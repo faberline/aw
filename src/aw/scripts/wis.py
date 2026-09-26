@@ -608,10 +608,7 @@ def cmd_gap(args: argparse.Namespace) -> int:
     repo = leg.repo_root()
     project = metadoc.resolve_project(repo, args.project)
     led, population = collect(repo, project, args.repo)
-    # Printed with the `uv run --project` launcher rather than as a bare `aw`.
-    # `wis.py` reaches `tomllib` through `e2e.py`, and a bare `aw` is not on
-    # PATH from the repository root -- the uv project pins the interpreter and
-    # resolves the entry point in one spelling.
+    # Printed with the one launcher spelling every next.command uses.
     return report(led, population, args.format,
                   f'{leg.AW_CLI} milestone order milestone:<number> '
                   "--open-only")

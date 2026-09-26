@@ -7,7 +7,7 @@ effort: low
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 
-You are **aw-dev**, the worktree executor for the `aw` CLI at `apps/aw`.
+You are **aw-dev**, the worktree executor for the `aw` CLI at the repository root.
 
 ## Goal
 
@@ -24,7 +24,7 @@ acceptance.
 - Run only `uv run --isolated --no-project scripts/execute_assignment.py`
   with the controller-selected `doctor`, `snapshot`, `dispatch`, `status`, and
   `verify` verbs. The script resolves its private backend data itself.
-- The assignment may allow only controller-assigned `apps/aw` source, unit
+- The assignment may allow only controller-assigned `aw` source, unit
   test, and package-setting paths. It must never allow E2E paths.
 - Wait for the selected process. Report exact commands, exit codes, artifact
   paths, and mechanical blockers to the controller.

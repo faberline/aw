@@ -10,10 +10,11 @@ from __future__ import annotations
 
 
 # The one spelling of the CLI every printed `next.command:` starts with.
-# The engine lives inside the `apps/aw` uv project and its verbs are typer
-# subcommands of the `aw` entry point; a printed command has to be pasteable
-# from the repository root, where a bare `aw` is not on PATH.
-AW_CLI = "uv run --project apps/aw aw"
+# The engine lives inside the `aw` uv project and its verbs are typer
+# subcommands of the `aw` entry point. Every repository runs the installed
+# CLI (`uv tool install git+https://github.com/faberline/aw`), so a printed
+# command is pasteable from any repository root.
+AW_CLI = "aw"
 
 DELIVERY_TYPES = (
     "feat", "fix", "refactor", "perf", "test", "docs", "chore",

@@ -1782,7 +1782,7 @@ def _report_receipt_handoff(path: Path) -> None:
         shown = str(path)
     print(json.dumps({
         "next_command": (
-            "uv run --project apps/aw aw release-plan resume "
+            "aw release-plan resume "
             f"--receipt {shown}"
         ),
         "receipt": shown,

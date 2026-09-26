@@ -696,7 +696,7 @@ def test_apply_failure_prints_the_incomplete_receipt_handoff(
     handoff = json.loads(capsys.readouterr().err.splitlines()[0])
     assert handoff == {
         "next_command": (
-            "uv run --project apps/aw aw release-plan resume "
+            "aw release-plan resume "
             f"--receipt {receipt_path.relative_to(tmp_path)}"
         ),
         "receipt": str(receipt_path.relative_to(tmp_path)),

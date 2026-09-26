@@ -107,8 +107,8 @@ PRODUCERS: dict[str, str] = {}
 # neither the pattern nor the group registry has drifted, because nothing else
 # compares them.
 #
-# The `aw` name is live again since 2026-09-02: `apps/aw` exposes this engine
-# as typer groups, launched as `uv run --project apps/aw aw <group> ...`. So
+# The `aw` name is live again since 2026-09-02: `aw` exposes this engine
+# as typer groups, launched as `aw <group> ...`. So
 # the rule no longer refuses every `aw` span -- a doc naming a live group is
 # naming the CLI that exists. What stays refused is a span whose first token
 # after `aw` is outside the group registry, which is exactly the shape of a
@@ -118,8 +118,8 @@ AW_GROUPS = (
     "change", "milestone", "e2e", "impl", "maint",
     "wis", "meta", "metadoc", "release-plan", "version",
 )
-AW_INVOCATION = re.compile(r"(?:`|\buv run --project apps/aw )aw\s+([a-z0-9-]+)")
-AW_SPAN = re.compile(r"`((?:uv run --project apps/aw )?aw\s+[a-z][^`]*)`")
+AW_INVOCATION = re.compile(r"(?:`|\buv run --project . )aw\s+([a-z0-9-]+)")
+AW_SPAN = re.compile(r"`((?:uv run --project . )?aw\s+[a-z][^`]*)`")
 
 # The backtick is what makes a command a command in prose -- and it is exactly
 # what a fenced block does not have. `apps/jet/README.md:63-64` is a ```bash

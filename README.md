@@ -1,20 +1,22 @@
 # aw
 
 The AW workflow engine and its Typer CLI. Managed with `uv`; requires
-Python 3.13. The canonical invocation, from the repository root, is
-`uv run --project apps/aw aw <group> ...` — that exact prefix is what the
-engine prints in its `next.command:` lines and what the seven `aw-*` skills
-run.
+Python 3.13. Install it with
+`uv tool install git+https://github.com/faberline/aw`; the canonical
+invocation, from any repository root, is `aw <group> ...` — that exact
+prefix is what the engine prints in its `next.command:` lines and what the
+seven `aw-*` skills run. Inside this checkout, `uv run --project . aw` runs
+the working tree.
 
 ## Capabilities
 
 ### CLI entry point
 
-Outcome: `uv run --project apps/aw aw` with no arguments prints usage and
-exits non-zero; `uv run --project apps/aw aw version` prints the project
+Outcome: `uv run --project . aw` with no arguments prints usage and
+exits non-zero; `uv run --project . aw version` prints the project
 version and exits zero.
 
-Gate: `uv run --project apps/aw --directory apps/aw pytest e2e/` (run from
+Gate: `uv run --project . --directory . pytest e2e/` (run from
 the repository root).
 
 ### Workflow command groups
@@ -26,7 +28,7 @@ source of argument validation — `change`, `milestone`, `e2e`, `impl`,
 option that the Typer surface accepts rebuilds an argv that the engine
 module's own parser accepts.
 
-Gate: `uv run --project apps/aw --directory apps/aw pytest e2e/` (run from
+Gate: `uv run --project . --directory . pytest e2e/` (run from
 the repository root). `e2e/test_cli.py` measures the delegation with
 `_delegate` stubbed; the other half of the printed protocol — that every
 `next.command:` line the engine prints parses in the engine's argparse — is
@@ -92,6 +94,6 @@ G6 and G7 may remain as recorded delivery work for the planned issues.
 ## Development
 
 ```
-uv run --project apps/aw aw release-plan --help
-uv run --project apps/aw --directory apps/aw pytest e2e/
+uv run --project . aw release-plan --help
+uv run --project . --directory . pytest e2e/
 ```

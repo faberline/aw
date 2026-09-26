@@ -696,11 +696,11 @@ def project_label(project: str) -> str:
     """Accept a bare project name or an already-qualified label."""
     if ":" in project:
         return project
-    if (REPO_ROOT / "apps" / project).is_dir():
-        return f"app:{project}"
     if (REPO_ROOT / "libs" / project).is_dir():
         return f"lib:{project}"
-    return f"project:{project}"
+    if (REPO_ROOT / "projects" / project).is_dir():
+        return f"project:{project}"
+    return f"app:{project}"
 
 
 def run_or_show(argv: list[str], dry_run: bool) -> str:

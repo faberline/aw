@@ -1,0 +1,72 @@
+version = "0.3.60"
+interface = "cli"
+
+[agentic_workflow.issue_platform]
+type = "github"
+repo = "faberline/aw"
+auth_method = "cli"
+
+[agentic_workflow.repo_platform]
+type = "github"
+repo = "faberline/aw"
+default_branch = "main"
+auto_commit = true
+auto_pr = false
+
+[agentic_workflow.tech_design_platform]
+type = "local"
+path = "tech-design"
+
+[[projects]]
+name = "todo-app"
+path = "examples/todo-app"
+td_path = "examples/todo-app/td"
+cap_path = "examples/todo-app/README.md"
+label = "example:todo-app"
+spec_model = "python"
+
+[[projects.workspaces]]
+name = "backend"
+paths = ["examples/todo-app/backend-rust/**"]
+target = "rust"
+test_cmd = "cargo test --offline --manifest-path examples/todo-app/backend-rust/Cargo.toml"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Agents — registry of LLM runners available for work-item assignment.
+#
+# `aw wi create --agent <name>` resolves <name> against `[[agents]].name`
+# and emits the corresponding `label` field on the issue. Mirrors the
+# `[[projects]]` shape so the same lookup pattern (`name` → `label`) works
+# for both routing dimensions.
+#
+# Label syntax uses GitLab-style scoped labels (`::`) so a work-item is
+# constrained to exactly one agent on GitLab via native mutex semantics.
+# GitHub treats the value as a plain string — no behavioral difference.
+#
+# `strengths` is informational. It captures each agent's comparative
+# strengths so the WI author (human or AI) can pick the best fit when
+# creating a work-item, and so a future `aw wi suggest-agent` heuristic
+# has in-repo context. Update when usage patterns shift.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[agents]]
+name = "claude-code"
+label = "agent::claude-code"
+strengths = [
+  "large-codebase exploration and cross-file refactor",
+  "backend logic, algorithms, data pipelines",
+  "terminal-native automation, CI / shell scripting",
+  "deep debugging in a shell environment",
+  "SDD lifecycle execution (issue → TD → CB → merge)",
+]
+
+[[agents]]
+name = "codex"
+label = "agent::codex"
+strengths = [
+  "frontend UI / UX, interaction polish",
+  "browser QA and visual verification",
+  "parallel agent orchestration (multi-task fan-out)",
+  "product delivery — PR descriptions, docs, handoff packaging",
+  "rapid prototyping of user-facing tools",
+]
