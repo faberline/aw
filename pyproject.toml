@@ -4,7 +4,13 @@ version = "0.1.0"
 description = "aw workflow CLI"
 requires-python = ">=3.13"
 dependencies = [
+    "httpx2>=2.10,<3",
+    "mcp>=2.3,<3",
+    "pydantic>=2.12,<3",
+    "starlette>=0.48,<1",
     "typer>=0.15",
+    "tomlkit>=0.13,<1",
+    "uvicorn>=0.31,<1",
 ]
 
 [project.scripts]

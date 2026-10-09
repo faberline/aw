@@ -1,6 +1,6 @@
 # aw
 
-The AW workflow engine and its Typer CLI. Managed with `uv`; requires
+The AW workflow engine, local MCP coordinator, and Typer CLI. Managed with `uv`; requires
 Python 3.13. Install it with
 `uv tool install git+https://github.com/faberline/aw`; the canonical
 invocation, from any repository root, is `aw <group> ...` — that exact
@@ -9,6 +9,33 @@ seven `aw-*` skills run. Inside this checkout, `uv run --project . aw` runs
 the working tree.
 
 ## Capabilities
+
+### Shared MCP coordination
+
+Outcome: independent Codex, Claude Code, and AGY sessions use one authenticated
+HTTP mailbox named `aw`. Messages and handoff cards survive service restarts.
+Sessions register a logical project, a descriptive name, a scope, and a worktree.
+Each session can initiate work. Native agent type is optional delivery metadata.
+Preflight is required before registration or scope changes.
+The stdio proxy exposes two tools before admission and all 12 after admission.
+It binds calls to one session and keeps its credential private.
+A thin stdio proxy connects to the same service.
+The user-level installer handles Codex TOML and Claude Code/AGY JSON.
+It keeps other settings, backs up existing files, and supports repeat installation.
+
+Native receivers forward events through Claude Code Channels, an existing
+Codex App Server, or an AGY desktop sidecar. Forwarding and agent acknowledgment
+are separate states. Worktree write claims are advisory and require owner release.
+
+Gate: `uv run --project . --directory . pytest e2e/test_mcp.py e2e/test_mcp_install.py`.
+This gate exercises real HTTP and stdio transports. Native Codex and AGY endpoints
+are protocol fixtures. Live model sessions still need integration verification.
+
+Install client entries with `aw mcp install --client all`.
+Add global session guidance with `aw mcp install-rules`.
+Check both with `aw mcp doctor --rules`.
+Start the service with `aw mcp serve`. See [MCP setup](docs/mcp.md) for credentials,
+native receivers, and client configuration.
 
 ### CLI entry point
 

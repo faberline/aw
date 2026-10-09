@@ -308,6 +308,7 @@ def test_cases_cover_every_registered_command() -> None:
         group.name: {command.name
                      for command in group.typer_instance.registered_commands}
         for group in cli.app.registered_groups
+        if group.name != "mcp"  # The independent service is exercised in test_mcp.py.
     }
     covered: dict[str, set[str]] = {}
     for group, verb, _tokens, _expected in CASES:
