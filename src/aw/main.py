@@ -1,6 +1,6 @@
 """Typer surface over the aw engine scripts.
 
-Each subcommand rebuilds the argv its engine module already parses and hands
+Each workflow subcommand rebuilds the argv its engine module already parses and hands
 it to that module's ``main(argv)``. argparse stays the single source of
 validation — the options here are deliberately plain ``str`` so a registry
 change in ``wi_types`` never has to be mirrored into a typer Enum.
@@ -38,6 +38,11 @@ app.add_typer(wis_app, name="wis")
 app.add_typer(meta_app, name="meta")
 app.add_typer(metadoc_app, name="metadoc")
 app.add_typer(release_plan_app, name="release-plan")
+
+# The service has its own CLI, independent of tracker-backed engine scripts.
+from aw.mcp.cli import app as mcp_app
+
+app.add_typer(mcp_app, name="mcp")
 
 
 def _delegate(module: str, argv: list[str]) -> None:
