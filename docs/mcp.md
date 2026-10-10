@@ -261,6 +261,8 @@ aw mcp proxy --session-file /absolute/path/to/session.json
 Each proxy has its own process.
 The mailbox remains in the shared HTTP service.
 Closing a proxy does not remove messages or stop that service.
+A running proxy survives a service restart on the same URL.
+While the service is down, its tool calls return an error result.
 The proxy binds tool calls to its session file.
 It hides session credentials from tool schemas and refuses identity overrides.
 Use a bound proxy only for that native session.
@@ -411,6 +413,8 @@ None of these states means that implementation or acceptance is complete.
 
 The event feed replays unacknowledged mail after reconnecting.
 Receivers skip messages already recorded as forwarded.
+A failed message does not block later messages.
+Receivers retry a failed message with backoff from 3 seconds up to 5 minutes.
 A crash after native delivery but before its receipt can cause a duplicate.
 Use the message ID to identify that duplicate.
 

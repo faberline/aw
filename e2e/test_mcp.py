@@ -11,7 +11,7 @@ import sys
 import tempfile
 import time
 import tomllib
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -22,6 +22,7 @@ from mcp import Client
 from mcp.client.stdio import StdioServerParameters
 
 from aw.mcp.client import bound_arguments, call, connect, events
+from aw.mcp import receivers
 from aw.mcp.receivers import AgyReceiver, CodexReceiver, receive_forever
 from aw.mcp.store import Mailbox, private_read, private_write, state_token
 
@@ -29,11 +30,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @contextmanager
-def running_hub(state: Path):
+def running_hub(state: Path, port: int = 0):
     token = state_token(state)
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
+    if not port:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
     process = subprocess.Popen(
         [sys.executable, "-m", "aw.main", "mcp", "serve", "--state-dir", str(state), "--port", str(port)],
@@ -531,6 +533,96 @@ def test_native_receiver_refuses_a_changed_worktree_binding(hub, repos):
             finally:
                 receiving.cancel()
                 await asyncio.gather(receiving, return_exceptions=True)
+    asyncio.run(scenario())
+
+
+def test_failed_native_delivery_backs_off_without_blocking_later_mail(hub, repos, monkeypatch):
+    monkeypatch.setattr(receivers, "RETRY_SECONDS", (0.2, 0.4))
+    async def scenario():
+        async with connect(hub.url, hub.token) as remote:
+            sender = await register(remote, "codex", repos[2])
+            target = await register(remote, "agy", repos[0])
+            class Receiver:
+                loaded, attempts = False, []
+                async def send(self, message):
+                    self.attempts.append(message["body"])
+                    if message["body"] == "first" and not self.loaded:
+                        raise ValueError("target thread is not loaded")
+                    return "accepted by fixture"
+            receiver = Receiver()
+
+            async def send(body):
+                return await call(remote, "send_message", {
+                    **bound_arguments(sender), "recipient": target["id"], "task_id": "backoff",
+                    "body": body, "request_id": body,
+                })
+
+            async def delivery(message, state):
+                for _ in range(100):
+                    row = next(row for row in await call(remote, "read_inbox", bound_arguments(target))
+                               if row["id"] == message["id"])
+                    if row["delivery"] == state:
+                        return row
+                    await asyncio.sleep(0.05)
+                raise AssertionError(f"{message['body']} never became {state}")
+
+            receiving = asyncio.create_task(receive_forever(hub.url, hub.token, target, receiver))
+            try:
+                first = await send("first")
+                assert "not loaded" in (await delivery(first, "failed"))["delivery_detail"]
+                second = await send("second")
+                # The second message passes the failed first message.
+                await delivery(second, "forwarded")
+                await asyncio.sleep(1)
+                retried = receiver.attempts.count("first")
+                # Backoff of 0.2, 0.4, 0.4 s allows only a few retries in about one second.
+                assert 2 <= retried <= 6
+                receiver.loaded = True
+                await delivery(first, "forwarded")
+                await asyncio.sleep(0.5)
+                assert receiver.attempts.count("first") == retried + 1
+                assert receiver.attempts.count("second") == 1
+            finally:
+                receiving.cancel()
+                await asyncio.gather(receiving, return_exceptions=True)
+    asyncio.run(scenario())
+
+
+def test_proxy_survives_a_service_restart(tmp_path, repos):
+    state = tmp_path / "restart"
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    script = """import asyncio, os, sys
+from pathlib import Path
+from aw.mcp.client import credentials
+import aw.mcp.proxy as proxy
+proxy.HEARTBEAT_SECONDS = 0.05
+asyncio.run(proxy.run_proxy(sys.argv[1], os.environ['AW_MCP_TOKEN'],
+    credentials(Path(sys.argv[2])), state_dir=Path(sys.argv[3]), session_path=Path(sys.argv[2])))
+"""
+    async def scenario():
+        with ExitStack() as service:
+            hub = service.enter_context(running_hub(state, port))
+            async with connect(hub.url, hub.token) as remote:
+                actor = await register(remote, "codex", repos[0])
+            path = tmp_path / "restart.json"
+            private_write(path, json.dumps(actor))
+            params = StdioServerParameters(command=sys.executable, args=[
+                "-c", script, hub.url, str(path), str(state),
+            ], env={**os.environ, "AW_MCP_TOKEN": hub.token}, cwd=str(ROOT))
+            async with Client(params) as proxy:
+                assert await call(proxy, "read_inbox", {}) == []
+                service.close()
+                # Automatic heartbeats fail while the service is down.
+                await asyncio.sleep(0.5)
+                down = await proxy.call_tool("read_inbox", {})
+                assert down.is_error
+                assert "AW service is unavailable" in down.content[0].text
+                service.enter_context(running_hub(state, port))
+                assert await call(proxy, "read_inbox", {}) == []
+                busy = await call(proxy, "heartbeat", {"status": "busy"})
+                assert busy["id"] == actor["id"] and busy["status"] == "busy"
     asyncio.run(scenario())
 
 
