@@ -48,12 +48,12 @@ the repository root).
 
 ### Workflow command groups
 
-Outcome: nine groups delegate to the engine modules under
+Outcome: ten groups delegate to the engine modules under
 `src/aw/scripts/`, one module per group, with argparse staying the single
 source of argument validation — `change`, `milestone`, `e2e`, `impl`,
-`maint`, `wis`, `meta`, `metadoc`, and `release-plan`. Every group, verb, and
-option that the Typer surface accepts rebuilds an argv that the engine
-module's own parser accepts.
+`maint`, `wis`, `meta`, `metadoc`, `release-plan`, and `standards`. Every
+group, verb, and option that the Typer surface accepts rebuilds an argv that
+the engine module's own parser accepts.
 
 Gate: `uv run --project . --directory . pytest e2e/` (run from
 the repository root). `e2e/test_cli.py` measures the delegation with
@@ -73,6 +73,9 @@ the repository root). `e2e/test_cli.py` measures the delegation with
   verification suite stayed at `.claude/aw/verification/` and resolves this
   path through its `_paths.SCRIPTS`.
 - `e2e/` — black-box CLI cases, run with pytest via the gate above.
+- `docs/standards/` — the shared standards for every faberline repository
+  ([index](docs/standards/README.md)). `aw standards check` checks the
+  [core-reuse](docs/standards/core-reuse.md) rules.
 
 ### Release plans
 

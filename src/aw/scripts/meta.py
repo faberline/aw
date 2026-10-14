@@ -116,7 +116,7 @@ PRODUCERS: dict[str, str] = {}
 # same way the deleted binary's verbs were.
 AW_GROUPS = (
     "change", "milestone", "e2e", "impl", "maint",
-    "wis", "meta", "metadoc", "release-plan", "version",
+    "wis", "meta", "metadoc", "release-plan", "standards", "version",
 )
 AW_INVOCATION = re.compile(r"(?:`|\buv run --project . )aw\s+([a-z0-9-]+)")
 AW_SPAN = re.compile(r"`((?:uv run --project . )?aw\s+[a-z][^`]*)`")
