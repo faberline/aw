@@ -19,6 +19,10 @@ set -euo pipefail
 # Optional:
 #   NAMESPACE      default REPO; must match the overlay's Namespace object
 #   IMAGE_NAME     image name in the overlay and test Job to replace; default REPO
+#   TEST_IMAGE, TEST_IMAGE_NAME   both or neither: also set TEST_IMAGE_NAME
+#                  to TEST_IMAGE, in the test Job only; for a client image
+#   TEST_ENV       lines of KEY=VALUE; the test Job gets them in the ConfigMap
+#                  gke-test-env (made also when TEST_ENV is empty)
 #   RUN_LABEL      value of faberline.dev/test-run; default local-<time>
 #   TTL_MINUTES    job timeout; the reaper may delete the namespace 15 minutes
 #                  after it; default 90
@@ -40,6 +44,16 @@ TEST_COMMAND="${TEST_COMMAND:-}"
 [[ -n "$TEST_JOB$TEST_COMMAND" ]] || { log "set TEST_JOB, TEST_COMMAND, or both"; exit 1; }
 NAMESPACE="${NAMESPACE:-$REPO}"
 IMAGE_NAME="${IMAGE_NAME:-$REPO}"
+TEST_IMAGE="${TEST_IMAGE:-}"
+TEST_IMAGE_NAME="${TEST_IMAGE_NAME:-}"
+TEST_ENV="${TEST_ENV:-}"
+[[ -z "$TEST_IMAGE$TEST_IMAGE_NAME" || ( -n "$TEST_IMAGE" && -n "$TEST_IMAGE_NAME" ) ]] \
+  || { log "set TEST_IMAGE and TEST_IMAGE_NAME together"; exit 1; }
+# render() sets IMAGE_NAME last, so the same name would undo TEST_IMAGE.
+[[ "$TEST_IMAGE_NAME" != "$IMAGE_NAME" ]] \
+  || { log "TEST_IMAGE_NAME must differ from IMAGE_NAME ($IMAGE_NAME)"; exit 1; }
+[[ -n "$TEST_JOB" || -z "$TEST_IMAGE$TEST_ENV" ]] \
+  || { log "TEST_IMAGE and TEST_ENV need TEST_JOB"; exit 1; }
 RUN_LABEL="${RUN_LABEL:-local-$(date +%s)}"
 TTL_MINUTES="${TTL_MINUTES:-90}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-900s}"
@@ -121,6 +135,20 @@ job_name=""
 if [[ -n "$TEST_JOB" ]]; then
   # The Job lives in the run's namespace, so it goes away with the namespace.
   (cd "$TEST_JOB" && kustomize edit set namespace "$NAMESPACE")
+  if [[ -n "$TEST_IMAGE" ]]; then
+    (cd "$TEST_JOB" && kustomize edit set image "$TEST_IMAGE_NAME=$TEST_IMAGE")
+  fi
+  # Per-call values, for example one cell of a matrix. Blank lines and lines
+  # that start with # are skipped. Keys must be environment variable names.
+  bad_env="$(grep -vE '^[[:space:]]*(#|$)' <<<"$TEST_ENV" | grep -vE '^[A-Za-z_][A-Za-z0-9_]*=' || true)"
+  if [[ -n "$bad_env" ]]; then
+    log "TEST_ENV lines must be KEY=VALUE:"
+    sed 's/^/  /' <<<"$bad_env" >&2
+    exit 1
+  fi
+  grep -vE '^[[:space:]]*(#|$)' <<<"$TEST_ENV" >"$TEST_JOB/.gke-test-env" || true
+  (cd "$TEST_JOB" && kustomize edit add configmap gke-test-env \
+    --from-env-file=.gke-test-env --disableNameSuffixHash)
   render "$TEST_JOB" "$job_rendered"
   problems+="
 $(check_pods "$job_rendered.json")

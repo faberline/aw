@@ -198,6 +198,19 @@ Write the Job so that:
 - Its image has the test tools. It can be the repository's own image, a
   client image, or a public tool image such as `alpine/k8s`.
 
+**Client image.** The run sets `<image-name>=<image>` in the test Job too.
+For a separate client image, also set the inputs `test-image` and
+`test-image-name`. The run then sets `<test-image-name>=<test-image>` in the
+test Job only, so the server keeps the image under test. The two names must
+differ. A client image that a run of the same repository pushes to
+`ghcr.io/faberline/<repo>-<name>` can be read with `ghcr-pull`.
+
+**Values for one call.** The input `test-env` takes lines of `KEY=VALUE`, for
+example a cell name, a commit, or an expected image digest. The run puts them
+in the ConfigMap `gke-test-env` in the test Job. It makes the ConfigMap also
+when `test-env` is empty, so the Job can always read it with `envFrom`. The
+values go into the evidence: never put a secret there.
+
 Example, from `keep` (`k8s/gke-test-job/kustomization.yaml`):
 
 ```yaml
@@ -218,6 +231,30 @@ is at most 360. Split a longer test into more than one call, for example one
 call per cell of a performance matrix. Calls of one repository run one after
 the other. In a matrix, set `strategy.max-parallel: 1`: a concurrency group
 keeps only one waiting run and cancels the others.
+Give each call its own `evidence-suffix`, for example the cell name. All
+calls of a matrix share one workflow run, and two artifacts with the same name
+fail the upload.
+
+```yaml
+  perf:
+    needs: [image, client-image]
+    strategy:
+      max-parallel: 1
+      matrix:
+        cell: [a1, a2]
+    uses: faberline/aw/.github/workflows/gke-test.yml@main
+    with:
+      image: ${{ needs.image.outputs.image }}
+      overlay: k8s/overlays/gke-perf
+      test-job: k8s/gke-perf-job
+      test-image: ${{ needs.client-image.outputs.image }}
+      test-image-name: <repo>-perf-client
+      test-env: |
+        CELL=${{ matrix.cell }}
+        COMMIT=${{ github.sha }}
+      evidence-suffix: ${{ matrix.cell }}
+      ttl-minutes: 150
+```
 
 ## The workflow
 
@@ -247,8 +284,9 @@ jobs:
 - Runs of one repository wait for each other (concurrency group
   `gke-test-<owner>/<repo>`). Runs of different repositories run at the same
   time.
-- Each run uploads the artifact `gke-test-evidence-<run>-<attempt>`: the
-  rendered manifests, nodes, events, `describe pods`, and logs.
+- Each run uploads the artifact `gke-test-evidence-<run>-<attempt>`, plus
+  `-<evidence-suffix>` when set: the rendered manifests, nodes, events,
+  `describe pods`, and logs.
 - A pull request from a fork gets no `id-token`, so it cannot run this.
 
 ## What a run does

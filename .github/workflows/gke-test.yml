@@ -40,6 +40,36 @@ on:
         required: false
         default: ""
         type: string
+      test-image:
+        description: >-
+          Client image for the test Job only, for example
+          ghcr.io/faberline/<repo>-test-client:sha-<git12>@sha256:<digest>. Set
+          it with test-image-name.
+        required: false
+        default: ""
+        type: string
+      test-image-name:
+        description: >-
+          Image name in the test Job to replace with test-image. It must differ
+          from image-name.
+        required: false
+        default: ""
+        type: string
+      test-env:
+        description: >-
+          Lines of KEY=VALUE for this call, for example one cell of a matrix.
+          The test Job gets them in the ConfigMap gke-test-env (use envFrom).
+          They are in the evidence, so never put a secret here.
+        required: false
+        default: ""
+        type: string
+      evidence-suffix:
+        description: >-
+          Added to the evidence artifact name. Set it when one workflow run
+          calls this workflow more than once, for example from a matrix.
+        required: false
+        default: ""
+        type: string
       overlay:
         description: Kustomize overlay to deploy.
         required: false
@@ -93,6 +123,9 @@ jobs:
       NAMESPACE: ${{ inputs.namespace || github.event.repository.name }}
       TEST_JOB: ${{ inputs.test-job }}
       TEST_COMMAND: ${{ inputs.test-command }}
+      TEST_IMAGE: ${{ inputs.test-image }}
+      TEST_IMAGE_NAME: ${{ inputs.test-image-name }}
+      TEST_ENV: ${{ inputs.test-env }}
       RUN_LABEL: gha-${{ github.run_id }}-${{ github.run_attempt }}
       TTL_MINUTES: ${{ inputs.ttl-minutes }}
       GHCR_USER: ${{ github.actor }}
@@ -140,7 +173,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gke-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          name: gke-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}${{ inputs.evidence-suffix && format('-{0}', inputs.evidence-suffix) || '' }}
           path: ${{ env.EVIDENCE_DIR }}
           if-no-files-found: warn
           retention-days: 14
