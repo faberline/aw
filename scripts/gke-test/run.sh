@@ -68,9 +68,9 @@ job_rendered="$EVIDENCE_DIR/test-job-rendered.yaml"
 # --- Render and check, before any cluster time is spent ----------------------
 
 [[ -f "$POOLS_FILE" ]] || { log "no pools file at $POOLS_FILE"; exit 1; }
-# Pool name -> its row. A row without `pool` is named after its repository.
+# Pool name -> its row.
 pools_json="$(yq -o=json -I=0 '.pools' "$POOLS_FILE" \
-  | jq -c 'map({key: (.pool // .repo), value: .}) | from_entries')"
+  | jq -c 'map({key: .pool, value: .}) | from_entries')"
 
 # render <kustomize folder> <output file>: also writes <output>.json, one
 # JSON document per manifest, for jq.

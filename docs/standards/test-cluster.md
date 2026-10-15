@@ -56,7 +56,7 @@ tears down.
   `faberline.dev/pool=<pool>:NoSchedule`. The taint keeps every other pod off
   it, so repositories do not compete for CPU and memory.
 - A repository can have more than one pool, one per role. The pool name is
-  `<repo>` or `<repo>-<role>`, for example `lumen` for the server and
+  `<repo>-<role>`, for example `lumen-server` for the server and
   `lumen-client` for the test Job. Terraform refuses another name.
 - Cost cap: the sum of `max_nodes` over all rows, while tests run. Idle cost
   is 0 nodes.
@@ -64,7 +64,7 @@ tears down.
 ## Add a repository
 
 1. **Pools.** Open a pull request on `aw` that adds rows to
-   `infra/gke-test/pools.yaml`: usually `<repo>` for the server and
+   `infra/gke-test/pools.yaml`: usually `<repo>-server` for the server and
    `<repo>-client` for the test Job. Pick the smallest `machine_type` on
    which the biggest pod fits. Set `max_nodes` of the server pool to at least
    the server replicas. Use `spot: false` for performance tests. An `aw`
@@ -133,11 +133,11 @@ patches:
         template:
           spec:
             nodeSelector:
-              faberline.dev/pool: keep
+              faberline.dev/pool: keep-server
             tolerations:
               - key: faberline.dev/pool
                 operator: Equal
-                value: keep
+                value: keep-server
                 effect: NoSchedule
             imagePullSecrets:
               - name: ghcr-pull

@@ -12,13 +12,13 @@
 #   pool run there. See docs/standards/test-cluster.md for the overlay patch.
 #
 # A repository can have more than one pool, one per role. The usual pair is
-# the server pool (`<repo>`, one node per server replica) and the client pool
-# (`<repo>-client`) for the test Job, so the load generator never takes CPU
-# from the server it measures.
+# the server pool (`<repo>-server`, one node per server replica) and the client
+# pool (`<repo>-client`) for the test Job, so the load generator never takes
+# CPU from the server it measures.
 #
 # Fields:
 #   repo          GitHub repository name under faberline; also the namespace.
-#   pool          Pool name: `<repo>` or `<repo>-<role>`. Default: repo.
+#   pool          Pool name: `<repo>-<role>`, for example `keep-server`.
 #   machine_type  GCE machine type. The biggest pod must fit on one node.
 #   spot          true for Spot VMs (about 70% cheaper; GCE may stop them).
 #   max_nodes     Upper bound for this pool. At least the server replicas,
@@ -28,6 +28,7 @@ pools:
   # keep requests 2 CPU and 4Gi per pod (QoS Guaranteed), which does not fit
   # the 1930m allocatable of an e2-standard-2.
   - repo: keep
+    pool: keep-server
     machine_type: e2-standard-4
     spot: true
     max_nodes: 1
@@ -43,6 +44,7 @@ pools:
   # and the operator itself share these nodes, which an e2-standard-2 cannot
   # hold.
   - repo: lumen
+    pool: lumen-server
     machine_type: e2-standard-4
     spot: true
     max_nodes: 3
@@ -57,7 +59,7 @@ pools:
   # 16Gi. Not Spot, because a preempted node would void a cell and its PVC
   # cold-restart measurement.
   - repo: lumen
-    pool: lumen-perf
+    pool: lumen-perf-server
     machine_type: e2-highmem-4
     spot: false
     max_nodes: 1
