@@ -37,3 +37,19 @@ pools:
     machine_type: e2-medium
     spot: true
     max_nodes: 1
+  # lumen's server pool. The operator's raft StatefulSet puts one replica on
+  # each node (required pod anti-affinity on the hostname), up to 3 voters at
+  # 1 CPU and 4Gi each. The direct-install Deployment (1 replica, 1 CPU, 4Gi)
+  # and the operator itself share these nodes, which an e2-standard-2 cannot
+  # hold.
+  - repo: lumen
+    machine_type: e2-standard-4
+    spot: true
+    max_nodes: 3
+  # The test Job (kubectl, curl, jq, python3 for the 100k-doc fixture)
+  # requests 500m and 1Gi.
+  - repo: lumen
+    pool: lumen-client
+    machine_type: e2-medium
+    spot: true
+    max_nodes: 1
