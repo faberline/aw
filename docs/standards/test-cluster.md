@@ -103,7 +103,7 @@ cluster when one of these is false:
     its own `GITHUB_TOKEN`, so the package can stay private.
 - **Requests.** Every container and init container sets
   `resources.requests.cpu` and `resources.requests.memory`. The autoscaler
-  picks the node count from requests.
+  uses them to check that the pod fits on a new node.
 - **One replica per node.** A StatefulSet or Deployment with more than 1
   replica has `topologySpreadConstraints` with `topologyKey:
   kubernetes.io/hostname`, `maxSkew: 1`, and `whenUnsatisfiable:
@@ -118,13 +118,11 @@ cluster when one of these is false:
 Each pod on a repository pool gets a node of its own: each server replica,
 each other server-side pod (for example a database), and the test Job pod.
 The pod can then use the whole node, and a test measures the code, not a
-neighbour. Do this for every pod template of the overlay and of the test Job:
+neighbour. The pod anti-affinity keeps other pods off the node, not the
+requests: do not make requests big to fill the node. The pool taint keeps
+other repositories off. Do this for every pod template of the overlay and of
+the test Job:
 
-- **Requests, no limits.** Set `resources.requests` (the check above needs
-  them) and no `resources.limits`. A limit caps the pod below the node size.
-  When the base sets limits, the overlay removes them, for example with a
-  JSON 6902 patch `op: remove`, `path:
-  /spec/template/spec/containers/0/resources/limits`.
 - **No shared node.** Add a required pod anti-affinity on the hostname that
   matches every pod of the namespace. An empty `labelSelector` matches every
   pod; without `namespaceSelector` it looks only in the pod's own namespace:
@@ -138,6 +136,12 @@ neighbour. Do this for every pod template of the overlay and of the test Job:
   ```
 
   It also passes the "one replica per node" check.
+- **Requests, no limits.** Set small `resources.requests`: what the pod
+  needs to start. The check above needs them. Set no `resources.limits`: a
+  limit caps the pod below the node size.
+  When the base sets limits, the overlay removes them, for example with a
+  JSON 6902 patch `op: remove`, `path:
+  /spec/template/spec/containers/0/resources/limits`.
 - **Enough nodes.** `max_nodes` of the pool is at least the number of pods on
   it. Otherwise a pod stays Pending and the run fails at its deadline.
 
