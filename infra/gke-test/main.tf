@@ -313,9 +313,11 @@ resource "kubernetes_cluster_role_binding_v1" "deployer" {
   }
 }
 
-# The reaper deletes test namespaces. It only reads everything else: nodes
-# for park.sh, PersistentVolumes so it never deletes a disk that one still
-# names, and pods to report the ones outside test namespaces.
+# The reaper deletes test namespaces, and the ClusterRoles and
+# ClusterRoleBindings that an operator made for a namespace that is gone. It
+# only reads everything else: nodes for park.sh, PersistentVolumes so it never
+# deletes a disk that one still names, and pods to report the ones outside test
+# namespaces. Deleting RBAC objects needs no `escalate`.
 resource "kubernetes_cluster_role_v1" "reaper" {
   metadata {
     name = "faberline-gke-test-reaper"
@@ -329,6 +331,11 @@ resource "kubernetes_cluster_role_v1" "reaper" {
     api_groups = [""]
     resources  = ["nodes", "persistentvolumes", "pods"]
     verbs      = ["get", "list"]
+  }
+  rule {
+    api_groups = ["rbac.authorization.k8s.io"]
+    resources  = ["clusterroles", "clusterrolebindings"]
+    verbs      = ["get", "list", "delete"]
   }
 }
 

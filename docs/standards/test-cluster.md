@@ -162,6 +162,14 @@ shared by the whole cluster. Give them names that start with the repository
 name or its API group, so two repositories never write the same object. The
 run applies CRDs first and deletes them last.
 
+**Cluster RBAC made at run time.** `run.sh` deletes only the objects in the
+rendered manifests. When an operator creates a ClusterRole or a
+ClusterRoleBinding for one namespace, it must put the label
+`faberline.dev/owner-namespace=<namespace>` on it. Teardown deletes the objects
+with that label after it deletes the namespace. The reaper deletes them when
+their namespace no longer exists. An object without the label stays on the
+cluster after the run.
+
 ## The test Job
 
 The workflow input `test-job` names a kustomize folder, for example
@@ -257,8 +265,9 @@ jobs:
 6. Applies the test Job and waits until it is `Complete` or `Failed`.
 7. Runs the test command, if there is one.
 8. Always: collects evidence, deletes the objects in reverse order, deletes
-   the namespace, deletes the CRDs, and waits until no PersistentVolume of the
-   namespace is left, then parks `system-pool` when no other run is live. A
+   the namespace, deletes the cluster RBAC labelled
+   `faberline.dev/owner-namespace=<namespace>`, deletes the CRDs, and waits
+   until no PersistentVolume of the namespace is left, then parks `system-pool` when no other run is live. A
    run whose cleanup fails is a failed run.
 
 ## Cleanup when a run dies
@@ -271,9 +280,11 @@ The reaper (`scripts/gke-test/reap.sh`) runs every 30 minutes. It:
    that no VM uses, that are older than 1 hour, and that no PersistentVolume
    names.
 4. Reports pods outside test and system namespaces. It does not delete them,
-   because they can be someone's manual work. Such a pod can keep a node up.
+. Deletes ClusterRoles and ClusterRoleBindings labelled
+   `faberline.dev/owner-namespace=<namespace>` when that namespace no longer
+   exists.
 
-When step 1 or 3 fails, or step 4 finds a pod, the run fails and opens one
+When step 1, 3, or 5 fails, or step 4 finds a pod, the run fails and opens one
 issue titled "gke-test reaper needs attention" on `faberline/aw`. The next
 clean run closes it.
 
