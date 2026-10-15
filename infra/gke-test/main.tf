@@ -168,6 +168,12 @@ resource "google_container_node_pool" "repo" {
       condition     = can(regex("^${each.value.repo}-[a-z0-9]+(-[a-z0-9]+)*$", each.key))
       error_message = "pools.yaml: pool \"${each.key}\" must be \"${each.value.repo}-<role>\", for example \"${each.value.repo}-server\"."
     }
+    # A shared-core node leaves too little CPU after GKE's DaemonSets: a test
+    # Job that requested 500m never got an e2-medium node.
+    precondition {
+      condition     = !can(regex("^(e2-(micro|small|medium)|f1-micro|g1-small)$", each.value.machine_type))
+      error_message = "pools.yaml: pool \"${each.key}\" uses shared-core ${each.value.machine_type}; use e2-standard-2 or bigger."
+    }
   }
 }
 
