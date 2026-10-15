@@ -232,6 +232,14 @@ CASES: tuple[tuple[str, str, list[str], list[str]], ...] = (
     ("metadoc", "commit",
      ["metadoc", "commit", "demo", "--why", "why.md", "--dry-run"],
      ["commit", "demo", "--why", "why.md", "--dry-run"]),
+
+    ("standards", "check",
+     ["standards", "check", "--repo", "/a", "--repo", "/b", "--core", "/c",
+      "--format", "json"],
+     ["check", "--format", "json", "--repo", "/a", "--repo", "/b", "--core", "/c"]),
+    ("standards", "check",
+     ["standards", "check"],
+     ["check", "--format", "text"]),
 )
 
 

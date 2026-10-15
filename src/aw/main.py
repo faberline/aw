@@ -28,6 +28,7 @@ wis_app = typer.Typer(no_args_is_help=True, help="Promise-to-tracker gap measure
 meta_app = typer.Typer(no_args_is_help=True, help="META-doc rule scan (read-only).")
 metadoc_app = typer.Typer(no_args_is_help=True, help="META-doc write allowlist check and commit.")
 release_plan_app = typer.Typer(no_args_is_help=True, help="Approved, resumable multi-project release planning.")
+standards_app = typer.Typer(no_args_is_help=True, help="Shared faberline standards checks (read-only).")
 
 app.add_typer(change_app, name="change")
 app.add_typer(milestone_app, name="milestone")
@@ -38,6 +39,7 @@ app.add_typer(wis_app, name="wis")
 app.add_typer(meta_app, name="meta")
 app.add_typer(metadoc_app, name="metadoc")
 app.add_typer(release_plan_app, name="release-plan")
+app.add_typer(standards_app, name="standards")
 
 # The service has its own CLI, independent of tracker-backed engine scripts.
 from aw.mcp.cli import app as mcp_app
@@ -669,6 +671,26 @@ def metadoc_commit(
     if dry_run:
         argv.append("--dry-run")
     _delegate("metadoc", argv)
+
+
+@standards_app.callback()
+def standards_main() -> None:
+    """Shared faberline standards checks (read-only)."""
+
+
+@standards_app.command("check")
+def standards_check(
+    repo: list[str] = typer.Option([], "--repo"),
+    core: str | None = typer.Option(None, "--core"),
+    format_: str = typer.Option("text", "--format"),
+) -> None:
+    """Check Rust repositories against the core-reuse rules."""
+    argv = ["check", "--format", format_]
+    for item in repo:
+        argv += ["--repo", item]
+    if core is not None:
+        argv += ["--core", core]
+    _delegate("standards", argv)
 
 
 if __name__ == "__main__":
