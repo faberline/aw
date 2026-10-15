@@ -40,7 +40,7 @@ jobs:
 
       - name: Get cluster credentials
         run: |
-          gcloud container clusters get-credentials axiom-operator-acceptance \
+          gcloud container clusters get-credentials faberline-test \
             --project=axiom-502607 --zone=asia-east1-a
 
       - name: Reap and park

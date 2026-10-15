@@ -21,7 +21,7 @@ test time. It becomes standard S5 when `aw standards check` checks the overlay.
 
 ## The cluster
 
-- Cluster `axiom-operator-acceptance`, zone `asia-east1-a`, project
+- Cluster `faberline-test`, zone `asia-east1-a`, project
   `axiom-502607`. The free tier covers the management fee of one zonal cluster
   only, so there is no second cluster.
 - `system-pool`: one e2-standard-2 Spot node for kube-system. It has no
@@ -173,7 +173,7 @@ activity in `aw`; turn it on again under the Actions tab of `faberline/aw`.
 To clean up by hand:
 
 ```bash
-gcloud container clusters get-credentials axiom-operator-acceptance --zone asia-east1-a --project axiom-502607
+gcloud container clusters get-credentials faberline-test --zone asia-east1-a --project axiom-502607
 ```
 
 ```bash

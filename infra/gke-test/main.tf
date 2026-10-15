@@ -18,51 +18,18 @@ locals {
   pools = { for p in yamldecode(file("${path.module}/pools.yaml")).pools : p.repo => p }
 
   pool_label_key = "faberline.dev/pool"
-  node_sa_email  = "${var.node_service_account_id}@${var.project_id}.iam.gserviceaccount.com"
 
   # Every identity that signs in from GitHub Actions: one per repository row,
   # plus the reaper. Keys are GitHub repository names under var.github_owner.
   deployers = toset(keys(local.pools))
 }
 
-# --- Existing resources -------------------------------------------------------
-# workspace/acceptance/gcp/cluster made these. Its state lived in /tmp and the
-# GCS bootstrap there was never applied, so nothing else owns them now.
-
-import {
-  to = google_container_cluster.test
-  id = "projects/${var.project_id}/locations/${var.zone}/clusters/${var.cluster_name}"
-}
-
-import {
-  to = google_service_account.nodes
-  id = "projects/${var.project_id}/serviceAccounts/${local.node_sa_email}"
-}
-
-import {
-  to = google_project_iam_member.node_baseline
-  id = "${var.project_id} roles/container.defaultNodeServiceAccount serviceAccount:${local.node_sa_email}"
-}
-
-import {
-  to = google_project_iam_member.node_image_pull
-  id = "${var.project_id} roles/artifactregistry.reader serviceAccount:${local.node_sa_email}"
-}
-
-import {
-  to = google_container_node_pool.acceptance
-  id = "projects/${var.project_id}/locations/${var.zone}/clusters/${var.cluster_name}/nodePools/acceptance-pool"
-}
-
-import {
-  to = google_container_node_pool.data_plane
-  id = "projects/${var.project_id}/locations/${var.zone}/clusters/${var.cluster_name}/nodePools/data-plane-pool"
-}
+# --- Cluster ------------------------------------------------------------------
 
 resource "google_service_account" "nodes" {
   project      = var.project_id
-  account_id   = var.node_service_account_id
-  display_name = "Axiom persistent operator acceptance GKE nodes"
+  account_id   = "${var.cluster_name}-node"
+  display_name = "Nodes of the ${var.cluster_name} GKE cluster"
 }
 
 resource "google_project_iam_member" "node_baseline" {
@@ -71,22 +38,25 @@ resource "google_project_iam_member" "node_baseline" {
   member  = "serviceAccount:${google_service_account.nodes.email}"
 }
 
-resource "google_project_iam_member" "node_image_pull" {
-  project = var.project_id
-  role    = "roles/artifactregistry.reader"
-  member  = "serviceAccount:${google_service_account.nodes.email}"
-}
-
 resource "google_container_cluster" "test" {
   project                    = var.project_id
   name                       = var.cluster_name
   location                   = var.zone
-  remove_default_node_pool   = true
-  initial_node_count         = 1
   deletion_protection        = true
   networking_mode            = "VPC_NATIVE"
   datapath_provider          = "ADVANCED_DATAPATH"
   enable_fqdn_network_policy = true
+
+  # GKE needs a default pool to create the cluster. Terraform deletes it right
+  # after; the real pools are below.
+  remove_default_node_pool = true
+  initial_node_count       = 1
+  node_config {
+    machine_type    = "e2-medium"
+    spot            = true
+    service_account = google_service_account.nodes.email
+    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
+  }
 
   release_channel {
     channel = "REGULAR"
@@ -95,84 +65,22 @@ resource "google_container_cluster" "test" {
     workload_pool = "${var.project_id}.svc.id.goog"
   }
   ip_allocation_policy {}
-  resource_labels = { "axiom-owner" = "gcp-operator-acceptance" }
+  # Remove an idle node sooner than the default profile does.
+  cluster_autoscaling {
+    autoscaling_profile = "OPTIMIZE_UTILIZATION"
+  }
+  resource_labels = { "faberline-owner" = "aw-gke-test" }
 
   lifecycle {
-    # Only the free-tier zonal cluster exists. A plan that replaces it is a bug.
+    # The free tier covers one zonal cluster. A plan that replaces it is a bug.
     prevent_destroy = true
-    # Create-time only; the import cannot read them back.
-    ignore_changes = [initial_node_count, remove_default_node_pool, node_config]
+    ignore_changes  = [initial_node_count, node_config]
   }
+
+  depends_on = [google_project_iam_member.node_baseline]
 }
 
-# --- Pools kept until lumen, sift, and tape move to their own pools ----------
-
-# Untainted. Autoscaling is OFF on purpose: with it on, this pool takes the
-# Pending kube-system pods whenever system-pool is parked. Resize it by hand
-# (workspace/acceptance/gke-harness/scripts/ensure-cluster.sh does) and back
-# to 0 when done.
-resource "google_container_node_pool" "acceptance" {
-  project  = var.project_id
-  name     = "acceptance-pool"
-  location = var.zone
-  cluster  = google_container_cluster.test.name
-
-  management {
-    auto_repair  = true
-    auto_upgrade = true
-  }
-  node_config {
-    machine_type    = "e2-standard-2"
-    service_account = google_service_account.nodes.email
-    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
-    metadata        = { disable-legacy-endpoints = "true" }
-    workload_metadata_config {
-      mode = "GKE_METADATA"
-    }
-  }
-
-  lifecycle {
-    ignore_changes = [node_count, initial_node_count]
-  }
-}
-
-# Tainted, so its autoscaling is safe: only lumen's placement leg tolerates it.
-resource "google_container_node_pool" "data_plane" {
-  project  = var.project_id
-  name     = "data-plane-pool"
-  location = var.zone
-  cluster  = google_container_cluster.test.name
-
-  autoscaling {
-    min_node_count = 0
-    max_node_count = 1
-  }
-  management {
-    auto_repair  = true
-    auto_upgrade = true
-  }
-  node_config {
-    machine_type    = "e2-standard-2"
-    service_account = google_service_account.nodes.email
-    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
-    metadata        = { disable-legacy-endpoints = "true" }
-    labels          = { "axiom.dev/pool" = "data-plane" }
-    taint {
-      key    = "axiom.dev/dedicated"
-      value  = "data-plane"
-      effect = "NO_SCHEDULE"
-    }
-    workload_metadata_config {
-      mode = "GKE_METADATA"
-    }
-  }
-
-  lifecycle {
-    ignore_changes = [node_count, initial_node_count]
-  }
-}
-
-# --- New pools ----------------------------------------------------------------
+# --- Pools --------------------------------------------------------------------
 
 # kube-system only. No autoscaling and no taint; wake.sh and park.sh own its
 # size. e2-standard-2, not e2-medium: the DaemonSets plus kube-dns,

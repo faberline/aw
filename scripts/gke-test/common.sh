@@ -7,7 +7,7 @@
 
 GKE_PROJECT="${GKE_PROJECT:-axiom-502607}"
 GKE_ZONE="${GKE_ZONE:-asia-east1-a}"
-GKE_CLUSTER="${GKE_CLUSTER:-axiom-operator-acceptance}"
+GKE_CLUSTER="${GKE_CLUSTER:-faberline-test}"
 GKE_SYSTEM_POOL="${GKE_SYSTEM_POOL:-system-pool}"
 
 # Namespace labels. test-run marks a namespace as a live test; expires is the

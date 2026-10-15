@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "GCP project that owns the shared test cluster."
+  description = "GCP project that owns the shared test cluster. The ID keeps its old axiom name; a project ID cannot change."
   type        = string
   default     = "axiom-502607"
 }
@@ -17,15 +17,9 @@ variable "zone" {
 }
 
 variable "cluster_name" {
-  description = "Name of the existing cluster. It was made by workspace/acceptance/gcp/cluster and is imported here."
+  description = "Name of the shared test cluster. The node service account is <cluster_name>-node."
   type        = string
-  default     = "axiom-operator-acceptance"
-}
-
-variable "node_service_account_id" {
-  description = "Account ID of the existing node service account."
-  type        = string
-  default     = "axiom-operator-acceptance-node"
+  default     = "faberline-test"
 }
 
 variable "github_owner" {
