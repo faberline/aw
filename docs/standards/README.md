@@ -43,7 +43,7 @@ Promote a guideline only when all three are true:
 | S1 | README contract | every repository | `scripts/meta/readme_contract.py check` | none yet | active; 1 of 29 repositories passes |
 | S2 | Project document set (README, STATUS, ROADMAP, and the fixed `docs/` guides) | repositories that adopt STATUS and ROADMAP | `scripts/meta/project_docs_contract.py` | none yet | active; 7 repositories adopted |
 | S3 | [Rust layout and layers](rust-layout.md) | every Rust repository | `rust_arch_contract.py` with the repository's `ddd.toml` | `ddd.toml` exception entries | candidate: the checker is in `faberline/workspace` PR #37, not merged |
-| S4 | [Core reuse](core-reuse.md) | every Rust repository, and `core` itself | `aw standards check` | `[[standards.core_reuse.exception]]` in `aw.toml` | candidate: 8 of 25 pass; the checker is on this branch, not on `aw` main |
+| S4 | [Core reuse](core-reuse.md) | every Rust repository, and `core` itself | `aw standards check` | `[[standards.core_reuse.exception]]` in `aw.toml` | active since 2026-10-15; 8 of 25 repositories pass |
 
 A candidate becomes active when its checker is on `aw` main.
 
