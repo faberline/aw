@@ -16,11 +16,10 @@
 #   Pending kube-system pods after a park and start a node again.
 
 locals {
-  # Keyed by pool name. A row without `pool` is the repository's main pool,
-  # named after the repository, so its key did not change when `pool` came.
+  # Keyed by pool name. Every row names its pool `<repo>-<role>`.
   pools = {
     for p in yamldecode(file("${path.module}/pools.yaml")).pools :
-    try(p.pool, p.repo) => merge(p, { pool = try(p.pool, p.repo) })
+    p.pool => p
   }
 
   pool_label_key = "faberline.dev/pool"
@@ -166,8 +165,8 @@ resource "google_container_node_pool" "repo" {
     # The pool name shows which repository owns the pool, and run.sh lets a
     # repository select only pools that pools.yaml gives to it.
     precondition {
-      condition     = each.key == each.value.repo || startswith(each.key, "${each.value.repo}-")
-      error_message = "pools.yaml: pool \"${each.key}\" must be \"${each.value.repo}\" or start with \"${each.value.repo}-\"."
+      condition     = can(regex("^${each.value.repo}-[a-z0-9]+(-[a-z0-9]+)*$", each.key))
+      error_message = "pools.yaml: pool \"${each.key}\" must be \"${each.value.repo}-<role>\", for example \"${each.value.repo}-server\"."
     }
   }
 }
