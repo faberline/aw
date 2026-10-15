@@ -1,0 +1,25 @@
+# One node pool per repository that tests on the shared GKE cluster.
+#
+# aw owns this file. A repository asks for a pool, a bigger machine, or a
+# higher max_nodes with a pull request here. Terraform in this folder reads
+# the file with yamldecode and makes `pool-<repo>`:
+#
+# - min 0 nodes, max `max_nodes`; the autoscaler adds a node only while a pod
+#   of that repository is Pending, and removes it about 10 minutes after the
+#   test namespace is gone.
+# - label `faberline.dev/pool=<repo>` and taint
+#   `faberline.dev/pool=<repo>:NoSchedule`, so only pods of that repository
+#   run there. See docs/standards/test-cluster.md for the overlay patch.
+#
+# Fields:
+#   repo          GitHub repository name under faberline; also the namespace.
+#   machine_type  GCE machine type. The biggest pod must fit on one node.
+#   spot          true for Spot VMs (about 70% cheaper; GCE may stop them).
+#   max_nodes     Upper bound for this pool. The sum of all rows is the cost cap.
+pools:
+  # keep requests 2 CPU and 4Gi per pod (QoS Guaranteed), which does not fit
+  # the 1930m allocatable of an e2-standard-2.
+  - repo: keep
+    machine_type: e2-standard-4
+    spot: true
+    max_nodes: 1

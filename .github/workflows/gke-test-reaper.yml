@@ -1,0 +1,47 @@
+# Every 30 minutes: delete expired test namespaces on the shared GKE cluster,
+# then park system-pool to 0 nodes when no test runs. See
+# scripts/gke-test/reap.sh and docs/standards/test-cluster.md.
+name: gke-test-reaper
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: gke-test-reaper
+  cancel-in-progress: false
+
+jobs:
+  reap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/gke-test
+
+      - name: Use a run-local kubeconfig
+        run: echo "KUBECONFIG=${RUNNER_TEMP}/gke-test-kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Sign in to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/406744653021/locations/global/workloadIdentityPools/faberline-github/providers/github-oidc
+          service_account: gke-test-reaper@axiom-502607.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin
+
+      - name: Get cluster credentials
+        run: |
+          gcloud container clusters get-credentials axiom-operator-acceptance \
+            --project=axiom-502607 --zone=asia-east1-a
+
+      - name: Reap and park
+        run: scripts/gke-test/reap.sh

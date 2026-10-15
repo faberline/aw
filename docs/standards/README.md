@@ -52,6 +52,7 @@ A candidate becomes active when its checker is on `aw` main.
 | Document | What it covers |
 |---|---|
 | [repo-layout.md](repo-layout.md) | Top-level files and folders by repository kind. Each row becomes a standard when a checker covers it. |
+| [test-cluster.md](test-cluster.md) | Testing on the shared GKE cluster instead of kind: the `gke-test` overlay, the node pool row, and the workflow. Becomes S5 when `aw standards check` reads the overlay. |
 
 The authoring, service, CLI, meta-doc, and release conventions are still in
 the root [CONTRIBUTING.md](https://github.com/faberline/workspace/blob/main/CONTRIBUTING.md)
