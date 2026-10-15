@@ -35,6 +35,11 @@ if kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
     || { log "namespace $NAMESPACE did not delete in time; the reaper retries"; status=1; }
 fi
 
+# Cluster RBAC that an operator made at run time is not in the manifests.
+# Delete it after the namespace, so the operator cannot make it again.
+log "deleting cluster RBAC labelled $LABEL_OWNER_NS=$NAMESPACE"
+delete_owned_cluster_rbac "$NAMESPACE" || { log "some cluster RBAC did not delete; the reaper retries"; status=1; }
+
 if [[ -n "$RENDERED" && -s "$RENDERED" ]]; then
   crds="$(dirname "$RENDERED")/teardown-crds.yaml"
   yq 'select(.kind == "CustomResourceDefinition")' "$RENDERED" >"$crds"

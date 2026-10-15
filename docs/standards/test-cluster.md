@@ -2,22 +2,45 @@
 
 Every faberline repository that tests on Kubernetes uses one shared GKE
 cluster instead of a local kind cluster. Each repository gets its own
-namespace and its own node pool. Nothing runs between tests: every pool scales
+namespace and its own node pools. Nothing runs between tests: every pool scales
 to 0 nodes.
 
 Status: **guideline, draft, 2026-10-15**. No checker reads a repository's
 overlay yet, so this is not a standard; see the
 [definition](README.md#what-a-standard-is). `scripts/gke-test/run.sh` refuses
-an overlay that breaks the rules in [The overlay](#the-overlay), but only at
-test time. It becomes standard S5 when `aw standards check` checks the overlay.
+an overlay or a test Job that breaks the rules in [The overlay](#the-overlay)
+or [The test Job](#the-test-job), but only at test time. It becomes standard S5 when `aw standards check` checks the overlay.
 
 ## Who owns what
 
 | Owner | Owns |
 |---|---|
 | `aw` | The cluster, every node pool and its max size, identities and permissions (`infra/gke-test/`), the shared workflow (`.github/workflows/gke-test.yml`), the scripts (`scripts/gke-test/`), and the reaper (`.github/workflows/gke-test-reaper.yml`). |
-| Each repository | Its overlay `k8s/overlays/gke-test/`, its image build, and its test command. |
+| Each repository | Its overlay `k8s/overlays/gke-test/`, its test Job, its image build, and its test command if it has one. |
 | GitHub Actions | Builds the image and pushes it to `ghcr.io/faberline/<repo>`. |
+
+## What runs where
+
+| Test | Where | Why |
+|---|---|---|
+| Unit and integration tests | Your machine, or the GitHub runner (`cargo test` and the like) | They need no Kubernetes. |
+| End-to-end (e2e) | This cluster: the server as a cluster, then a test Job | It tests the real deploy: StatefulSet, PVC, Service DNS, restarts. |
+| Performance | This cluster, on a non-Spot pool | A Spot node can stop in the middle, and the numbers need a quiet node. |
+
+An e2e run has two parts:
+
+1. **The server.** The overlay deploys it the way a real cluster does: a
+   StatefulSet with one replica on each node of the repository's server pool.
+2. **The test client.** A Kubernetes Job on a second pool of the same
+   repository, for example `pool-lumen-client`. It reaches the server through
+   the Service DNS name. It does not use `kubectl port-forward`: a
+   port-forward goes through the API server and the runner, so it is slow,
+   it drops when a pod restarts, and it measures the network to GitHub, not
+   the server.
+
+The GitHub runner only starts things and waits. It applies the overlay, waits
+for the rollout, applies the Job, waits for the Job, collects the logs, and
+tears down.
 
 ## The cluster
 
@@ -28,27 +51,35 @@ test time. It becomes standard S5 when `aw standards check` checks the overlay.
   autoscaling. A test run sets it to 1 node (`scripts/gke-test/wake.sh`).
   Teardown and the reaper set it to 0 when no test namespace is left
   (`scripts/gke-test/park.sh`).
-- `pool-<repo>`: one pool per row of `infra/gke-test/pools.yaml`. It has 0 to
-  `max_nodes` nodes, label `faberline.dev/pool=<repo>`, and taint
-  `faberline.dev/pool=<repo>:NoSchedule`. The taint keeps every other pod off
+- `pool-<pool>`: one pool per row of `infra/gke-test/pools.yaml`. It has 0 to
+  `max_nodes` nodes, label `faberline.dev/pool=<pool>`, and taint
+  `faberline.dev/pool=<pool>:NoSchedule`. The taint keeps every other pod off
   it, so repositories do not compete for CPU and memory.
+- A repository can have more than one pool, one per role. The pool name is
+  `<repo>` or `<repo>-<role>`, for example `lumen` for the server and
+  `lumen-client` for the test Job. Terraform refuses another name.
 - Cost cap: the sum of `max_nodes` over all rows, while tests run. Idle cost
   is 0 nodes.
 
 ## Add a repository
 
-1. **Pool.** Open a pull request on `aw` that adds a row to
-   `infra/gke-test/pools.yaml`. Pick the smallest `machine_type` on which the
-   biggest pod fits. An `aw` maintainer runs `terraform apply` after merge.
-   The row also creates the GCP service account `gke-test-<repo>`; without it
-   the repository's workflow cannot sign in.
+1. **Pools.** Open a pull request on `aw` that adds rows to
+   `infra/gke-test/pools.yaml`: usually `<repo>` for the server and
+   `<repo>-client` for the test Job. Pick the smallest `machine_type` on
+   which the biggest pod fits. Set `max_nodes` of the server pool to at least
+   the server replicas. Use `spot: false` for performance tests. An `aw`
+   maintainer runs `terraform apply` after merge; until then a run stops at
+   its checks with "the cluster has no node pool". The first row of a
+   repository also creates the GCP service account `gke-test-<repo>`; without
+   it the repository's workflow cannot sign in.
 2. **Overlay.** Add `k8s/overlays/gke-test/kustomization.yaml`. See
    [The overlay](#the-overlay).
-3. **Test command.** Add a script, for example `scripts/gke-test/verify.sh`.
-   It runs from the repository root after every workload is rolled out. It
-   gets `NAMESPACE`, `IMAGE`, `EVIDENCE_DIR`, `RUN_LABEL`, and `KUBECONFIG`.
-   Reach services with `kubectl port-forward` or `kubectl exec`; the cluster
-   has no ingress for tests. Write extra evidence into `EVIDENCE_DIR`.
+3. **Test Job.** Add a kustomize folder with one Job, for example
+   `k8s/gke-test-job/`. See [The test Job](#the-test-job).
+   A test command (a script on the runner) is still possible, for short
+   checks after the Job. It runs from the repository root, gets `NAMESPACE`,
+   `IMAGE`, `EVIDENCE_DIR`, `RUN_LABEL`, and `KUBECONFIG`, and must not
+   send test load through `kubectl port-forward`.
 4. **Workflow.** Add `.github/workflows/gke-test.yml`. See
    [The workflow](#the-workflow).
 
@@ -62,13 +93,20 @@ cluster when one of these is false:
   workflow's `namespace` input.
 - **Placement.** Every pod template (Pod, Deployment, StatefulSet, DaemonSet,
   ReplicaSet, Job, CronJob) has:
-  - `nodeSelector: {faberline.dev/pool: <repo>}`
-  - the toleration `faberline.dev/pool=<repo>:NoSchedule`
+  - `nodeSelector: {faberline.dev/pool: <pool>}`, where `pools.yaml` gives
+    `<pool>` to this repository, and the cluster has that pool
+  - the toleration `faberline.dev/pool=<pool>:NoSchedule`
   - `imagePullSecrets: [{name: ghcr-pull}]`. The run makes this secret from
     its own `GITHUB_TOKEN`, so the package can stay private.
 - **Requests.** Every container and init container sets
   `resources.requests.cpu` and `resources.requests.memory`. The autoscaler
   picks the node count from requests.
+- **One replica per node.** A StatefulSet or Deployment with more than 1
+  replica has `topologySpreadConstraints` with `topologyKey:
+  kubernetes.io/hostname`, `maxSkew: 1`, and `whenUnsatisfiable:
+  DoNotSchedule` (a required pod anti-affinity on the hostname also passes).
+  Its replicas are not more than `max_nodes` of its pool. This makes the test
+  cluster fail the way a real one does: one node down takes one replica.
 - **Image tag.** No `REPLACE_ME` is left. The run sets the image with
   `kustomize edit set image <repo>=<image>`.
 
@@ -103,6 +141,14 @@ patches:
                 effect: NoSchedule
             imagePullSecrets:
               - name: ghcr-pull
+            topologySpreadConstraints:
+              - maxSkew: 1
+                topologyKey: kubernetes.io/hostname
+                whenUnsatisfiable: DoNotSchedule
+                labelSelector:
+                  matchLabels:
+                    app: keep
+                    role: server
 ```
 
 **Pods that an operator creates.** `run.sh` sees only the rendered
@@ -115,6 +161,100 @@ other pool has a taint and `system-pool` has no room.
 shared by the whole cluster. Give them names that start with the repository
 name or its API group, so two repositories never write the same object. The
 run applies CRDs first and deletes them last.
+
+**Cluster RBAC made at run time.** `run.sh` deletes only the objects in the
+rendered manifests. When an operator creates a ClusterRole or a
+ClusterRoleBinding for one namespace, it must put the label
+`faberline.dev/owner-namespace=<namespace>` on it. Teardown deletes the objects
+with that label after it deletes the namespace. The reaper deletes them when
+their namespace no longer exists. An object without the label stays on the
+cluster after the run.
+
+## The test Job
+
+The workflow input `test-job` names a kustomize folder, for example
+`k8s/gke-test-job/`. The run sets its namespace and its image, renders it,
+and checks it before it touches the cluster:
+
+- It renders exactly one Job.
+- It has only these kinds: Job, ConfigMap, Secret, ServiceAccount, Role,
+  RoleBinding. They are all in the namespace, so they go away with it.
+- Its pod template follows [Placement](#the-overlay) and
+  [Requests](#the-overlay), on a pool of this repository, normally
+  `<repo>-client`.
+
+After every rollout is done, the run applies the folder and waits until the
+Job has the condition `Complete` (pass) or `Failed` (fail). The wait ends
+15 minutes before `ttl-minutes`, so the run can still collect evidence and
+tear down. The Job's logs go into the run log and into the evidence.
+
+Write the Job so that:
+
+- `backoffLimit: 0`. A retry hides a flaky failure.
+- It reaches the server by the Service name, for example `http://keep:7117`.
+- It prints its results to stdout. The pod logs are the evidence.
+- It gets a ServiceAccount and a Role only for what it does, for example
+  `delete` on pods to test a restart.
+- Its image has the test tools. It can be the repository's own image, a
+  client image, or a public tool image such as `alpine/k8s`.
+
+**Client image.** The run sets `<image-name>=<image>` in the test Job too.
+For a separate client image, also set the inputs `test-image` and
+`test-image-name`. The run then sets `<test-image-name>=<test-image>` in the
+test Job only, so the server keeps the image under test. The two names must
+differ. A client image that a run of the same repository pushes to
+`ghcr.io/faberline/<repo>-<name>` can be read with `ghcr-pull`.
+
+**Values for one call.** The input `test-env` takes lines of `KEY=VALUE`, for
+example a cell name, a commit, or an expected image digest. The run puts them
+in the ConfigMap `gke-test-env` in the test Job. It makes the ConfigMap also
+when `test-env` is empty, so the Job can always read it with `envFrom`. The
+values go into the evidence: never put a secret there.
+
+Example, from `keep` (`k8s/gke-test-job/kustomization.yaml`):
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: keep
+resources:
+  - rbac.yaml   # ServiceAccount, Role (pods: get, list, watch, delete), RoleBinding
+  - job.yaml    # Job keep-test on pool keep-client, runs /scripts/verify.sh
+configMapGenerator:
+  - name: keep-test-script
+    files:
+      - verify.sh
+```
+
+**Long tests.** A GitHub-hosted job stops after 6 hours, so `ttl-minutes`
+is at most 360. Split a longer test into more than one call, for example one
+call per cell of a performance matrix. Calls of one repository run one after
+the other. In a matrix, set `strategy.max-parallel: 1`: a concurrency group
+keeps only one waiting run and cancels the others.
+Give each call its own `evidence-suffix`, for example the cell name. All
+calls of a matrix share one workflow run, and two artifacts with the same name
+fail the upload.
+
+```yaml
+  perf:
+    needs: [image, client-image]
+    strategy:
+      max-parallel: 1
+      matrix:
+        cell: [a1, a2]
+    uses: faberline/aw/.github/workflows/gke-test.yml@main
+    with:
+      image: ${{ needs.image.outputs.image }}
+      overlay: k8s/overlays/gke-perf
+      test-job: k8s/gke-perf-job
+      test-image: ${{ needs.client-image.outputs.image }}
+      test-image-name: <repo>-perf-client
+      test-env: |
+        CELL=${{ matrix.cell }}
+        COMMIT=${{ github.sha }}
+      evidence-suffix: ${{ matrix.cell }}
+      ttl-minutes: 150
+```
 
 ## The workflow
 
@@ -138,30 +278,34 @@ jobs:
     uses: faberline/aw/.github/workflows/gke-test.yml@main
     with:
       image: ${{ needs.image.outputs.image }}
-      test-command: scripts/gke-test/verify.sh
+      test-job: k8s/gke-test-job
 ```
 
 - Runs of one repository wait for each other (concurrency group
   `gke-test-<owner>/<repo>`). Runs of different repositories run at the same
   time.
-- Each run uploads the artifact `gke-test-evidence-<run>-<attempt>`: the
-  rendered manifests, nodes, events, `describe pods`, and logs.
+- Each run uploads the artifact `gke-test-evidence-<run>-<attempt>`, plus
+  `-<evidence-suffix>` when set: the rendered manifests, nodes, events,
+  `describe pods`, and logs.
 - A pull request from a fork gets no `id-token`, so it cannot run this.
 
 ## What a run does
 
-1. Renders the overlay and checks it.
+1. Renders the overlay and the test Job and checks them. It also checks
+   that the cluster has every pool they select.
 2. Deletes a namespace that an earlier, dead run left behind.
 3. Creates the namespace with the labels `faberline.dev/test-run=<run>` and
    `faberline.dev/expires=<epoch>` (job timeout plus 15 minutes).
 4. Wakes `system-pool`, creates `ghcr-pull`, applies CRDs, then applies the
    rest with server-side apply.
-5. Waits for every rollout. The first pod on `pool-<repo>` waits a few minutes
-   for the autoscaler to add a node.
-6. Runs the test command.
-7. Always: collects evidence, deletes the objects in reverse order, deletes
-   the namespace, deletes the CRDs, and waits until no PersistentVolume of the
-   namespace is left, then parks `system-pool` when no other run is live. A
+5. Waits for every rollout. The first pod on a pool waits a few minutes for
+   the autoscaler to add a node.
+6. Applies the test Job and waits until it is `Complete` or `Failed`.
+7. Runs the test command, if there is one.
+8. Always: collects evidence, deletes the objects in reverse order, deletes
+   the namespace, deletes the cluster RBAC labelled
+   `faberline.dev/owner-namespace=<namespace>`, deletes the CRDs, and waits
+   until no PersistentVolume of the namespace is left, then parks `system-pool` when no other run is live. A
    run whose cleanup fails is a failed run.
 
 ## Cleanup when a run dies
@@ -174,9 +318,11 @@ The reaper (`scripts/gke-test/reap.sh`) runs every 30 minutes. It:
    that no VM uses, that are older than 1 hour, and that no PersistentVolume
    names.
 4. Reports pods outside test and system namespaces. It does not delete them,
-   because they can be someone's manual work. Such a pod can keep a node up.
+. Deletes ClusterRoles and ClusterRoleBindings labelled
+   `faberline.dev/owner-namespace=<namespace>` when that namespace no longer
+   exists.
 
-When step 1 or 3 fails, or step 4 finds a pod, the run fails and opens one
+When step 1, 3, or 5 fails, or step 4 finds a pod, the run fails and opens one
 issue titled "gke-test reaper needs attention" on `faberline/aw`. The next
 clean run closes it.
 

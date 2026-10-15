@@ -15,6 +15,9 @@ GKE_SYSTEM_POOL="${GKE_SYSTEM_POOL:-system-pool}"
 LABEL_RUN="faberline.dev/test-run"
 LABEL_EXPIRES="faberline.dev/expires"
 LABEL_POOL="faberline.dev/pool"
+# Put on a ClusterRole or ClusterRoleBinding that an operator creates at run
+# time for one namespace. Teardown and the reaper delete it with that namespace.
+LABEL_OWNER_NS="faberline.dev/owner-namespace"
 
 log() { printf '[gke-test] %s\n' "$*" >&2; }
 
@@ -45,4 +48,11 @@ ready_nodes() {
 # Names of namespaces that carry a live test-run label.
 test_namespaces() {
   kubectl get namespaces -l "$LABEL_RUN" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
+}
+
+# Delete the ClusterRoles and ClusterRoleBindings that carry
+# faberline.dev/owner-namespace=<namespace>.
+delete_owned_cluster_rbac() {
+  kubectl delete clusterrolebindings,clusterroles -l "$LABEL_OWNER_NS=$1" \
+    --ignore-not-found --wait=true --timeout=120s >&2
 }

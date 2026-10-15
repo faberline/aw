@@ -11,9 +11,11 @@ set -euo pipefail
 #    uses them, they are older than 1 hour, and no PersistentVolume names them.
 # 4. Report pods outside test and system namespaces. They can keep a node up,
 #    but they may be someone's manual work, so the reaper does not delete them.
+# 5. Delete ClusterRoles and ClusterRoleBindings labelled
+#    faberline.dev/owner-namespace=<ns> when <ns> no longer exists.
 #
-# Exits 1 when step 1 or 3 could not finish, or when step 4 found a pod. The
-# workflow then opens an issue on faberline/aw.
+# Exits 1 when step 1, 3, or 5 could not finish, or when step 4 found a pod.
+# The workflow then opens an issue on faberline/aw.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
@@ -99,6 +101,24 @@ if [[ -n "$strays" ]]; then
   sed "s/^/  /" <<<"$strays" >&2
   problems=$((problems + 1))
 fi
+
+# --- 5. Cluster RBAC of deleted namespaces -----------------------------------
+
+# If kubectl fails, set -e stops here, before any object is deleted.
+all_namespaces="$(kubectl get namespaces -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')"
+owners="$(
+  kubectl get clusterroles,clusterrolebindings -l "$LABEL_OWNER_NS" -o json \
+    | jq -r --arg key "$LABEL_OWNER_NS" '.items[].metadata.labels[$key]' | sort -u
+)"
+
+for ns in $owners; do
+  grep -qxF "$ns" <<<"$all_namespaces" && continue
+  log "deleting cluster RBAC of deleted namespace $ns"
+  if ! delete_owned_cluster_rbac "$ns"; then
+    log "delete of cluster RBAC of $ns did not finish; the next run retries"
+    problems=$((problems + 1))
+  fi
+done
 
 if ((problems > 0)); then
   log "$problems problem(s) need a person"
