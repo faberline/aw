@@ -8,7 +8,7 @@
 #       uses: faberline/aw/.github/workflows/gke-test.yml@main
 #       with:
 #         image: ${{ needs.image.outputs.image }}
-#         test-command: scripts/gke-test/verify.sh
+#         test-job: k8s/gke-test-job
 #
 # The run signs in as gke-test-<repo>, which exists only when the repository
 # has a row in infra/gke-test/pools.yaml. Full contract:
@@ -22,12 +22,23 @@ on:
         description: Image to deploy, for example ghcr.io/faberline/keep:sha-<git12>@sha256:<digest>.
         required: true
         type: string
+      test-job:
+        description: >-
+          Kustomize folder with exactly one Job (plus its ConfigMaps, Secrets,
+          ServiceAccount, Role, and RoleBinding). The run applies it in the
+          namespace after every Deployment, StatefulSet, and DaemonSet is rolled
+          out, and passes only when the Job completes. Set this, test-command,
+          or both.
+        required: false
+        default: ""
+        type: string
       test-command:
         description: >-
-          Bash command run from the repository root after every Deployment,
-          StatefulSet, and DaemonSet in the namespace is rolled out. It gets
-          NAMESPACE, IMAGE, EVIDENCE_DIR, RUN_LABEL, and KUBECONFIG.
-        required: true
+          Bash command run from the repository root after the test Job passes,
+          or after the rollouts when there is no test Job. It gets NAMESPACE,
+          IMAGE, EVIDENCE_DIR, RUN_LABEL, and KUBECONFIG.
+        required: false
+        default: ""
         type: string
       overlay:
         description: Kustomize overlay to deploy.
@@ -45,7 +56,10 @@ on:
         default: ""
         type: string
       ttl-minutes:
-        description: Job timeout. The reaper may delete the namespace 15 minutes after it.
+        description: >-
+          Job timeout in minutes, at most 360 (the limit of a GitHub-hosted
+          job). The reaper may delete the namespace 15 minutes after it. Split
+          longer tests into more than one call.
         required: false
         default: 90
         type: number
@@ -77,6 +91,7 @@ jobs:
       IMAGE: ${{ inputs.image }}
       IMAGE_NAME: ${{ inputs.image-name }}
       NAMESPACE: ${{ inputs.namespace || github.event.repository.name }}
+      TEST_JOB: ${{ inputs.test-job }}
       TEST_COMMAND: ${{ inputs.test-command }}
       RUN_LABEL: gha-${{ github.run_id }}-${{ github.run_attempt }}
       TTL_MINUTES: ${{ inputs.ttl-minutes }}
@@ -89,7 +104,10 @@ jobs:
           repository: faberline/aw
           ref: ${{ inputs.aw-ref }}
           path: .gke-test-aw
-          sparse-checkout: scripts/gke-test
+          # run.sh reads pools.yaml to check which pools this repository owns.
+          sparse-checkout: |
+            scripts/gke-test
+            infra/gke-test
 
       - name: Prepare run folders
         run: |

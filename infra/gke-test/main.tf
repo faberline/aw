@@ -5,8 +5,9 @@
 # .github/workflows/gke-test.yml. See docs/standards/test-cluster.md.
 #
 # Cost model: no node runs while no test runs.
-# - pool-<repo>: autoscaled 0..max_nodes, tainted, so it holds only that
-#   repository's pods and the autoscaler takes it back to 0 on its own.
+# - pool-<pool>: autoscaled 0..max_nodes, tainted, so it holds only the pods
+#   that select it and the autoscaler takes it back to 0 on its own. A
+#   repository can have more than one, for example <repo> and <repo>-client.
 # - system-pool: kube-dns and the other kube-system singletons. The autoscaler
 #   never removes the last node that holds them, so this pool has no
 #   autoscaling at all: scripts/gke-test/wake.sh sets it to 1 node and
@@ -15,13 +16,19 @@
 #   Pending kube-system pods after a park and start a node again.
 
 locals {
-  pools = { for p in yamldecode(file("${path.module}/pools.yaml")).pools : p.repo => p }
+  # Keyed by pool name. A row without `pool` is the repository's main pool,
+  # named after the repository, so its key did not change when `pool` came.
+  pools = {
+    for p in yamldecode(file("${path.module}/pools.yaml")).pools :
+    try(p.pool, p.repo) => merge(p, { pool = try(p.pool, p.repo) })
+  }
 
   pool_label_key = "faberline.dev/pool"
 
-  # Every identity that signs in from GitHub Actions: one per repository row,
-  # plus the reaper. Keys are GitHub repository names under var.github_owner.
-  deployers = toset(keys(local.pools))
+  # Every identity that signs in from GitHub Actions: one per repository in
+  # pools.yaml, plus the reaper. Keys are GitHub repository names under
+  # var.github_owner.
+  deployers = toset([for p in values(local.pools) : p.repo])
 }
 
 # --- Cluster ------------------------------------------------------------------
@@ -156,6 +163,12 @@ resource "google_container_node_pool" "repo" {
 
   lifecycle {
     ignore_changes = [node_count, initial_node_count]
+    # The pool name shows which repository owns the pool, and run.sh lets a
+    # repository select only pools that pools.yaml gives to it.
+    precondition {
+      condition     = each.key == each.value.repo || startswith(each.key, "${each.value.repo}-")
+      error_message = "pools.yaml: pool \"${each.key}\" must be \"${each.value.repo}\" or start with \"${each.value.repo}-\"."
+    }
   }
 }
 

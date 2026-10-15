@@ -17,13 +17,14 @@ output "reaper_service_account" {
 }
 
 output "pools" {
-  description = "Repository name to its node pool, node label, and taint."
+  description = "Pool name to its repository, node pool, node label, and taint."
   value = {
-    for repo, pool in google_container_node_pool.repo : repo => {
-      name          = pool.name
-      node_selector = { (local.pool_label_key) = repo }
-      toleration    = { key = local.pool_label_key, operator = "Equal", value = repo, effect = "NoSchedule" }
-      max_nodes     = local.pools[repo].max_nodes
+    for name, pool in google_container_node_pool.repo : name => {
+      repo          = local.pools[name].repo
+      node_pool     = pool.name
+      node_selector = { (local.pool_label_key) = name }
+      toleration    = { key = local.pool_label_key, operator = "Equal", value = name, effect = "NoSchedule" }
+      max_nodes     = local.pools[name].max_nodes
     }
   }
 }
