@@ -1,0 +1,135 @@
+# Shared GKE test run for any faberline repository. aw owns this file; a
+# repository calls it after it pushes its test image to GHCR:
+#
+#   jobs:
+#     gke-test:
+#       needs: image
+#       permissions: { id-token: write, contents: read, packages: read }
+#       uses: faberline/aw/.github/workflows/gke-test.yml@main
+#       with:
+#         image: ${{ needs.image.outputs.image }}
+#         test-command: scripts/gke-test/verify.sh
+#
+# The run signs in as gke-test-<repo>, which exists only when the repository
+# has a row in infra/gke-test/pools.yaml. Full contract:
+# docs/standards/test-cluster.md.
+name: gke-test
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: Image to deploy, for example ghcr.io/faberline/keep:sha-<git12>@sha256:<digest>.
+        required: true
+        type: string
+      test-command:
+        description: >-
+          Bash command run from the repository root after every Deployment,
+          StatefulSet, and DaemonSet in the namespace is rolled out. It gets
+          NAMESPACE, IMAGE, EVIDENCE_DIR, RUN_LABEL, and KUBECONFIG.
+        required: true
+        type: string
+      overlay:
+        description: Kustomize overlay to deploy.
+        required: false
+        default: k8s/overlays/gke-test
+        type: string
+      image-name:
+        description: Image name in the overlay to replace. Empty means the repository name.
+        required: false
+        default: ""
+        type: string
+      namespace:
+        description: Namespace of the overlay. Empty means the repository name.
+        required: false
+        default: ""
+        type: string
+      ttl-minutes:
+        description: Job timeout. The reaper may delete the namespace 15 minutes after it.
+        required: false
+        default: 90
+        type: number
+      aw-ref:
+        description: Ref of faberline/aw whose scripts/gke-test/ this run uses. Match the ref in `uses:`.
+        required: false
+        default: main
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+  packages: read
+
+jobs:
+  gke-test:
+    name: deploy + test on shared GKE
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.ttl-minutes }}
+    # Runs of one repository share its namespace and its cluster-wide CRDs,
+    # so they queue. Different repositories run at the same time. Never
+    # cancel in progress: a cancelled runner may skip its own teardown.
+    concurrency:
+      group: gke-test-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      REPO: ${{ github.event.repository.name }}
+      OVERLAY: ${{ inputs.overlay }}
+      IMAGE: ${{ inputs.image }}
+      IMAGE_NAME: ${{ inputs.image-name }}
+      NAMESPACE: ${{ inputs.namespace || github.event.repository.name }}
+      TEST_COMMAND: ${{ inputs.test-command }}
+      RUN_LABEL: gha-${{ github.run_id }}-${{ github.run_attempt }}
+      TTL_MINUTES: ${{ inputs.ttl-minutes }}
+      GHCR_USER: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: faberline/aw
+          ref: ${{ inputs.aw-ref }}
+          path: .gke-test-aw
+          sparse-checkout: scripts/gke-test
+
+      - name: Prepare run folders
+        run: |
+          echo "EVIDENCE_DIR=${RUNNER_TEMP}/gke-test-evidence" >> "$GITHUB_ENV"
+          echo "KUBECONFIG=${RUNNER_TEMP}/gke-test-kubeconfig" >> "$GITHUB_ENV"
+
+      # Values from `terraform -chdir=infra/gke-test output` in faberline/aw.
+      - name: Sign in to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/406744653021/locations/global/workloadIdentityPools/faberline-github/providers/github-oidc
+          service_account: gke-test-${{ github.event.repository.name }}@axiom-502607.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin
+
+      - name: Get cluster credentials
+        run: |
+          gcloud container clusters get-credentials faberline-test \
+            --project=axiom-502607 --zone=asia-east1-a
+
+      # kubectl, kustomize, yq, and jq come with ubuntu-latest.
+      - name: Deploy, test, and tear down
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: .gke-test-aw/scripts/gke-test/run.sh
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gke-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.EVIDENCE_DIR }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      # run.sh tears down on every in-process exit. This step covers a
+      # killed process (timeout-minutes, runner shutdown). The reaper covers
+      # the rest.
+      - name: Tear down (backup)
+        if: always()
+        run: .gke-test-aw/scripts/gke-test/teardown.sh
