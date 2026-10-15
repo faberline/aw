@@ -249,6 +249,26 @@ resource "google_project_iam_member" "reaper" {
   member  = "serviceAccount:${google_service_account.reaper.email}"
 }
 
+# Step 3 of scripts/gke-test/reap.sh: find and delete orphan PVC disks.
+resource "google_project_iam_custom_role" "disk_reaper" {
+  project     = var.project_id
+  role_id     = "faberlineGkeTestDiskReaper"
+  title       = "faberline GKE test disk reaper"
+  description = "List and delete persistent disks that no VM and no PersistentVolume uses."
+  permissions = [
+    "compute.disks.delete",
+    "compute.disks.get",
+    "compute.disks.list",
+    "compute.zoneOperations.get",
+  ]
+}
+
+resource "google_project_iam_member" "reaper_disks" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.disk_reaper.id
+  member  = "serviceAccount:${google_service_account.reaper.email}"
+}
+
 resource "google_service_account_iam_member" "reaper_wif" {
   service_account_id = google_service_account.reaper.name
   role               = "roles/iam.workloadIdentityUser"
@@ -280,7 +300,9 @@ resource "kubernetes_cluster_role_binding_v1" "deployer" {
   }
 }
 
-# The reaper only reads nodes and deletes test namespaces.
+# The reaper deletes test namespaces. It only reads everything else: nodes
+# for park.sh, PersistentVolumes so it never deletes a disk that one still
+# names, and pods to report the ones outside test namespaces.
 resource "kubernetes_cluster_role_v1" "reaper" {
   metadata {
     name = "faberline-gke-test-reaper"
@@ -292,7 +314,7 @@ resource "kubernetes_cluster_role_v1" "reaper" {
   }
   rule {
     api_groups = [""]
-    resources  = ["nodes"]
+    resources  = ["nodes", "persistentvolumes", "pods"]
     verbs      = ["get", "list"]
   }
 }
@@ -311,4 +333,55 @@ resource "kubernetes_cluster_role_binding_v1" "reaper" {
     kind      = "User"
     name      = google_service_account.reaper.email
   }
+}
+
+# --- Budget -------------------------------------------------------------------
+
+# The last net under the reaper: an email when the project spends more than
+# expected in a month. It reaches the billing account's admins and users,
+# because default IAM recipients stay on. The billing account comes from the
+# project, so its ID is not in this public repository.
+data "google_project" "this" {
+  project_id = var.project_id
+}
+
+resource "google_project_service" "billingbudgets" {
+  project            = var.project_id
+  service            = "billingbudgets.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_billing_budget" "test" {
+  provider = google.billing
+
+  billing_account = data.google_project.this.billing_account
+  display_name    = "${var.cluster_name} monthly"
+
+  budget_filter {
+    projects = ["projects/${data.google_project.this.number}"]
+  }
+
+  # In the billing account's currency.
+  amount {
+    specified_amount {
+      units = tostring(var.monthly_budget)
+    }
+  }
+
+  threshold_rules {
+    threshold_percent = 0.5
+  }
+  threshold_rules {
+    threshold_percent = 0.9
+  }
+  threshold_rules {
+    threshold_percent = 1.0
+  }
+  # Warn early when the month is on track to pass the budget.
+  threshold_rules {
+    threshold_percent = 1.0
+    spend_basis       = "FORECASTED_SPEND"
+  }
+
+  depends_on = [google_project_service.billingbudgets]
 }

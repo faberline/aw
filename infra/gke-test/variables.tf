@@ -33,3 +33,9 @@ variable "reaper_repository" {
   type        = string
   default     = "aw"
 }
+
+variable "monthly_budget" {
+  description = "Monthly budget of the project, in the billing account's currency (TWD). 650 TWD is about US$20."
+  type        = number
+  default     = 650
+}

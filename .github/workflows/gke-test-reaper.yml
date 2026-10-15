@@ -1,6 +1,8 @@
 # Every 30 minutes: delete expired test namespaces on the shared GKE cluster,
-# then park system-pool to 0 nodes when no test runs. See
-# scripts/gke-test/reap.sh and docs/standards/test-cluster.md.
+# park system-pool to 0 nodes when no test runs, delete orphan PVC disks, and
+# report pods outside test namespaces. A failed run opens one issue here; the
+# next clean run closes it. See scripts/gke-test/reap.sh and
+# docs/standards/test-cluster.md.
 name: gke-test-reaper
 
 on:
@@ -11,6 +13,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  issues: write
 
 concurrency:
   group: gke-test-reaper
@@ -20,6 +23,10 @@ jobs:
   reap:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      ISSUE_TITLE: gke-test reaper needs attention
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,5 +50,25 @@ jobs:
           gcloud container clusters get-credentials faberline-test \
             --project=axiom-502607 --zone=asia-east1-a
 
-      - name: Reap and park
+      - name: Reap, park, and delete orphan disks
         run: scripts/gke-test/reap.sh
+
+      # One open issue at a time: a failed run opens it, a clean run closes it.
+      - name: Open an issue when a person is needed
+        if: failure()
+        run: |
+          open="$(gh issue list -R "$GITHUB_REPOSITORY" --state open --author app/github-actions \
+            --search "\"$ISSUE_TITLE\" in:title" --json number --jq '.[0].number // empty')"
+          if [[ -z "$open" ]]; then
+            gh issue create -R "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" --body \
+              "The gke-test reaper failed, or found something it must not delete. Test nodes or disks may still cost money. Log: $RUN_URL"
+          fi
+
+      - name: Close the issue after a clean run
+        if: success()
+        run: |
+          gh issue list -R "$GITHUB_REPOSITORY" --state open --author app/github-actions \
+            --search "\"$ISSUE_TITLE\" in:title" --json number --jq '.[].number' |
+            while read -r n; do
+              gh issue close -R "$GITHUB_REPOSITORY" "$n" --comment "Clean run: $RUN_URL"
+            done

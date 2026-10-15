@@ -60,4 +60,8 @@ while :; do
   sleep 10
 done
 
+# Best effort: park system-pool now instead of at the next reaper run.
+# park.sh does nothing while another run's test namespace exists.
+"$SCRIPT_DIR/park.sh" || log "park did not finish; the reaper retries"
+
 exit "$status"

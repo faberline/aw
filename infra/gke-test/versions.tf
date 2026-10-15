@@ -24,6 +24,17 @@ provider "google" {
   region  = var.region
 }
 
+# The Budget API needs a quota project when the caller signs in as a user.
+# Only google_billing_budget uses this alias, so the header stays off the
+# other resources.
+provider "google" {
+  alias                 = "billing"
+  project               = var.project_id
+  region                = var.region
+  billing_project       = var.project_id
+  user_project_override = true
+}
+
 data "google_client_config" "current" {}
 
 # The API server runs on the GKE control plane, so this provider works while

@@ -29,5 +29,8 @@ until (( "$(ready_nodes "$GKE_SYSTEM_POOL")" >= 1 )); do
   sleep 10
 done
 
-kubectl -n kube-system rollout status deployment/kube-dns --timeout=300s >&2
+# Not `rollout status`: kube-dns sat Pending while the pool had 0 nodes, so
+# its progress deadline has often passed already and `rollout status` fails at
+# once. The Available condition only asks for a ready replica.
+kubectl -n kube-system wait --for=condition=Available deployment/kube-dns --timeout=300s >&2
 log "awake: $GKE_SYSTEM_POOL has a Ready node and kube-dns is available"

@@ -25,8 +25,8 @@ test time. It becomes standard S5 when `aw standards check` checks the overlay.
   `axiom-502607`. The free tier covers the management fee of one zonal cluster
   only, so there is no second cluster.
 - `system-pool`: one e2-standard-2 Spot node for kube-system. It has no
-  autoscaling. A test run sets it to 1 node (`scripts/gke-test/wake.sh`). The
-  reaper sets it to 0 when no test namespace is left
+  autoscaling. A test run sets it to 1 node (`scripts/gke-test/wake.sh`).
+  Teardown and the reaper set it to 0 when no test namespace is left
   (`scripts/gke-test/park.sh`).
 - `pool-<repo>`: one pool per row of `infra/gke-test/pools.yaml`. It has 0 to
   `max_nodes` nodes, label `faberline.dev/pool=<repo>`, and taint
@@ -161,14 +161,36 @@ jobs:
 6. Runs the test command.
 7. Always: collects evidence, deletes the objects in reverse order, deletes
    the namespace, deletes the CRDs, and waits until no PersistentVolume of the
-   namespace is left. A run whose cleanup fails is a failed run.
+   namespace is left, then parks `system-pool` when no other run is live. A
+   run whose cleanup fails is a failed run.
 
 ## Cleanup when a run dies
 
-The reaper runs every 30 minutes. It deletes every test namespace whose
-`faberline.dev/expires` is in the past, then parks `system-pool` when no test
-namespace is left. GitHub turns off a scheduled workflow after 60 days without
-activity in `aw`; turn it on again under the Actions tab of `faberline/aw`.
+The reaper (`scripts/gke-test/reap.sh`) runs every 30 minutes. It:
+
+1. Deletes every test namespace whose `faberline.dev/expires` is in the past.
+2. Parks `system-pool` when no test namespace is left.
+3. Deletes orphan disks: `pvc-*` disks that GKE made for a PersistentVolume,
+   that no VM uses, that are older than 1 hour, and that no PersistentVolume
+   names.
+4. Reports pods outside test and system namespaces. It does not delete them,
+   because they can be someone's manual work. Such a pod can keep a node up.
+
+When step 1 or 3 fails, or step 4 finds a pod, the run fails and opens one
+issue titled "gke-test reaper needs attention" on `faberline/aw`. The next
+clean run closes it.
+
+GitHub runs a schedule only from the default branch, so the reaper runs only
+after this workflow is on `main`. GitHub also turns off a scheduled workflow
+after 60 days without activity in `aw`; turn it on again under the Actions tab
+of `faberline/aw`.
+
+## Budget alert
+
+Terraform creates a monthly budget on the project (`google_billing_budget.test`,
+`monthly_budget` in TWD, default 650, about US$20). Billing emails the billing
+admins at 50%, 90%, and 100% of actual spend, and at 100% of forecast spend.
+The alert only reports; it does not stop anything.
 
 To clean up by hand:
 

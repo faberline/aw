@@ -21,7 +21,7 @@ if [[ -n "$live" ]]; then
 fi
 
 # A run that labels its namespace after the check above loses its system
-# node. wake.sh in that run already returned, so its rollout wait fails and
+# node. wake.sh in that run already returned, so its kube-dns wait fails and
 # the run reports it; the window is the few seconds between check and resize.
 resize_pool "$GKE_SYSTEM_POOL" 0
 log "parked: $GKE_SYSTEM_POOL at 0 nodes"
