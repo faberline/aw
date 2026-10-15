@@ -269,6 +269,44 @@ configMapGenerator:
       - verify.sh
 ```
 
+**Test suites.** Split the tests into suites: one folder with one Job per
+suite, for example `k8s/gke-test-job/smoke/` and
+`k8s/gke-test-job/failover/`. Each suite is one call of this workflow, from a
+matrix with `max-parallel: 1`, so the calls run one at a time. Each call
+deploys a new server, so a suite never sees the state of another suite. To
+test one part only, run the workflow by hand and pick one suite. A pull
+request runs all of them. `fail-fast: false` runs the other suites when one
+fails.
+
+```yaml
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      suite:
+        type: choice
+        options: [all, smoke, failover]
+        default: all
+
+jobs:
+  gke-test:
+    needs: image
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        # A pull request has no inputs, so it runs all suites.
+        suite: ${{ fromJSON((inputs.suite || 'all') == 'all' && '["smoke","failover"]' || format('["{0}"]', inputs.suite)) }}
+    uses: faberline/aw/.github/workflows/gke-test.yml@main
+    with:
+      image: ${{ needs.image.outputs.image }}
+      test-job: k8s/gke-test-job/${{ matrix.suite }}
+      evidence-suffix: ${{ matrix.suite }}
+```
+
+Every call pays for its rollout. A node that the autoscaler added stays
+about 10 minutes after the call, so the next suite usually reuses it.
+
 **Long tests.** A GitHub-hosted job stops after 6 hours, so `ttl-minutes`
 is at most 360. Split a longer test into more than one call, for example one
 call per cell of a performance matrix. Calls of one repository run one after
