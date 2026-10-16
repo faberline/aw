@@ -72,9 +72,13 @@ tears down.
    which the biggest pod fits, and at least e2-standard-2: a shared-core type
    (e2-micro, e2-small, e2-medium) leaves too little CPU after GKE's own
    DaemonSets, and Terraform refuses it. Set `max_nodes` of a pool to at least
-   the number of pods on it, because each pod gets its own node. Use `spot: false` for performance tests. An `aw`
-   maintainer runs `terraform apply` after merge; until then a run stops at
-   its checks with "the cluster has no node pool". The first row of a
+   the number of pods on it, because each pod gets its own node.
+   For performance tests, use `spot: false` and a machine series with one CPU
+   generation, for example `n4-highmem-4`. An E2 node can have one of several
+   Intel or AMD generations, so E2 numbers do not compare from run to run.
+   An `aw` maintainer runs `terraform apply` after merge. Until then a run
+   stops at its checks with "the cluster has no node pool", or with "pools.yaml
+   says <type>" when the row changed the machine type. The first row of a
    repository also creates the GCP service account `gke-test-<repo>`; without
    it the repository's workflow cannot sign in.
 2. **Overlay.** Add `k8s/overlays/gke-test/kustomization.yaml`. See
@@ -112,6 +116,14 @@ cluster when one of these is false:
   DoNotSchedule` (a required pod anti-affinity on the hostname also passes).
   Its replicas are not more than `max_nodes` of its pool. This makes the test
   cluster fail the way a real one does: one node down takes one replica.
+- **Storage on N4 and C4.** These series take only Hyperdisk. On a pool of
+  type `n4-*`, `n4a-*`, `n4d-*`, `c4-*`, `c4a-*`, or `c4d-*`, every
+  `volumeClaimTemplates` entry, and every rendered PVC that a pod mounts, sets
+  `storageClassName: dynamic-rwo`. GKE's `dynamic-rwo` makes a Hyperdisk
+  Balanced disk on these nodes and a PD Balanced disk on other nodes, so it is
+  safe to set before the pool changes. The default `standard-rwo` makes a PD
+  disk that an N4 node cannot attach, and the pod stays Pending. Terraform
+  gives these pools Hyperdisk boot disks on its own.
 - **Image tag.** No `REPLACE_ME` is left. The run sets the image with
   `kustomize edit set image <repo>=<image>`.
 

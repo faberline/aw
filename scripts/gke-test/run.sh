@@ -59,6 +59,9 @@ TTL_MINUTES="${TTL_MINUTES:-90}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-900s}"
 TEST_JOB_TIMEOUT="${TEST_JOB_TIMEOUT:-$(( (TTL_MINUTES > 20 ? TTL_MINUTES - 15 : 5) * 60 ))}"
 POOLS_FILE="${POOLS_FILE:-$SCRIPT_DIR/../../infra/gke-test/pools.yaml}"
+# These series take only Hyperdisk. Keep the same list in hyperdisk_only_re of
+# infra/gke-test/main.tf.
+HYPERDISK_ONLY_RE='^(n4|n4a|n4d|c4|c4a|c4d)-'
 export KUBECONFIG REPO NAMESPACE IMAGE EVIDENCE_DIR RUN_LABEL
 
 mkdir -p "$EVIDENCE_DIR"
@@ -89,7 +92,8 @@ render() {
 # Rules for every pod template, in the overlay and in the test Job. Prints one
 # line per problem.
 check_pods() {
-  jq -r --arg label "$LABEL_POOL" --arg repo "$REPO" --argjson pools "$pools_json" '
+  jq -r --arg label "$LABEL_POOL" --arg repo "$REPO" --argjson pools "$pools_json" \
+    --arg hd "$HYPERDISK_ONLY_RE" '
     def pod_spec:
       if .kind == "Pod" then .spec
       elif .kind == "CronJob" then .spec.jobTemplate.spec.template.spec
@@ -102,6 +106,9 @@ check_pods() {
           and (.maxSkew // 1) == 1)
       or any(.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[]?;
              .topologyKey == "kubernetes.io/hostname");
+    # PVC name -> its storage class, for pod volumes that name a claim.
+    (map(select(.kind == "PersistentVolumeClaim")
+         | {key: .metadata.name, value: (.spec.storageClassName // "")}) | from_entries) as $pvcs |
     .[] | . as $o | pod_spec as $s | ($o | where) as $w
     | ($s.nodeSelector[$label] // "") as $p
     | (if $p == "" then "\($w): nodeSelector \($label) is missing"
@@ -122,6 +129,13 @@ check_pods() {
          (if $pools[$p] != null and $o.spec.replicas > $pools[$p].max_nodes
             then "\($w): \($o.spec.replicas) replicas need \($o.spec.replicas) nodes, but pool \($p) has max_nodes \($pools[$p].max_nodes)"
           else empty end)
+       else empty end),
+      (if $pools[$p] != null and ($pools[$p].machine_type | test($hd)) then
+         (($o.spec.volumeClaimTemplates[]? | {n: .metadata.name, c: (.spec.storageClassName // "")}),
+          ($s.volumes[]? | .persistentVolumeClaim.claimName // empty
+             | select($pvcs[.] != null) | {n: ., c: $pvcs[.]}))
+         | select(.c != "dynamic-rwo")
+         | "\($w): claim \(.n) uses storage class \(if .c == "" then "standard-rwo (the default)" else .c end), but pool \($p) is \($pools[$p].machine_type), which takes only Hyperdisk; set storageClassName: dynamic-rwo"
        else empty end)
   ' "$1"
 }
@@ -160,17 +174,26 @@ $(jq -r '
   job_name="$(jq -r '.[] | select(.kind == "Job") | .metadata.name' "$job_rendered.json" | head -n 1)"
 fi
 
-# A row merged into pools.yaml has no node pool until an aw maintainer runs
-# terraform apply. A pod for it stays Pending until the run times out, so stop
-# here instead.
+# A row merged into pools.yaml has no node pool, or the old machine type,
+# until an aw maintainer runs terraform apply. A pod for a missing pool stays
+# Pending until the run times out, and a test on the old machine type measures
+# the wrong machine, so stop here instead.
+# Pool name -> its machine type on the cluster.
 live_pools="$(gcloud container clusters describe "$GKE_CLUSTER" \
-  --project="$GKE_PROJECT" --zone="$GKE_ZONE" --format='value(nodePools[].name)' | tr ';' '\n')"
+  --project="$GKE_PROJECT" --zone="$GKE_ZONE" --format=json \
+  | jq -c '[.nodePools[] | {key: .name, value: .config.machineType}] | from_entries')"
 for p in $(cat "$rendered.json" ${TEST_JOB:+"$job_rendered.json"} | jq -r --arg label "$LABEL_POOL" '
     .[] | (.spec.template.spec // .spec.jobTemplate.spec.template.spec // .spec)
     | .nodeSelector[$label]? // empty' | sort -u); do
-  grep -qx "pool-$p" <<<"$live_pools" \
-    || problems+="
+  live_type="$(jq -r --arg n "pool-$p" '.[$n] // empty' <<<"$live_pools")"
+  want_type="$(jq -r --arg p "$p" '.[$p].machine_type // empty' <<<"$pools_json")"
+  if [[ -z "$live_type" ]]; then
+    problems+="
 the cluster has no node pool pool-$p; when pools.yaml has it, an aw maintainer must run terraform apply"
+  elif [[ -n "$want_type" && "$live_type" != "$want_type" ]]; then
+    problems+="
+pool-$p is $live_type on the cluster, but pools.yaml says $want_type; an aw maintainer must run terraform apply"
+  fi
 done
 
 problems="$(sed '/^$/d' <<<"$problems")"
