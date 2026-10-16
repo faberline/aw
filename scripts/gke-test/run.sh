@@ -184,7 +184,7 @@ fi
 
 collect_evidence() {
   set +e
-  kubectl get nodes -L "$LABEL_POOL" -o wide >"$EVIDENCE_DIR/nodes.txt" 2>&1
+  kubectl get nodes -L "$LABEL_POOL" -L node.kubernetes.io/instance-type -o wide >"$EVIDENCE_DIR/nodes.txt" 2>&1
   kubectl -n "$NAMESPACE" get all,pvc,configmap -o wide >"$EVIDENCE_DIR/resources.txt" 2>&1
   kubectl -n "$NAMESPACE" get events --sort-by=.lastTimestamp >"$EVIDENCE_DIR/events.txt" 2>&1
   kubectl -n "$NAMESPACE" describe pods >"$EVIDENCE_DIR/pods-describe.txt" 2>&1
