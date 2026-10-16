@@ -16,10 +16,16 @@
 # pool (`<repo>-client`) for the test Job, so the load generator never takes
 # CPU from the server it measures.
 #
+# One pod gets one node. Each server replica and each test Job pod has a node
+# of its own, and sets requests but no limits, so it can use the whole node.
+# A shared-core type (e2-micro, e2-small, e2-medium) is too small for that:
+# GKE's own DaemonSets take a large part of its CPU.
+#
 # Fields:
 #   repo          GitHub repository name under faberline; also the namespace.
 #   pool          Pool name: `<repo>-<role>`, for example `keep-server`.
-#   machine_type  GCE machine type. The biggest pod must fit on one node.
+#   machine_type  GCE machine type, at least e2-standard-2. The biggest pod
+#                 must fit on one node.
 #   spot          true for Spot VMs (about 70% cheaper; GCE may stop them).
 #   max_nodes     Upper bound for this pool. At least the server replicas,
 #                 because the server puts one replica on each node. The sum
@@ -35,7 +41,7 @@ pools:
   # The test Job (kubectl, curl, jq) requests 250m and 256Mi.
   - repo: keep
     pool: keep-client
-    machine_type: e2-medium
+    machine_type: e2-standard-2
     spot: true
     max_nodes: 1
   # lumen's server pool. The operator's raft StatefulSet puts one replica on
@@ -49,10 +55,10 @@ pools:
     spot: true
     max_nodes: 3
   # The e2e test Job (kubectl, curl, jq; jq builds the 100k-doc fixture)
-  # requests 500m and 1Gi.
+  # requests 250m and 1Gi.
   - repo: lumen
     pool: lumen-client
-    machine_type: e2-medium
+    machine_type: e2-standard-2
     spot: true
     max_nodes: 1
   # lumen's 0.6.1 perf matrix: one server cell at a time, up to 2.5 CPU and

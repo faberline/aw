@@ -51,7 +51,8 @@ tears down.
   autoscaling. A test run sets it to 1 node (`scripts/gke-test/wake.sh`).
   Teardown and the reaper set it to 0 when no test namespace is left
   (`scripts/gke-test/park.sh`).
-- `pool-<pool>`: one pool per row of `infra/gke-test/pools.yaml`. It has 0 to
+- `pool-<pool>`: one pool per row of `infra/gke-test/pools.yaml`. Its machine
+  type is e2-standard-2 or bigger. It has 0 to
   `max_nodes` nodes, label `faberline.dev/pool=<pool>`, and taint
   `faberline.dev/pool=<pool>:NoSchedule`. The taint keeps every other pod off
   it, so repositories do not compete for CPU and memory.
@@ -66,8 +67,10 @@ tears down.
 1. **Pools.** Open a pull request on `aw` that adds rows to
    `infra/gke-test/pools.yaml`: usually `<repo>-server` for the server and
    `<repo>-client` for the test Job. Pick the smallest `machine_type` on
-   which the biggest pod fits. Set `max_nodes` of the server pool to at least
-   the server replicas. Use `spot: false` for performance tests. An `aw`
+   which the biggest pod fits, and at least e2-standard-2: a shared-core type
+   (e2-micro, e2-small, e2-medium) leaves too little CPU after GKE's own
+   DaemonSets, and Terraform refuses it. Set `max_nodes` of a pool to at least
+   the number of pods on it, because each pod gets its own node. Use `spot: false` for performance tests. An `aw`
    maintainer runs `terraform apply` after merge; until then a run stops at
    its checks with "the cluster has no node pool". The first row of a
    repository also creates the GCP service account `gke-test-<repo>`; without
@@ -100,7 +103,7 @@ cluster when one of these is false:
     its own `GITHUB_TOKEN`, so the package can stay private.
 - **Requests.** Every container and init container sets
   `resources.requests.cpu` and `resources.requests.memory`. The autoscaler
-  picks the node count from requests.
+  uses them to check that the pod fits on a new node.
 - **One replica per node.** A StatefulSet or Deployment with more than 1
   replica has `topologySpreadConstraints` with `topologyKey:
   kubernetes.io/hostname`, `maxSkew: 1`, and `whenUnsatisfiable:
@@ -109,6 +112,40 @@ cluster when one of these is false:
   cluster fail the way a real one does: one node down takes one replica.
 - **Image tag.** No `REPLACE_ME` is left. The run sets the image with
   `kustomize edit set image <repo>=<image>`.
+
+### One pod per node, requests without limits
+
+Each pod on a repository pool gets a node of its own: each server replica,
+each other server-side pod (for example a database), and the test Job pod.
+The pod can then use the whole node, and a test measures the code, not a
+neighbour. The pod anti-affinity keeps other pods off the node, not the
+requests: do not make requests big to fill the node. The pool taint keeps
+other repositories off. Do this for every pod template of the overlay and of
+the test Job:
+
+- **No shared node.** Add a required pod anti-affinity on the hostname that
+  matches every pod of the namespace. An empty `labelSelector` matches every
+  pod; without `namespaceSelector` it looks only in the pod's own namespace:
+
+  ```yaml
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - topologyKey: kubernetes.io/hostname
+          labelSelector: {}
+  ```
+
+  It also passes the "one replica per node" check.
+- **Requests, no limits.** Set small `resources.requests`: what the pod
+  needs to start. The check above needs them. Set no `resources.limits`: a
+  limit caps the pod below the node size.
+  When the base sets limits, the overlay removes them, for example with a
+  JSON 6902 patch `op: remove`, `path:
+  /spec/template/spec/containers/0/resources/limits`.
+- **Enough nodes.** `max_nodes` of the pool is at least the number of pods on
+  it. Otherwise a pod stays Pending and the run fails at its deadline.
+
+`run.sh` does not check these three rules yet. Follow them anyway.
 
 Example, from `keep`:
 
@@ -141,14 +178,18 @@ patches:
                 effect: NoSchedule
             imagePullSecrets:
               - name: ghcr-pull
-            topologySpreadConstraints:
-              - maxSkew: 1
-                topologyKey: kubernetes.io/hostname
-                whenUnsatisfiable: DoNotSchedule
-                labelSelector:
-                  matchLabels:
-                    app: keep
-                    role: server
+            affinity:
+              podAntiAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - topologyKey: kubernetes.io/hostname
+                    labelSelector: {}
+  # keep's base sets limits; remove them so the pod can use the whole node.
+  - target:
+      kind: StatefulSet
+      name: keep
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/containers/0/resources/limits
 ```
 
 **Pods that an operator creates.** `run.sh` sees only the rendered
@@ -182,6 +223,8 @@ and checks it before it touches the cluster:
 - Its pod template follows [Placement](#the-overlay) and
   [Requests](#the-overlay), on a pool of this repository, normally
   `<repo>-client`.
+- It follows [One pod per node](#one-pod-per-node-requests-without-limits):
+  requests without limits, and a node of its own.
 
 After every rollout is done, the run applies the folder and waits until the
 Job has the condition `Complete` (pass) or `Failed` (fail). The wait ends
@@ -225,6 +268,44 @@ configMapGenerator:
     files:
       - verify.sh
 ```
+
+**Test suites.** Split the tests into suites: one folder with one Job per
+suite, for example `k8s/gke-test-job/smoke/` and
+`k8s/gke-test-job/failover/`. Each suite is one call of this workflow, from a
+matrix with `max-parallel: 1`, so the calls run one at a time. Each call
+deploys a new server, so a suite never sees the state of another suite. To
+test one part only, run the workflow by hand and pick one suite. A pull
+request runs all of them. `fail-fast: false` runs the other suites when one
+fails.
+
+```yaml
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      suite:
+        type: choice
+        options: [all, smoke, failover]
+        default: all
+
+jobs:
+  gke-test:
+    needs: image
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        # A pull request has no inputs, so it runs all suites.
+        suite: ${{ fromJSON((inputs.suite || 'all') == 'all' && '["smoke","failover"]' || format('["{0}"]', inputs.suite)) }}
+    uses: faberline/aw/.github/workflows/gke-test.yml@main
+    with:
+      image: ${{ needs.image.outputs.image }}
+      test-job: k8s/gke-test-job/${{ matrix.suite }}
+      evidence-suffix: ${{ matrix.suite }}
+```
+
+Every call pays for its rollout. A node that the autoscaler added stays
+about 10 minutes after the call, so the next suite usually reuses it.
 
 **Long tests.** A GitHub-hosted job stops after 6 hours, so `ttl-minutes`
 is at most 360. Split a longer test into more than one call, for example one
