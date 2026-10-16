@@ -52,6 +52,7 @@ A candidate becomes active when its checker is on `aw` main.
 | Document | What it covers |
 |---|---|
 | [repo-layout.md](repo-layout.md) | Top-level files and folders by repository kind. Each row becomes a standard when a checker covers it. |
+| [rust-tests.md](rust-tests.md) | Every test of a Rust repository is Rust: unit, integration, e2e, and performance. e2e is a test binary that talks to the server over the network. Becomes part of S3 when its checker ships. |
 | [test-cluster.md](test-cluster.md) | Testing on the shared GKE cluster instead of kind: the `gke-test` overlay, the node pool row, and the workflow. Becomes S5 when `aw standards check` reads the overlay. |
 
 The authoring, service, CLI, meta-doc, and release conventions are still in
