@@ -26,6 +26,10 @@
 #   pool          Pool name: `<repo>-<role>`, for example `keep-server`.
 #   machine_type  GCE machine type, at least e2-standard-2. The biggest pod
 #                 must fit on one node.
+#                 A performance pool uses a series with one CPU generation,
+#                 for example n4; E2 mixes generations. N4 and C4 take only
+#                 Hyperdisk: boot disks follow on their own, and a PVC on
+#                 such a pool uses storageClassName dynamic-rwo.
 #   spot          true for Spot VMs (about 70% cheaper; GCE may stop them).
 #   max_nodes     Upper bound for this pool. At least the server replicas,
 #                 because the server puts one replica on each node. The sum
@@ -61,18 +65,21 @@ pools:
     machine_type: e2-standard-2
     spot: true
     max_nodes: 1
-  # lumen's 0.6.1 perf matrix: one server cell at a time, up to 2.5 CPU and
-  # 16Gi. Not Spot, because a preempted node would void a cell and its PVC
-  # cold-restart measurement.
+  # lumen's perf matrix: one server cell at a time, up to 2.5 CPU and 16Gi.
+  # Not Spot, because a preempted node would void a cell and its PVC
+  # cold-restart measurement. N4, not E2: an N4 node always has the same CPU
+  # generation, and an E2 node can have one of several Intel or AMD
+  # generations, so E2 numbers do not compare from run to run. N4 takes only
+  # Hyperdisk, so the PVC uses storageClassName dynamic-rwo.
   - repo: lumen
     pool: lumen-perf-server
-    machine_type: e2-highmem-4
+    machine_type: n4-highmem-4
     spot: false
     max_nodes: 1
   # The perf load generator, kept off the measured server's node. Not Spot,
-  # for the same reason.
+  # and N4, for the same reasons.
   - repo: lumen
     pool: lumen-perf-client
-    machine_type: e2-standard-4
+    machine_type: n4-standard-4
     spot: false
     max_nodes: 1

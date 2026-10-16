@@ -24,6 +24,10 @@ locals {
 
   pool_label_key = "faberline.dev/pool"
 
+  # These series take only Hyperdisk, for boot disks and for PVCs. Keep the
+  # same list in HYPERDISK_ONLY_RE of scripts/gke-test/run.sh.
+  hyperdisk_only_re = "^(n4|n4a|n4d|c4|c4a|c4d)-"
+
   # Every identity that signs in from GitHub Actions: one per repository in
   # pools.yaml, plus the reaper. Keys are GitHub repository names under
   # var.github_owner.
@@ -143,7 +147,7 @@ resource "google_container_node_pool" "repo" {
     machine_type    = each.value.machine_type
     spot            = each.value.spot
     disk_size_gb    = 50
-    disk_type       = "pd-balanced"
+    disk_type       = can(regex(local.hyperdisk_only_re, each.value.machine_type)) ? "hyperdisk-balanced" : "pd-balanced"
     service_account = google_service_account.nodes.email
     oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
     metadata        = { disable-legacy-endpoints = "true" }
