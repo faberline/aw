@@ -43,12 +43,26 @@ All four kinds are in the one integration binary of S3. `cargo test --test it
 5. **One suite is one module.** `tests/it/e2e/smoke.rs` is the suite `smoke`.
    Its filter is `e2e::smoke::`. A suite can have several tests. They run one
    at a time (`--test-threads=1`), because they share one server.
+   libtest runs them in name order, so no test may depend on another test.
+   Each test makes its own data, for example its own collection. A journey
+   whose steps must run in order (write, search, restart, read) is one
+   `#[test]` that does the steps in order.
 6. **Endpoints are base URLs.** `E2E_ENDPOINT` is the main server, for example
    `http://lumen:7373`. Another service gets `E2E_<NAME>_ENDPOINT`, for
    example `E2E_RELAY_ENDPOINT`.
 7. **Cluster actions are steps in Rust.** A test that restarts a pod calls the
    `kube` crate or `kubectl` from Rust (`std::process::Command`), then checks
    the result in Rust.
+8. **The test checks what it tests.** The run passes the expected identity in
+   `test-env` (the ConfigMap `gke-test-env`): `E2E_EXPECTED_VERSION`,
+   `E2E_EXPECTED_GIT_SHA`, `E2E_EXPECTED_IMAGE`, and
+   `E2E_EXPECTED_RUNTIME_DIGEST`. A test reads the server's version endpoint
+   and the pods' `imageID` (with `kubectl` from Rust) and compares them. Do
+   not check them in a shell script on the runner.
+9. **Evidence goes to stdout.** The pod log is the evidence. A test prints
+   one JSON object per line with a fixed prefix, for example
+   `E2E_EVIDENCE {"suite":"smoke","step":"search","ok":true}`. A script can
+   collect those lines from the log later.
 
 ## The same test binary everywhere
 
@@ -58,10 +72,12 @@ changes:
 | Where | Server | Command |
 |---|---|---|
 | Your machine | `cargo run`, or `docker compose up` | `E2E_ENDPOINT=http://127.0.0.1:7373 cargo test --test it -- --ignored e2e::smoke::` |
-| Shared GKE cluster | StatefulSet on `pool-<repo>-server` | The test Job runs `/usr/local/bin/<repo>-it --ignored --test-threads=1 e2e::smoke::` on `pool-<repo>-client` |
+| Shared GKE cluster | The server workload (StatefulSet or Deployment) on `pool-<repo>-server` | The test Job runs `/usr/local/bin/<repo>-it --ignored --test-threads=1 e2e::smoke::` on `pool-<repo>-client` |
 
 There is no kind script. One set of tests replaces `scripts/kind-e2e.sh` and
-any `e2e.sh` in a test Job folder.
+any `e2e.sh` in a test Job folder. Before you delete a script, find the tests
+that read its text (for example release or claim tests that name it). Point
+them at the new Rust suite. Do not only delete them.
 
 ## The test client image
 
@@ -69,11 +85,14 @@ The test Job runs the test binary from a second image,
 `ghcr.io/faberline/<repo>-test-client:sha-<git12>`. The same workflow run
 builds both images from the same commit:
 
-1. On the runner, build the server binary: `cargo build --release --locked`.
-2. On the runner, build the test binary:
+1. On the runner, build the server binary, for example
+   `cargo build --release --locked --target x86_64-unknown-linux-musl`.
+2. On the runner, build the test binary with the **same `--target`** as the
+   server binary, so both fit the same small base image:
 
    ```bash
-   cargo test --release --locked --test it --no-run --message-format=json \
+   cargo test --release --locked --target x86_64-unknown-linux-musl \
+       --test it --no-run --message-format=json \
      | jq -r 'select(.profile.test == true and .target.name == "it") | .executable'
    ```
 
@@ -102,6 +121,9 @@ containers:
     env:
       - name: E2E_ENDPOINT
         value: http://lumen:7373
+    envFrom:
+      - configMapRef:
+          name: gke-test-env   # E2E_EXPECTED_* from the workflow input test-env
 ```
 
 ## Planned checks
