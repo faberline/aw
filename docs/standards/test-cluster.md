@@ -49,8 +49,10 @@ tears down.
   only, so there is no second cluster.
 - `system-pool`: one e2-standard-2 Spot node for kube-system. It has no
   autoscaling. A test run sets it to 1 node (`scripts/gke-test/wake.sh`).
-  Teardown and the reaper set it to 0 when no test namespace is left
-  (`scripts/gke-test/park.sh`).
+  Only the reaper sets it to 0, when no test namespace is left
+  (`scripts/gke-test/park.sh`). Teardown leaves it up, so the next call (for
+  example the next test suite) does not wait for a new system node. Idle cost:
+  one node for at most 30 minutes after the last run.
 - `pool-<pool>`: one pool per row of `infra/gke-test/pools.yaml`. Its machine
   type is e2-standard-2 or bigger. It has 0 to
   `max_nodes` nodes, label `faberline.dev/pool=<pool>`, and taint
@@ -386,8 +388,8 @@ jobs:
 8. Always: collects evidence, deletes the objects in reverse order, deletes
    the namespace, deletes the cluster RBAC labelled
    `faberline.dev/owner-namespace=<namespace>`, deletes the CRDs, and waits
-   until no PersistentVolume of the namespace is left, then parks `system-pool` when no other run is live. A
-   run whose cleanup fails is a failed run.
+   until no PersistentVolume of the namespace is left. A run whose cleanup
+   fails is a failed run. It does not park `system-pool`; the reaper does.
 
 ## Cleanup when a run dies
 
