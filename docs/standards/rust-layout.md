@@ -105,7 +105,8 @@ Other rules the checker applies:
   API modules in `src/api/`. Neither belongs to a layer.
 - No `mod.rs` files. Set `mod_module_files = "deny"` in clippy.
 - A file in `src/` above 400 lines is a warning. Above 1000 lines is an error.
-- Integration tests live in `tests/it/`, as one binary.
+- Integration tests live in `tests/it/`, as one binary. e2e and performance
+  tests are in the same binary; see [rust-tests.md](rust-tests.md).
 - Another context uses a layered package only through its `application`
   layer.
 - The root holds only these Markdown files: README, CONTRIBUTING, LICENSE,

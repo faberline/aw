@@ -66,7 +66,7 @@ Rules:
 | Path | Holds | Rule |
 |---|---|---|
 | `src/`, `crates/`, `tests/it/` | Rust code and integration tests. | Standard S3, [rust-layout.md](rust-layout.md). |
-| `e2e/` | Black-box tests that run the shipped binary or CLI. | Default for `cli` and `python`. |
+| `e2e/` | Black-box tests that run the shipped binary or CLI. | Default for `cli` and `python`. A Rust `service` repository uses `tests/it/e2e/` ([rust-tests.md](rust-tests.md)). |
 | `benches/` | `cargo bench` targets. | Cargo's default name. |
 | `benchmarks/` | Cross-tool runs and their recorded results. | `benchmark/` (singular) is drift. |
 | `external-contracts/` | EC sources, `ec.lock`, and evidence. | Root CONTRIBUTING, "EC gates". |

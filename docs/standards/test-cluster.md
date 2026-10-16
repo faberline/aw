@@ -238,8 +238,10 @@ Write the Job so that:
 - It prints its results to stdout. The pod logs are the evidence.
 - It gets a ServiceAccount and a Role only for what it does, for example
   `delete` on pods to test a restart.
-- Its image has the test tools. It can be the repository's own image, a
-  client image, or a public tool image such as `alpine/k8s`.
+- Its image has the test tools. For a Rust repository, it is the test client
+  image, and the Job runs the repository's test binary with one suite filter
+  ([rust-tests.md](rust-tests.md)). Other repositories can use their own
+  image, a client image, or a public tool image such as `alpine/k8s`.
 
 **Client image.** The run sets `<image-name>=<image>` in the test Job too.
 For a separate client image, also set the inputs `test-image` and
