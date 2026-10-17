@@ -3,7 +3,9 @@ set -euo pipefail
 
 # The safety net under every test run, so nothing keeps costing money after a
 # run that died first (runner lost, job cancelled, teardown failed). Run by
-# .github/workflows/gke-test-reaper.yml every 30 minutes.
+# .github/workflows/gke-test-reaper.yml. Its schedule says every 30 minutes;
+# GitHub runs it every few hours. Step 2 is a second net: the parker
+# (infra/gke-test/park.yaml) parks system-pool on time.
 #
 # 1. Delete test namespaces whose faberline.dev/expires time has passed.
 # 2. Park system-pool (park.sh).

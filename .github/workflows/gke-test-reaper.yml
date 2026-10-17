@@ -1,6 +1,8 @@
-# Every 30 minutes: delete expired test namespaces on the shared GKE cluster,
-# park system-pool to 0 nodes when no test runs, delete orphan PVC disks, and
-# report pods outside test namespaces. A failed run opens one issue here; the
+# Delete expired test namespaces on the shared GKE cluster, park system-pool
+# to 0 nodes when no test runs, delete orphan PVC disks, and report pods
+# outside test namespaces. The schedule says every 30 minutes; GitHub runs it
+# every 2.5 to 5 hours. The parker (infra/gke-test/parker.tf) parks
+# system-pool on time, so this is the second net for that step. A failed run opens one issue here; the
 # next clean run closes it. See scripts/gke-test/reap.sh and
 # docs/standards/test-cluster.md.
 name: gke-test-reaper

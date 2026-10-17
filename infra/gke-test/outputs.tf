@@ -16,6 +16,10 @@ output "reaper_service_account" {
   value = google_service_account.reaper.email
 }
 
+output "parker_service_account" {
+  value = google_service_account.parker.email
+}
+
 output "pools" {
   description = "Pool name to its repository, node pool, node label, and taint."
   value = {

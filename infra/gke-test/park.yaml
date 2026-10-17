@@ -1,0 +1,114 @@
+# Cloud Workflows: park system-pool of the shared GKE test cluster.
+#
+# Cloud Scheduler starts it every 10 minutes (parker.tf). It does what
+# scripts/gke-test/park.sh does, on time: GitHub runs the reaper's
+# `*/30` schedule hours late, and system-pool then stays up for hours after
+# the last test.
+#
+# 1. system-pool has no node: done.
+# 2. A namespace carries faberline.dev/test-run: a test runs, done.
+# 3. Wait GRACE_SECONDS, then check again. The suites of one workflow run
+#    follow each other with a short gap and no test namespace; the wait keeps
+#    the parker from parking in that gap, so the next suite does not wake the
+#    cluster again.
+# 4. Set system-pool to 0 nodes.
+#
+# The same race as park.sh: a run that labels its namespace after the last
+# check loses its system node, and its wake.sh reports it.
+
+main:
+  steps:
+    - init:
+        assign:
+          - project: ${sys.get_env("GKE_PROJECT")}
+          - zone: ${sys.get_env("GKE_ZONE")}
+          - cluster: ${sys.get_env("GKE_CLUSTER")}
+          - pool: ${sys.get_env("GKE_SYSTEM_POOL")}
+          - grace: ${int(sys.get_env("GRACE_SECONDS"))}
+
+    - count_system_nodes:
+        call: count_items
+        args:
+          project: ${project}
+          zone: ${zone}
+          cluster: ${cluster}
+          path: /api/v1/nodes
+          selector: ${"cloud.google.com/gke-nodepool=" + pool}
+        result: nodes
+    - parked_already:
+        switch:
+          - condition: ${nodes == 0}
+            return: parked already
+
+    - count_runs:
+        call: count_items
+        args:
+          project: ${project}
+          zone: ${zone}
+          cluster: ${cluster}
+          path: /api/v1/namespaces
+          selector: faberline.dev/test-run
+        result: runs
+    - test_runs:
+        switch:
+          - condition: ${runs > 0}
+            return: ${"not parking; test namespaces " + string(runs)}
+
+    - grace:
+        call: sys.sleep
+        args:
+          seconds: ${grace}
+
+    - count_runs_again:
+        call: count_items
+        args:
+          project: ${project}
+          zone: ${zone}
+          cluster: ${cluster}
+          path: /api/v1/namespaces
+          selector: faberline.dev/test-run
+        result: runs
+    - test_runs_again:
+        switch:
+          - condition: ${runs > 0}
+            return: ${"not parking; test namespaces " + string(runs)}
+
+    - park:
+        try:
+          call: googleapis.container.v1.projects.locations.clusters.nodePools.setSize
+          args:
+            name: ${"projects/" + project + "/locations/" + zone + "/clusters/" + cluster + "/nodePools/" + pool}
+            body:
+              nodeCount: 0
+        except:
+          as: e
+          steps:
+            # 400 FAILED_PRECONDITION or 409: another operation (a wake, an
+            # upgrade) runs on the cluster. The next run tries again.
+            - busy:
+                switch:
+                  - condition: ${"code" in e and (e.code == 400 or e.code == 409)}
+                    return: ${"not parking; cluster busy " + string(e.code)}
+            - fail:
+                raise: ${e}
+    - parked:
+        return: ${"parked " + pool}
+
+# Count the objects at a list path of the Kubernetes API that match a label
+# selector.
+count_items:
+  params: [project, zone, cluster, path, selector]
+  steps:
+    - list:
+        call: gke.request
+        args:
+          project: ${project}
+          location: ${zone}
+          cluster_id: ${cluster}
+          method: GET
+          path: ${path}
+          query:
+            labelSelector: ${selector}
+        result: response
+    - count:
+        return: ${len(default(map.get(response.body, "items"), []))}

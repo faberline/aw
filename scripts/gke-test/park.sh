@@ -6,7 +6,11 @@ set -euo pipefail
 # own through the autoscaler.
 #
 # Parks only when no namespace carries faberline.dev/test-run. A namespace
-# that is still Terminating keeps its labels, so the next reaper run parks.
+# that is still Terminating keeps its labels, so a later run parks.
+#
+# The parker (infra/gke-test/park.yaml, every 10 minutes) does the same
+# check in GCP and parks on time. This script is the reaper's second net.
+# Keep both checks the same.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh

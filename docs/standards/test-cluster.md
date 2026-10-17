@@ -15,7 +15,7 @@ or [The test Job](#the-test-job), but only at test time. It becomes standard S5 
 
 | Owner | Owns |
 |---|---|
-| `aw` | The cluster, every node pool and its max size, identities and permissions (`infra/gke-test/`), the shared workflow (`.github/workflows/gke-test.yml`), the scripts (`scripts/gke-test/`), and the reaper (`.github/workflows/gke-test-reaper.yml`). |
+| `aw` | The cluster, every node pool and its max size, identities and permissions (`infra/gke-test/`), the shared workflow (`.github/workflows/gke-test.yml`), the scripts (`scripts/gke-test/`), the parker (`infra/gke-test/parker.tf`), and the reaper (`.github/workflows/gke-test-reaper.yml`). |
 | Each repository | Its overlay `k8s/overlays/gke-test/`, its test Job, its image build, and its test command if it has one. |
 | GitHub Actions | Builds the image and pushes it to `ghcr.io/faberline/<repo>`. |
 
@@ -49,10 +49,10 @@ tears down.
   only, so there is no second cluster.
 - `system-pool`: one e2-standard-2 Spot node for kube-system. It has no
   autoscaling. A test run sets it to 1 node (`scripts/gke-test/wake.sh`).
-  Only the reaper sets it to 0, when no test namespace is left
-  (`scripts/gke-test/park.sh`). Teardown leaves it up, so the next call (for
+  The parker sets it to 0 when no test namespace is left; see
+  [The parker](#the-parker). Teardown leaves it up, so the next call (for
   example the next test suite) does not wait for a new system node. Idle cost:
-  one node for at most 30 minutes after the last run.
+  one node for 5 to 15 minutes after the last run.
 - `pool-<pool>`: one pool per row of `infra/gke-test/pools.yaml`. Its machine
   type is e2-standard-2 or bigger. It has 0 to
   `max_nodes` nodes, label `faberline.dev/pool=<pool>`, and taint
@@ -403,11 +403,35 @@ jobs:
    the namespace, deletes the cluster RBAC labelled
    `faberline.dev/owner-namespace=<namespace>`, deletes the CRDs, and waits
    until no PersistentVolume of the namespace is left. A run whose cleanup
-   fails is a failed run. It does not park `system-pool`; the reaper does.
+   fails is a failed run. It does not park `system-pool`; the parker does.
+
+## The parker
+
+Cloud Scheduler starts the Cloud Workflows workflow `gke-test-park`
+(`infra/gke-test/park.yaml`) every 10 minutes. Both run in GCP, outside the
+cluster, so they run when the cluster has no node. The workflow:
+
+1. Stops when `system-pool` has no node.
+2. Stops when a namespace carries `faberline.dev/test-run`.
+3. Waits 5 minutes and checks the namespaces again. The suites of one
+   workflow run follow each other with a short gap; the wait keeps the parker
+   from parking in that gap.
+4. Sets `system-pool` to 0 nodes. When another operation runs on the
+   cluster, it stops, and the next run tries again.
+
+See its executions with:
+
+```bash
+gcloud workflows executions list gke-test-park --location asia-east1 --project axiom-502607 --limit 10
+```
+
+The reaper also parks (step 2 below). It is the second net, because GitHub
+runs its schedule hours late.
 
 ## Cleanup when a run dies
 
-The reaper (`scripts/gke-test/reap.sh`) runs every 30 minutes. It:
+The reaper (`scripts/gke-test/reap.sh`) runs from a GitHub schedule. The
+schedule says every 30 minutes; GitHub runs it every 2.5 to 5 hours. It:
 
 1. Deletes every test namespace whose `faberline.dev/expires` is in the past.
 2. Parks `system-pool` when no test namespace is left.
@@ -415,7 +439,8 @@ The reaper (`scripts/gke-test/reap.sh`) runs every 30 minutes. It:
    that no VM uses, that are older than 1 hour, and that no PersistentVolume
    names.
 4. Reports pods outside test and system namespaces. It does not delete them,
-. Deletes ClusterRoles and ClusterRoleBindings labelled
+   because they can be someone's manual work.
+5. Deletes ClusterRoles and ClusterRoleBindings labelled
    `faberline.dev/owner-namespace=<namespace>` when that namespace no longer
    exists.
 

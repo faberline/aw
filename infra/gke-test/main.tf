@@ -10,8 +10,9 @@
 #   repository can have more than one, for example <repo> and <repo>-client.
 # - system-pool: kube-dns and the other kube-system singletons. The autoscaler
 #   never removes the last node that holds them, so this pool has no
-#   autoscaling at all: scripts/gke-test/wake.sh sets it to 1 node and
-#   scripts/gke-test/park.sh sets it back to 0.
+#   autoscaling at all: scripts/gke-test/wake.sh sets it to 1 node. The
+#   parker (parker.tf, every 10 minutes) and the reaper (park.sh) set it
+#   back to 0 when no test runs.
 # - No other pool may be untainted AND autoscaled. Such a pool would take the
 #   Pending kube-system pods after a park and start a node again.
 
@@ -92,8 +93,8 @@ resource "google_container_cluster" "test" {
 
 # --- Pools --------------------------------------------------------------------
 
-# kube-system only. No autoscaling and no taint; wake.sh and park.sh own its
-# size. e2-standard-2, not e2-medium: the DaemonSets plus kube-dns,
+# kube-system only. No autoscaling and no taint; wake.sh, the parker, and
+# park.sh own its size. e2-standard-2, not e2-medium: the DaemonSets plus kube-dns,
 # konnectivity, and metrics-server request about 1.2 CPU.
 resource "google_container_node_pool" "system" {
   project            = var.project_id
