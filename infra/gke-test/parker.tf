@@ -11,6 +11,9 @@
 # the free 5,000; one Cloud Scheduler job, inside the free 3 per billing
 # account.
 
+# On a new project the first apply can fail with "Workflows service agent
+# does not exist". Make it, then apply again:
+#   gcloud beta services identity create --service=workflows.googleapis.com
 resource "google_project_service" "workflows" {
   project            = var.project_id
   service            = "workflows.googleapis.com"
@@ -33,6 +36,24 @@ resource "google_service_account" "parker" {
 resource "google_project_iam_member" "parker" {
   project = var.project_id
   role    = google_project_iam_custom_role.test_runner.id
+  member  = "serviceAccount:${google_service_account.parker.email}"
+}
+
+# gke.request reaches the cluster through its DNS-based endpoint, which
+# checks container.clusters.connect before Kubernetes RBAC. Without it every
+# call fails with 403 "Permission 'container.googleapis.com/clusters.connect'
+# denied". kubectl in GitHub Actions uses the IP endpoint and does not need it.
+resource "google_project_iam_custom_role" "parker_connect" {
+  project     = var.project_id
+  role_id     = "faberlineGkeTestParkerConnect"
+  title       = "faberline GKE test parker connect"
+  description = "Reach the shared test cluster through its DNS-based endpoint."
+  permissions = ["container.clusters.connect"]
+}
+
+resource "google_project_iam_member" "parker_connect" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.parker_connect.id
   member  = "serviceAccount:${google_service_account.parker.email}"
 }
 
@@ -91,6 +112,7 @@ resource "google_workflows_workflow" "park" {
   depends_on = [
     google_project_service.workflows,
     google_project_iam_member.parker,
+    google_project_iam_member.parker_connect,
     kubernetes_cluster_role_binding_v1.parker,
   ]
 }
@@ -101,13 +123,10 @@ resource "google_cloud_scheduler_job" "park" {
   region    = var.region
   schedule  = "*/10 * * * *"
   time_zone = "Etc/UTC"
-  # The call only starts an execution, so it returns fast. No retry: the next
-  # tick is the retry.
+  # The call only starts an execution, so it returns fast. No retry_config:
+  # the default is no retry, and the next tick is the retry. (A block with
+  # retry_count = 0 shows as a change in every plan.)
   attempt_deadline = "60s"
-
-  retry_config {
-    retry_count = 0
-  }
 
   http_target {
     http_method = "POST"
