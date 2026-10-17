@@ -14,7 +14,8 @@ set -euo pipefail
 #   EVIDENCE_DIR   folder for the rendered manifests, describe output, and logs
 #   TEST_JOB and/or TEST_COMMAND, at least one:
 #   TEST_JOB       kustomize folder with one Job; applied after every rollout
-#                  is done; the run passes only when the Job completes
+#                  is done; the run passes only when the Job completes and
+#                  its log has no `running 0 tests` line
 #   TEST_COMMAND   bash command; runs in the checkout after the Job passes
 # Optional:
 #   NAMESPACE      default REPO; must match the overlay's Namespace object
@@ -289,9 +290,18 @@ if [[ -n "$job_name" ]]; then
   done
   # Into the run log too, so a reader does not need the artifact for a
   # quick look. The evidence keeps the full logs of every pod.
-  kubectl -n "$NAMESPACE" logs -l "job-name=$job_name" --all-containers --prefix --tail=-1 >&2 || true
+  job_log="$(kubectl -n "$NAMESPACE" logs -l "job-name=$job_name" --all-containers --prefix --tail=-1 || true)"
+  printf '%s\n' "$job_log" >&2
   if [[ "$state" != "Complete" ]]; then
     log "test Job $job_name: $state"
+    exit 1
+  fi
+  # A suite filter with a typo matches no test, and libtest still exits 0.
+  # The Job runs only the repository's test binary (rust-tests.md), so any
+  # `running 0 tests` line is that binary running nothing. A Job that is not
+  # libtest never prints the line.
+  if grep -Eq '(^|[[:space:]])running 0 tests[[:space:]]*$' <<<"$job_log"; then
+    log "test Job $job_name ran no test (running 0 tests); check its filter"
     exit 1
   fi
   log "test Job $job_name passed"

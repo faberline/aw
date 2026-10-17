@@ -397,7 +397,9 @@ jobs:
    rest with server-side apply.
 5. Waits for every rollout. The first pod on a pool waits a few minutes for
    the autoscaler to add a node.
-6. Applies the test Job and waits until it is `Complete` or `Failed`.
+6. Applies the test Job and waits until it is `Complete` or `Failed`. A
+   `Complete` Job whose log shows `running 0 tests` fails the run: its filter
+   matched no test.
 7. Runs the test command, if there is one.
 8. Always: collects evidence, deletes the objects in reverse order, deletes
    the namespace, deletes the cluster RBAC labelled
