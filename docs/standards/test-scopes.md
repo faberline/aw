@@ -40,8 +40,14 @@ run ([rust-tests.md](rust-tests.md#four-kinds-of-test)).
   An `e2e` selector may run against a server on your machine
   (`E2E_ENDPOINT=http://127.0.0.1:<port>`), but it is not required here.
   `perf` selectors never run here.
-- **Rule.** Push only when scope 1 passed on what you push. No checker
-  enforces it yet; a `pre-push` hook can.
+- **Rule.** Push only when scope 1 passed on what you push.
+- **Who enforces it.** The agent's hook, not git. Before the agent runs
+  `git push`, its tool hook runs scope 1 and blocks the push when a test
+  fails: a `PreToolUse` hook on `Bash` in Claude Code, and the same kind of
+  hook in Codex. The hook config is in the repository, so every agent session
+  gets it. Do not use a git `pre-push` hook: it runs for every person and
+  tool, and `git push --no-verify` skips it anyway. A person who pushes by
+  hand runs scope 1 by hand; scope 2 catches what it misses.
 
 ### 2. Branch: in the cloud, on every pull request run
 
@@ -151,7 +157,8 @@ binary for `e2e` and `perf`.
 ## Planned checks
 
 `aw tests select --scope change|branch|full` will print the selectors as
-JSON for one checkout, so your machine and CI use one rule.
+JSON for one checkout, so your machine and CI use one rule. The agent hooks
+of scope 1 call it too.
 
 `aw standards check` will report:
 
