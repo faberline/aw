@@ -7,7 +7,8 @@ set -euo pipefail
 #
 # Call it AFTER the test namespace exists with its faberline.dev/test-run
 # label. park.sh refuses to park while such a namespace exists, so this order
-# keeps the reaper from parking a run that just woke the cluster.
+# keeps the parker and the reaper from parking a run that just woke the
+# cluster.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh

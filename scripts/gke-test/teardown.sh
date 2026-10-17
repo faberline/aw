@@ -66,6 +66,7 @@ while :; do
 done
 
 # system-pool stays up: the next call (for example the next test suite)
-# needs it soon. The reaper parks it within 30 minutes when no test runs.
+# needs it soon. The parker (infra/gke-test/park.yaml) parks it 5 to 15
+# minutes after the last test namespace is gone.
 
 exit "$status"
