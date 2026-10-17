@@ -25,6 +25,10 @@ In a workspace with several packages, `tests/it/` is in the main package:
 All four kinds are in the one integration binary of S3. `cargo test --test it
 --no-run` builds it. Its file is the test binary.
 
+The kind says where a test can run. It does not say when it runs: what
+changed decides that, in three scopes ([test-scopes.md](test-scopes.md)).
+Performance tests run only in the cloud.
+
 ## Rules
 
 1. **Rust decides pass or fail.** A shell script may deploy, wait, and collect
