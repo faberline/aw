@@ -4,9 +4,9 @@
 organization. Every Rust repository uses a `core` crate when one does the job.
 A repository does not write its own copy.
 
-Status: **candidate standard S4, 2026-10-14**. The checker is
-`aw standards check`. S4 becomes active when that command is on `aw` main. See
-the [definition](README.md#what-a-standard-is).
+Status: **active standard S4, 2026-10-15**. The checker is
+`aw standards check`. It is on `aw` main. See the
+[definition](README.md#what-a-standard-is).
 
 ## Rules
 
