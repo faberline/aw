@@ -137,9 +137,8 @@ The S3 checker will report:
 - A test Job whose command is not the repository's test binary.
 - An e2e or performance test without `#[ignore]`.
 
-aw's `run.sh` will fail a test Job whose log shows `running 0 tests`. A
-filter with a typo matches no test, and libtest exits 0 in that case. Until
-the check ships, read the Job log once when you add a suite.
+aw's `run.sh` fails a test Job whose log shows `running 0 tests`. A filter
+with a typo matches no test, and libtest exits 0 in that case.
 
 ## Measured state, 2026-10-16
 
