@@ -96,6 +96,11 @@ main:
 
 # Count the objects at a list path of the Kubernetes API that match a label
 # selector.
+#
+# gke.request ignores its `query` argument (tested 2026-10-18: labelSelector,
+# fieldSelector and limit all came back with every namespace), so the
+# selector goes into the path. Our selectors use only [a-z0-9.-] plus `/` and
+# `=`, so those two are the only characters to encode.
 count_items:
   params: [project, zone, cluster, path, selector]
   steps:
@@ -106,9 +111,7 @@ count_items:
           location: ${zone}
           cluster_id: ${cluster}
           method: GET
-          path: ${path}
-          query:
-            labelSelector: ${selector}
+          path: ${path + "?labelSelector=" + text.replace_all(text.replace_all(selector, "/", "%2F"), "=", "%3D")}
         result: response
     - count:
         return: ${len(default(map.get(response.body, "items"), []))}
