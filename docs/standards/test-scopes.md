@@ -12,7 +12,7 @@ are three scopes. Each one has a fixed place and a fixed moment:
 |---|---|---|---|
 | 1. Change | This change: the commits and files not yet pushed | Your machine | Before every push |
 | 2. Branch | Every change of the branch against `main` | The cloud: GitHub runner and the [shared GKE cluster](test-cluster.md) | Every pull request run |
-| 3. Full | Everything: every test, whatever changed | The cloud | Every merge to `main`, and every release candidate |
+| 3. Full | Everything: every test, whatever changed | The cloud | Every merge to `main`; with the whole performance matrix only on a release candidate |
 
 **Performance tests run only in the cloud.** Scope 1 never runs them, and a
 number from your machine is never evidence.
@@ -24,9 +24,9 @@ map serves scopes 1 and 2. Scope 3 does not read it.
 
 Kinds do not split well by cost. In `lumen`, an integration test in
 `tests/it/` starts the server binary on the runner, and all 659 of them take
-about 3 minutes after the build. The real costs are the build (about 11
-minutes), the cluster, and the performance matrix (about 80 minutes for each
-cell). A scope says how much to run; the kind of test only says where it can
+about 3 minutes after the build. The real costs are the builds (about 11
+minutes for each feature set), the cluster, and the performance matrix (about
+80 minutes for each cell). A scope says how much to run; the kind of test only says where it can
 run ([rust-tests.md](rust-tests.md#four-kinds-of-test)).
 
 ## The three scopes
@@ -61,8 +61,11 @@ run ([rust-tests.md](rust-tests.md#four-kinds-of-test)).
 
 ### 3. Full: in the cloud, on every merge to `main`
 
-- **Tests.** Every test of every kind: all of `lib` and `it`, every e2e suite,
-  and every performance cell.
+- **Tests.** All of `lib` and `it` in every feature set, and every e2e suite.
+- **The performance matrix runs only on a release candidate.** A release
+  candidate runs scope 3 on its commit and adds every `perf` cell. A merge to
+  `main` runs no `perf` cell: the whole matrix takes hours on the shared
+  cluster, and the cluster budget is shared by every repository.
 - **When.** On `push` to `main`, and in the release candidate on its commit.
 - **Queue.** Full runs of one repository wait for each other. Put them in one
   concurrency group without `cancel-in-progress`: GitHub keeps one waiting run
@@ -87,13 +90,25 @@ full = [
   ".github/workflows/**",
 ]
 
+[tests.scope.features]
+# Name = cargo flags. "default" is plain `cargo test`.
+default = []
+operator = ["--features", "operator"]
+raft-wal = ["--features", "raft-wal"]
+
 [[tests.scope.rule]]
 paths = ["src/index/**", "tests/it/segment_*.rs"]
 tests = ["lib index::", "it segment_", "e2e smoke"]
 
 [[tests.scope.rule]]
 paths = ["src/engine/checkpoint*/**"]
+features = ["default", "raft-wal"]
 tests = ["lib engine::checkpoint", "it aof_", "e2e failover", "perf index-1000-hnsw-cpu"]
+
+[[tests.scope.rule]]
+paths = ["src/operator/**"]
+features = ["operator"]
+tests = ["lib operator::", "it operator_"]
 
 [[tests.scope.rule]]
 # Documents select no test.
@@ -110,8 +125,8 @@ tests = []
 - A renamed file counts as two paths: the old one and the new one. A deleted
   file counts as its old path.
 - A changed path that matches `full`, or that matches no rule, selects the
-  full scope of that run: in scope 1 all of `lib` and `it`, in scope 2
-  everything. A repository with no map therefore runs the full scope every
+  full scope of that run: in scope 1 all of `lib` and `it` in every feature
+  set, in scope 2 everything that scope 3 runs. A repository with no map therefore runs the full scope every
   time, which is safe and slow.
 - `tests = []` selects nothing. Use it on purpose, for example for documents.
   An empty list is the only way to say "no test"; a missing rule means "all
@@ -135,13 +150,27 @@ Each entry of `tests` is `<target> <filter>`:
 - A filter is a substring of the test name, as libtest matches it. Keep it
   short and stable: a module path (`index::`) is better than one test name.
 
+### Feature sets
+
+Each feature set is one more build, so a map names the feature sets that a
+change needs:
+
+- `[tests.scope.features]` names each feature set and its cargo flags.
+  `default` is plain `cargo test`.
+- A rule's `features` lists the feature sets its `lib` and `it` selectors run
+  in. Each selector runs once in each listed set. Without `features`, a rule
+  runs in `default` only.
+- `features` does not apply to `e2e` and `perf`. They run against the image,
+  and the image has one fixed feature set.
+- A run builds each feature set at most once, for all of its selectors.
+
 ## The CI shape
 
 | Event | Scope | Changed paths |
 |---|---|---|
 | `pull_request` | 2. Branch | Merge base with `main` to the head commit |
-| `push` to `main` | 3. Full | Not read |
-| Release candidate | 3. Full | Not read |
+| `push` to `main` | 3. Full, without `perf` | Not read |
+| Release candidate | 3. Full, with every `perf` cell | Not read |
 
 A pull request workflow starts with one small `select` job. It reads the
 changed paths and the map, and gives the selectors as outputs. The test jobs
@@ -150,7 +179,7 @@ read those outputs: a `cargo test` job for `lib` and `it`, and the
 `perf` cells. A job with no selector is skipped, and a skipped job counts as
 passed.
 
-The cargo build happens once for each run. The test client image of
+The cargo build happens once for each feature set of a run. The test client image of
 [rust-tests.md](rust-tests.md#the-test-client-image) holds the same test
 binary for `e2e` and `perf`.
 
@@ -167,6 +196,7 @@ of scope 1 call it too.
   typo matches nothing, and libtest exits 0 then.
 - An `e2e` suite without its test Job folder, or a `perf` cell that the
   repository's matrix does not list.
+- A rule's `features` entry that `[tests.scope.features]` does not name.
 - Files that match no rule, as a count. Each one runs the full scope, so the
   count shows how much the map saves.
 
@@ -177,6 +207,7 @@ and that follows this guideline.
 
 No repository has a map yet. `lumen` runs the full scope on every candidate.
 Its default cargo gate takes 16 minutes: 11 minutes of build, 37 seconds for
-1,176 `lib` tests, and 3 minutes for 659 `it` tests. Its 16-cell performance
+1,176 `lib` tests, and 3 minutes for 659 `it` tests. Its other feature-set
+gates take 10 to 21 minutes each, mostly build. Its 16-cell performance
 matrix takes about 21 hours on the shared cluster, one cell at a time.
 `lumen` moves first, as part of its one-pipeline work.
