@@ -54,6 +54,11 @@ Performance tests run only in the cloud.
 6. **Endpoints are base URLs.** `E2E_ENDPOINT` is the main server, for example
    `http://lumen:7373`. Another service gets `E2E_<NAME>_ENDPOINT`, for
    example `E2E_RELAY_ENDPOINT`.
+   One exception: a suite that tests the image itself, for example how the
+   container starts, stops, and keeps its volume, starts the container on the
+   runner. Its input is the image, `E2E_<NAME>_IMAGE`, for example
+   `E2E_STANDALONE_IMAGE`, not an endpoint. It is still `#[ignore]`, and rule
+   4 holds for the image: a missing `E2E_<NAME>_IMAGE` is a failure.
 7. **Cluster actions are steps in Rust.** A test that restarts a pod calls the
    `kube` crate or `kubectl` from Rust (`std::process::Command`), then checks
    the result in Rust.
