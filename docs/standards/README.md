@@ -53,6 +53,7 @@ A candidate becomes active when its checker is on `aw` main.
 |---|---|
 | [repo-layout.md](repo-layout.md) | Top-level files and folders by repository kind. Each row becomes a standard when a checker covers it. |
 | [rust-tests.md](rust-tests.md) | Every test of a Rust repository is Rust: unit, integration, e2e, and performance. e2e is a test binary that talks to the server over the network. Becomes part of S3 when its checker ships. |
+| [test-scopes.md](test-scopes.md) | Which tests run when, by what changed: this change on your machine before push, the branch against `main` in the cloud, and everything in the cloud in the merge queue before every merge to `main`. Performance runs only in the cloud, and the whole performance matrix only on a release candidate. The path-to-test map in `aw.toml`, with feature sets. Becomes a standard when `aw tests select` and its map checks ship. |
 | [test-cluster.md](test-cluster.md) | Testing on the shared GKE cluster instead of kind: the `gke-test` overlay, the node pool row, and the workflow. Becomes S5 when `aw standards check` reads the overlay. |
 
 The authoring, service, CLI, meta-doc, and release conventions are still in

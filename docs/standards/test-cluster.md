@@ -27,6 +27,11 @@ or [The test Job](#the-test-job), but only at test time. It becomes standard S5 
 | End-to-end (e2e) | This cluster: the server as a cluster, then a test Job | It tests the real deploy: StatefulSet, PVC, Service DNS, restarts. |
 | Performance | This cluster, on a non-Spot pool | A Spot node can stop in the middle, and the numbers need a quiet node. |
 
+This table says where each kind can run. Which tests run on a pull request
+or on a merge to `main` is set by what changed, in
+[test-scopes.md](test-scopes.md). Performance tests run only here, never on
+your machine.
+
 An e2e run has two parts:
 
 1. **The server.** The overlay deploys it the way a real cluster does: a
@@ -291,7 +296,8 @@ suite, for example `k8s/gke-test-job/smoke/` and
 matrix with `max-parallel: 1`, so the calls run one at a time. Each call
 deploys a new server, so a suite never sees the state of another suite. To
 test one part only, run the workflow by hand and pick one suite. A pull
-request runs all of them. `fail-fast: false` runs the other suites when one
+request runs the suites that its changes select
+([test-scopes.md](test-scopes.md)); the merge queue runs all of them. `fail-fast: false` runs the other suites when one
 fails.
 
 ```yaml

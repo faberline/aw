@@ -25,6 +25,10 @@ In a workspace with several packages, `tests/it/` is in the main package:
 All four kinds are in the one integration binary of S3. `cargo test --test it
 --no-run` builds it. Its file is the test binary.
 
+The kind says where a test can run. It does not say when it runs: what
+changed decides that, in three scopes ([test-scopes.md](test-scopes.md)).
+Performance tests run only in the cloud.
+
 ## Rules
 
 1. **Rust decides pass or fail.** A shell script may deploy, wait, and collect
@@ -50,6 +54,11 @@ All four kinds are in the one integration binary of S3. `cargo test --test it
 6. **Endpoints are base URLs.** `E2E_ENDPOINT` is the main server, for example
    `http://lumen:7373`. Another service gets `E2E_<NAME>_ENDPOINT`, for
    example `E2E_RELAY_ENDPOINT`.
+   One exception: a suite that tests the image itself, for example how the
+   container starts, stops, and keeps its volume, starts the container on the
+   runner. Its input is the image, `E2E_<NAME>_IMAGE`, for example
+   `E2E_STANDALONE_IMAGE`, not an endpoint. It is still `#[ignore]`, and rule
+   4 holds for the image: a missing `E2E_<NAME>_IMAGE` is a failure.
 7. **Cluster actions are steps in Rust.** A test that restarts a pod calls the
    `kube` crate or `kubectl` from Rust (`std::process::Command`), then checks
    the result in Rust.
