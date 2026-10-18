@@ -12,7 +12,7 @@ are three scopes. Each one has a fixed place and a fixed moment:
 |---|---|---|---|
 | 1. Change | This change: the commits and files not yet pushed | Your machine | Before every push |
 | 2. Branch | Every change of the branch against `main` | The cloud: GitHub runner and the [shared GKE cluster](test-cluster.md) | Every pull request run |
-| 3. Full | Everything: every test, whatever changed | The cloud | Every merge to `main`; with the whole performance matrix only on a release candidate |
+| 3. Full | Everything: every test, whatever changed | The cloud | Every merge to `main`, in the merge queue before the merge; the performance matrix only on a release candidate |
 
 **Performance tests run only in the cloud.** Scope 1 never runs them, and a
 number from your machine is never evidence.
@@ -37,9 +37,8 @@ run ([rust-tests.md](rust-tests.md#four-kinds-of-test)).
   and untracked files. A branch with no push yet compares with
   `git merge-base origin/main HEAD`, like scope 2.
 - **Tests.** The `lib` and `it` selectors that the map gives for those paths.
-  An `e2e` selector may run against a server on your machine
-  (`E2E_ENDPOINT=http://127.0.0.1:<port>`), but it is not required here.
-  `perf` selectors never run here.
+  Tests with `#[ignore]` do not run here: `e2e` and `perf` selectors wait
+  for scope 2.
 - **Rule.** Push only when scope 1 passed on what you push.
 - **Who enforces it.** The agent's hook, not git. Before the agent runs
   `git push`, its tool hook runs scope 1 and blocks the push when a test
@@ -55,24 +54,27 @@ run ([rust-tests.md](rust-tests.md#four-kinds-of-test)).
   It covers every commit of the branch, also the ones that another person or
   agent pushed.
 - **Tests.** Every selector that the map gives for those paths: `lib`, `it`,
-  `e2e`, and `perf`. `e2e` and `perf` run on the shared cluster.
+  `e2e`, and `perf`. `e2e` runs on the shared cluster. `perf` selects short
+  performance tests on a cloud runner or the cluster. The performance matrix
+  never runs here.
 - **Rule.** A pull request merges only when scope 2 passed on its last
   commit.
 
-### 3. Full: in the cloud, on every merge to `main`
+### 3. Full: in the cloud, before every merge to `main`
 
-- **Tests.** All of `lib` and `it` in every feature set, and every e2e suite.
-- **The performance matrix runs only on a release candidate.** A release
-  candidate runs scope 3 on its commit and adds every `perf` cell. A merge to
-  `main` runs no `perf` cell: the whole matrix takes hours on the shared
-  cluster, and the cluster budget is shared by every repository.
-- **When.** On `push` to `main`, and in the release candidate on its commit.
-- **Queue.** Full runs of one repository wait for each other. Put them in one
-  concurrency group without `cancel-in-progress`: GitHub keeps one waiting run
-  and cancels an older waiting one, so a burst of merges runs the full scope
-  on the newest `main`, not once for each merge.
-- **Rule.** A red full run on `main` is a broken `main`. Fix it before the next
-  release candidate.
+- **Tests.** All of `lib` and `it` in every feature set, every e2e suite, and
+  every short `perf` test. Only the known failures in
+  [`[[tests.scope.skip]]`](#known-failures) are left out.
+- **When.** In the GitHub merge queue (`merge_group`). A pull request merges
+  only after scope 3 passed on the commit that `main` will get, so a red run
+  keeps it out of `main` and `main` stays green. A private repository on the
+  free plan has no merge queue. It runs scope 3 on `push` to `main` instead,
+  and a red run there is a broken `main` to fix before the next release
+  candidate.
+- **Release candidate.** It runs scope 3 on its commit, plus the whole
+  performance matrix: every cell that the repository's matrix lists. A merge
+  to `main` runs no matrix cell. The matrix takes hours on the shared
+  cluster, and every repository shares the cluster budget.
 
 ## The map
 
@@ -103,12 +105,18 @@ tests = ["lib index::", "it segment_", "e2e smoke"]
 [[tests.scope.rule]]
 paths = ["src/engine/checkpoint*/**"]
 features = ["default", "raft-wal"]
-tests = ["lib engine::checkpoint", "it aof_", "e2e failover", "perf index-1000-hnsw-cpu"]
+tests = ["lib engine::checkpoint", "it aof_", "e2e failover", "perf checkpoint_"]
 
 [[tests.scope.rule]]
 paths = ["src/operator/**"]
 features = ["operator"]
 tests = ["lib operator::", "it operator_"]
+
+[[tests.scope.skip]]
+# A known failure, left out until its issue is fixed.
+features = ["raft-wal"]
+test = "raft_shutdown_failover"
+issue = "faberline/lumen#120"
 
 [[tests.scope.rule]]
 # Documents select no test.
@@ -141,9 +149,11 @@ Each entry of `tests` is `<target> <filter>`:
 | `lib` | `cargo test --lib -- <filter>` | A libtest name filter, for example `index::` |
 | `it` | `cargo test --test it -- <filter>` (tests without `#[ignore]`) | A libtest name filter, for example `segment_` |
 | `e2e` | The suite's test Job on the cluster, filter `e2e::<suite>::` | The suite name, for example `smoke` |
-| `perf` | One cell call on the cluster | The cell name, for example `index-1000-hnsw-cpu` |
+| `perf` | A short performance test of the test binary, on a cloud runner or the cluster | A libtest name filter, for example `checkpoint_` |
 
 - `<target> *` selects every test of that target, for example `e2e *`.
+- The performance matrix is not in the map. Its cells run only on a release
+  candidate.
 - Filters of one target join into one command. libtest takes several filters
   and runs a test that matches any of them:
   `cargo test --test it -- segment_ aof_`.
@@ -164,19 +174,28 @@ change needs:
   and the image has one fixed feature set.
 - A run builds each feature set at most once, for all of its selectors.
 
+### Known failures
+
+- `[[tests.scope.skip]]` leaves one test out of the listed feature sets, with
+  libtest `--skip <test>`. Without `features`, it applies to every feature
+  set.
+- Each entry names an open issue. When the issue closes, remove the entry.
+- This is the exception path: the opt-out is in a file, and a checker counts
+  it. Do not narrow a feature set's selectors to hide a failing test.
+
 ## The CI shape
 
 | Event | Scope | Changed paths |
 |---|---|---|
 | `pull_request` | 2. Branch | Merge base with `main` to the head commit |
-| `push` to `main` | 3. Full, without `perf` | Not read |
-| Release candidate | 3. Full, with every `perf` cell | Not read |
+| `merge_group` | 3. Full | Not read |
+| Release candidate | 3. Full, plus the performance matrix | Not read |
 
 A pull request workflow starts with one small `select` job. It reads the
 changed paths and the map, and gives the selectors as outputs. The test jobs
 read those outputs: a `cargo test` job for `lib` and `it`, and the
-[test cluster](test-cluster.md#the-test-job) matrix for `e2e` suites and
-`perf` cells. A job with no selector is skipped, and a skipped job counts as
+[test cluster](test-cluster.md#the-test-job) matrix for `e2e` suites, and a
+job for `perf` tests. A job with no selector is skipped, and a skipped job counts as
 passed.
 
 The cargo build happens once for each feature set of a run. The test client image of
@@ -194,14 +213,14 @@ of scope 1 call it too.
 - A glob in `paths` or `full` that matches no file.
 - A `lib` or `it` filter that matches no test in `cargo test -- --list`. A
   typo matches nothing, and libtest exits 0 then.
-- An `e2e` suite without its test Job folder, or a `perf` cell that the
-  repository's matrix does not list.
+- An `e2e` suite without its test Job folder.
 - A rule's `features` entry that `[tests.scope.features]` does not name.
+- A `[[tests.scope.skip]]` entry without an issue, or whose issue is closed.
 - Files that match no rule, as a count. Each one runs the full scope, so the
   count shows how much the map saves.
 
-A repository needs no exception file: without a map it runs the full scope,
-and that follows this guideline.
+The exception path is `[[tests.scope.skip]]` in `aw.toml`. A repository with
+no map runs the full scope, and that also follows this guideline.
 
 ## Measured state, 2026-10-17
 

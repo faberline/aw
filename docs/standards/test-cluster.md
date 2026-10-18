@@ -296,7 +296,8 @@ suite, for example `k8s/gke-test-job/smoke/` and
 matrix with `max-parallel: 1`, so the calls run one at a time. Each call
 deploys a new server, so a suite never sees the state of another suite. To
 test one part only, run the workflow by hand and pick one suite. A pull
-request runs all of them. `fail-fast: false` runs the other suites when one
+request runs the suites that its changes select
+([test-scopes.md](test-scopes.md)); the merge queue runs all of them. `fail-fast: false` runs the other suites when one
 fails.
 
 ```yaml
