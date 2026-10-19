@@ -76,6 +76,9 @@ the repository root). `e2e/test_cli.py` measures the delegation with
 - `docs/standards/` — the shared standards for every faberline repository
   ([index](docs/standards/README.md)). `aw standards check` checks the
   [core-reuse](docs/standards/core-reuse.md) rules.
+- `.claude-plugin/marketplace.json` and `plugins/faberline/` — the Claude
+  Code plugin with the shared faberline skills. A repository enables it in
+  its `.claude/settings.json` ([how](plugins/faberline/README.md)).
 
 ### Release plans
 

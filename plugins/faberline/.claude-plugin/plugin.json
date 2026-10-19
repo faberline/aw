@@ -1,0 +1,7 @@
+{
+  "name": "faberline",
+  "description": "Shared faberline skills: commit, rebase, push, and pull-request flow.",
+  "author": { "name": "faberline" },
+  "repository": "https://github.com/faberline/aw",
+  "license": "MIT"
+}

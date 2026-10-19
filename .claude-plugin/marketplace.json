@@ -1,0 +1,12 @@
+{
+  "name": "faberline",
+  "owner": { "name": "faberline" },
+  "description": "Shared Claude Code plugins for faberline repositories.",
+  "plugins": [
+    {
+      "name": "faberline",
+      "source": "./plugins/faberline",
+      "description": "Shared faberline skills: commit, rebase, push, and pull-request flow."
+    }
+  ]
+}
