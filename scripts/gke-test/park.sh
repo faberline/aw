@@ -24,8 +24,10 @@ if [[ -n "$live" ]]; then
   exit 0
 fi
 
-# A run that labels its namespace after the check above loses its system
-# node. wake.sh in that run already returned, so its kube-dns wait fails and
-# the run reports it; the window is the few seconds between check and resize.
+# A run that labels its namespace after the check above can lose its system
+# node. When this resize is still running, that run's wake.sh waits for it and
+# resizes to 1 again. When wake.sh already returned, its kube-dns wait or its
+# test fails and the run reports it; the window is the few seconds between
+# check and resize.
 resize_pool "$GKE_SYSTEM_POOL" 0
 log "parked: $GKE_SYSTEM_POOL at 0 nodes"

@@ -15,10 +15,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 : "${KUBECONFIG:?KUBECONFIG must point at a task-local file}"
 
-if (( "$(ready_nodes "$GKE_SYSTEM_POOL")" == 0 )); then
-  log "waking $GKE_SYSTEM_POOL (resize to 1)"
-  resize_pool "$GKE_SYSTEM_POOL" 1
-fi
+# Resize even when a Ready node is there. A park that started before this
+# run labeled its namespace still shows the node as Ready while GKE drains and
+# deletes it (seen 2026-10-19: tape run 39214223760 lost kube-dns that way).
+# While the park operation runs, GKE refuses the resize and resize_pool
+# retries; when the park ends, the resize brings the node back. A resize to 1
+# when the pool has 1 node changes nothing.
+log "waking $GKE_SYSTEM_POOL (resize to 1)"
+resize_pool "$GKE_SYSTEM_POOL" 1
 
 deadline=$((SECONDS + 600))
 until (( "$(ready_nodes "$GKE_SYSTEM_POOL")" >= 1 )); do
