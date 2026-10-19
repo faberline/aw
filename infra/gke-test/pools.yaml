@@ -98,3 +98,19 @@ pools:
     machine_type: e2-standard-2
     spot: true
     max_nodes: 1
+  # defer's server pool. The e2e installs the operator (2 replicas, 100m and
+  # 128Mi each, no anti-affinity) and one Defer instance that it renders; the
+  # direct-install StatefulSet requests 1 CPU and 4Gi. One e2-standard-4 holds
+  # all of them; the second node is room for the recovery step, which deletes
+  # the Defer pod and waits for its replacement on the same PVC.
+  - repo: defer
+    pool: defer-server
+    machine_type: e2-standard-4
+    spot: true
+    max_nodes: 2
+  # The e2e test Job requests at most 250m and 256Mi.
+  - repo: defer
+    pool: defer-client
+    machine_type: e2-standard-2
+    spot: true
+    max_nodes: 1
