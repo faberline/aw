@@ -52,8 +52,8 @@ tears down.
 - Cluster `faberline-test`, zone `asia-east1-a`, project
   `axiom-502607`. The free tier covers the management fee of one zonal cluster
   only, so there is no second cluster.
-- `system-pool`: one e2-standard-2 Spot node for kube-system. It has no
-  autoscaling. A test run sets it to 1 node (`scripts/gke-test/wake.sh`).
+- `system-pool`: one e2-standard-2 on-demand (not Spot) node for kube-system.
+  It has no autoscaling. A test run sets it to 1 node (`scripts/gke-test/wake.sh`).
   The parker sets it to 0 when no test namespace is left; see
   [The parker](#the-parker). Teardown leaves it up, so the next call (for
   example the next test suite) does not wait for a new system node. Idle cost:

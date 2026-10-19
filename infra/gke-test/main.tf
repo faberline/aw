@@ -96,6 +96,10 @@ resource "google_container_cluster" "test" {
 # kube-system only. No autoscaling and no taint; wake.sh, the parker, and
 # park.sh own its size. e2-standard-2, not e2-medium: the DaemonSets plus kube-dns,
 # konnectivity, and metrics-server request about 1.2 CPU.
+# On-demand, not Spot: kube-dns and konnectivity run only here. On 2026-10-19
+# GCE preempted the Spot node twice in two minutes during tape run
+# 39253766861; the test lost DNS and the job lost its log stream
+# ("No agent available"). The node runs only while a test runs.
 resource "google_container_node_pool" "system" {
   project            = var.project_id
   name               = "system-pool"
@@ -109,7 +113,7 @@ resource "google_container_node_pool" "system" {
   }
   node_config {
     machine_type    = "e2-standard-2"
-    spot            = true
+    spot            = false
     disk_size_gb    = 50
     disk_type       = "pd-balanced"
     service_account = google_service_account.nodes.email
