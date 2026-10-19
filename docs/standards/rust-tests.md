@@ -126,7 +126,7 @@ containers:
       - /usr/local/bin/lumen-it
       - --ignored
       - --test-threads=1
-      - e2e::smoke::
+      - "e2e::smoke::"   # quoted: a trailing `:` makes YAML read a map key
     env:
       - name: E2E_ENDPOINT
         value: http://lumen:7373
