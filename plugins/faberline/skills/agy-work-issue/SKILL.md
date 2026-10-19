@@ -1,6 +1,6 @@
 ---
 name: agy-work-issue
-description: "Run one step of the AGY issue loop: take one open GitHub issue labelled agy:todo in the current repository, implement it in its own worktree, run its gate, and open a pull request for review. Use when a scheduled AGY loop or the user asks to work the next agy issue."
+description: "Run one step of the AGY issue loop: take one open GitHub issue labelled agy:todo in the current repository, implement it in its own worktree, run its unit tests, and open a pull request for review. Use when a scheduled AGY loop or the user asks to work the next agy issue."
 user-invocable: true
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/issue.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/issue.sh *)
 ---
@@ -22,6 +22,9 @@ in `${CLAUDE_SKILL_DIR}/scripts/issue.sh`; your job is the implementation.
   contract. Do not widen the scope.
 - Never merge, close an issue, delete a branch, or change labels by hand. The
   script moves the labels.
+- Run unit tests only. Never run e2e, integration, or cluster tests: no
+  `kind`, `kubectl`, `gcloud`, `terraform`, or workflow dispatch. Claude runs
+  those during review.
 - Never run bare `git stash`. Never use `git push --force`.
 - When a decision belongs to a human, or the gate still fails after a fix you
   can justify, ask a clear question with `ask`. Do not guess.
@@ -47,8 +50,9 @@ gh pr view <pr> --comments
    A PR means this is a rework: fix what the review asks, on the same branch.
    If `origin/main` moved, rebase first with `/faberline:git-rebase`.
 
-3. Implement in the worktree. Run every gate command the issue lists, from the
-   worktree. All of them must pass.
+3. Implement in the worktree. Run the unit-test gate commands the issue lists,
+   from the worktree. All of them must pass. If the issue lists a command that
+   is not a unit test, do not run it; say so in the summary.
 
 4. Commit with `/faberline:git-commit`, from the worktree. One conventional
    commit per run is enough.

@@ -103,8 +103,10 @@ The issue label is the state:
 
 Claude's side:
 
-- Write the issue with Goal, Acceptance, Never, and the exact gate commands.
-  Then add `agy:todo`.
+- Write the issue with Goal, Acceptance, Never, and the exact unit-test gate
+  commands. Then add `agy:todo`.
+- The loop runs unit tests only. Run e2e, integration, and cluster tests
+  yourself, during review.
 - Review pass: merge the PR. The merge closes the issue.
 - Review fail: write the review on the PR. Then move the issue back to
   `agy:todo`. The loop continues on the same branch.
