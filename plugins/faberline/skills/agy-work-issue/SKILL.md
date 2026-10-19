@@ -24,7 +24,7 @@ in `${CLAUDE_SKILL_DIR}/scripts/issue.sh`; your job is the implementation.
   script moves the labels.
 - Never run bare `git stash`. Never use `git push --force`.
 - When a decision belongs to a human, or the gate still fails after a fix you
-  can justify, block the issue with a clear question. Do not guess.
+  can justify, ask a clear question with `ask`. Do not guess.
 
 ## Instructions
 
@@ -61,20 +61,21 @@ ${CLAUDE_SKILL_DIR}/scripts/issue.sh finish <N> <summary-file>
 ```
 
    It pushes, opens or reuses the PR (`Closes #<N>`), and moves the issue to
-   `agy:review`.
+   `agy:done`. Claude reviews it. If the review fails, Claude moves the issue
+   back to `agy:todo`, and a later run continues on the same branch.
 
-6. To block instead, write the question to a file, then:
+6. To ask a question instead, write it to a file, then:
 
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/issue.sh block <N> <reason-file>
+${CLAUDE_SKILL_DIR}/scripts/issue.sh ask <N> <question-file>
 ```
 
    Commit finished work first, if there is any. The issue moves to
-   `agy:blocked`.
+   `agy:done`. Claude answers in the issue and moves it back to `agy:todo`.
 
 ## Exit codes
 
 - `0` — done; report the issue, the PR, and the gate results.
 - `2` — refused; report the printed reason. Fix it and run the step again,
-  or block the issue.
+  or ask a question.
 - `3` — nothing to do; stop.

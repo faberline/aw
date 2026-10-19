@@ -99,19 +99,24 @@ The issue label is the state:
 |---|---|---|
 | `agy:todo` | Claude | Ready. The loop takes the oldest one. |
 | `agy:doing` | the loop | The loop is working on it, in `.agents/worktrees/issue-<N>` on branch `agy/issue-<N>`. |
-| `agy:review` | the loop | A PR (`Closes #<N>`) waits for Claude's review. |
-| `agy:blocked` | the loop | The last issue comment is a question for a human. |
+| `agy:done` | the loop | The loop's turn is over. A PR (`Closes #<N>`) waits for Claude's review, or the last issue comment is a question. |
 
 Claude's side:
 
 - Write the issue with Goal, Acceptance, Never, and the exact gate commands.
   Then add `agy:todo`.
-- To accept, merge the PR. The merge closes the issue.
-- To reject, write the review on the PR. Then move the issue back to
+- Review pass: merge the PR. The merge closes the issue.
+- Review fail: write the review on the PR. Then move the issue back to
   `agy:todo`. The loop continues on the same branch.
-- To unblock, answer in the issue. Then move it back to `agy:todo`.
+- Question: answer in the issue. Then move it back to `agy:todo`.
 
-Create the four labels once per repository. Run this from that repository's checkout:
+Move an issue back with:
+
+```bash
+gh issue edit <N> --remove-label agy:done --add-label agy:todo
+```
+
+Create the three labels once per repository. Run this from that repository's checkout:
 
 ```bash
 ~/faberlines/aw/plugins/faberline/skills/agy-work-issue/scripts/issue.sh labels

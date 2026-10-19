@@ -2,19 +2,20 @@
 # One step of the AGY issue loop, for the repository of the current directory.
 # One loop per repository works on one issue at a time. The issue label is
 # the state:
-#   agy:todo -> agy:doing -> agy:review   (Claude accepts, merges, releases)
-#                         -> agy:blocked  (a question for a human)
-# A rejected review goes back to agy:todo; the next run continues the same
-# branch, agy/issue-<N>.
+#   agy:todo -> agy:doing -> agy:done   (Claude reviews)
+# agy:done means the loop's turn is over: a PR waits for review, or the last
+# issue comment is a question. Claude merges a PR it accepts. Otherwise Claude
+# writes the review or the answer and moves the issue back to agy:todo; the
+# next run continues the same branch, agy/issue-<N>.
 #
 # usage:
-#   issue.sh labels                       create or update the four labels
+#   issue.sh labels                       create or update the three labels
 #   issue.sh next                         claim or resume one issue; prepare
 #                                         its worktree
 #   issue.sh finish <N> <summary-file>    push, open or reuse the PR, move the
-#                                         issue to agy:review
-#   issue.sh block <N> <reason-file>      comment, move the issue to
-#                                         agy:blocked
+#                                         issue to agy:done
+#   issue.sh ask <N> <question-file>      comment the question, move the
+#                                         issue to agy:done
 # exit: 0 done; 2 refused; 3 nothing to do (no agy:todo issue, or another run
 #   holds the lock)
 set -euo pipefail
@@ -43,8 +44,7 @@ relabel() { # <N> <from> <to>
 cmd_labels() {
   gh label create agy:todo    --force --color 0E8A16 --description "Ready for the AGY loop"
   gh label create agy:doing   --force --color FBCA04 --description "The AGY loop is working on it"
-  gh label create agy:review  --force --color 1D76DB --description "AGY opened a PR; waiting for review"
-  gh label create agy:blocked --force --color B60205 --description "AGY needs an answer from a human"
+  gh label create agy:done    --force --color 1D76DB --description "AGY is done; Claude reviews the PR or answers the question"
 }
 
 cmd_next() {
@@ -128,25 +128,25 @@ cmd_finish() {
   fi
 
   gh issue comment "$n" --body "AGY: ready for review in #$pr." >/dev/null
-  relabel "$n" agy:doing agy:review
+  relabel "$n" agy:doing agy:done
   release_lock "$n"
   gh pr view "$pr" --json number,url,state,mergeable,statusCheckRollup
 }
 
-cmd_block() {
-  n=${1:?usage: block <N> <reason-file>}
-  reason=${2:?usage: block <N> <reason-file>}
-  [ -s "$reason" ] || { echo "refused: reason file is empty or missing" >&2; exit 2; }
-  gh issue comment "$n" --body-file "$reason" >/dev/null
-  relabel "$n" agy:doing agy:blocked
+cmd_ask() {
+  n=${1:?usage: ask <N> <question-file>}
+  question=${2:?usage: ask <N> <question-file>}
+  [ -s "$question" ] || { echo "refused: question file is empty or missing" >&2; exit 2; }
+  gh issue comment "$n" --body-file "$question" >/dev/null
+  relabel "$n" agy:doing agy:done
   release_lock "$n"
-  echo "issue #$n is agy:blocked"
+  echo "issue #$n is agy:done with a question"
 }
 
 case "${1:-}" in
   labels) cmd_labels ;;
   next) cmd_next ;;
   finish) shift; cmd_finish "$@" ;;
-  block) shift; cmd_block "$@" ;;
-  *) echo "usage: issue.sh labels | next | finish <N> <summary-file> | block <N> <reason-file>" >&2; exit 2 ;;
+  ask) shift; cmd_ask "$@" ;;
+  *) echo "usage: issue.sh labels | next | finish <N> <summary-file> | ask <N> <question-file>" >&2; exit 2 ;;
 esac
