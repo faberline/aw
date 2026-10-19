@@ -427,6 +427,10 @@ cluster, so they run when the cluster has no node. The workflow:
 4. Sets `system-pool` to 0 nodes. When another operation runs on the
    cluster, it stops, and the next run tries again.
 
+A run can start while a park runs. Its node is still Ready while GKE deletes
+it. So `wake.sh` always resizes `system-pool` to 1: GKE refuses the resize
+until the park ends, `resize_pool` retries, and then the node comes back.
+
 See its executions with:
 
 ```bash
