@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Push the current branch to origin, choosing the safe variant from the
 # upstream divergence:
-#   no upstream        -> git push -u origin HEAD
+#   no upstream, or an upstream other than origin/<branch>
+#                      -> git push -u origin HEAD
 #   ahead only (N 0)   -> git push
 #   rewritten (N M>0)  -> git push --force-with-lease
 #   in sync (0 0)      -> nothing to push
@@ -32,7 +33,8 @@ push_or_report() {
   fi
 }
 
-if upstream=$("${GIT[@]}" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
+upstream=$("${GIT[@]}" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
+if [ "$upstream" = "origin/$branch" ]; then
   read -r ahead behind <<EOF
 $("${GIT[@]}" rev-list --left-right --count 'HEAD...@{u}')
 EOF
@@ -55,6 +57,8 @@ EOF
     echo "nothing to push: HEAD...$upstream is 0 0"
   fi
 else
+  # No upstream, or one with another name: `git switch -c <branch> origin/main`
+  # tracks origin/main, and a plain push to it fails.
   push_or_report -u origin HEAD
 fi
 
