@@ -7,6 +7,8 @@ allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/merge-pr.sh) Bash(${CLAUDE_SKILL
 
 # /faberline:gh-merge-pr
 
+`${CLAUDE_SKILL_DIR}` is the directory that holds this SKILL.md.
+
 Merge one pull request, verify it merged, then stop. The mechanics live in
 `${CLAUDE_SKILL_DIR}/scripts/merge-pr.sh`: it watches pending checks to completion, refuses
 failing ones, merges with an explicit strategy, and verifies `MERGED`.

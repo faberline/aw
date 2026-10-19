@@ -7,6 +7,8 @@ allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/commit.sh) Bash(${CLAUDE_SKILL_D
 
 # /faberline:git-commit
 
+`${CLAUDE_SKILL_DIR}` is the directory that holds this SKILL.md.
+
 Turn the current working-tree changes into one well-formed commit, then stop.
 The mechanics live in `${CLAUDE_SKILL_DIR}/scripts/commit.sh`; your job is the two things it
 cannot do — read the diff and author the message.

@@ -17,9 +17,11 @@ change. Do not copy these skills into a repository.
 | `/faberline:gh-create-pr` | Opens a pull request, or reuses the open one. |
 | `/faberline:gh-merge-pr` | Waits for checks, then squash-merges and verifies. |
 | `/faberline:git-land` | Runs all of the above in order. |
+| `/faberline:agy-work-issue` | One step of the AGY issue loop ([below](#agy-issue-loop)). |
 
 Each skill keeps its script next to it, in `skills/<skill>/scripts/`. The skill
-calls it as `${CLAUDE_SKILL_DIR}/scripts/<script>.sh`.
+calls it as `${CLAUDE_SKILL_DIR}/scripts/<script>.sh`. Claude Code replaces
+`${CLAUDE_SKILL_DIR}`. Each SKILL.md also says what it means, for AGY.
 
 ## Enable it in a repository
 
@@ -66,10 +68,60 @@ claude plugin marketplace update faberline
 Or turn on auto-update: `/plugin` > **Marketplaces** > `faberline` >
 **Enable auto-update**.
 
+## Use it in AGY
+
+The plugin is also an Antigravity (AGY) plugin:
+[`.antigravity-plugin/plugin.json`](.antigravity-plugin/plugin.json). AGY reads
+it in place from a local aw checkout. Add the aw `plugins` directory to
+`~/.gemini/config/plugins.json` once:
+
+```json
+{
+  "entries": [
+    { "path": "~/faberlines/aw/plugins" }
+  ]
+}
+```
+
+Then restart AGY. `git pull` in that checkout updates the skills. Do not use
+`agy plugin install`: it makes a copy, and the copy does not update.
+
+## AGY issue loop
+
+Claude writes the issues, reviews the pull requests, merges, and releases. AGY
+implements. Each repository has its own AGY session with a scheduled loop
+(every 5 to 15 minutes) that runs `/faberline:agy-work-issue`. A loop works on
+one issue at a time.
+
+The issue label is the state:
+
+| Label | Set by | Meaning |
+|---|---|---|
+| `agy:todo` | Claude | Ready. The loop takes the oldest one. |
+| `agy:doing` | the loop | The loop is working on it, in `.agents/worktrees/issue-<N>` on branch `agy/issue-<N>`. |
+| `agy:review` | the loop | A PR (`Closes #<N>`) waits for Claude's review. |
+| `agy:blocked` | the loop | The last issue comment is a question for a human. |
+
+Claude's side:
+
+- Write the issue with Goal, Acceptance, Never, and the exact gate commands.
+  Then add `agy:todo`.
+- To accept, merge the PR. The merge closes the issue.
+- To reject, write the review on the PR. Then move the issue back to
+  `agy:todo`. The loop continues on the same branch.
+- To unblock, answer in the issue. Then move it back to `agy:todo`.
+
+Create the four labels once per repository. Run this from that repository's checkout:
+
+```bash
+~/faberlines/aw/plugins/faberline/skills/agy-work-issue/scripts/issue.sh labels
+```
+
 ## Check before you merge
 
 ```bash
 claude plugin validate .
+agy plugin validate plugins/faberline
 ```
 
-Run it from the aw repository root.
+Run them from the aw repository root.

@@ -7,6 +7,8 @@ allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/create-pr.sh) Bash(${CLAUDE_SKIL
 
 # /faberline:gh-create-pr
 
+`${CLAUDE_SKILL_DIR}` is the directory that holds this SKILL.md.
+
 Open — or reuse — one pull request from the current branch to a base branch,
 report its state, then stop. The mechanics live in `${CLAUDE_SKILL_DIR}/scripts/create-pr.sh`;
 one PR per head is its invariant, so it reuses an existing open PR instead of

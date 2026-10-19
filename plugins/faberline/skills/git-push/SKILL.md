@@ -7,6 +7,8 @@ allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/push.sh) Bash(${CLAUDE_SKILL_DIR
 
 # /faberline:git-push
 
+`${CLAUDE_SKILL_DIR}` is the directory that holds this SKILL.md.
+
 Push the current branch to `origin`, then stop. The mechanics live in
 `${CLAUDE_SKILL_DIR}/scripts/push.sh`, which picks the safe variant itself: `-u origin HEAD`
 on a first push, a plain push when only ahead, `--force-with-lease` when
