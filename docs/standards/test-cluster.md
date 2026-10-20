@@ -380,7 +380,10 @@ A lane lets calls of one repository run at the same time. Set the workflow's
   the new name too.
 - The overlay has no cluster-scoped objects. Lanes run at the same time, and
   one lane would overwrite or delete the objects of another. Put a CRD or a
-  ClusterRole in a lane-less call instead.
+  ClusterRole in a lane-less call instead. Every service account can already
+  get and list nodes and PersistentVolumes (ClusterRole
+  `faberline-gke-test-reader`), so a test that only reads them needs no
+  ClusterRole of its own.
 - Each lane gets its own concurrency group, `gke-test-<owner>/<repo>-lane-<lane>`.
   Two calls with the same lane wait for each other.
 - Each lane needs its own nodes. Ask for `max_nodes` of at least the number of

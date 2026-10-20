@@ -369,6 +369,38 @@ resource "kubernetes_cluster_role_binding_v1" "reaper" {
   }
 }
 
+# Every pod of a test may read nodes and PersistentVolumes, for example to
+# record the machine type and disk type in a perf receipt. A repository's
+# overlay could grant this itself, but a lane run (gke-test.yml `lane`) may not
+# carry cluster-scoped objects, so the cluster grants it once. Read only: no
+# list of Secrets, and nothing that changes the cluster.
+resource "kubernetes_cluster_role_v1" "test_reader" {
+  metadata {
+    name = "faberline-gke-test-reader"
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["nodes", "persistentvolumes"]
+    verbs      = ["get", "list"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding_v1" "test_reader" {
+  metadata {
+    name = "faberline-gke-test-reader"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role_v1.test_reader.metadata[0].name
+  }
+  subject {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Group"
+    name      = "system:serviceaccounts"
+  }
+}
+
 # --- Budget -------------------------------------------------------------------
 
 # The last net under the reaper: an email when the project spends more than
