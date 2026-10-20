@@ -105,6 +105,10 @@ cluster when one of these is false:
 
 - **Namespace.** Every `Namespace` object is the repository name, or the
   workflow's `namespace` input.
+- **Lane.** When the workflow's `lane` input is set, the overlay has no
+  cluster-scoped objects (CRD, ClusterRole, ClusterRoleBinding, StorageClass,
+  PriorityClass, webhook configurations, PersistentVolume, APIService,
+  IngressClass, RuntimeClass). See [Lanes](#lanes).
 - **Placement.** Every pod template (Pod, Deployment, StatefulSet, DaemonSet,
   ReplicaSet, Job, CronJob) has:
   - `nodeSelector: {faberline.dev/pool: <pool>}`, where `pools.yaml` gives
@@ -331,23 +335,27 @@ about 10 minutes after the call, so the next suite usually reuses it.
 
 **Long tests.** A GitHub-hosted job stops after 6 hours, so `ttl-minutes`
 is at most 360. Split a longer test into more than one call, for example one
-call per cell of a performance matrix. Calls of one repository run one after
-the other. In a matrix, set `strategy.max-parallel: 1`: a concurrency group
-keeps only one waiting run and cancels the others.
-Give each call its own `evidence-suffix`, for example the cell name. All
-calls of a matrix share one workflow run, and two artifacts with the same name
-fail the upload.
+call per cell of a performance matrix. Give each call its own
+`evidence-suffix`, for example the cell name. All calls of a matrix share one
+workflow run, and two artifacts with the same name fail the upload.
+
+Calls of one repository run one after the other, unless each call has its own
+lane (see [Lanes](#lanes)). Without lanes, set `strategy.max-parallel: 1`: a
+concurrency group keeps only one waiting run and cancels the others. With a
+lane per cell, set `strategy.max-parallel` to at most the pool's `max_nodes`.
 
 ```yaml
   perf:
     needs: [image, client-image]
     strategy:
-      max-parallel: 1
+      max-parallel: 3   # at most max_nodes of the perf pools
       matrix:
         cell: [a1, a2]
     uses: faberline/aw/.github/workflows/gke-test.yml@main
     with:
       image: ${{ needs.image.outputs.image }}
+      namespace: <repo>-perf-${{ matrix.cell }}
+      lane: ${{ matrix.cell }}
       overlay: k8s/overlays/gke-perf
       test-job: k8s/gke-perf-job
       test-image: ${{ needs.client-image.outputs.image }}
@@ -358,6 +366,30 @@ fail the upload.
       evidence-suffix: ${{ matrix.cell }}
       ttl-minutes: 150
 ```
+
+### Lanes
+
+A lane lets calls of one repository run at the same time. Set the workflow's
+`lane` input, for example to the cell name, and give the call its own
+`namespace`:
+
+- `namespace` is `<repo>-<something>`, for example `lumen-perf-a1`. run.sh
+  refuses the repository name itself, because the lane-less runs use it.
+- run.sh sets that namespace on the overlay (`kustomize edit set namespace`),
+  so one overlay serves every lane. A `Namespace` object in the overlay gets
+  the new name too.
+- The overlay has no cluster-scoped objects. Lanes run at the same time, and
+  one lane would overwrite or delete the objects of another. Put a CRD or a
+  ClusterRole in a lane-less call instead.
+- Each lane gets its own concurrency group, `gke-test-<owner>/<repo>-lane-<lane>`.
+  Two calls with the same lane wait for each other.
+- Each lane needs its own nodes. Ask for `max_nodes` of at least the number of
+  lanes that run at the same time, in every pool that the overlay and the
+  test Job use.
+- All repositories share the project quota (CPUS_ALL_REGIONS 32 and
+  IN_USE_ADDRESSES 8: each node has an external IP). A node over the quota
+  stays Pending until the call times out. Keep the lanes of one matrix, plus
+  the other repositories that test at that time, inside that limit.
 
 ## The workflow
 
@@ -385,8 +417,8 @@ jobs:
 ```
 
 - Runs of one repository wait for each other (concurrency group
-  `gke-test-<owner>/<repo>`). Runs of different repositories run at the same
-  time.
+  `gke-test-<owner>/<repo>`), unless they have different lanes. Runs of
+  different repositories run at the same time.
 - Each run uploads the artifact `gke-test-evidence-<run>-<attempt>`, plus
   `-<evidence-suffix>` when set: the rendered manifests, nodes, events,
   `describe pods`, and logs.
