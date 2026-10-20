@@ -29,6 +29,7 @@ meta_app = typer.Typer(no_args_is_help=True, help="META-doc rule scan (read-only
 metadoc_app = typer.Typer(no_args_is_help=True, help="META-doc write allowlist check and commit.")
 release_plan_app = typer.Typer(no_args_is_help=True, help="Approved, resumable multi-project release planning.")
 standards_app = typer.Typer(no_args_is_help=True, help="Shared faberline standards checks (read-only).")
+rust_arch_app = typer.Typer(no_args_is_help=True, help="S3 Rust layout and layer checks (read-only).")
 
 app.add_typer(change_app, name="change")
 app.add_typer(milestone_app, name="milestone")
@@ -40,6 +41,7 @@ app.add_typer(meta_app, name="meta")
 app.add_typer(metadoc_app, name="metadoc")
 app.add_typer(release_plan_app, name="release-plan")
 app.add_typer(standards_app, name="standards")
+standards_app.add_typer(rust_arch_app, name="rust-arch")
 
 # The service has its own CLI, independent of tracker-backed engine scripts.
 from aw.mcp.cli import app as mcp_app
@@ -684,13 +686,49 @@ def standards_check(
     core: str | None = typer.Option(None, "--core"),
     format_: str = typer.Option("text", "--format"),
 ) -> None:
-    """Check Rust repositories against the core-reuse rules."""
+    """Check Rust repositories against the core-reuse rules (S4)."""
     argv = ["check", "--format", format_]
     for item in repo:
         argv += ["--repo", item]
     if core is not None:
         argv += ["--core", core]
     _delegate("standards", argv)
+
+
+@rust_arch_app.command("check")
+def rust_arch_check(
+    repo: list[str] = typer.Option([], "--repo"),
+    root: str | None = typer.Option(None, "--root"),
+    base: str | None = typer.Option(None, "--base"),
+    baseline: bool = typer.Option(False, "--baseline"),
+    strict: bool = typer.Option(False, "--strict"),
+    json_: str | None = typer.Option(None, "--json"),
+    top: int = typer.Option(5, "--top"),
+    verbose: bool = typer.Option(False, "--verbose"),
+) -> None:
+    """Check Rust repositories against the layout and layer rules (S3, ddd.toml)."""
+    argv = ["check", "--top", str(top)]
+    for item in repo:
+        argv += ["--repo", item]
+    for flag, value in (("--root", root), ("--base", base), ("--json", json_)):
+        if value is not None:
+            argv += [flag, value]
+    for flag, on in (("--baseline", baseline), ("--strict", strict), ("--verbose", verbose)):
+        if on:
+            argv.append(flag)
+    _delegate("rust_arch.cli", argv)
+
+
+@rust_arch_app.command("scaffold")
+def rust_arch_scaffold(
+    repo: str = typer.Option(..., "--repo"),
+    root: str | None = typer.Option(None, "--root"),
+) -> None:
+    """Print a draft ddd.toml for one repository (writes nothing)."""
+    argv = ["scaffold", "--repo", repo]
+    if root is not None:
+        argv += ["--root", root]
+    _delegate("rust_arch.cli", argv)
 
 
 if __name__ == "__main__":
