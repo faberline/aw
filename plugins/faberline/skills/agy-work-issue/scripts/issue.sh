@@ -20,8 +20,16 @@
 #   holds the lock)
 set -euo pipefail
 GIT=(git -c core.fsmonitor=false)
-here=$(cd "$(dirname "$0")" && pwd)
-push_sh="$here/../../git-push/scripts/push.sh"
+here=$(cd "$(dirname "$0")" && pwd -P)
+# The git-push skill sits next to this one, in place or in an AGY plugin copy.
+push_sh=$(cd "$here/../.." && pwd -P)/git-push/scripts/push.sh
+
+need_push_sh() {
+  [ -x "$push_sh" ] || {
+    echo "refused: $push_sh is missing; install the whole faberline plugin, not one skill" >&2
+    exit 2
+  }
+}
 
 common=$(cd "$("${GIT[@]}" rev-parse --git-common-dir)" && pwd)
 main_checkout=$(dirname "$common")
@@ -48,6 +56,7 @@ cmd_labels() {
 }
 
 cmd_next() {
+  need_push_sh
   if [ -f "$lock" ]; then
     read -r held since <"$lock" || true
     age=$(( $(date +%s) - ${since:-0} ))
@@ -99,6 +108,7 @@ cmd_next() {
 }
 
 cmd_finish() {
+  need_push_sh
   n=${1:?usage: finish <N> <summary-file>}
   summary=${2:?usage: finish <N> <summary-file>}
   [ -s "$summary" ] || { echo "refused: summary file is empty or missing" >&2; exit 2; }

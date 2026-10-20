@@ -7,7 +7,10 @@ allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/issue.sh) Bash(${CLAUDE_SKILL_DI
 
 # /faberline:agy-work-issue
 
-`${CLAUDE_SKILL_DIR}` is the directory that holds this SKILL.md.
+`${CLAUDE_SKILL_DIR}` is the directory that holds this SKILL.md. Claude Code
+fills it in. AGY does not, and the shell expands an unset `${CLAUDE_SKILL_DIR}`
+to nothing. In AGY, run the script by the absolute path of
+[scripts/issue.sh](scripts/issue.sh), next to this file.
 
 Work one issue, then stop. Claude writes the issues, reviews the pull
 requests, merges, and releases. This loop only implements. The mechanics live
