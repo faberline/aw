@@ -1,8 +1,16 @@
 # Rust layout and layers
 
-Standard S3. State: **candidate**. The checker is
-`scripts/meta/rust_arch_contract.py` in `faberline/workspace` PR #37. Each
-repository configures it with a `ddd.toml` at its root. `core` follows every
+Standard S3. State: **active**. The checker is `aw standards rust-arch check`.
+Each repository configures it with a `ddd.toml` at its root.
+
+```bash
+aw standards rust-arch check --repo ~/faberlines/<repo>
+```
+
+Exit code 0 is pass, 1 is fail, and 2 is a tool error. `--json -` prints the
+`rust-arch-report/1` JSON. `--base origin/main` adds the ratchet rule R1:
+exceptions and large-file entries may only shrink.
+`aw standards rust-arch scaffold --repo <repo>` prints a first `ddd.toml`. `core` follows every
 rule today; its [architecture page](https://github.com/faberline/core/blob/main/docs/architecture.md)
 is the worked example.
 
@@ -73,10 +81,44 @@ Rules:
   `<dep>.workspace = true`.
 - Split a package out only when it has its own consumer or its own build
   reason: another repository depends on it (`-client`), it deploys separately
-  (`-operator`), or it is a separate binary (`-cli`). Do not split by layer
-  alone. Layers live inside a package.
+  (`-operator`), it is a separate binary (`-cli`), or it holds one bounded
+  context (see below). Do not split by layer alone. Layers live inside a
+  package.
 
 `keep` and `tape` already use this shape.
+
+### One package per context
+
+This is a form of the several-packages shape. Each bounded context (a part of
+the domain with its own words and rules) is one package. The four layers are
+modules inside that package.
+
+```text
+<repo>/
+├── Cargo.toml                    virtual workspace
+├── ddd.toml
+└── crates/
+    ├── <repo>/                   the binary; assembly only
+    ├── <repo>-shared-kernel/     small types every context may use
+    ├── <repo>-<context>/
+    │   └── src/
+    │       ├── lib.rs            only `mod` and `pub use`
+    │       ├── domain/
+    │       ├── application/
+    │       ├── infrastructure/
+    │       └── interfaces/
+    └── <repo>-<other-context>/
+```
+
+- The package name is `<repo>-<context>`. The shared kernel is
+  `<repo>-shared-kernel`.
+- In `ddd.toml`, each context names its layers by path, for example
+  `domain = "crates/<repo>-<context>/src/domain"`.
+- A context uses another context only through its `application` layer, and
+  only when `depends_on` names it. Cargo also stops a cycle between packages.
+- `lumen`, `relay`, `defer`, and `tape` move to this form (decided
+  2026-10-20). A repository may keep several contexts in one package until it
+  moves.
 
 ## Inside a package
 
@@ -113,7 +155,7 @@ Other rules the checker applies:
   CHANGELOG, SECURITY, CODE_OF_CONDUCT, CLAUDE, AGENTS, and for now STATUS and
   ROADMAP. Other topics go under `docs/`.
 - Every `ddd.toml` copies the shared `[policy]` table exactly. The canonical
-  copy is `rust_arch/policy.toml` next to the checker.
+  copy is [`src/aw/scripts/rust_arch/policy.toml`](../../src/aw/scripts/rust_arch/policy.toml).
 
 ## Exceptions
 
@@ -133,3 +175,13 @@ migration ends.
 
 `ddd.toml` exists in 8 repositories. It enforces in core, mamba,
 model-router, pgpool, sift, and tape. It only reports in defer and lumen.
+
+## Checker run, 2026-10-20
+
+| Repository | Status | Main findings |
+|---|---|---|
+| core | pass | none |
+| tape | pass (enforce) | 3 files above 400 lines (warnings) |
+| lumen | report | B2 `tokio` in the shared kernel, B6 code in `src/bin/lumen/main.rs`, C2 one file above 1000 lines; 330 findings under exceptions |
+| defer | report | A1 16 loose test files, A5 missing docs |
+| relay | report | no `ddd.toml`; A1 34 loose test files, A2 one-member `[workspace]`, A5 missing docs, B6 |
