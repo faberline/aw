@@ -114,3 +114,18 @@ pools:
     machine_type: e2-standard-2
     spot: true
     max_nodes: 1
+  # relay's server pool: the raft failover suite runs 3 voters, one pod per
+  # node (required anti-affinity), each requesting 250m and 512Mi. The suite
+  # deletes the leader pod, not its node, so the replacement pod returns to the
+  # same node and zonal PVC; no spare node is needed.
+  - repo: relay
+    pool: relay-server
+    machine_type: e2-standard-2
+    spot: true
+    max_nodes: 3
+  # The e2e test Job (relay-it, kubectl) requests 250m and 256Mi.
+  - repo: relay
+    pool: relay-client
+    machine_type: e2-standard-2
+    spot: true
+    max_nodes: 1
