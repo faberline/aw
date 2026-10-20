@@ -65,7 +65,12 @@ pools:
     machine_type: e2-standard-2
     spot: true
     max_nodes: 1
-  # lumen's perf matrix: one server cell at a time, up to 2.5 CPU and 16Gi.
+  # lumen's perf matrix: one server cell per node, up to 2.5 CPU and 16Gi.
+  # Up to 3 cells run at the same time, each in its own lane (namespace).
+  # Not 4: the project quota CPUS_ALL_REGIONS is 32 and IN_USE_ADDRESSES is 8
+  # (each node has an external IP). 3 lanes use 3 x (4 + 4) = 24 CPUs and 6
+  # addresses, plus 2 CPUs and 1 address for system-pool. Raise those quotas
+  # before you raise max_nodes here.
   # Not Spot, because a preempted node would void a cell and its PVC
   # cold-restart measurement. N4, not E2: an N4 node always has the same CPU
   # generation, and an E2 node can have one of several Intel or AMD
@@ -75,14 +80,14 @@ pools:
     pool: lumen-perf-server
     machine_type: n4-highmem-4
     spot: false
-    max_nodes: 1
-  # The perf load generator, kept off the measured server's node. Not Spot,
-  # and N4, for the same reasons.
+    max_nodes: 3
+  # The perf load generator, one per lane, kept off the measured server's
+  # node. Not Spot, and N4, for the same reasons.
   - repo: lumen
     pool: lumen-perf-client
     machine_type: n4-standard-4
     spot: false
-    max_nodes: 1
+    max_nodes: 3
   # tape's server pool: the operator's 2 replicas (leader election, required
   # anti-affinity) and the 1 Tape pod that it renders, one pod per node, plus 1
   # spare node so the HA suite's drain can move the evicted replica. Each pod

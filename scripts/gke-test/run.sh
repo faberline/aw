@@ -19,6 +19,11 @@ set -euo pipefail
 #   TEST_COMMAND   bash command; runs in the checkout after the Job passes
 # Optional:
 #   NAMESPACE      default REPO; must match the overlay's Namespace object
+#   LANE           when set, this run may run beside the other runs of REPO
+#                  (the workflow gives it its own concurrency group). Then
+#                  NAMESPACE must be REPO-<something>, run.sh sets it on the
+#                  overlay, and the overlay may not have cluster-scoped objects,
+#                  because runs that share them would overwrite them
 #   IMAGE_NAME     image name in the overlay and test Job to replace; default REPO
 #   TEST_IMAGE, TEST_IMAGE_NAME   both or neither: also set TEST_IMAGE_NAME
 #                  to TEST_IMAGE, in the test Job only; for a client image
@@ -55,6 +60,11 @@ TEST_ENV="${TEST_ENV:-}"
   || { log "TEST_IMAGE_NAME must differ from IMAGE_NAME ($IMAGE_NAME)"; exit 1; }
 [[ -n "$TEST_JOB" || -z "$TEST_IMAGE$TEST_ENV" ]] \
   || { log "TEST_IMAGE and TEST_ENV need TEST_JOB"; exit 1; }
+LANE="${LANE:-}"
+if [[ -n "$LANE" ]]; then
+  [[ "$NAMESPACE" == "$REPO"-?* ]] \
+    || { log "LANE=$LANE needs its own NAMESPACE, $REPO-<something>; got $NAMESPACE"; exit 1; }
+fi
 RUN_LABEL="${RUN_LABEL:-local-$(date +%s)}"
 TTL_MINUTES="${TTL_MINUTES:-90}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-900s}"
@@ -141,10 +151,22 @@ check_pods() {
   ' "$1"
 }
 
+# A lane run shares the overlay with the other lanes of the repository, so it
+# moves every object into its own namespace.
+if [[ -n "$LANE" ]]; then
+  (cd "$OVERLAY" && kustomize edit set namespace "$NAMESPACE")
+fi
 render "$OVERLAY" "$rendered"
 problems="$(check_pods "$rendered.json")
 $(jq -r --arg ns "$NAMESPACE" '.[] | select(.kind == "Namespace" and .metadata.name != $ns)
   | "\(.kind)/\(.metadata.name): the overlay namespace must be \($ns)"' "$rendered.json")"
+if [[ -n "$LANE" ]]; then
+  problems+="
+$(jq -r --arg lane "$LANE" '.[] | select(.kind | IN("CustomResourceDefinition","ClusterRole",
+    "ClusterRoleBinding","StorageClass","PriorityClass","ValidatingWebhookConfiguration",
+    "MutatingWebhookConfiguration","PersistentVolume","APIService","IngressClass","RuntimeClass"))
+  | "\(.kind)/\(.metadata.name): a lane run (LANE=\($lane)) may not have cluster-scoped objects; other lanes share them"' "$rendered.json")"
+fi
 
 job_name=""
 if [[ -n "$TEST_JOB" ]]; then

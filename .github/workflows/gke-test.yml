@@ -85,6 +85,15 @@ on:
         required: false
         default: ""
         type: string
+      lane:
+        description: >-
+          Lets this call run beside the other runs of the repository. Empty
+          means the call waits for them. Set it only with its own `namespace`
+          (`<repo>-<something>`) and an overlay without cluster-scoped objects:
+          run.sh refuses the run otherwise.
+        required: false
+        default: ""
+        type: string
       ttl-minutes:
         description: >-
           Job timeout in minutes, at most 360 (the limit of a GitHub-hosted
@@ -110,10 +119,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.ttl-minutes }}
     # Runs of one repository share its namespace and its cluster-wide CRDs,
-    # so they queue. Different repositories run at the same time. Never
-    # cancel in progress: a cancelled runner may skip its own teardown.
+    # so they queue. Different repositories run at the same time. A run with a
+    # `lane` has its own namespace and no cluster-scoped objects, so it gets
+    # its own group and runs beside the others. Never cancel in progress: a
+    # cancelled runner may skip its own teardown.
     concurrency:
-      group: gke-test-${{ github.repository }}
+      group: gke-test-${{ github.repository }}${{ inputs.lane && format('-lane-{0}', inputs.lane) || '' }}
       cancel-in-progress: false
     env:
       REPO: ${{ github.event.repository.name }}
@@ -121,6 +132,7 @@ jobs:
       IMAGE: ${{ inputs.image }}
       IMAGE_NAME: ${{ inputs.image-name }}
       NAMESPACE: ${{ inputs.namespace || github.event.repository.name }}
+      LANE: ${{ inputs.lane }}
       TEST_JOB: ${{ inputs.test-job }}
       TEST_COMMAND: ${{ inputs.test-command }}
       TEST_IMAGE: ${{ inputs.test-image }}
