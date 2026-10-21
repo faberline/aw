@@ -1,6 +1,6 @@
 ---
 name: agy-review-issue
-description: "Claude's side of the AGY issue loop: take the oldest GitHub issue labelled agy:done in the current repository, run the acceptance checks beyond unit tests and hunt for bugs, then merge the PR or send it back to agy:todo with a review. With nothing to review, plan the next direction and open new agy:todo issues. Use when a scheduled Claude loop or the user asks to review, accept, or feed the AGY issue loop."
+description: "Claude's side of the AGY issue loop: take the oldest GitHub issue labelled agy:done in the current repository, run the acceptance checks beyond unit tests and hunt for bugs, then merge the PR or send it back to agy:todo with a review. With nothing to review, plan the next direction and open new agy:todo issues. Run by hand, it starts a self-paced /loop that repeats it. Use when a scheduled Claude loop or the user asks to review, accept, or feed the AGY issue loop."
 user-invocable: true
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/review.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/review.sh *)
 ---
@@ -17,6 +17,17 @@ unit tests. This skill is the acceptance gate after it, and the planner in
 front of it. Review one issue per run. If there is none, open new issues. The
 mechanics live in `${CLAUDE_SKILL_DIR}/scripts/review.sh`; your job is the
 judgement.
+
+## Loop
+
+This skill keeps itself running with a self-paced `/loop`:
+
+- Started by hand (not by a `/loop` wakeup) and no `/loop` of this skill is
+  active in the session: first invoke `/loop /faberline:agy-review-issue`,
+  with no interval, then do the run below as its first iteration.
+- Started by a `/loop` wakeup, or a loop is already active: never start
+  another. Do the run, then schedule the next one (step 6).
+- In AGY there is no `/loop`: do one run and stop.
 
 ## Rules
 
@@ -81,8 +92,8 @@ ${CLAUDE_SKILL_DIR}/scripts/review.sh fail <N> <review-file>
 
    The loop picks the issue up again and continues on the same branch.
 
-4. Question: answer it in a file. If the answer needs a human decision, stop
-   and ask the user instead. Then:
+4. Question: answer it in a file. If the answer needs a human decision, do
+   not answer: stop the loop (step 6) and ask the user. Otherwise:
 
 ```bash
 ${CLAUDE_SKILL_DIR}/scripts/review.sh answer <N> <answer-file>
@@ -90,7 +101,7 @@ ${CLAUDE_SKILL_DIR}/scripts/review.sh answer <N> <answer-file>
 
 5. Nothing to review: plan the next work.
    - If the `idle` line shows `agy:todo` at `todo_max` or more, the queue is
-     full. Report it and stop.
+     full. Report it and go to step 6.
    - Read the repository's goals and status (README, roadmap, status or
      handoff docs), the open issues, and recent commits. Pick the next
      direction that extends the project: a gap, a missing case, a friction
@@ -108,8 +119,23 @@ ${CLAUDE_SKILL_DIR}/scripts/review.sh answer <N> <answer-file>
 ${CLAUDE_SKILL_DIR}/scripts/review.sh new "<title>" <body-file>
 ```
 
+6. Schedule the next run of the loop, with `ScheduleWakeup` (`prompt`:
+   `/faberline:agy-review-issue`):
+   - Reviewed, answered, or opened issues: about 900 seconds. AGY's loop
+     runs every 5 to 15 minutes and needs one turn to react.
+   - Idle: an `agy:doing` issue is open, so AGY is working: about 1200
+     seconds.
+   - Idle with the `agy:todo` queue full, or nothing worth opening: about
+     1800 seconds.
+   - Stop the loop (`stop: true`) and report to the user when a human
+     decision blocks the next step: a question only the user can answer, a
+     direction that needs a frozen contract changed, or a refusal you cannot
+     fix. Otherwise the next wakeup picks the same issue again.
+
 ## Exit codes
 
 - `0` — done; report the issue, the decision, and each check with its result.
 - `2` — refused; report the printed reason. Fix it and run the step again.
 - `3` — nothing to review (`next` only); continue with step 5.
+
+Every run inside the loop ends with step 6, whatever the exit code.

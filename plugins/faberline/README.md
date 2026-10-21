@@ -107,8 +107,10 @@ The issue label is the state:
 | `agy:doing` | the loop | The loop is working on it, in `.agents/worktrees/issue-<N>` on branch `agy/issue-<N>`. |
 | `agy:done` | the loop | The loop's turn is over. A PR (`Closes #<N>`) waits for Claude's review, or the last issue comment is a question. |
 
-Claude's side is `/faberline:agy-review-issue`. One run takes the oldest
-`agy:done` issue:
+Claude's side is `/faberline:agy-review-issue`. Run it once by hand in the
+repository's Claude session. It starts a self-paced `/loop` of itself, which
+wakes every 15 to 30 minutes and stops when a decision needs you. One run
+takes the oldest `agy:done` issue:
 
 - PR: run the unit-test gate again, then the checks beyond it (e2e,
   integration, cluster, behavior), and look for bugs. Pass merges the PR
