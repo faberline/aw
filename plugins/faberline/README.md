@@ -18,6 +18,7 @@ change. Do not copy these skills into a repository.
 | `/faberline:gh-merge-pr` | Waits for checks, then squash-merges and verifies. |
 | `/faberline:git-land` | Runs all of the above in order. |
 | `/faberline:agy-work-issue` | One step of the AGY issue loop ([below](#agy-issue-loop)). |
+| `/faberline:agy-review-issue` | Claude's side of the loop: review, merge or send back, and open new issues. |
 
 Each skill keeps its script next to it, in `skills/<skill>/scripts/`. The skill
 calls it as `${CLAUDE_SKILL_DIR}/scripts/<script>.sh`. Claude Code replaces
@@ -71,20 +72,25 @@ Or turn on auto-update: `/plugin` > **Marketplaces** > `faberline` >
 ## Use it in AGY
 
 The plugin is also an Antigravity (AGY) plugin:
-[`.antigravity-plugin/plugin.json`](.antigravity-plugin/plugin.json). AGY reads
-it in place from a local aw checkout. Add the aw `plugins` directory to
-`~/.gemini/config/plugins.json` once:
+[`.antigravity-plugin/plugin.json`](.antigravity-plugin/plugin.json). Install
+it into AGY from a local aw checkout:
 
-```json
-{
-  "entries": [
-    { "path": "~/faberlines/aw/plugins" }
-  ]
-}
+```bash
+agy plugin install ~/faberlines/aw/plugins/faberline
+agy plugin list
 ```
 
-Then restart AGY. `git pull` in that checkout updates the skills. Do not use
-`agy plugin install`: it makes a copy, and the copy does not update.
+`agy plugin list` must show `faberline` with its skills. Then restart AGY.
+
+AGY copies the plugin into `~/.gemini/config/plugins/faberline`. It does not
+read a symlink there, and it did not pick up a `plugins.json` entry that
+points at the checkout. The copy does not update: after aw changes, update
+the checkout, then reinstall:
+
+```bash
+agy plugin uninstall faberline
+agy plugin install ~/faberlines/aw/plugins/faberline
+```
 
 ## AGY issue loop
 
@@ -101,22 +107,18 @@ The issue label is the state:
 | `agy:doing` | the loop | The loop is working on it, in `.agents/worktrees/issue-<N>` on branch `agy/issue-<N>`. |
 | `agy:done` | the loop | The loop's turn is over. A PR (`Closes #<N>`) waits for Claude's review, or the last issue comment is a question. |
 
-Claude's side:
+Claude's side is `/faberline:agy-review-issue`. One run takes the oldest
+`agy:done` issue:
 
-- Write the issue with Goal, Acceptance, Never, and the exact unit-test gate
-  commands. Then add `agy:todo`.
-- The loop runs unit tests only. Run e2e, integration, and cluster tests
-  yourself, during review.
-- Review pass: merge the PR. The merge closes the issue.
-- Review fail: write the review on the PR. Then move the issue back to
-  `agy:todo`. The loop continues on the same branch.
-- Question: answer in the issue. Then move it back to `agy:todo`.
-
-Move an issue back with:
-
-```bash
-gh issue edit <N> --remove-label agy:done --add-label agy:todo
-```
+- PR: run the unit-test gate again, then the checks beyond it (e2e,
+  integration, cluster, behavior), and look for bugs. Pass merges the PR
+  through `/faberline:gh-merge-pr`; the merge closes the issue. Fail writes
+  the review on the PR and moves the issue back to `agy:todo`. The loop
+  continues on the same branch.
+- Question: answer in the issue, then move it back to `agy:todo`.
+- Nothing to review: plan the next work and open new `agy:todo` issues, at
+  most `AGY_TODO_MAX` (default 3) open at once. Each issue has Goal,
+  Acceptance, Never, and Gate (the exact unit-test commands) sections.
 
 Create the three labels once per repository. Run this from that repository's checkout:
 
