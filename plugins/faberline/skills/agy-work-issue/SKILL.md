@@ -1,6 +1,6 @@
 ---
 name: agy-work-issue
-description: "Run one step of the AGY issue loop: take one open GitHub issue labelled agy:todo in the current repository, implement it in its own worktree, run its unit tests, and open a pull request for review. Use when a scheduled AGY loop or the user asks to work the next agy issue."
+description: "Run one step of the AGY issue loop: take one open GitHub issue labelled agy:todo in the current repository, implement it in its own worktree, run its unit tests, and open a pull request for review. Run by hand, it creates a recurring AGY schedule that repeats it every 10 minutes. Use when that schedule or the user asks to work the next agy issue."
 user-invocable: true
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/issue.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/issue.sh *)
 ---
@@ -12,13 +12,31 @@ fills it in. AGY does not, and the shell expands an unset `${CLAUDE_SKILL_DIR}`
 to nothing. In AGY, run the script by the absolute path of
 [scripts/issue.sh](scripts/issue.sh), next to this file.
 
-Work one issue, then stop. Claude writes the issues, reviews the pull
+Work one issue per run. Claude writes the issues, reviews the pull
 requests, merges, and releases. This loop only implements. The mechanics live
 in `${CLAUDE_SKILL_DIR}/scripts/issue.sh`; your job is the implementation.
 
+## Loop
+
+This skill keeps itself running with AGY's `schedule` tool:
+
+- Started by hand, and no recurring job for `/faberline:agy-work-issue` is
+  listed in `/tasks`: first create one with the `schedule` tool. It repeats
+  every 600 seconds (`AGY_WORK_EVERY`, if set, overrides it), runs the prompt
+  `/faberline:agy-work-issue` in this repository, and has no iteration limit.
+  Then do the run below as its first iteration.
+- Started by the schedule, or the job already exists: never create another.
+  Do the run, then stop. The schedule starts the next run.
+- In Claude Code, or anywhere without the `schedule` tool: do one run and stop.
+
+An empty queue is not an error. When `next` exits `3`, report its line and
+end the run; the schedule tries again later. A run never waits or polls for
+new issues itself.
+
 ## Rules
 
-- One issue per run. When the script exits `3`, report its line and stop.
+- One issue per run. When the script exits `3`, report its line and end the
+  run.
 - Write only inside the worktree that `next` prints. Never edit the main
   checkout, and never switch its branch.
 - Do only what the issue asks. Its Acceptance and Never sections are the
@@ -40,7 +58,7 @@ in `${CLAUDE_SKILL_DIR}/scripts/issue.sh`; your job is the implementation.
 ${CLAUDE_SKILL_DIR}/scripts/issue.sh next
 ```
 
-   - Exit `3`: nothing to do. Report the line and stop.
+   - Exit `3`: nothing to do. Report the line and end the run.
    - Exit `0`: it printed `issue=`, `branch=`, `worktree=`, and `pr=`.
 
 2. Read the issue and, when `pr` is not `none`, the review on that PR:
@@ -85,4 +103,6 @@ ${CLAUDE_SKILL_DIR}/scripts/issue.sh ask <N> <question-file>
 - `0` — done; report the issue, the PR, and the gate results.
 - `2` — refused; report the printed reason. Fix it and run the step again,
   or ask a question.
-- `3` — nothing to do; stop.
+- `3` — nothing to do; end the run. The schedule tries again later.
+
+No run deletes the schedule. To stop the loop, cancel the job in `/tasks`.
