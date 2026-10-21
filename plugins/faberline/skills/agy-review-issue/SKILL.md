@@ -122,7 +122,7 @@ ${CLAUDE_SKILL_DIR}/scripts/review.sh new "<title>" <body-file>
 6. Schedule the next run of the loop, with `ScheduleWakeup` (`prompt`:
    `/faberline:agy-review-issue`):
    - Reviewed, answered, or opened issues: about 900 seconds. AGY's loop
-     runs every 5 to 15 minutes and needs one turn to react.
+     runs every 10 minutes and needs one turn to react.
    - Idle: an `agy:doing` issue is open, so AGY is working: about 1200
      seconds.
    - Idle with the `agy:todo` queue full, or nothing worth opening: about

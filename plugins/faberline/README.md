@@ -95,9 +95,12 @@ agy plugin install ~/faberlines/aw/plugins/faberline
 ## AGY issue loop
 
 Claude writes the issues, reviews the pull requests, merges, and releases. AGY
-implements. Each repository has its own AGY session with a scheduled loop
-(every 5 to 15 minutes) that runs `/faberline:agy-work-issue`. A loop works on
-one issue at a time.
+implements. Each repository has its own AGY session. Run
+`/faberline:agy-work-issue` once by hand there. It creates a recurring job
+with AGY's `schedule` tool that runs it again every 10 minutes
+(`AGY_WORK_EVERY` seconds, if set). Each run takes one `agy:todo` issue, or
+ends at once when there is none. A loop works on one issue at a time. Cancel
+the job in `/tasks` to stop it.
 
 The issue label is the state:
 
