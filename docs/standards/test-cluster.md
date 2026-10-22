@@ -504,7 +504,7 @@ of `faberline/aw`.
 ## Budget alert
 
 Terraform creates a monthly budget on the project (`google_billing_budget.test`,
-`monthly_budget` in TWD, default 2000, about US$62, a little over normal test use). Billing emails the billing
+`monthly_budget` in TWD, default 3000, about US$95, close to the US$100 a month set aside for testing). Billing emails the billing
 admins at 50%, 90%, and 100% of actual spend, and at 100% of forecast spend.
 The alert only reports; it does not stop anything.
 
