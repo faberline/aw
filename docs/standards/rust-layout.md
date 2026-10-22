@@ -66,8 +66,7 @@ Use this when the repository ships more than one package.
 ├── docs/               same folders as the one-package shape
 └── crates/
     ├── <repo>/          the main binary; wires the others together
-    ├── <repo>-core/     domain types and rules
-    ├── <repo>-http/     the HTTP surface
+    ├── <repo>-<context>/ one bounded context (see below)
     ├── <repo>-operator/ the Kubernetes operator
     └── <repo>-client/   the generated client other repositories use
 ```
@@ -83,9 +82,9 @@ Rules:
   reason: another repository depends on it (`-client`), it deploys separately
   (`-operator`), it is a separate binary (`-cli`), or it holds one bounded
   context (see below). Do not split by layer alone. Layers live inside a
-  package.
+  package. A `-core` or `-http` package is a split by layer.
 
-`keep` and `tape` already use this shape.
+`tape` and `defer` already use this shape.
 
 ### One package per context
 
@@ -116,9 +115,11 @@ modules inside that package.
   `domain = "crates/<repo>-<context>/src/domain"`.
 - A context uses another context only through its `application` layer, and
   only when `depends_on` names it. Cargo also stops a cycle between packages.
-- `lumen`, `relay`, `defer`, and `tape` move to this form (decided
-  2026-10-20). A repository may keep several contexts in one package until it
-  moves.
+- `lumen`, `relay`, `defer`, `tape`, and `keep` move to this form (decided
+  2026-10-20; `keep` added 2026-10-22). A repository may keep several
+  contexts in one package until it moves.
+- A SaaS service repository also uses the fixed package names in
+  [saas-service.md](saas-service.md) (S5).
 
 ## Inside a package
 

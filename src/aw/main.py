@@ -30,6 +30,7 @@ metadoc_app = typer.Typer(no_args_is_help=True, help="META-doc write allowlist c
 release_plan_app = typer.Typer(no_args_is_help=True, help="Approved, resumable multi-project release planning.")
 standards_app = typer.Typer(no_args_is_help=True, help="Shared faberline standards checks (read-only).")
 rust_arch_app = typer.Typer(no_args_is_help=True, help="S3 Rust layout and layer checks (read-only).")
+saas_service_app = typer.Typer(no_args_is_help=True, help="SaaS service skeleton checks (read-only).")
 
 app.add_typer(change_app, name="change")
 app.add_typer(milestone_app, name="milestone")
@@ -42,6 +43,7 @@ app.add_typer(metadoc_app, name="metadoc")
 app.add_typer(release_plan_app, name="release-plan")
 app.add_typer(standards_app, name="standards")
 standards_app.add_typer(rust_arch_app, name="rust-arch")
+standards_app.add_typer(saas_service_app, name="saas-service")
 
 # The service has its own CLI, independent of tracker-backed engine scripts.
 from aw.mcp.cli import app as mcp_app
@@ -693,6 +695,18 @@ def standards_check(
     if core is not None:
         argv += ["--core", core]
     _delegate("standards", argv)
+
+
+@saas_service_app.command("check")
+def saas_service_check(
+    repo: list[str] = typer.Option([], "--repo"),
+    format_: str = typer.Option("text", "--format"),
+) -> None:
+    """Check SaaS service repositories against the shared skeleton."""
+    argv = ["check", "--format", format_]
+    for item in repo:
+        argv += ["--repo", item]
+    _delegate("saas_service", argv)
 
 
 @rust_arch_app.command("check")
