@@ -302,6 +302,14 @@ class DomainRulesTest(Fixture):
         self.assertEqual({f["subject"] for f in hits}, {"billing.infrastructure"})
         self.assertIn("共 2 處", hits[0]["message"])
 
+    def test_b4_through_private_crate_alias(self) -> None:
+        # `use demo_billing as billing;` at the crate root is private, yet every
+        # module of the crate reaches billing through `crate::billing::`.
+        files = module_form()
+        files["crates/demo-orders/src/lib.rs"] = "use demo_billing as billing;\n\n" + files["crates/demo-orders/src/lib.rs"]
+        files["crates/demo-orders/src/application.rs"] += "use crate::billing::infrastructure::store;\n"
+        self.assertIn(("B4", "billing.infrastructure"), self.found(self.check(files)[1]))
+
     def test_b4_missing_depends_on(self) -> None:
         files = module_form()
         files["ddd.toml"] = files["ddd.toml"].replace('depends_on = ["billing"]', "depends_on = []")
