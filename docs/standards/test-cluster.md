@@ -9,7 +9,7 @@ Status: **guideline, draft, 2026-10-15**. No checker reads a repository's
 overlay yet, so this is not a standard; see the
 [definition](README.md#what-a-standard-is). `scripts/gke-test/run.sh` refuses
 an overlay or a test Job that breaks the rules in [The overlay](#the-overlay)
-or [The test Job](#the-test-job), but only at test time. It becomes standard S5 when `aw standards check` checks the overlay.
+or [The test Job](#the-test-job), but only at test time. It becomes standard S6 when `aw standards check` checks the overlay.
 
 ## Who owns what
 
