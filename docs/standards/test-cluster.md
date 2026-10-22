@@ -389,8 +389,9 @@ A lane lets calls of one repository run at the same time. Set the workflow's
 - Each lane needs its own nodes. Ask for `max_nodes` of at least the number of
   lanes that run at the same time, in every pool that the overlay and the
   test Job use.
-- All repositories share the project quota (CPUS_ALL_REGIONS 32 and
-  IN_USE_ADDRESSES 8: each node has an external IP). A node over the quota
+- All repositories share the project quota (CPUS_ALL_REGIONS 32, E2_CPUS 24
+  in asia-east1). Nodes are private and connect out through one Cloud NAT, so
+  the external-IP quota does not limit them. A node over the quota
   stays Pending until the call times out. Keep the lanes of one matrix, plus
   the other repositories that test at that time, inside that limit.
 

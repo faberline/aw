@@ -67,9 +67,8 @@ pools:
     max_nodes: 1
   # lumen's perf matrix: one server cell per node, up to 2.5 CPU and 16Gi.
   # Up to 3 cells run at the same time, each in its own lane (namespace).
-  # Not 4: the project quota CPUS_ALL_REGIONS is 32 and IN_USE_ADDRESSES is 8
-  # (each node has an external IP). 3 lanes use 3 x (4 + 4) = 24 CPUs and 6
-  # addresses, plus 2 CPUs and 1 address for system-pool. Raise those quotas
+  # Not 4: the project quota CPUS_ALL_REGIONS is 32. 3 lanes use
+  # 3 x (4 + 4) = 24 CPUs, plus 2 CPUs for system-pool. Raise that quota
   # before you raise max_nodes here.
   # Not Spot, because a preempted node would void a cell and its PVC
   # cold-restart measurement. N4, not E2: an N4 node always has the same CPU
