@@ -105,12 +105,13 @@ path = "clients/codegen.toml"
 
 ## Where each repository is (2026-10-22)
 
-The checker ran on each repository's `origin/main`.
+The checker ran on each repository's `origin/main`, then on the branch of
+its S5 pull request. Each pull request passes. They merge together.
 
-| Repository | Findings | Work left |
-|---|---|---|
-| `tape` | SV1 | Add `kind` to `aw.toml`. |
-| `defer` | SV1, SV3 (`defer-storage`), SV8 | Add `kind`. Move the on-disk part (the data directory and the durable snapshots, now in `defer-replication/src/raft`) into `defer-storage`. Add `clients/`. |
-| `relay` | SV1, SV2, SV3 (all six) | Split the one package into crates. `src/cluster` becomes `relay-replication`. `src/broker/log.rs` becomes `relay-storage`. Add `relay-access`. |
-| `lumen` | SV1, SV2, SV3 (all six) | Split the one package into crates. Its `persistence` context becomes `lumen-storage`. |
-| `keep` | SV1, SV3, SV4, SV6, SV7 | Replace `keep-core`, `keep-engine`, and `keep-http` with contexts. `keep-engine/persistence` becomes `keep-storage`. Add `ddd.toml` and the `gke-test` overlay. |
+| Repository | Findings on `main` | Pull request | Exception left |
+|---|---|---|---|
+| `tape` | SV1 | faberline/tape#29 adds `kind`. | none |
+| `defer` | SV1, SV3 (`defer-storage`), SV8 | faberline/defer#29 adds `kind`, `defer-storage`, and `clients/`. | none |
+| `relay` | SV1, SV2, SV3 (all six) | faberline/relay#57 splits the package into the six crates. | none |
+| `lumen` | SV1, SV2, SV3 (all six) | faberline/lumen#159 splits the package into `lumen`, `lumen-shared-kernel`, `lumen-access`, `lumen-operator`, and `lumen-index`. | SV3: `lumen-storage` and `lumen-replication` wait for faberline/lumen#158, which cuts the cycle between index, ingest, persistence, sharding, and replication. |
+| `keep` | SV1, SV3, SV4, SV6, SV7 | faberline/keep#7 replaces `keep-core`, `keep-engine`, and `keep-http` with contexts and adds `ddd.toml`. | SV7: the `gke-test` overlay lands in faberline/keep#6. |
