@@ -15,6 +15,11 @@
 #   back to 0 when no test runs.
 # - No other pool may be untainted AND autoscaled. Such a pool would take the
 #   Pending kube-system pods after a park and start a node again.
+#
+# Network: every node is private (no external IP). Nodes only connect out, to
+# ghcr.io and Google APIs, and they do it through one Cloud NAT (nat.tf). The
+# region allows only 8 external IPs, so with one IP per node three repositories
+# testing at once ran out of IPs (tape run 39561000737: "GCE quota exceeded").
 
 locals {
   # Keyed by pool name. Every row names its pool `<repo>-<role>`.
@@ -111,6 +116,9 @@ resource "google_container_node_pool" "system" {
     auto_repair  = true
     auto_upgrade = true
   }
+  network_config {
+    enable_private_nodes = true
+  }
   node_config {
     machine_type    = "e2-standard-2"
     spot            = false
@@ -147,6 +155,9 @@ resource "google_container_node_pool" "repo" {
   management {
     auto_repair  = true
     auto_upgrade = true
+  }
+  network_config {
+    enable_private_nodes = true
   }
   node_config {
     machine_type    = each.value.machine_type
