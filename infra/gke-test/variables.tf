@@ -35,7 +35,7 @@ variable "reaper_repository" {
 }
 
 variable "monthly_budget" {
-  description = "Monthly budget of the project, in the billing account's currency (TWD). 2000 TWD is about US$62: normal test use is about 1500 to 2000 TWD a month, so an alert means more spend than usual."
+  description = "Monthly budget of the project, in the billing account's currency (TWD). 3000 TWD is about US$95, close to the US$100 a month set aside for testing. Normal test use is about 1500 to 2000 TWD a month."
   type        = number
-  default     = 2000
+  default     = 3000
 }
