@@ -11,6 +11,9 @@ Merge one pull request, verify it merged, then stop. The mechanics live in
 `${CLAUDE_SKILL_DIR}/scripts/merge-pr.sh`: it watches pending checks to completion, refuses
 failing ones, merges with an explicit strategy, and verifies `MERGED`.
 
+`${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
+In Codex or AGY, use the absolute path of that folder instead.
+
 ## Rules
 
 - The argument is the PR number or URL; no argument means the one open PR

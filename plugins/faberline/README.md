@@ -71,6 +71,31 @@ claude plugin marketplace update faberline
 Or turn on auto-update: `/plugin` > **Marketplaces** > `faberline` >
 **Enable auto-update**.
 
+## Codex and AGY
+
+The same skills load in Codex and AGY. These clients do not set
+`${CLAUDE_SKILL_DIR}`, so each skill tells the model to use the absolute
+path of its own folder instead.
+
+Codex reads the same marketplace. Run once:
+
+```bash
+codex plugin marketplace add faberline/aw
+codex plugin add faberline@faberline
+```
+
+Codex keeps a copy. Get changes with `codex plugin marketplace upgrade`.
+
+AGY reads `.antigravity-plugin/plugin.json`. To follow a local aw checkout
+without a copy, list its `plugins` folder in `~/.gemini/config/plugins.json`:
+
+```json
+{ "entries": [ { "path": "~/faberlines/aw/plugins" } ] }
+```
+
+Remove an older copy in `~/.gemini/config/plugins/faberline` first, with
+`agy plugin uninstall faberline`.
+
 ## Issue loop
 
 Three steps, each in its own loop. Run each step skill once, in its own

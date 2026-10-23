@@ -13,6 +13,9 @@ on a first push, a plain push when only ahead, `--force-with-lease` when
 history was rewritten, nothing when already in sync — and never bare
 `--force`.
 
+`${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
+In Codex or AGY, use the absolute path of that folder instead.
+
 ## Rules
 
 - Push only the current branch; the script never touches another ref.

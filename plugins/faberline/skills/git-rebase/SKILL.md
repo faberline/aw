@@ -11,6 +11,9 @@ Rebase the current branch onto one target ref, then stop. The mechanics live
 in `${CLAUDE_SKILL_DIR}/scripts/rebase.sh`; your job is the one thing it cannot do — resolve
 conflicts correctly.
 
+`${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
+In Codex or AGY, use the absolute path of that folder instead.
+
 ## Rules
 
 - The target is always the remote ref: no argument means a freshly fetched

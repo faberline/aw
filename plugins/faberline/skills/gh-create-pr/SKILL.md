@@ -12,6 +12,9 @@ report its state, then stop. The mechanics live in `${CLAUDE_SKILL_DIR}/scripts/
 one PR per head is its invariant, so it reuses an existing open PR instead of
 creating a second.
 
+`${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
+In Codex or AGY, use the absolute path of that folder instead.
+
 ## Rules
 
 - The argument is the base branch; no argument means `main`. The head is

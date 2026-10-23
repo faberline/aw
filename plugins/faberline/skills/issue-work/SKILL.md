@@ -11,6 +11,9 @@ allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/work.sh) Bash(${CLAUDE_SKILL_DIR
 Work one issue per run, then stop. The mechanics live in
 `${CLAUDE_SKILL_DIR}/scripts/work.sh`; your job is the implementation.
 
+`${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
+In Codex or AGY, use the absolute path of that folder instead.
+
 ## Loop
 
 This step starts its own loop. The loop wakes this conversation every 15

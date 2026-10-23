@@ -20,6 +20,9 @@ Any step can move an issue to `blocked` when a human must decide. The loops
 skip `blocked` issues. The user answers in the issue and moves it back to
 `todo`.
 
+`${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
+In Codex or AGY, use the absolute path of that folder instead.
+
 ## Start the loops
 
 Run each step skill once, in its own conversation, in the repository. The

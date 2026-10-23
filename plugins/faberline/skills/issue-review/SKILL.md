@@ -12,6 +12,9 @@ Review one issue per run, then stop. This is the acceptance gate after
 `/faberline:issue-work`. The mechanics live in
 `${CLAUDE_SKILL_DIR}/scripts/review.sh`; your job is the judgement.
 
+`${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
+In Codex or AGY, use the absolute path of that folder instead.
+
 ## Loop
 
 This step starts its own loop. The loop wakes this conversation every 15

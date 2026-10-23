@@ -11,6 +11,9 @@ Turn the current working-tree changes into one well-formed commit, then stop.
 The mechanics live in `${CLAUDE_SKILL_DIR}/scripts/commit.sh`; your job is the two things it
 cannot do — read the diff and author the message.
 
+`${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
+In Codex or AGY, use the absolute path of that folder instead.
+
 ## Rules
 
 - Inspect the complete diff before writing the message; never commit content
