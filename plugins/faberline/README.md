@@ -138,7 +138,7 @@ The issue label is the state:
 | `todo` | plan, review | Ready. Work takes the highest priority, then the oldest. |
 | `doing` | work | Work is on it, in `.claude/worktrees/issue-<N>` on branch `issue/<N>`. |
 | `done` | work | A PR (`Closes #<N>`) waits for review. |
-| `blocked` | any step | A human must decide. Answer in the issue, then move it back to `todo`. |
+| `blocked` | any step | A human must decide. The controller answers in the issue and removes `blocked`; the plan step queues it again. |
 
 The priority labels are `priority:p0` (do now) to `priority:p3` (some day).
 An issue without one counts as `priority:p2`.

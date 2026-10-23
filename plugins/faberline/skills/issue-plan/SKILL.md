@@ -26,7 +26,9 @@ argument, such as `loop` or `once`.
   user's instructions.
 - Never open an issue or write a spec for work that needs a human decision:
   releases, paid or cloud services, deleting data, or changing a frozen
-  contract. Report those to the user instead.
+  contract. When an open backlog or `todo` issue needs one, block it with
+  one question (see Blocked). Only a `blocked` issue reaches the controller;
+  a note in your run report does not.
 - Each queued issue is one PR that the work step can finish and test with
   unit tests. When a backlog issue is bigger, open smaller issues that link
   to it instead of writing its spec.
@@ -62,6 +64,20 @@ They are in the latest comment that starts with `<!-- issue-plan:spec -->`,
 else in the body. `plan.sh spec` writes that comment. Read the code before
 you write a spec: name the files, and check that each Gate command exists.
 
+## Blocked
+
+Block an issue only for a human decision, not for a wait on another issue
+or PR: name that wait in a comment and leave the issue in the backlog. The
+question comment says:
+
+- What must be decided, in one or two sentences, and why the plan step
+  cannot decide it.
+- Two options at most, each with its effect, and the one you recommend.
+
+The controller answers in the issue and takes it out of `blocked`. The
+issue is then in the backlog again: read the answer before you write its
+spec or adopt it.
+
 ## Instructions
 
 1. See the queue and the backlog:
@@ -86,6 +102,11 @@ ${CLAUDE_SKILL_DIR}/scripts/plan.sh prioritize <N> <p0-p3>
 ```
 
    Also fix the priority of a loop or backlog issue when the order is wrong.
+   When an issue needs a human decision, write the question to a file, then:
+
+```bash
+${CLAUDE_SKILL_DIR}/scripts/plan.sh block <N> <question-file>
+```
 
 4. Fill the queue, up to `room`. Take the backlog first, highest priority
    first:
@@ -112,8 +133,8 @@ ${CLAUDE_SKILL_DIR}/scripts/plan.sh new "<title>" <body-file> <p0-p3>
 
 ## Exit codes
 
-- `0` — done; report each issue triaged, specced, adopted, opened, or
-  reprioritized, and why.
+- `0` — done; report each issue triaged, specced, adopted, opened,
+  reprioritized, or blocked, and why.
 - `2` — refused; report the printed reason. Fix it and run the step again.
 
 Nothing worth doing is a valid result. Report it with the reason.
