@@ -6,7 +6,7 @@
     {
       "name": "faberline",
       "source": "./plugins/faberline",
-      "description": "Shared faberline skills: commit, rebase, push, and pull-request flow."
+      "description": "Shared faberline skills: commit, rebase, push, pull-request flow, and the plan, work, and review issue loop."
     }
   ]
 }

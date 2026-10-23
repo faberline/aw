@@ -7,14 +7,12 @@ allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/commit.sh) Bash(${CLAUDE_SKILL_D
 
 # /faberline:git-commit
 
-`${CLAUDE_SKILL_DIR}` is the directory that holds this SKILL.md. Claude Code
-fills it in. AGY does not, and the shell expands an unset `${CLAUDE_SKILL_DIR}`
-to nothing. In AGY, run the script by the absolute path of
-[scripts/commit.sh](scripts/commit.sh), next to this file.
-
 Turn the current working-tree changes into one well-formed commit, then stop.
 The mechanics live in `${CLAUDE_SKILL_DIR}/scripts/commit.sh`; your job is the two things it
 cannot do — read the diff and author the message.
+
+`${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
+In Codex or AGY, use the absolute path of that folder instead.
 
 ## Rules
 

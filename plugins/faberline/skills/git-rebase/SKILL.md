@@ -7,14 +7,12 @@ allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/rebase.sh) Bash(${CLAUDE_SKILL_D
 
 # /faberline:git-rebase
 
-`${CLAUDE_SKILL_DIR}` is the directory that holds this SKILL.md. Claude Code
-fills it in. AGY does not, and the shell expands an unset `${CLAUDE_SKILL_DIR}`
-to nothing. In AGY, run the script by the absolute path of
-[scripts/rebase.sh](scripts/rebase.sh), next to this file.
-
 Rebase the current branch onto one target ref, then stop. The mechanics live
 in `${CLAUDE_SKILL_DIR}/scripts/rebase.sh`; your job is the one thing it cannot do — resolve
 conflicts correctly.
+
+`${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
+In Codex or AGY, use the absolute path of that folder instead.
 
 ## Rules
 

@@ -7,16 +7,14 @@ allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/push.sh) Bash(${CLAUDE_SKILL_DIR
 
 # /faberline:git-push
 
-`${CLAUDE_SKILL_DIR}` is the directory that holds this SKILL.md. Claude Code
-fills it in. AGY does not, and the shell expands an unset `${CLAUDE_SKILL_DIR}`
-to nothing. In AGY, run the script by the absolute path of
-[scripts/push.sh](scripts/push.sh), next to this file.
-
 Push the current branch to `origin`, then stop. The mechanics live in
 `${CLAUDE_SKILL_DIR}/scripts/push.sh`, which picks the safe variant itself: `-u origin HEAD`
 on a first push, a plain push when only ahead, `--force-with-lease` when
 history was rewritten, nothing when already in sync — and never bare
 `--force`.
+
+`${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
+In Codex or AGY, use the absolute path of that folder instead.
 
 ## Rules
 

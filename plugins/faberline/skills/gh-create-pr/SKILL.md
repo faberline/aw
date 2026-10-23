@@ -7,15 +7,13 @@ allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/create-pr.sh) Bash(${CLAUDE_SKIL
 
 # /faberline:gh-create-pr
 
-`${CLAUDE_SKILL_DIR}` is the directory that holds this SKILL.md. Claude Code
-fills it in. AGY does not, and the shell expands an unset `${CLAUDE_SKILL_DIR}`
-to nothing. In AGY, run the script by the absolute path of
-[scripts/create-pr.sh](scripts/create-pr.sh), next to this file.
-
 Open — or reuse — one pull request from the current branch to a base branch,
 report its state, then stop. The mechanics live in `${CLAUDE_SKILL_DIR}/scripts/create-pr.sh`;
 one PR per head is its invariant, so it reuses an existing open PR instead of
 creating a second.
+
+`${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
+In Codex or AGY, use the absolute path of that folder instead.
 
 ## Rules
 

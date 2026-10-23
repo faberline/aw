@@ -1,6 +1,6 @@
 {
   "name": "faberline",
-  "description": "Shared faberline skills: commit, rebase, push, and pull-request flow.",
+  "description": "Shared faberline skills: commit, rebase, push, pull-request flow, and the plan, work, and review issue loop.",
   "author": { "name": "faberline" },
   "repository": "https://github.com/faberline/aw",
   "license": "MIT"
