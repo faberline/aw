@@ -1,64 +1,41 @@
 ---
 name: issue-plan
-description: "The plan step of the issue loop. It starts its own 30-minute loop in the current conversation (Claude Code, Codex, or AGY), then each run reads the current repository's goals, status, and open issues, set the priority of the issues in the loop, and open new GitHub issues labelled todo, each one PR the work step can finish. Use when the loop or the user asks to plan, prioritize, or fill the issue queue."
+description: "The plan step of the issue loop. Each run triages the open issues of one repository, sets their priority, writes the spec of backlog issues, and fills the todo queue from the backlog first, then with new GitHub issues, each one PR the work step can finish. Use when the schedule or the user asks to plan, triage, prioritize, or fill the issue queue."
 user-invocable: true
-argument-hint: "[loop]"
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/plan.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/plan.sh *)
 ---
 
 # /faberline:issue-plan
 
-Fill the `todo` queue and set priorities, then stop. The mechanics live in
-`${CLAUDE_SKILL_DIR}/scripts/plan.sh`; your job is the direction.
+Triage the issues, set priorities, and fill the `todo` queue, then stop.
+The mechanics live in `${CLAUDE_SKILL_DIR}/scripts/plan.sh`; your job is
+the direction.
 
 `${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
-In Codex or AGY, use the absolute path of that folder instead.
+Otherwise, use the absolute path of that folder.
 
-## Loop
+## Runs
 
-This step starts its own loop. The loop wakes this conversation every 30
-minutes. Work and review run in other conversations, each in its own loop.
-A run that the loop started has the argument `loop`.
-
-- With the argument `loop`: the loop runs. Go to Instructions.
-- Without it: start the loop, then do one run now.
-
-Start the loop with the scheduler of the client you run in:
-
-| Client | Tool | Arguments |
-|---|---|---|
-| Claude Code | `CronCreate` | `cron: "13,43 * * * *"`, `prompt: "/faberline:issue-plan loop"` |
-| Codex | `automation_update` | `mode: "create"`, `kind: "heartbeat"`, `destination: "thread"`, `name: "issue-plan <repo>"`, `rrule: "FREQ=MINUTELY;INTERVAL=30"`, `status: "ACTIVE"`, `prompt: "Run the issue-plan skill with the argument loop."` |
-| AGY | `schedule` | `CronExpression: "13,43 * * * *"`, `IsDaemon: true`, `Prompt: "Run the issue-plan skill with the argument loop."` |
-
-- One loop per conversation. When this conversation has a loop of this step
-  already, do not start another. Claude Code: look in `CronList`. Codex:
-  look for the name in `$CODEX_HOME/automations/*/automation.toml`.
-- Use only these schedulers. They wake this conversation. Never use one that
-  starts a new conversation for each run: Claude Code scheduled tasks or
-  routines, Codex `cron` automations, or AGY sidecars.
-- Report the loop's ID and how to stop it: Claude Code `CronDelete <id>`;
-  Codex `automation_update` with `status: "PAUSED"`; AGY `manage_task` with
-  the task ID.
-- A Claude Code loop stops after 7 days, or when the session closes. Run
-  the skill again without `loop` to start a new one.
-- When the client has none of these tools, say so and do one run.
-
-Each run plans once and ends its turn, so the next wakeup can fire.
+Each run does one pass, then ends. This skill never starts a loop or a
+schedule. The controller sets the schedule outside the skill. Ignore any
+argument, such as `loop` or `once`.
 
 ## Rules
 
-- New issues stay inside the repository's stated goals and the user's
-  instructions.
-- Never open an issue for work that needs a human decision: releases, paid or
-  cloud services, deleting data, or changing a frozen contract. Report those
-  to the user instead.
-- Each issue is one PR that the work step can finish and test with unit
-  tests. Split bigger work into several issues.
-- Skip anything an open issue already covers. Adopt that issue instead, when
-  its body has the four sections below.
-- Never edit an issue's body that a human wrote. Open a new issue that links
-  to it instead.
+- New issues and specs stay inside the repository's stated goals and the
+  user's instructions.
+- Never open an issue or write a spec for work that needs a human decision:
+  releases, paid or cloud services, deleting data, or changing a frozen
+  contract. Report those to the user instead.
+- Each queued issue is one PR that the work step can finish and test with
+  unit tests. When a backlog issue is bigger, open smaller issues that link
+  to it instead of writing its spec.
+- The backlog comes before new work. Open a new issue only when no backlog
+  issue fits the next direction.
+- Never edit an issue's body that a human wrote. Write its spec as a comment
+  with `plan.sh spec` instead.
+- Never close an issue. When one looks done or obsolete, set it to `p3` and
+  comment why, with the commit or issue that covers it.
 
 ## Priority
 
@@ -72,48 +49,71 @@ Each run plans once and ends its turn, so the next wakeup can fire.
 The work step takes the `todo` issue with the highest priority, then the
 oldest.
 
+## Spec
+
+The work and review steps read these four sections of a queued issue:
+
+- `## Goal`: one paragraph on the outcome and why.
+- `## Acceptance`: checkable items.
+- `## Never`: what the PR must not touch or do.
+- `## Gate`: the exact unit-test commands the work step runs.
+
+They are in the latest comment that starts with `<!-- issue-plan:spec -->`,
+else in the body. `plan.sh spec` writes that comment. Read the code before
+you write a spec: name the files, and check that each Gate command exists.
+
 ## Instructions
 
-1. See the loop's open issues and the room in the queue:
+1. See the queue and the backlog:
 
 ```bash
 ${CLAUDE_SKILL_DIR}/scripts/plan.sh status
 ```
 
-2. Read the repository's goals and status (README, roadmap, status or
-   handoff docs), all open issues (`gh issue list --state open`), and the
-   recent commits. Pick the next direction that extends the project: a gap, a
-   missing case, a friction point met during review, or the next roadmap
-   step.
+   It prints each loop issue by state, `room=` (free places in the `todo`
+   queue), `backlog=` and `untriaged=` counts, then the oldest untriaged
+   issues and the top of the backlog by priority.
 
-3. Set priorities. Change the priority of a loop issue when the order is
-   wrong:
+2. When there is something to do (`room` above 0, an untriaged issue, or a
+   backlog issue to spec), read the repository's goals and status (README,
+   roadmap, status or handoff docs), the open issues (`gh issue list --state
+   open --limit 200`), and the recent commits. Otherwise skip to step 6.
+
+3. Triage. Give each untriaged issue that `status` printed a priority:
 
 ```bash
 ${CLAUDE_SKILL_DIR}/scripts/plan.sh prioritize <N> <p0-p3>
 ```
 
-4. Fill the queue, up to the `room` that `status` printed. With `room=0`,
-   skip this and end the run. For an existing
-   open issue that fits and has the four sections:
+   Also fix the priority of a loop or backlog issue when the order is wrong.
+
+4. Fill the queue, up to `room`. Take the backlog first, highest priority
+   first:
+   - A backlog issue without a spec: write the spec to a file, then
+     `plan.sh spec <N> <spec-file>`.
+   - Then put it in the queue:
 
 ```bash
 ${CLAUDE_SKILL_DIR}/scripts/plan.sh adopt <N> <p0-p3>
 ```
 
-   For new work, write the body to a file with these sections:
-   - `## Goal`: one paragraph on the outcome and why.
-   - `## Acceptance`: checkable items.
-   - `## Never`: what the PR must not touch or do.
-   - `## Gate`: the exact unit-test commands the work step runs.
+   - Only when no backlog issue fits, open new work. Write the body with the
+     four spec sections, then:
 
 ```bash
 ${CLAUDE_SKILL_DIR}/scripts/plan.sh new "<title>" <body-file> <p0-p3>
 ```
 
+5. With `room=0`, prepare instead: write the spec of the top backlog issue
+   that has none, at most one per run, so the next free place is quick to
+   fill.
+
+6. End the run. When nothing changed, report one line.
+
 ## Exit codes
 
-- `0` — done; report each issue opened, adopted, or reprioritized, and why.
+- `0` — done; report each issue triaged, specced, adopted, opened, or
+  reprioritized, and why.
 - `2` — refused; report the printed reason. Fix it and run the step again.
 
-Nothing worth opening is a valid result. Report it with the reason.
+Nothing worth doing is a valid result. Report it with the reason.
