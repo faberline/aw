@@ -1,0 +1,41 @@
+{
+  "lifecycle_mode": "failure-only",
+  "qualification_blockers": [
+    "Example only: replace every workflow/job identity and applicability rule with reviewed real pilot evidence before separately activating full mode."
+  ],
+  "workflows": [
+    {
+      "path": ".github/workflows/pr-tests.yml",
+      "jobs": ["policy validation", "affected units", "affected functional and e2e", "affected performance"]
+    }
+  ],
+  "qualification": {
+    "version": 1,
+    "trusted_workflows": {
+      ".github/workflows/pr-tests.yml": {
+        "id": 1,
+        "definition_sha": "0000000000000000000000000000000000000000"
+      }
+    },
+    "checks": {
+      "policy": {"workflow": ".github/workflows/pr-tests.yml", "job": "policy validation", "kind": "policy"},
+      "units": {"workflow": ".github/workflows/pr-tests.yml", "job": "affected units", "kind": "unit"},
+      "behavior": {"workflow": ".github/workflows/pr-tests.yml", "job": "affected functional and e2e", "kind": "functional_e2e"},
+      "cost": {"workflow": ".github/workflows/pr-tests.yml", "job": "affected performance", "kind": "performance"}
+    },
+    "always": ["policy"],
+    "protected_paths": ["scripts/ci/**", ".github/actions/**", ".github/issue-ci-required-gates.json"],
+    "rules": [
+      {"paths": ["src/**"], "require": ["units", "behavior", "cost"], "exempt": {}},
+      {
+        "paths": ["docs/**", "*.md"],
+        "require": [],
+        "exempt": {
+          "unit": "Reviewed documentation-only paths do not change executable behavior.",
+          "functional_e2e": "Reviewed documentation-only paths do not change deployed behavior.",
+          "performance": "Reviewed documentation-only paths do not change workload cost."
+        }
+      }
+    ]
+  }
+}

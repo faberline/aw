@@ -1,0 +1,26 @@
+# Placeholder names and SHA: replace only after a reviewed real consumer pilot.
+name: Issue CI handoff
+on:
+  workflow_run:
+    workflows: ["Actual PR tests"]
+    types: [completed]
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+  issues: write
+concurrency:
+  group: issue-ci-handoff
+  cancel-in-progress: false
+jobs:
+  handoff:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      # No consumer checkout. The action reads policy from a frozen default-
+      # branch SHA through GitHub API; implementation comes from this pin.
+      - uses: faberline/aw/.github/actions/issue-ci@REVIEWED_40_HEX_SHA
+        with:
+          operation: handoff
+          run-id: ${{ github.event.workflow_run.id }}
+          policy: .github/issue-ci-required-gates.json
