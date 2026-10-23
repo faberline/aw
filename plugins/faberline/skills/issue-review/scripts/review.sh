@@ -24,7 +24,7 @@ merge_sh=$(cd "$here/../.." && pwd -P)/gh-merge-pr/scripts/merge-pr.sh
 
 common=$(cd "$("${GIT[@]}" rev-parse --git-common-dir)" && pwd)
 main_checkout=$(dirname "$common")
-lock="$common/issue-loop.lock"
+lock="$common/issue-work.lock"
 
 review_tree_of() { echo "$main_checkout/.claude/worktrees/review-$1"; }
 work_tree_of() { echo "$main_checkout/.claude/worktrees/issue-$1"; }

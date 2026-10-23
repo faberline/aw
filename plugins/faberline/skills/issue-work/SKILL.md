@@ -1,15 +1,28 @@
 ---
 name: issue-work
-description: "The work step of the issue loop: take the highest-priority open GitHub issue labelled todo in the current repository (or resume the one labelled doing), implement it in its own worktree, run its unit-test gate, and open a pull request that closes it, labelled done. Use when /faberline:issue-loop or the user asks to work the next issue."
+description: "The work step of the issue loop, run every 15 minutes as /loop 15m /faberline:issue-work: take the highest-priority open GitHub issue labelled todo in the current repository (or resume the one labelled doing), implement it in its own worktree, run its unit-test gate, and open a pull request that closes it, labelled done. Use when the loop or the user asks to work the next issue."
 user-invocable: true
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/work.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/work.sh *)
 ---
 
 # /faberline:issue-work
 
-Work one issue per run, then stop. `/faberline:issue-loop` runs this step
-when no PR waits for review. The mechanics live in
+Work one issue per run, then stop. The mechanics live in
 `${CLAUDE_SKILL_DIR}/scripts/work.sh`; your job is the implementation.
+
+## Loop
+
+This step runs every 15 minutes in its own session:
+`/loop 15m /faberline:issue-work`. The plan and review loops run at the same
+time. Each run works one issue and ends. Never schedule a wakeup yourself.
+
+A lock lets only one run work at a time. When `next` says `busy` and this
+session claimed that issue in an earlier run and did not finish or block
+it, run `work.sh next --mine` to go on with it. Never use `--mine` for an
+issue that this session did not claim.
+
+When `finish` refuses for the same reason as in the last run of this
+session, block the issue with that reason. Do not try a third time.
 
 ## Rules
 

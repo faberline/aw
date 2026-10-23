@@ -17,7 +17,7 @@ change. Do not copy these skills into a repository.
 | `/faberline:gh-create-pr` | Opens a pull request, or reuses the open one. |
 | `/faberline:gh-merge-pr` | Waits for checks, then squash-merges and verifies. |
 | `/faberline:git-land` | Runs all of the above in order. |
-| `/faberline:issue-loop` | Runs the issue loop ([below](#issue-loop)): plan, work, review, again. |
+| `/faberline:issue-loop` | Shows the issue loop ([below](#issue-loop)) and creates its labels. |
 | `/faberline:issue-plan` | Opens issues and sets their priority. |
 | `/faberline:issue-work` | Takes the next issue, implements it, and opens a PR. |
 | `/faberline:issue-review` | Tests the PR, then merges it or sends it back. |
@@ -73,26 +73,34 @@ Or turn on auto-update: `/plugin` > **Marketplaces** > `faberline` >
 
 ## Issue loop
 
-Three steps make one cycle. Run `/faberline:issue-loop` once by hand in the
-repository's Claude Code session. It starts a self-paced `/loop` of itself.
-Each iteration runs one step, in this order:
+Three steps, each in its own loop. Run each loop in its own Claude Code
+session, in the repository:
 
-1. **review** (`/faberline:issue-review`), when an issue is `done`: run the
-   unit-test gate again, then the checks beyond it (build, lint, e2e,
-   integration, behavior), and look for bugs. It runs in a fresh subagent, so
-   it does not share the work step's reasoning. Pass merges the PR through
-   `/faberline:gh-merge-pr`; the merge closes the issue. Fail writes the
-   review on the PR and moves the issue back to `todo`.
-2. **work** (`/faberline:issue-work`), when an issue is `todo` or `doing`:
-   take the highest-priority one, implement it in its own worktree, run its
-   unit-test gate, and open a PR with `Closes #<N>`.
-3. **plan** (`/faberline:issue-plan`), when nothing else is open: read the
-   repository's goals and status, set priorities, and open new `todo`
-   issues, at most `ISSUE_TODO_MAX` (default 3) at once. Each issue has Goal,
-   Acceptance, Never, and Gate (the exact unit-test commands) sections.
+```
+/loop 30m /faberline:issue-plan
+/loop 15m /faberline:issue-work
+/loop 15m /faberline:issue-review
+```
 
-The loop wakes again after 60 seconds when a step changed an issue, and
-after 30 minutes when there is nothing to do.
+The three loops run side by side. Each run does one step and ends. A run
+with nothing to do ends at once.
+
+- **plan** (`/faberline:issue-plan`), every 30 minutes: read the
+  repository's goals and status, set priorities, and open new `todo` issues,
+  at most `ISSUE_TODO_MAX` (default 3) at once. Each issue has Goal,
+  Acceptance, Never, and Gate (the exact unit-test commands) sections.
+- **work** (`/faberline:issue-work`), every 15 minutes: take the
+  highest-priority `todo` issue, implement it in its own worktree, run its
+  unit-test gate, and open a PR with `Closes #<N>`. One issue at a time.
+- **review** (`/faberline:issue-review`), every 15 minutes: take the oldest
+  `done` issue. Run the unit-test gate again, then the checks beyond it
+  (build, lint, e2e, integration, behavior), and look for bugs. Its own
+  session keeps it apart from the work step's reasoning. Pass merges the PR
+  through `/faberline:gh-merge-pr`; the merge closes the issue. Fail writes
+  the review on the PR and moves the issue back to `todo`.
+
+`/faberline:issue-loop` shows the counts and the `blocked` issues, and
+prints the three commands.
 
 The issue label is the state:
 

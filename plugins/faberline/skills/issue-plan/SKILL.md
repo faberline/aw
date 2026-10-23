@@ -1,15 +1,20 @@
 ---
 name: issue-plan
-description: "The plan step of the issue loop: read the current repository's goals, status, and open issues, set the priority of the issues in the loop, and open new GitHub issues labelled todo, each one PR the work step can finish. Use when /faberline:issue-loop or the user asks to plan, prioritize, or fill the issue queue."
+description: "The plan step of the issue loop, run every 30 minutes as /loop 30m /faberline:issue-plan: read the current repository's goals, status, and open issues, set the priority of the issues in the loop, and open new GitHub issues labelled todo, each one PR the work step can finish. Use when the loop or the user asks to plan, prioritize, or fill the issue queue."
 user-invocable: true
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/plan.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/plan.sh *)
 ---
 
 # /faberline:issue-plan
 
-Fill the `todo` queue and set priorities, then stop. `/faberline:issue-loop`
-runs this step when no issue waits for work or review. The mechanics live in
+Fill the `todo` queue and set priorities, then stop. The mechanics live in
 `${CLAUDE_SKILL_DIR}/scripts/plan.sh`; your job is the direction.
+
+## Loop
+
+This step runs every 30 minutes in its own session:
+`/loop 30m /faberline:issue-plan`. The work and review loops run at the same
+time. Each run plans once and ends. Never schedule a wakeup yourself.
 
 ## Rules
 
@@ -58,7 +63,8 @@ ${CLAUDE_SKILL_DIR}/scripts/plan.sh status
 ${CLAUDE_SKILL_DIR}/scripts/plan.sh prioritize <N> <p0-p3>
 ```
 
-4. Fill the queue, up to the `room` that `status` printed. For an existing
+4. Fill the queue, up to the `room` that `status` printed. With `room=0`,
+   skip this and end the run. For an existing
    open issue that fits and has the four sections:
 
 ```bash

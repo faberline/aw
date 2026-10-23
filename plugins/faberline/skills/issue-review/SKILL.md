@@ -1,6 +1,6 @@
 ---
 name: issue-review
-description: "The review step of the issue loop: take the oldest open GitHub issue labelled done in the current repository, run the checks beyond its unit-test gate and hunt for bugs, then merge the PR (which closes the issue) or send it back to todo with a review. Use when /faberline:issue-loop or the user asks to review, accept, or merge the next done issue."
+description: "The review step of the issue loop, run every 15 minutes as /loop 15m /faberline:issue-review: take the oldest open GitHub issue labelled done in the current repository, run the checks beyond its unit-test gate and hunt for bugs, then merge the PR (which closes the issue) or send it back to todo with a review. Use when the loop or the user asks to review, accept, or merge the next done issue."
 user-invocable: true
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/review.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/review.sh *)
 ---
@@ -10,6 +10,16 @@ allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/review.sh) Bash(${CLAUDE_SKILL_D
 Review one issue per run, then stop. This is the acceptance gate after
 `/faberline:issue-work`. The mechanics live in
 `${CLAUDE_SKILL_DIR}/scripts/review.sh`; your job is the judgement.
+
+## Loop
+
+This step runs every 15 minutes in its own session:
+`/loop 15m /faberline:issue-review`. The work loop runs in another session,
+so this review does not share its reasoning. Each run reviews one issue and
+ends. Never schedule a wakeup yourself.
+
+When `pass` refuses for the same reason as in the last run of this session,
+block the issue with that reason. Do not try a third time.
 
 ## Rules
 

@@ -9,8 +9,9 @@
 # .claude/worktrees/issue-<N>.
 #
 # usage:
-#   work.sh next                          claim or resume one issue; prepare
-#                                         its worktree
+#   work.sh next [--mine]                 claim or resume one issue; prepare
+#                                         its worktree; --mine resumes past a
+#                                         lock that this session holds
 #   work.sh finish <N> <summary-file>     push, open or reuse the PR, move the
 #                                         issue to done
 #   work.sh block <N> <question-file>     comment the question, move the
@@ -32,7 +33,7 @@ need_push_sh() {
 
 common=$(cd "$("${GIT[@]}" rev-parse --git-common-dir)" && pwd)
 main_checkout=$(dirname "$common")
-lock="$common/issue-loop.lock"
+lock="$common/issue-work.lock"
 lock_ttl=${ISSUE_LOCK_TTL:-7200}
 
 worktree_of() { echo "$main_checkout/.claude/worktrees/issue-$1"; }
@@ -59,14 +60,18 @@ relabel() { # <N> <from> <to>
 
 cmd_next() {
   need_push_sh
+  mine=${1:-}
   if [ -f "$lock" ]; then
     read -r held since <"$lock" || true
     age=$(( $(date +%s) - ${since:-0} ))
-    if [ "$age" -lt "$lock_ttl" ]; then
+    if [ "$mine" = --mine ]; then
+      echo "lock on issue #${held:-?} (${age}s old) is this session's; resuming it"
+    elif [ "$age" -lt "$lock_ttl" ]; then
       echo "busy: another run holds issue #${held:-?} (${age}s old)"
       exit 3
+    else
+      echo "stale lock on issue #${held:-?} (${age}s old); resuming it"
     fi
-    echo "stale lock on issue #${held:-?} (${age}s old); resuming it"
   fi
 
   n=$(gh issue list --state open --label doing --json number \
@@ -160,8 +165,8 @@ cmd_block() {
 }
 
 case "${1:-}" in
-  next) cmd_next ;;
+  next) shift; cmd_next "$@" ;;
   finish) shift; cmd_finish "$@" ;;
   block) shift; cmd_block "$@" ;;
-  *) echo "usage: work.sh next | finish <N> <summary-file> | block <N> <question-file>" >&2; exit 2 ;;
+  *) echo "usage: work.sh next [--mine] | finish <N> <summary-file> | block <N> <question-file>" >&2; exit 2 ;;
 esac

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The issue loop, for the repository of the current directory. It joins three
-# steps into one cycle. The issue label is the state:
+# The issue loop, for the repository of the current directory. Three steps
+# run as three loops, side by side. The issue label is the state:
 #   plan:   opens issues as todo and sets their priority
 #   work:   todo -> doing -> done (a PR that closes the issue)
 #   review: done -> merged and closed, or back to todo
@@ -9,8 +9,7 @@
 # usage:
 #   loop.sh labels   create the state and priority labels; rename the old
 #                    agy:todo, agy:doing, and agy:done labels
-#   loop.sh step     print the counts and the step to run next:
-#                    review, work, or plan
+#   loop.sh status   print the counts and each blocked issue
 # exit: 0 done; 2 refused
 set -euo pipefail
 
@@ -54,25 +53,15 @@ EOF
   echo "labels ready"
 }
 
-cmd_step() {
+cmd_status() {
   count() { gh issue list --state open --label "$1" --limit 500 --json number --jq length; }
-  todo=$(count todo) doing=$(count doing) done=$(count "done") blocked=$(count blocked)
-  echo "todo=$todo doing=$doing done=$done blocked=$blocked"
-  if [ "$blocked" -gt 0 ]; then
-    gh issue list --state open --label blocked --json number,title \
-      --jq '.[] | "blocked #\(.number) \(.title)"'
-  fi
-  if [ "$done" -gt 0 ]; then
-    echo "step=review"
-  elif [ "$doing" -gt 0 ] || [ "$todo" -gt 0 ]; then
-    echo "step=work"
-  else
-    echo "step=plan"
-  fi
+  echo "todo=$(count todo) doing=$(count doing) done=$(count "done") blocked=$(count blocked)"
+  gh issue list --state open --label blocked --json number,title \
+    --jq '.[] | "blocked #\(.number) \(.title)"'
 }
 
 case "${1:-}" in
   labels) cmd_labels ;;
-  step) cmd_step ;;
-  *) echo "usage: loop.sh labels | step" >&2; exit 2 ;;
+  status) cmd_status ;;
+  *) echo "usage: loop.sh labels | status" >&2; exit 2 ;;
 esac
