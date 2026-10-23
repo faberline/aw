@@ -113,5 +113,5 @@ its S5 pull request. Each pull request passes. They merge together.
 | `tape` | SV1 | faberline/tape#29 adds `kind`. | none |
 | `defer` | SV1, SV3 (`defer-storage`), SV8 | faberline/defer#29 adds `kind`, `defer-storage`, and `clients/`. | none |
 | `relay` | SV1, SV2, SV3 (all six) | faberline/relay#57 splits the package into the six crates. | none |
-| `lumen` | SV1, SV2, SV3 (all six) | faberline/lumen#159 splits the package into `lumen`, `lumen-shared-kernel`, `lumen-access`, `lumen-operator`, and `lumen-index`. | SV3: `lumen-storage` and `lumen-replication` wait for faberline/lumen#158, which cuts the cycle between index, ingest, persistence, sharding, and replication. |
+| `lumen` | SV1, SV2, SV3 (all six) | faberline/lumen#159 splits the package into `lumen`, `lumen-shared-kernel`, `lumen-access`, `lumen-operator`, and `lumen-index`. faberline/lumen#160 adds `lumen-replication`. faberline/lumen#161 adds `lumen-storage`; its rust-arch exceptions need the checker fix in faberline/aw#66. | none after faberline/lumen#161 |
 | `keep` | SV1, SV3, SV4, SV6, SV7 | faberline/keep#7 replaces `keep-core`, `keep-engine`, and `keep-http` with contexts and adds `ddd.toml`. | SV7: the `gke-test` overlay lands in faberline/keep#6. |
