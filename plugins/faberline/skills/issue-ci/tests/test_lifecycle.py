@@ -363,6 +363,24 @@ class FailureOnlyTests(unittest.TestCase):
         self.assertTrue(all('/comments' in path for path, _, _ in self.writes))
         self.assertEqual({l['name'] for l in self.issue['labels']}, {'done', 'priority:p1'})
 
+    def test_done_during_second_snapshot_never_adds_todo(self):
+        failed = self.failed()
+        reads = 0
+
+        def finish_during_snapshot(*args):
+            nonlocal reads
+            reads += 1
+            if reads == 2:
+                self.issue['labels'] = [{'name': 'done'}, {'name': 'priority:p1'}]
+            return failed
+
+        with self.assertRaisesRegex(RuntimeError, 'cannot touch a done issue'):
+            self.invoke(snapshot_sequence=finish_during_snapshot)
+        self.assertEqual(reads, 2)
+        self.assertTrue(self.writes)  # A pending journal is safe to retain.
+        self.assertTrue(all('/comments' in path for path, _, _ in self.writes))
+        self.assertEqual({l['name'] for l in self.issue['labels']}, {'done', 'priority:p1'})
+
     # Same guarantees run in failure-only mode, including the ready recovery
     # that must not re-add todo after AGY has consumed that handoff.
     test_duplicate_failure_never_undoes_later_worker_claim = ApplyTests.test_duplicate_failure_never_undoes_later_worker_claim

@@ -208,6 +208,9 @@ def process_head(args, config, check_event=True):
     if snapshot(args.repo, args.head, config) != snapshots:
         raise RuntimeError('CI runs changed during evaluation; pending intent is retryable')
     if phase == 'pending':
+        # Snapshot pagination can outlast a lifecycle transition. Recheck after
+        # that read, immediately before adding the target label.
+        labels = fresh_labels()
         if state not in labels:
             api(f'{issue_path}/labels', 'POST', {'labels': [state]})
         # Durable proof that the desired label was added BEFORE deleting old
