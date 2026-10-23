@@ -1,6 +1,22 @@
 {
+  "lifecycle_mode": "failure-only",
+  "qualification_blockers": [
+    "Replace placeholders with reviewed complete qualification gates before enabling full mode."
+  ],
   "workflows": [
-    {"path": ".github/workflows/pr-unit.yml", "jobs": ["affected-unit"]},
-    {"path": ".github/workflows/pr-cloud.yml", "jobs": ["functional", "e2e", "performance"]}
+    {
+      "path": ".github/workflows/pr-unit.yml",
+      "jobs": [
+        "affected-unit"
+      ]
+    },
+    {
+      "path": ".github/workflows/pr-cloud.yml",
+      "jobs": [
+        "functional",
+        "e2e",
+        "performance"
+      ]
+    }
   ]
 }

@@ -1,3 +1,5 @@
+# Select failure-only in the trusted config while qualification blockers remain.
+# The controller suppresses done itself; no blanket guard is needed for failures.
 # Copy ONLY after choosing the consumer's actual required workflows/jobs.
 # This is a trusted default-branch workflow, NOT pull_request_target execution.
 name: Issue CI handoff
