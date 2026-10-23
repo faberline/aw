@@ -205,7 +205,13 @@ class Index:
         return self.external(pkg, segs)
 
     def land(self, target: Target, hops: int = 0) -> tuple[Package, str, Segs] | None:
-        """Follow ``target`` to the file that defines it, through pub use re-exports."""
+        """Follow ``target`` to the file that defines it, through use re-exports.
+
+        A private ``use`` counts too: ``use lumen_storage as storage;`` at a
+        crate root is how the crate's own modules reach ``crate::storage::``.
+        Code that compiles only names a binding it can see, so the checker
+        need not repeat the privacy check.
+        """
         pkg = self.cargo.packages.get(target.crate)
         if pkg is None or not target.internal:
             return None
@@ -226,7 +232,7 @@ class Index:
         if rest and hops < MAX_HOPS:
             scope = facts.scopes.get(rel)
             binding = scope.uses.get(rest[0]) if scope is not None else None
-            if binding is not None and binding.pub:
+            if binding is not None:
                 nxt = self.resolve(pkg, segs[:cut], facts, rel, binding.segs + rest[1:], hops + 1)
                 if nxt is not None and nxt.internal:
                     return self.land(nxt, hops + 1)
