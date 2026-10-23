@@ -1,7 +1,8 @@
 ---
 name: issue-plan
-description: "The plan step of the issue loop, run every 30 minutes as /loop 30m /faberline:issue-plan: read the current repository's goals, status, and open issues, set the priority of the issues in the loop, and open new GitHub issues labelled todo, each one PR the work step can finish. Use when the loop or the user asks to plan, prioritize, or fill the issue queue."
+description: "The plan step of the issue loop. It starts its own 30-minute loop in the current conversation (Claude Code, Codex, or AGY), then each run reads the current repository's goals, status, and open issues, set the priority of the issues in the loop, and open new GitHub issues labelled todo, each one PR the work step can finish. Use when the loop or the user asks to plan, prioritize, or fill the issue queue."
 user-invocable: true
+argument-hint: "[loop]"
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/plan.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/plan.sh *)
 ---
 
@@ -12,9 +13,35 @@ Fill the `todo` queue and set priorities, then stop. The mechanics live in
 
 ## Loop
 
-This step runs every 30 minutes in its own session:
-`/loop 30m /faberline:issue-plan`. The work and review loops run at the same
-time. Each run plans once and ends. Never schedule a wakeup yourself.
+This step starts its own loop. The loop wakes this conversation every 30
+minutes. Work and review run in other conversations, each in its own loop.
+A run that the loop started has the argument `loop`.
+
+- With the argument `loop`: the loop runs. Go to Instructions.
+- Without it: start the loop, then do one run now.
+
+Start the loop with the scheduler of the client you run in:
+
+| Client | Tool | Arguments |
+|---|---|---|
+| Claude Code | `CronCreate` | `cron: "13,43 * * * *"`, `prompt: "/faberline:issue-plan loop"` |
+| Codex | `automation_update` | `mode: "create"`, `kind: "heartbeat"`, `destination: "thread"`, `name: "issue-plan <repo>"`, `rrule: "FREQ=MINUTELY;INTERVAL=30"`, `status: "ACTIVE"`, `prompt: "Run the issue-plan skill with the argument loop."` |
+| AGY | `schedule` | `CronExpression: "13,43 * * * *"`, `IsDaemon: true`, `Prompt: "Run the issue-plan skill with the argument loop."` |
+
+- One loop per conversation. When this conversation has a loop of this step
+  already, do not start another. Claude Code: look in `CronList`. Codex:
+  look for the name in `$CODEX_HOME/automations/*/automation.toml`.
+- Use only these schedulers. They wake this conversation. Never use one that
+  starts a new conversation for each run: Claude Code scheduled tasks or
+  routines, Codex `cron` automations, or AGY sidecars.
+- Report the loop's ID and how to stop it: Claude Code `CronDelete <id>`;
+  Codex `automation_update` with `status: "PAUSED"`; AGY `manage_task` with
+  the task ID.
+- A Claude Code loop stops after 7 days, or when the session closes. Run
+  the skill again without `loop` to start a new one.
+- When the client has none of these tools, say so and do one run.
+
+Each run plans once and ends its turn, so the next wakeup can fire.
 
 ## Rules
 

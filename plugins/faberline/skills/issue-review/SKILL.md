@@ -1,7 +1,8 @@
 ---
 name: issue-review
-description: "The review step of the issue loop, run every 15 minutes as /loop 15m /faberline:issue-review: take the oldest open GitHub issue labelled done in the current repository, run the checks beyond its unit-test gate and hunt for bugs, then merge the PR (which closes the issue) or send it back to todo with a review. Use when the loop or the user asks to review, accept, or merge the next done issue."
+description: "The review step of the issue loop. It starts its own 15-minute loop in the current conversation (Claude Code, Codex, or AGY), then each run takes the oldest open GitHub issue labelled done in the current repository, run the checks beyond its unit-test gate and hunt for bugs, then merge the PR (which closes the issue) or send it back to todo with a review. Use when the loop or the user asks to review, accept, or merge the next done issue."
 user-invocable: true
+argument-hint: "[loop]"
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/review.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/review.sh *)
 ---
 
@@ -13,13 +14,39 @@ Review one issue per run, then stop. This is the acceptance gate after
 
 ## Loop
 
-This step runs every 15 minutes in its own session:
-`/loop 15m /faberline:issue-review`. The work loop runs in another session,
-so this review does not share its reasoning. Each run reviews one issue and
-ends. Never schedule a wakeup yourself.
+This step starts its own loop. The loop wakes this conversation every 15
+minutes. Work runs in another conversation, so this review does not share
+its reasoning. Plan also runs in its own conversation. A run that the loop
+started has the argument `loop`.
 
-When `pass` refuses for the same reason as in the last run of this session,
-block the issue with that reason. Do not try a third time.
+- With the argument `loop`: the loop runs. Go to Instructions.
+- Without it: start the loop, then do one run now.
+
+Start the loop with the scheduler of the client you run in:
+
+| Client | Tool | Arguments |
+|---|---|---|
+| Claude Code | `CronCreate` | `cron: "11,26,41,56 * * * *"`, `prompt: "/faberline:issue-review loop"` |
+| Codex | `automation_update` | `mode: "create"`, `kind: "heartbeat"`, `destination: "thread"`, `name: "issue-review <repo>"`, `rrule: "FREQ=MINUTELY;INTERVAL=15"`, `status: "ACTIVE"`, `prompt: "Run the issue-review skill with the argument loop."` |
+| AGY | `schedule` | `CronExpression: "11,26,41,56 * * * *"`, `IsDaemon: true`, `Prompt: "Run the issue-review skill with the argument loop."` |
+
+- One loop per conversation. When this conversation has a loop of this step
+  already, do not start another. Claude Code: look in `CronList`. Codex:
+  look for the name in `$CODEX_HOME/automations/*/automation.toml`.
+- Use only these schedulers. They wake this conversation. Never use one that
+  starts a new conversation for each run: Claude Code scheduled tasks or
+  routines, Codex `cron` automations, or AGY sidecars.
+- Report the loop's ID and how to stop it: Claude Code `CronDelete <id>`;
+  Codex `automation_update` with `status: "PAUSED"`; AGY `manage_task` with
+  the task ID.
+- A Claude Code loop stops after 7 days, or when the session closes. Run
+  the skill again without `loop` to start a new one.
+- When the client has none of these tools, say so and do one run.
+
+Each run reviews one issue and ends its turn, so the next wakeup can fire.
+
+When `pass` refuses for the same reason as in the last run of this
+conversation, block the issue with that reason. Do not try a third time.
 
 ## Rules
 

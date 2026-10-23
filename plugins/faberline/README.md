@@ -73,17 +73,21 @@ Or turn on auto-update: `/plugin` > **Marketplaces** > `faberline` >
 
 ## Issue loop
 
-Three steps, each in its own loop. Run each loop in its own Claude Code
-session, in the repository:
+Three steps, each in its own loop. Run each step skill once, in its own
+conversation, in the repository:
 
 ```
-/loop 30m /faberline:issue-plan
-/loop 15m /faberline:issue-work
-/loop 15m /faberline:issue-review
+/faberline:issue-plan
+/faberline:issue-work
+/faberline:issue-review
 ```
 
-The three loops run side by side. Each run does one step and ends. A run
-with nothing to do ends at once.
+Each skill starts its own loop, which wakes that same conversation. It uses
+the scheduler of the client: Claude Code `CronCreate`, a Codex heartbeat
+automation, or the AGY `schedule` tool. A Claude Code loop stops after 7
+days; run the skill again to start a new one. The three loops run side by
+side. Each run does one step and ends. A run with nothing to do ends at
+once.
 
 - **plan** (`/faberline:issue-plan`), every 30 minutes: read the
   repository's goals and status, set priorities, and open new `todo` issues,
@@ -95,12 +99,11 @@ with nothing to do ends at once.
 - **review** (`/faberline:issue-review`), every 15 minutes: take the oldest
   `done` issue. Run the unit-test gate again, then the checks beyond it
   (build, lint, e2e, integration, behavior), and look for bugs. Its own
-  session keeps it apart from the work step's reasoning. Pass merges the PR
+  conversation keeps it apart from the work step's reasoning. Pass merges the PR
   through `/faberline:gh-merge-pr`; the merge closes the issue. Fail writes
   the review on the PR and moves the issue back to `todo`.
 
-`/faberline:issue-loop` shows the counts and the `blocked` issues, and
-prints the three commands.
+`/faberline:issue-loop` shows the counts and the `blocked` issues.
 
 The issue label is the state:
 
