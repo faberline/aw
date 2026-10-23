@@ -54,10 +54,12 @@ it recomputes every PR from fresh current-head metadata. The PR must use `issue/
 Fork PRs and custom branch conventions are deliberately refused.
 
 Each handoff journals an authenticated Actions-bot comment keyed by head,
-manifest, result and relevant latest runs/attempts. Failure keys only the
-failing run attempts, so unrelated workflow progress cannot repeat the same
-failure or undo a later AGY claim. A new failed attempt after a successful
-rerun is a new failure and can return the issue to todo again. Journal phases are:
+manifest and result. Success also keys the latest run attempts. Failure
+keys the coding epoch: the latest authenticated, applied done receipt for
+this PR/head/policy, or the initial epoch. Additional workflow failures on
+the same head cannot repeat a handoff or undo a claimed AGY retry. After
+CI successfully applies done, a later failure belongs to a new epoch and
+can legitimately return the issue to todo again. Journal phases are:
 `pending` (retryable intent), `ready` (desired label durably known present,
 recorded before any old label deletion), and `applied` (completed receipt).
 Snapshot/head failures after intent do not dedupe future handoffs. After a

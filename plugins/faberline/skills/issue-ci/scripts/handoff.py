@@ -121,19 +121,21 @@ def process_head(args, config, check_event=True):
     labels = {l['name'] for l in current['labels']}
     if current['state'] != 'open' or not labels & {'todo', 'doing', 'done'} or 'blocked' in labels:
         raise RuntimeError('issue is closed, blocked, or unmanaged; no mutation')
-    # Failure receipts key only failing run attempts: unrelated workflow
-    # progress cannot requeue the same failure, but a genuinely new failed
-    # attempt after a successful rerun still returns the issue to todo.
-    failed = {'failure', 'timed_out', 'action_required', 'startup_failure'}
-    receipt_runs = evidence if state == 'done' else sorted(
-        f'{run["id"]}:{run.get("run_attempt", 1)}'
-        for run, jobs in snapshots.values()
-        if (run.get('conclusion') in failed
-            or any(job.get('conclusion') in failed for job in jobs))
-    )
-    digest = hashlib.sha256(json.dumps([args.head, receipt_runs, config, state], sort_keys=True).encode()).hexdigest()
-    prefix = f'<!-- issue-ci:{digest}:'
     comments = pages(f'{issue_path}/comments')
+    policy = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
+    # A failure hands a head back once per coding epoch, regardless of how
+    # many more workflows fail while AGY is fixing it. A successfully APPLIED
+    # done receipt begins a new epoch, allowing a later done -> todo regression.
+    qualified = [c for c in comments
+                 if c['user']['login'] == 'github-actions[bot]'
+                 and c['body'].startswith('<!-- issue-ci:')
+                 and c['body'].splitlines()[0].endswith(':applied -->')
+                 and f'\nCI: done for PR #{args.pr} head `{args.head}`.\n' in c['body']
+                 and f'\nPolicy: {policy}\n' in c['body']]
+    epoch = qualified[-1]['id'] if qualified else 0
+    receipt_key = evidence if state == 'done' else ['coding-epoch', epoch]
+    digest = hashlib.sha256(json.dumps([args.head, receipt_key, config, state], sort_keys=True).encode()).hexdigest()
+    prefix = f'<!-- issue-ci:{digest}:'
     journals = [c for c in comments if c['body'].startswith(prefix) and c['user']['login'] == 'github-actions[bot]']
     journal = journals[-1] if journals else None
     phase = journal['body'].split(prefix, 1)[1].split(' -->', 1)[0] if journal else 'pending'
@@ -146,7 +148,7 @@ def process_head(args, config, check_event=True):
     urls = '\n'.join(s[0]['html_url'] for s in snapshots.values())
 
     def body(phase):
-        return f'{prefix}{phase} -->\nCI: {state} for PR #{args.pr} head `{args.head}`.\n{detail}\n{urls}'
+        return f'{prefix}{phase} -->\nCI: {state} for PR #{args.pr} head `{args.head}`.\nPolicy: {policy}\n{detail}\n{urls}'
 
     def fresh_labels():
         fresh = api(pr_path)

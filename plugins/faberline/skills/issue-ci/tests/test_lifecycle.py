@@ -185,6 +185,26 @@ class ApplyTests(unittest.TestCase):
         self.invoke(later)
         self.assertEqual(self.writes, [])
 
+    def test_additional_failed_workflow_cannot_undo_claimed_coding_epoch(self):
+        first = evidence()
+        first[GATES[0]['path']][0]['conclusion'] = 'failure'
+        first[GATES[0]['path']][1][0]['conclusion'] = 'failure'
+        first[GATES[1]['path']][0].update(status='in_progress', conclusion=None)
+        self.invoke(first)
+        self.assertIn('todo', {l['name'] for l in self.issue['labels']})
+        self.issue['labels'] = [{'name': 'doing'}, {'name': 'priority:p1'}]
+        later = evidence()
+        for path in (GATES[0]['path'], GATES[1]['path']):
+            later[path][0]['conclusion'] = 'failure'
+            later[path][1][0]['conclusion'] = 'failure'
+        # Same head, run IDs and attempts; only B's pending result changed.
+        self.writes.clear()
+        comments_before = len(self.comments)
+        self.invoke(later)
+        self.assertEqual(self.writes, [])
+        self.assertEqual(len(self.comments), comments_before)
+        self.assertEqual({l['name'] for l in self.issue['labels']}, {'doing', 'priority:p1'})
+
     def test_snapshot_progress_after_intent_is_retryable(self):
         first = evidence()
         first[GATES[0]['path']][1][0]['conclusion'] = 'failure'
