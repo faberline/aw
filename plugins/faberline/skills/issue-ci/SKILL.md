@@ -23,6 +23,21 @@ job names (including each matrix expansion) and install a nonempty trusted
 protection alone is not inferred: an empty or unspecified gate set refuses.
 The names in the example are placeholders, not an assertion of live gates.
 
+The trusted config accepts `lifecycle_mode: "failure-only"` or `"full"`.
+Omitting the mode keeps the legacy full behavior. `qualification_blockers`
+is a list of nonempty strings (omitting it means no declared blockers).
+A nonempty list prevents `done` inside the controller even if mode is full.
+Use failure-only while qualification coverage decisions remain unresolved:
+it returns only confirmed required-gate failures on a current-head doing issue
+to todo, with exact diagnostic links. Success, missing, skipped and pending
+evidence never writes lifecycle or comments in this mode; already done
+issues are untouched, including fresh checks during journal recovery.
+An existing failure journal may finish its checkpoint/removal sequence, but
+it never re-adds todo consumed by AGY. Keep all real required gates and
+blockers listed; do not invent passing jobs or clear blockers to activate.
+Clearing blockers and selecting full requires a separately reviewed complete
+qualification policy. Failure-only does not grant merge or review acceptance.
+
 Choose the source before rollout: either maintain this explicit manifest as
 the reviewed gate contract, or implement a separate tested adapter for that
 repository's branch-protection/ruleset requirements. Do not guess that all
