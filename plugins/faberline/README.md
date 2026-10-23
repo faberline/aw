@@ -122,11 +122,14 @@ once.
   highest-priority `todo` issue, implement it in its own worktree, run its
   unit-test gate, and open a PR with `Closes #<N>`. One issue at a time.
 - **review** (`/faberline:issue-review`), every 15 minutes: take the oldest
-  `done` issue. Run the unit-test gate again, then the checks beyond it
-  (build, lint, e2e, integration, behavior), and look for bugs. Its own
-  conversation keeps it apart from the work step's reasoning. Pass merges the PR
-  through `/faberline:gh-merge-pr`; the merge closes the issue. Fail writes
-  the review on the PR and moves the issue back to `todo`.
+  `done` issue. Read the issue, the PR, its diff, and its CI checks, and
+  look for bugs. Review runs no tests: the PR checks do, and each repository
+  decides what its CI runs, also whether e2e goes to the shared GKE cluster.
+  Its own conversation keeps it apart from the work step's reasoning. Pass
+  merges the PR through `/faberline:gh-merge-pr` after the checks pass; the
+  merge closes the issue. A PR without checks blocks the issue until the
+  repository has CI. Fail writes the review on the PR and moves the issue
+  back to `todo`.
 
 `/faberline:issue-loop` shows the counts and the `blocked` issues.
 

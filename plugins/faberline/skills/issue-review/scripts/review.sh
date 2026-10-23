@@ -10,7 +10,9 @@
 #   review.sh next                        pick the oldest done issue; check
 #                                         out its PR head for review
 #   review.sh pass <N> <head-sha>         merge the PR (it must still be at
-#                                         <head-sha>), close the issue, clean up
+#                                         <head-sha>, with checks), close the
+#                                         issue, clean up; a PR without checks
+#                                         blocks the issue
 #   review.sh fail <N> <review-file>      comment the review on the PR, move
 #                                         the issue back to todo
 #   review.sh block <N> <question-file>   comment the question on the issue,
@@ -48,6 +50,10 @@ need_done() { # <N>
 
 need_file() { # <path> <what>
   [ -s "$1" ] || { echo "refused: $2 file is empty or missing" >&2; exit 2; }
+}
+
+checks_of() { # <pr> -> the number of checks on the PR, run or not
+  gh pr view "$1" --json statusCheckRollup --jq '.statusCheckRollup | length'
 }
 
 drop_review_tree() { # <N>
@@ -94,6 +100,7 @@ cmd_next() {
   echo "pr=$pr"
   echo "head=$head"
   echo "worktree=$wt"
+  echo "checks=$(checks_of "$pr")"
   echo "base=$("${GIT[@]}" merge-base origin/main "$head")"
 }
 
@@ -110,6 +117,16 @@ cmd_pass() {
   head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
   [ "$head" = "$reviewed" ] \
     || { echo "refused: PR #$pr moved to $head after the review of $reviewed; review again" >&2; exit 2; }
+
+  # Review reads; the PR checks test. A PR without checks ran no test, so the
+  # repository needs CI before the loop can merge it.
+  if [ "$(checks_of "$pr")" = 0 ]; then
+    gh issue comment "$n" --body "Review: blocked. PR #$pr has no checks, so no test ran. Add CI to this repository, then move the issue back to todo." >/dev/null
+    drop_review_tree "$n"
+    gh issue edit "$n" --remove-label "done" --add-label blocked >/dev/null
+    echo "refused: PR #$pr has no checks; issue #$n is blocked until the repository has CI" >&2
+    exit 2
+  fi
 
   # issue/* branches are per-issue; the merge removes the remote one.
   "$merge_sh" "$pr" --delete-branch

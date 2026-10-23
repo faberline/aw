@@ -66,7 +66,7 @@ conversation, block the issue with that reason. Do not try a third time.
   scripts move the labels.
 - Run the unit-test gate only. Never run e2e, integration, or cluster tests:
   no `kind`, `kubectl`, `gcloud`, `terraform`, or workflow dispatch. The
-  review step and the PR checks run those.
+  PR checks run those.
 - Never run bare `git stash`. Never use `git push --force`.
 - When a decision belongs to a human, or the gate still fails after a fix you
   can justify, block the issue with a clear question. Do not guess.
