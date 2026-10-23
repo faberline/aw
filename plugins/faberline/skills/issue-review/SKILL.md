@@ -1,6 +1,6 @@
 ---
 name: issue-review
-description: "The review step of the issue loop. Each run takes the oldest open GitHub issue labelled done in the current repository, reads the issue, the PR, its diff, and its CI checks (it runs no tests), then merges the PR (which closes the issue) or sends it back to todo with a review. Use when a schedule or the user asks to review, accept, or merge the next done issue."
+description: "The review step of the issue loop. Each run takes the oldest open GitHub issue labelled done in the current repository, reads the issue, the PR, its diff, and its CI checks (it runs no tests), then independently verifies current-head CI and records its review without merging or changing lifecycle. Use when a schedule or the user asks to review the next done issue."
 user-invocable: true
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/review.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/review.sh *)
 ---
@@ -23,7 +23,7 @@ argument, such as `loop` or `once`.
 Each run reviews one issue and ends its turn.
 
 When `pass` refuses for the same reason as in the last run of this
-conversation, block the issue with that reason. Do not try a third time.
+conversation, report evidence with that reason; leave lifecycle unchanged. Do not try a third time.
 
 ## Rules
 
@@ -33,13 +33,15 @@ conversation, block the issue with that reason. Do not try a third time.
   Do not run tests, builds, or e2e yourself. The PR checks run them, and
   each repository decides what its CI runs, also whether e2e goes to the
   shared GKE cluster.
-- Never edit the PR branch. The review worktree is for reading only. A fix
-  goes back to the work step as a failed review.
+- Never edit the PR branch. The review worktree is for reading only. Report needed fixes for explicit human triage; do not change lifecycle labels.
 - Do not create cloud resources or dispatch or rerun workflows by hand.
-- Merge only through `review.sh pass`. It merges with `/faberline:gh-merge-pr`
-  and only at the commit you reviewed. It waits for the checks and refuses
-  when one fails. A PR without checks ran no test: `pass` blocks the issue
-  until the repository has CI.
+- Never merge, close issues, delete coding worktrees/branches, or change
+  lifecycle labels. CI alone sets done/todo. Set `ISSUE_CI_CONFIG` to the
+  approved manifest from the trusted default branch (never from the PR).
+  Both next and pass independently verify ALL configured current-head gates.
+  Missing/pending/cancelled/skipped checks refuse acceptance. Missing gate
+  configuration is a deployment blocker, not permission to accept all green
+  visible checks.
 
 ## Instructions
 
@@ -72,7 +74,7 @@ git -C <worktree> diff <base>..<head>
 
 3. Decide:
    - Pass: every Acceptance item holds, no Never item is broken, no check
-     failed, and no bug was found. Then merge:
+     failed, and no bug was found. Then record acceptance (no merge):
 
 ```bash
 ${CLAUDE_SKILL_DIR}/scripts/review.sh pass <N> <head>
@@ -85,8 +87,8 @@ ${CLAUDE_SKILL_DIR}/scripts/review.sh pass <N> <head>
 ${CLAUDE_SKILL_DIR}/scripts/review.sh fail <N> <review-file>
 ```
 
-     The work step picks the issue up again and continues on the same
-     branch.
+     This reports evidence only. A human decides any next coding action;
+     CI lifecycle labels remain unchanged.
 
    - Blocked: the decision needs a human (a frozen contract, a release, a
      paid service, deleting data). Write the question to a file, then:
@@ -99,5 +101,5 @@ ${CLAUDE_SKILL_DIR}/scripts/review.sh block <N> <question-file>
 
 - `0` — done; report the issue, the decision, and the PR checks.
 - `2` — refused; report the printed reason. Fix it and run the step again.
-  A PR without checks is already blocked; end the run.
+  Leave lifecycle unchanged and end the run when evidence/config is missing.
 - `3` — nothing to review; end the run.
