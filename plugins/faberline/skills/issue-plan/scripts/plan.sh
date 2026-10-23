@@ -24,6 +24,9 @@
 #   plan.sh adopt <N> <p0-p3>                put a backlog issue that has a
 #                                            spec into the todo queue
 #   plan.sh prioritize <N> <p0-p3>           set the priority of an open issue
+#   plan.sh block <N> <question-file>        comment the question on a backlog
+#                                            or todo issue that needs a human
+#                                            decision, move it to blocked
 # exit: 0 done; 2 refused
 set -euo pipefail
 todo_max=${ISSUE_TODO_MAX:-3}
@@ -143,11 +146,31 @@ cmd_prioritize() {
   echo "issue #$n is priority:$priority"
 }
 
+cmd_block() {
+  n=${1:?usage: block <N> <question-file>}
+  question=${2:?usage: block <N> <question-file>}
+  [ -s "$question" ] || { echo "refused: question file is empty or missing" >&2; exit 2; }
+  need_open "$n"
+  labels=$(gh issue view "$n" --json labels --jq '[.labels[].name] | join(",")')
+  for s in doing "done" blocked; do
+    case ",$labels," in *",$s,"*)
+      echo "refused: issue #$n is already $s" >&2; exit 2 ;;
+    esac
+  done
+  gh issue comment "$n" --body-file "$question" >/dev/null
+  case ",$labels," in
+    *,todo,*) gh issue edit "$n" --remove-label todo --add-label blocked >/dev/null ;;
+    *) gh issue edit "$n" --add-label blocked >/dev/null ;;
+  esac
+  echo "issue #$n is blocked; the controller answers, then the plan step queues it again"
+}
+
 case "${1:-}" in
   status) cmd_status ;;
   new) shift; cmd_new "$@" ;;
   spec) shift; cmd_spec "$@" ;;
   adopt) shift; cmd_adopt "$@" ;;
   prioritize) shift; cmd_prioritize "$@" ;;
-  *) echo "usage: plan.sh status | new <title> <body-file> <p0-p3> | spec <N> <spec-file> | adopt <N> <p0-p3> | prioritize <N> <p0-p3>" >&2; exit 2 ;;
+  block) shift; cmd_block "$@" ;;
+  *) echo "usage: plan.sh status | new <title> <body-file> <p0-p3> | spec <N> <spec-file> | adopt <N> <p0-p3> | prioritize <N> <p0-p3> | block <N> <question-file>" >&2; exit 2 ;;
 esac
