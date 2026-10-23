@@ -103,15 +103,16 @@ reason = "no public API until the 0.3 release"
 path = "clients/codegen.toml"
 ```
 
-## Where each repository is (2026-10-22)
+## Where each repository is (2026-10-23)
 
 The checker ran on each repository's `origin/main`, then on the branch of
-its S5 pull request. Each pull request passes. They merge together.
+its S5 pull request. Each pull request passed. All of them merged on
+2026-10-23.
 
-| Repository | Findings on `main` | Pull request | Exception left |
+| Repository | Findings before S5 | Pull request | Exception left |
 |---|---|---|---|
 | `tape` | SV1 | faberline/tape#29 adds `kind`. | none |
 | `defer` | SV1, SV3 (`defer-storage`), SV8 | faberline/defer#29 adds `kind`, `defer-storage`, and `clients/`. | none |
 | `relay` | SV1, SV2, SV3 (all six) | faberline/relay#57 splits the package into the six crates. | none |
-| `lumen` | SV1, SV2, SV3 (all six) | faberline/lumen#159 splits the package into `lumen`, `lumen-shared-kernel`, `lumen-access`, `lumen-operator`, and `lumen-index`. faberline/lumen#160 adds `lumen-replication`. faberline/lumen#161 adds `lumen-storage`; its rust-arch exceptions need the checker fix in faberline/aw#66. | none after faberline/lumen#161 |
+| `lumen` | SV1, SV2, SV3 (all six) | faberline/lumen#159 splits the package into `lumen`, `lumen-shared-kernel`, `lumen-access`, `lumen-operator`, and `lumen-index`. faberline/lumen#160 adds `lumen-replication`. faberline/lumen#161 adds `lumen-storage`. Its rust-arch exceptions rely on the checker fix in faberline/aw#66. | none |
 | `keep` | SV1, SV3, SV4, SV6, SV7 | faberline/keep#7 replaces `keep-core`, `keep-engine`, and `keep-http` with contexts and adds `ddd.toml`. | SV7: the `gke-test` overlay lands in faberline/keep#6. |
