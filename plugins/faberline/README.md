@@ -123,22 +123,25 @@ Each run does one step and ends. A run with nothing to do ends at once.
   `done` issue. Read the issue, the PR, its diff, and its CI checks, and
   look for bugs. Review runs no tests: the PR checks do, and each repository
   decides what its CI runs, also whether e2e goes to the shared GKE cluster.
-  Its own conversation keeps it apart from the work step's reasoning. Pass
-  merges the PR through `/faberline:gh-merge-pr` after the checks pass; the
-  merge closes the issue. A PR without checks blocks the issue until the
-  repository has CI. Fail writes the review on the PR and moves the issue
-  back to `todo`.
+  Its own conversation keeps it apart from the work step's reasoning.
+  After independently verifying every required CI gate on the same current
+  head, pass records acceptance. Review never merges or changes labels;
+  findings needing a human are reported as evidence.
 
-`/faberline:issue-loop` shows the counts and the `blocked` issues.
-
-The issue label is the state:
+`/faberline:issue-loop` shows the counts and existing `blocked` issues.
 
 | Label | Set by | Meaning |
 |---|---|---|
-| `todo` | plan, review | Ready. Work takes the highest priority, then the oldest. |
-| `doing` | work | Work is on it, in `.claude/worktrees/issue-<N>` on branch `issue/<N>`. |
-| `done` | work | A PR (`Closes #<N>`) waits for review. |
-| `blocked` | any step | A human must decide. The controller answers in the issue and removes `blocked`; the plan step queues it again. |
+| `todo` | plan (initial queue), CI (failed current-head gates) | Ready for coding; retry uses the same PR/branch/worktree. |
+| `doing` | work, only from todo | Coding or waiting for CI; submitted doing issues are not recoded each cycle. |
+| `done` | CI only | All explicit required workflow/job gates passed for the current PR head; ready for independent review. |
+| `blocked` | existing human triage / backlog planning | Work and review report questions without setting this label. |
+
+See [issue-ci](skills/issue-ci/SKILL.md) for the trusted controller interface,
+required-gate manifest and consumer workflow template. These are not deployed
+by this PR: tape/keep/core/lumen/defer/relay each still need explicit wiring.
+No paused schedules are restored. Work now requires a stable conversation
+`ISSUE_WORK_OWNER`; review requires a trusted `ISSUE_CI_CONFIG`.
 
 The priority labels are `priority:p0` (do now) to `priority:p3` (some day).
 An issue without one counts as `priority:p2`.

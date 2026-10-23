@@ -1,0 +1,6 @@
+{
+  "workflows": [
+    {"path": ".github/workflows/pr-unit.yml", "jobs": ["affected-unit"]},
+    {"path": ".github/workflows/pr-cloud.yml", "jobs": ["functional", "e2e", "performance"]}
+  ]
+}

@@ -1,6 +1,6 @@
 ---
 name: issue-loop
-description: "Show the issue loop of the current repository: plan (open and prioritize issues), work (todo -> doing -> done, a PR), and review (test, then merge the PR and close the issue, or send it back). Each step skill does one run; the controller sets their schedules. Prints the counts and the blocked issues; creates the labels. Use when the user asks to set up or check the issue loop."
+description: "Show the issue loop of the current repository: plan (open and prioritize issues), work (todo -> doing, a PR), CI (done or todo), and review (independent acceptance without merge). Each step skill does one run; the controller sets their schedules. Prints the counts and the blocked issues; creates the labels. Use when the user asks to set up or check the issue loop."
 user-invocable: true
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/loop.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/loop.sh *)
 ---
@@ -13,12 +13,13 @@ the state:
 | Step | Skill | Moves | Every |
 |---|---|---|---|
 | plan | `/faberline:issue-plan` | triages the backlog, fills `todo`; sets `priority:p0`..`p3` | 10 min |
-| work | `/faberline:issue-work` | `todo` -> `doing` -> `done` (a PR with `Closes #<N>`) | 15 min |
-| review | `/faberline:issue-review` | `done` -> merged and closed, or back to `todo` | 15 min |
+| work | `/faberline:issue-work` | `todo` -> `doing` (submit PR, then wait for CI) | 15 min |
+| review | `/faberline:issue-review` | review `done`; no lifecycle writes or merge | 15 min |
 
-Any step can move an issue to `blocked` when a human must decide. The steps
-skip `blocked` issues. The controller answers in the issue, and the plan
-step puts it back in the `todo` queue.
+CI alone sets `done` after all required current-head gates pass or `todo`
+on failure; see the issue-ci skill for explicit consumer wiring. Work and
+review report human-decision evidence without changing lifecycle. Existing
+blocked issues require human triage. Schedules remain externally controlled.
 
 `${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
 In Codex or AGY, use the absolute path of that folder instead.
