@@ -10,8 +10,9 @@
 #   control.sh scan                       print each open blocked issue that
 #                                         is new or changed since the last scan
 #   control.sh answer <owner/repo> <N> <answer-file>
-#                                         comment the answer, move the issue
-#                                         from blocked back to todo
+#                                         comment the answer, take the issue
+#                                         out of blocked; the plan step puts
+#                                         it back in the todo queue
 # exit: 0 done; 2 refused; 3 nothing new
 # env: ISSUE_CONTROL_OWNER (default faberline)
 set -euo pipefail
@@ -43,8 +44,8 @@ cmd_answer() {
     *) echo "refused: $repo#$n is not blocked (labels: $labels)" >&2; exit 2 ;;
   esac
   gh issue comment "$n" --repo "$repo" --body-file "$answer" >/dev/null
-  gh issue edit "$n" --repo "$repo" --remove-label blocked --add-label todo >/dev/null
-  echo "$repo#$n answered and moved back to todo"
+  gh issue edit "$n" --repo "$repo" --remove-label blocked >/dev/null
+  echo "$repo#$n answered; the plan step puts it back in the todo queue"
 }
 
 case "${1:-}" in

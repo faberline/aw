@@ -98,8 +98,9 @@ Remove an older copy in `~/.gemini/config/plugins/faberline` first, with
 
 ## Issue loop
 
-Three steps, each in its own loop. Run each step skill once, in its own
-conversation, in the repository:
+Three steps. Each step skill does one run and ends. The controller (the
+`issue-control` skill in the aw repository) sets a schedule that runs each
+step in the repository:
 
 ```
 /faberline:issue-plan
@@ -107,15 +108,12 @@ conversation, in the repository:
 /faberline:issue-review
 ```
 
-Each skill starts its own loop, which wakes that same conversation. It uses
-the scheduler of the client: Claude Code `CronCreate`, a Codex heartbeat
-automation, or the AGY `schedule` tool. A Claude Code loop stops after 7
-days; run the skill again to start a new one. The three loops run side by
-side. Each run does one step and ends. A run with nothing to do ends at
-once.
+No skill starts a loop or a schedule. The schedules run side by side.
+Each run does one step and ends. A run with nothing to do ends at once.
 
-- **plan** (`/faberline:issue-plan`), every 30 minutes: read the
-  repository's goals and status, set priorities, and open new `todo` issues,
+- **plan** (`/faberline:issue-plan`), every 10 minutes: read the
+  repository's goals and status, triage and prioritize issues, and fill the
+  `todo` queue from the backlog first, then with new issues,
   at most `ISSUE_TODO_MAX` (default 3) at once. Each issue has Goal,
   Acceptance, Never, and Gate (the exact unit-test commands) sections.
 - **work** (`/faberline:issue-work`), every 15 minutes: take the

@@ -1,37 +1,34 @@
 ---
 name: issue-loop
-description: "Show the issue loop of the current repository: plan (open and prioritize issues), work (todo -> doing -> done, a PR), and review (test, then merge the PR and close the issue, or send it back). Each step skill starts its own loop in its own conversation. Prints the counts and the blocked issues; creates the labels. Use when the user asks to set up or check the issue loop."
+description: "Show the issue loop of the current repository: plan (open and prioritize issues), work (todo -> doing -> done, a PR), and review (test, then merge the PR and close the issue, or send it back). Each step skill does one run; the controller sets their schedules. Prints the counts and the blocked issues; creates the labels. Use when the user asks to set up or check the issue loop."
 user-invocable: true
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/loop.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/loop.sh *)
 ---
 
 # /faberline:issue-loop
 
-Three steps, each in its own loop. They run side by side. The issue label is
+Three steps. Each runs on its own schedule, side by side. The issue label is
 the state:
 
 | Step | Skill | Moves | Every |
 |---|---|---|---|
-| plan | `/faberline:issue-plan` | opens issues as `todo`; sets `priority:p0`..`p3` | 30 min |
+| plan | `/faberline:issue-plan` | triages the backlog, fills `todo`; sets `priority:p0`..`p3` | 10 min |
 | work | `/faberline:issue-work` | `todo` -> `doing` -> `done` (a PR with `Closes #<N>`) | 15 min |
 | review | `/faberline:issue-review` | `done` -> merged and closed, or back to `todo` | 15 min |
 
-Any step can move an issue to `blocked` when a human must decide. The loops
-skip `blocked` issues. The user answers in the issue and moves it back to
-`todo`.
+Any step can move an issue to `blocked` when a human must decide. The steps
+skip `blocked` issues. The controller answers in the issue, and the plan
+step puts it back in the `todo` queue.
 
 `${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
 In Codex or AGY, use the absolute path of that folder instead.
 
-## Start the loops
+## Schedules
 
-Run each step skill once, in its own conversation, in the repository. The
-skill starts its own loop with the scheduler of the client (Claude Code
-`CronCreate`, a Codex heartbeat, or the AGY `schedule` tool). The loop wakes
-that same conversation. A separate conversation keeps the review apart from
-the work step's reasoning, and keeps each context small.
-
-Run one loop of each step per repository. Each run does one step and ends.
+The skills never start a loop or a schedule. The controller sets one
+schedule per step and repository. A separate conversation for each step
+keeps the review apart from the work step's reasoning, and keeps each
+context small. Each run does one step and ends.
 A run with nothing to do ends at once.
 
 ## Instructions

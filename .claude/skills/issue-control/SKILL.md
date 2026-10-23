@@ -1,8 +1,7 @@
 ---
 name: issue-control
-description: "The controller of the issue loops in all faberline repositories, run in a Claude Code conversation in the aw repository. It starts its own 15-minute loop, then each run finds the open issues labelled blocked that are new or changed, answers the ones a known user decision covers, and asks the user the rest. Use when the user asks to watch, control, or check the issue loops."
+description: "The controller of the issue loops in all faberline repositories, run in a Claude Code conversation in the aw repository. Each run finds the open issues labelled blocked that are new or changed, answers the ones a known user decision covers, and asks the user the rest. Use when the user asks to watch, control, or check the issue loops."
 user-invocable: true
-argument-hint: "[loop]"
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/control.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/control.sh *)
 ---
 
@@ -17,19 +16,11 @@ the question. This skill is the controller. The user talks only to it.
 The mechanics live in `${CLAUDE_SKILL_DIR}/scripts/control.sh`; your job is
 the judgement.
 
-## Loop
+## Runs
 
-This skill starts its own loop. The loop wakes this conversation every 15
-minutes. A run that the loop started has the argument `loop`.
-
-- With the argument `loop`: the loop runs. Go to Instructions.
-- Without it: start the loop with `CronCreate`, `cron: "7,22,37,52 * * * *"`,
-  `prompt: "/issue-control loop"`. Then do one run now.
-- One loop per conversation. When `CronList` shows one already, do not start
-  another.
-- Report the loop's ID and how to stop it: `CronDelete <id>`. The loop stops
-  after 7 days, or when the session closes. Run the skill again without
-  `loop` to start a new one.
+Each run does one pass, then ends. This skill never starts a loop or a
+schedule. The controller sets the schedule outside the skill. Ignore any
+argument, such as `loop` or `once`.
 
 ## Rules
 
@@ -67,7 +58,8 @@ gh issue view <N> --repo <owner/repo> --comments
 ${CLAUDE_SKILL_DIR}/scripts/control.sh answer <owner/repo> <N> <answer-file>
 ```
 
-     It comments the answer and moves the issue back to `todo`.
+     It comments the answer and takes the issue out of `blocked`. The plan
+     step puts it back in the `todo` queue, inside the queue limit.
    - The user must decide: ask the user. Give the issue (`<owner/repo>#<N>`
      and its URL), the question in one or two sentences, and two options at
      most, with the one you recommend. After the user answers, use `answer`.
