@@ -6,6 +6,14 @@ user-invocable: false
 
 # CI lifecycle handoff
 
+The optional [PR qualification v1 contract](QUALIFICATION.md) adds trusted
+per-path applicability and evidence provenance to the existing full-mode
+controller. The pinned `.github/actions/issue-ci` distribution reads only
+default-branch consumer policy; consumers need reviewed mapping plus immutable
+references, not their own evaluator copies. This does not activate any live
+consumer or clear existing blockers. Defer #42 is the separately reviewed pilot;
+aw #73 is handled directly and never dispatched to an aw AGY schedule.
+
 AGY owns only `todo -> doing`. Finish opens/updates the same PR and leaves
 `doing`. CI alone writes `done` after ALL configured workflow/job gates pass
 for the current PR head; a failed required gate returns the issue to `todo`
@@ -45,8 +53,9 @@ currently visible green checks constitute the required set.
 
 Copy/adapt `templates/issue-ci.yml.example` onto the default branch. Include
 every required workflow display name in its trigger. Vendor these scripts
-from a reviewed aw revision into the trusted default branch; do not fetch a
-mutable controller at runtime. All privileged controllers must serialize in
+from a reviewed aw revision into the trusted default branch, or use the shared
+action at a reviewed immutable 40-hex commit; do not fetch a mutable controller
+at runtime. All privileged controllers must serialize in
 the same repository-wide concurrency group. Every wake uses `--reconcile`
 to paginate ALL managed open PRs and re-evaluate each current head. Default
 pending replacement therefore coalesces wake-ups without dropping a PR;

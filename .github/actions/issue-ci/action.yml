@@ -1,0 +1,29 @@
+name: Trusted PR qualification and CI handoff
+description: Evaluate GitHub metadata with pinned aw logic and default-branch consumer policy.
+inputs:
+  operation:
+    description: validate (read-only schema), qualify (read-only current PR), or handoff (serialized workflow_run reconciliation).
+    default: handoff
+  policy:
+    description: Policy JSON path on the consumer default branch. PR policy is never loaded.
+    default: .github/issue-ci-required-gates.json
+  run-id:
+    description: workflow_run ID for handoff.
+  pr:
+    description: PR number for read-only qualification.
+  head:
+    description: Exact PR head SHA for read-only qualification.
+runs:
+  using: composite
+  steps:
+    - name: Evaluate trusted policy and current GitHub evidence
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        AW_ACTION_REF: ${{ github.action_ref }}
+        INPUT_OPERATION: ${{ inputs.operation }}
+        INPUT_POLICY: ${{ inputs.policy }}
+        INPUT_RUN_ID: ${{ inputs.run-id }}
+        INPUT_PR: ${{ inputs.pr }}
+        INPUT_HEAD: ${{ inputs.head }}
+      run: python3 "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/action.py"
