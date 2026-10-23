@@ -1,0 +1,47 @@
+name: Issue lifecycle unit
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/issue-lifecycle-unit.yml'
+      - 'plugins/faberline/README.md'
+      - 'plugins/faberline/skills/issue-ci/**'
+      - 'plugins/faberline/skills/issue-work/**'
+      - 'plugins/faberline/skills/issue-review/**'
+      - 'plugins/faberline/skills/issue-loop/**'
+
+# PR code runs only on an unprivileged hosted runner. No secrets, label writes,
+# cloud credentials, workflow dispatch, or GKE/functional/e2e/performance jobs.
+permissions:
+  contents: read
+
+jobs:
+  affected-unit-static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Affected lifecycle unit tests
+        run: python3 -m unittest discover -s plugins/faberline/skills/issue-ci/tests -v
+      - name: Affected shell and Python syntax, example JSON, patch whitespace
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n plugins/faberline/skills/issue-work/scripts/work.sh \
+            plugins/faberline/skills/issue-review/scripts/review.sh
+          python3 - <<'PY'
+          import ast
+          import json
+          from pathlib import Path
+          for path in (
+              Path('plugins/faberline/skills/issue-work/scripts/work.py'),
+              Path('plugins/faberline/skills/issue-ci/scripts/handoff.py'),
+              Path('plugins/faberline/skills/issue-ci/tests/test_lifecycle.py'),
+          ):
+              ast.parse(path.read_text(), filename=str(path))
+          json.loads(Path('plugins/faberline/skills/issue-ci/templates/required-gates.example.json').read_text())
+          PY
+          git diff --check HEAD^ HEAD -- plugins/faberline .github/workflows/issue-lifecycle-unit.yml
