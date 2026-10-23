@@ -91,18 +91,7 @@ def snapshot(repo, sha, config):
     return snapshots
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--repo', required=True)
-    parser.add_argument('--config', required=True, help='trusted default-branch config, never from PR')
-    parser.add_argument('--pr', required=True, type=int)
-    parser.add_argument('--head', required=True)
-    parser.add_argument('--run-id', type=int, help='workflow_run event ID; required for mutation')
-    parser.add_argument('--apply', action='store_true')
-    args = parser.parse_args()
-    if not re.fullmatch(r'[\w.-]+/[\w.-]+', args.repo) or not re.fullmatch('[0-9a-f]{40}', args.head):
-        raise RuntimeError('invalid repository or SHA')
-    config = load_config(args.config)
+def process_head(args, config, check_event=True):
     root = f'repos/{args.repo}'
     pr_path = f'{root}/pulls/{args.pr}'
     pr = api(pr_path)
@@ -119,11 +108,12 @@ def main():
     print(json.dumps(dict(state=state, head=args.head, evidence=evidence, reasons=reasons)))
     if not args.apply:
         return 0 if state == 'done' else 2
-    if args.run_id is None:
-        raise RuntimeError('--apply requires workflow_run event --run-id')
-    event_run = api(f'{root}/actions/runs/{args.run_id}')
-    if event_run['head_sha'] != args.head or event_run.get('event') != 'pull_request' or str(event_run['id']) not in {e.split(':')[0] for e in evidence}:
-        raise RuntimeError('stale/unconfigured triggering run; no mutation')
+    if check_event:
+        if args.run_id is None:
+            raise RuntimeError('--apply requires workflow_run event --run-id')
+        event_run = api(f'{root}/actions/runs/{args.run_id}')
+        if event_run['head_sha'] != args.head or event_run.get('event') != 'pull_request' or str(event_run['id']) not in {e.split(':')[0] for e in evidence}:
+            raise RuntimeError('stale/unconfigured triggering run; no mutation')
     if state == 'pending':
         return 0
     issue_path = f'{root}/issues/{issue}'
@@ -131,38 +121,120 @@ def main():
     labels = {l['name'] for l in current['labels']}
     if current['state'] != 'open' or not labels & {'todo', 'doing', 'done'} or 'blocked' in labels:
         raise RuntimeError('issue is closed, blocked, or unmanaged; no mutation')
-    # A failed head is handed back once, even if another workflow finishes
-    # later or a run is retried while AGY is already coding the correction.
-    # Success still keys all latest run attempts and the trusted gate policy.
-    receipt_runs = evidence if state == 'done' else []
+    # Failure receipts key only failing run attempts: unrelated workflow
+    # progress cannot requeue the same failure, but a genuinely new failed
+    # attempt after a successful rerun still returns the issue to todo.
+    failed = {'failure', 'timed_out', 'action_required', 'startup_failure'}
+    receipt_runs = evidence if state == 'done' else sorted(
+        f'{run["id"]}:{run.get("run_attempt", 1)}'
+        for run, jobs in snapshots.values()
+        if (run.get('conclusion') in failed
+            or any(job.get('conclusion') in failed for job in jobs))
+    )
     digest = hashlib.sha256(json.dumps([args.head, receipt_runs, config, state], sort_keys=True).encode()).hexdigest()
-    marker = f'<!-- issue-ci:{digest} -->'
+    prefix = f'<!-- issue-ci:{digest}:'
     comments = pages(f'{issue_path}/comments')
-    duplicate = any(marker in c['body'] and c['user']['login'] == 'github-actions[bot]' for c in comments)
-    if duplicate:
-        print('duplicate head/run handoff; no mutation')
+    journals = [c for c in comments if c['body'].startswith(prefix) and c['user']['login'] == 'github-actions[bot]']
+    journal = journals[-1] if journals else None
+    phase = journal['body'].split(prefix, 1)[1].split(' -->', 1)[0] if journal else 'pending'
+    if phase == 'applied':
+        print('duplicate applied head/run handoff; no mutation')
         return 0
-    # Re-read immediately before writes. Workflow concurrency must also serialize
-    # all controller invocations for this repository (see the template).
-    fresh = api(pr_path)
-    if fresh['state'] != 'open' or fresh['head']['sha'] != args.head:
-        raise RuntimeError('PR moved during evaluation; no mutation')
+    if phase not in ('pending', 'ready'):
+        raise RuntimeError('invalid handoff journal phase')
     detail = '\n'.join(reasons) if reasons else 'All explicitly required workflow/job gates passed.'
     urls = '\n'.join(s[0]['html_url'] for s in snapshots.values())
-    api(f'{issue_path}/comments', 'POST', {'body': f'{marker}\nCI: {state} for PR #{args.pr} head `{args.head}`.\n{detail}\n{urls}'})
-    # Journal first: a replay must never undo a worker's later todo -> doing.
-    # If interrupted mid-write, report/reconcile manually; do not replay coding.
-    fresh = api(pr_path)
-    if fresh['head']['sha'] != args.head or fresh['state'] != 'open':
-        raise RuntimeError('PR moved before label write; no label mutation')
+
+    def body(phase):
+        return f'{prefix}{phase} -->\nCI: {state} for PR #{args.pr} head `{args.head}`.\n{detail}\n{urls}'
+
+    def fresh_labels():
+        fresh = api(pr_path)
+        if fresh['state'] != 'open' or fresh['head']['sha'] != args.head:
+            raise RuntimeError('PR moved during handoff; no further label mutation')
+        current = api(issue_path)
+        labels = {l['name'] for l in current['labels']}
+        if current['state'] != 'open' or 'blocked' in labels or not labels & {'todo', 'doing', 'done'}:
+            raise RuntimeError('issue lifecycle changed during handoff')
+        return labels
+
+    labels = fresh_labels()
+    if journal is None:
+        phase = 'ready' if state in labels else 'pending'
+        journal = api(f'{issue_path}/comments', 'POST', {'body': body(phase)})
+    comment_path = f'{root}/issues/comments/{journal["id"]}'
+    # A pending intent never suppresses a retry after head/snapshot/API failures.
+    labels = fresh_labels()
     if snapshot(args.repo, args.head, config) != snapshots:
-        raise RuntimeError('CI runs changed during evaluation; wait for next handoff')
-    # Preserve unrelated labels; partial/API failures are surfaced, never hidden.
-    if state not in labels:
-        api(f'{issue_path}/labels', 'POST', {'labels': [state]})
-    for old in sorted((labels & {'todo', 'doing', 'done'}) - {state}):
-        api(f'{issue_path}/labels/{old}', 'DELETE')
+        raise RuntimeError('CI runs changed during evaluation; pending intent is retryable')
+    if phase == 'pending':
+        if state not in labels:
+            api(f'{issue_path}/labels', 'POST', {'labels': [state]})
+        # Durable proof that the desired label was added BEFORE deleting old
+        # labels. Workers refuse mixed states, so they cannot claim between
+        # the add and this checkpoint, even if the controller crashes.
+        api(comment_path, 'PATCH', {'body': body('ready')})
+    labels = fresh_labels()
+    if state in labels:
+        for old in sorted((labels & {'todo', 'doing', 'done'}) - {state}):
+            live = fresh_labels()
+            if state not in live:
+                break
+            if old in live:
+                api(f'{issue_path}/labels/{old}', 'DELETE')
+    # ready + desired label absent means a later actor already consumed it
+    # (e.g. AGY claimed todo -> doing). Never add it again or undo that claim.
+    api(comment_path, 'PATCH', {'body': body('applied')})
     return 0
+
+
+def reconcile(args, config):
+    """Every wake scans all managed open PRs: a replaced pending wake loses none."""
+    root = f'repos/{args.repo}'
+    event = api(f'{root}/actions/runs/{args.run_id}')
+    if (event.get('event') != 'pull_request'
+            or event.get('head_repository', {}).get('full_name') != args.repo
+            or event.get('path') not in {w['path'] for w in config['workflows']}):
+        raise RuntimeError('unconfigured/foreign reconciliation wake')
+    errors = []
+    for pr in pages(f'{root}/pulls?state=open'):
+        match = re.fullmatch(r'(?:issue/|agy/issue-)([0-9]+)', pr['head']['ref'])
+        if (not match or (pr['head'].get('repo') or {}).get('full_name') != args.repo
+                or not re.search(rf'(?im)^Closes #{int(match[1])}\s*$', pr.get('body') or '')):
+            continue
+        current = argparse.Namespace(**vars(args))
+        current.pr, current.head, current.apply = pr['number'], pr['head']['sha'], True
+        try:
+            # Event metadata only wakes us. All decisions use fresh current-head
+            # snapshots, including PRs unrelated to the triggering run.
+            process_head(current, config, check_event=False)
+        except (RuntimeError, subprocess.CalledProcessError, OSError, ValueError, KeyError, TypeError) as exc:
+            errors.append(f'PR #{current.pr}: {exc}')
+    if errors:
+        raise RuntimeError('; '.join(errors))
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--repo', required=True)
+    parser.add_argument('--config', required=True, help='trusted default-branch config, never from PR')
+    parser.add_argument('--pr', type=int)
+    parser.add_argument('--head')
+    parser.add_argument('--run-id', type=int)
+    parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--reconcile', action='store_true', help='trusted wake: reconcile every managed current PR head')
+    args = parser.parse_args()
+    if not re.fullmatch(r'[\w.-]+/[\w.-]+', args.repo):
+        raise RuntimeError('invalid repository')
+    config = load_config(args.config)
+    if args.reconcile:
+        if args.run_id is None or args.pr is not None or args.head is not None:
+            raise RuntimeError('--reconcile requires --run-id and scans PRs itself')
+        return reconcile(args, config)
+    if args.pr is None or not re.fullmatch('[0-9a-f]{40}', args.head or ''):
+        raise RuntimeError('--pr and valid --head required')
+    return process_head(args, config)
 
 
 if __name__ == '__main__':

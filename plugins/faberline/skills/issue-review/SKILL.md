@@ -20,7 +20,13 @@ Each run does one pass, then ends. This skill never starts a loop or a
 schedule. The controller sets the schedule outside the skill. Ignore any
 argument, such as `loop` or `once`.
 
-Each run reviews one issue and ends its turn.
+Each run reviews one issue and ends its turn. Durable PR comments contain
+a per-issue/head receipt authenticated against the reviewer's current `gh`
+user identity. `next` skips that identity's already-reviewed heads (pass,
+fail or block), scans the next done issue, and considers changed heads again.
+Recording the same head twice is idempotent under a local repository guard;
+keep one reviewer controller per repository across hosts. Missing/pending CI
+or an orphan done issue is reported and skipped so it cannot starve others.
 
 When `pass` refuses for the same reason as in the last run of this
 conversation, report evidence with that reason; leave lifecycle unchanged. Do not try a third time.
@@ -84,7 +90,7 @@ ${CLAUDE_SKILL_DIR}/scripts/review.sh pass <N> <head>
      problem with where it is and what done looks like. Then:
 
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/review.sh fail <N> <review-file>
+${CLAUDE_SKILL_DIR}/scripts/review.sh fail <N> <head> <review-file>
 ```
 
      This reports evidence only. A human decides any next coding action;
@@ -94,7 +100,7 @@ ${CLAUDE_SKILL_DIR}/scripts/review.sh fail <N> <review-file>
      paid service, deleting data). Write the question to a file, then:
 
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/review.sh block <N> <question-file>
+${CLAUDE_SKILL_DIR}/scripts/review.sh block <N> <head> <question-file>
 ```
 
 ## Exit codes

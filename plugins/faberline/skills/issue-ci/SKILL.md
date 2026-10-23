@@ -32,7 +32,11 @@ Copy/adapt `templates/issue-ci.yml.example` onto the default branch. Include
 every required workflow display name in its trigger. Vendor these scripts
 from a reviewed aw revision into the trusted default branch; do not fetch a
 mutable controller at runtime. All privileged controllers must serialize in
-the same repository-wide concurrency group. The controller token needs only
+the same repository-wide concurrency group. Every wake uses `--reconcile`
+to paginate ALL managed open PRs and re-evaluate each current head. Default
+pending replacement therefore coalesces wake-ups without dropping a PR;
+an event naming C also reconciles B whose pending wake was replaced. A
+failure/stale head on one PR is reported after other PRs are reconciled. The controller token needs only
 contents/actions/PR read and issues write; no PR write, credential creation,
 or branch-protection changes. The reviewer uses a read-only token for CI
 verification, and normal PR-comment permission for reporting its review.
@@ -44,22 +48,31 @@ latest run and current attempt, `pull_request` event, same repository and
 head SHA. Only completed success counts. Missing/pending/cancelled/neutral/
 skipped checks cannot produce done. Skips currently have no approved bypass;
 consumers must produce real qualification checks. Run/job failures include
-exact links. Reruns are separate attempts. Stale/unconfigured event runs
-cannot mutate. The PR must use `issue/N` or `agy/issue-N` and link `Closes #N`.
+exact links. Reruns are separate attempts. Single-head stale/unconfigured events refuse. Reconciliation validates the
+wake workflow/repository but never uses its result or old SHA as evidence;
+it recomputes every PR from fresh current-head metadata. The PR must use `issue/N` or `agy/issue-N` and link `Closes #N`.
 Fork PRs and custom branch conventions are deliberately refused.
 
 Each handoff journals an authenticated Actions-bot comment keyed by head,
-manifest and result; success also keys latest runs/attempts. A failed head
-is returned only once, so later workflow completions/reruns cannot undo
-a later AGY claim before it pushes a corrected head. API errors fail closed and are reported; an interruption after the
-journal but before all label writes requires human reconciliation after
-checking the current head and lease. Do not delete the journal to replay
-blindly. GitHub has no atomic compare-and-swap across head, comments and
-labels: the controller rechecks the head and complete run snapshot directly
-before label writes; consumers must retain the serialized writer and rerun
-on subsequent CI completions. Review always rechecks the current head.
+manifest, result and relevant latest runs/attempts. Failure keys only the
+failing run attempts, so unrelated workflow progress cannot repeat the same
+failure or undo a later AGY claim. A new failed attempt after a successful
+rerun is a new failure and can return the issue to todo again. Journal phases are:
+`pending` (retryable intent), `ready` (desired label durably known present,
+recorded before any old label deletion), and `applied` (completed receipt).
+Snapshot/head failures after intent do not dedupe future handoffs. After a
+partial API failure, retry completes the checkpoint/removal sequence. If a
+ready receipt's desired label has since been consumed (AGY claimed todo),
+recovery never re-adds it or removes that actor's state. Workers refuse
+mixed lifecycle labels, protecting the add/checkpoint/delete boundary.
 
-Local policy: affected unit/static only. MR cloud qualification still needs
-affected unit/functional/e2e/performance; release needs complete declared
-functional/performance qualification. This interface does not redesign test
+GitHub has no atomic compare-and-swap across head, comments and labels.
+The controller rechecks the head, issue lifecycle and complete run snapshot
+before writes, and head/lifecycle before each old-label removal. Consumers
+must retain the serialized writer. Review always checks the current head.
+
+This aw controller repair is validated with affected local unit/static
+checks; it does not require an added aw cloud workflow. Consumer product MR
+qualification separately needs affected unit/functional/e2e/performance;
+product release needs complete declared functional/performance qualification. This interface does not redesign test
 selection, milestones or performance policy, and dispatches no test jobs.

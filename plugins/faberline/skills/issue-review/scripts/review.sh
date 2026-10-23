@@ -4,6 +4,7 @@
 set -euo pipefail
 GIT=(git -c core.fsmonitor=false)
 here=$(cd "$(dirname "$0")" && pwd -P)
+receipt_py="$here/receipt.py"
 ci_py=$(cd "$here/../.." && pwd -P)/issue-ci/scripts/handoff.py
 verify_ci() {
   local repo
@@ -53,23 +54,36 @@ drop_review_tree() { # <N>
 }
 
 cmd_next() {
-  n=$(gh issue list --state open --label "done" --limit 200 \
-    --json number,updatedAt --jq 'sort_by(.updatedAt) | .[0].number // empty')
-  if [ -z "$n" ]; then
-    echo "idle: no open done issue"
+  candidates=$(gh api --paginate --slurp \
+    'repos/{owner}/{repo}/issues?state=open&labels=done&per_page=100' \
+    --jq 'add | map(select(has("pull_request") | not)) | sort_by(.updated_at) | .[].number')
+  "${GIT[@]}" fetch -q origin
+  selected=false
+  for n in $candidates; do
+    read -r pr branch <<<"$(pr_and_branch_of "$n")" || true
+    if [ -z "${pr:-}" ]; then
+      echo "skip: done issue #$n has no associated open PR; lifecycle unchanged" >&2
+      continue
+    fi
+    head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
+    if python3 "$receipt_py" seen "$n" "$pr" "$head"; then
+      continue
+    else
+      status=$?
+      [ "$status" = 1 ] || return "$status"
+    fi
+    # A pending/invalid CI head must not starve other qualified done issues.
+    if ! verify_ci "$pr" "$head"; then
+      echo "skip: issue #$n current head is not qualified" >&2
+      continue
+    fi
+    selected=true
+    break
+  done
+  if [ "$selected" != true ]; then
+    echo "idle: no unreviewed current-head qualified done issue"
     exit 3
   fi
-
-  "${GIT[@]}" fetch -q origin
-  read -r pr branch <<<"$(pr_and_branch_of "$n")" || true
-  if [ -z "${pr:-}" ]; then
-    echo "refused: issue #$n is done but has no open PR from issue/$n; report missing association; leave lifecycle unchanged" >&2
-    echo "issue=$n"
-    exit 2
-  fi
-
-  head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
-  verify_ci "$pr" "$head"
   wt=$(review_tree_of "$n")
   exclude="$common/info/exclude"
   mkdir -p "$(dirname "$exclude")"
@@ -105,37 +119,28 @@ cmd_pass() {
   # Verify one more time after CI collection before recording acceptance.
   [ "$(gh pr view "$pr" --json headRefOid --jq .headRefOid)" = "$reviewed" ] \
     || { echo "refused: PR head moved" >&2; exit 2; }
-  gh pr comment "$pr" --body "Review: accepted head $reviewed after independently verifying required CI. Awaiting explicit human merge." >/dev/null
+  python3 "$receipt_py" record "$n" "$pr" "$reviewed" pass
   echo "accepted PR #$pr at $reviewed; lifecycle unchanged; no merge"
 }
 
-cmd_fail() {
-  n=${1:?usage: fail <N> <review-file>}
-  review=${2:?usage: fail <N> <review-file>}
-  need_file "$review" review
+cmd_report() {
+  outcome=$1
+  n=${2:?usage: fail|block <N> <head-sha> <evidence-file>}
+  reviewed=${3:?usage: fail|block <N> <head-sha> <evidence-file>}
+  evidence=${4:?usage: fail|block <N> <head-sha> <evidence-file>}
+  need_file "$evidence" evidence
   need_done "$n"
   read -r pr _ <<<"$(pr_and_branch_of "$n")" || true
-  [ -n "${pr:-}" ] || { echo "refused: issue #$n has no open PR from issue/$n" >&2; exit 2; }
-  gh pr comment "$pr" --body-file "$review" >/dev/null
-  gh issue comment "$n" --body "Review: changes requested; see #$pr. Human triage required; lifecycle unchanged." >/dev/null
+  [ -n "${pr:-}" ] || { echo "refused: issue #$n has no open PR" >&2; exit 2; }
+  python3 "$receipt_py" record "$n" "$pr" "$reviewed" "$outcome" "$evidence"
   drop_review_tree "$n"
-  echo "review evidence reported for #$n; lifecycle unchanged"
-}
-
-cmd_block() {
-  n=${1:?usage: block <N> <question-file>}
-  question=${2:?usage: block <N> <question-file>}
-  need_file "$question" question
-  need_done "$n"
-  gh issue comment "$n" --body-file "$question" >/dev/null
-  drop_review_tree "$n"
-  echo "question reported for #$n; lifecycle unchanged"
+  echo "review evidence reported for #$n at $reviewed; lifecycle unchanged"
 }
 
 case "${1:-}" in
   next) cmd_next ;;
   pass) shift; cmd_pass "$@" ;;
-  fail) shift; cmd_fail "$@" ;;
-  block) shift; cmd_block "$@" ;;
-  *) echo "usage: review.sh next | pass <N> <head-sha> | fail <N> <review-file> | block <N> <question-file>" >&2; exit 2 ;;
+  fail) shift; cmd_report fail "$@" ;;
+  block) shift; cmd_report block "$@" ;;
+  *) echo "usage: review.sh next | pass <N> <head-sha> | fail <N> <head-sha> <review-file> | block <N> <head-sha> <question-file>" >&2; exit 2 ;;
 esac

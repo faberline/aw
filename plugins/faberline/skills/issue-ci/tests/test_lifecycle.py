@@ -24,6 +24,7 @@ def load(name, path):
 
 ci = load('handoff', SKILLS / 'issue-ci/scripts/handoff.py')
 work = load('work', SKILLS / 'issue-work/scripts/work.py')
+receipt = load('receipt', SKILLS / 'issue-review/scripts/receipt.py')
 GATES = [{'path': '.github/workflows/unit.yml', 'jobs': ['unit']},
          {'path': '.github/workflows/cloud.yml', 'jobs': ['functional', 'e2e', 'performance']}]
 SHA = 'a' * 40
@@ -110,8 +111,19 @@ class ApplyTests(unittest.TestCase):
     def api(self, path, method='GET', data=None):
         if method != 'GET':
             self.writes.append((path, method, data))
-            if path.endswith('/comments'):
-                self.comments.append(dict(body=data['body'], user={'login': 'github-actions[bot]'}))
+            if method == 'POST' and path.endswith('/comments'):
+                comment = dict(id=len(self.comments) + 1, body=data['body'], user={'login': 'github-actions[bot]'})
+                self.comments.append(comment)
+                return comment
+            if method == 'PATCH' and '/issues/comments/' in path:
+                self.comments[int(path.rsplit('/', 1)[1]) - 1]['body'] = data['body']
+            if method == 'POST' and path.endswith('/labels'):
+                for label in data['labels']:
+                    if label not in {l['name'] for l in self.issue['labels']}:
+                        self.issue['labels'].append({'name': label})
+            if method == 'DELETE' and '/labels/' in path:
+                label = path.rsplit('/', 1)[1]
+                self.issue['labels'] = [l for l in self.issue['labels'] if l['name'] != label]
             return {}
         if '/pulls/' in path:
             self.pr_reads += 1
@@ -122,16 +134,16 @@ class ApplyTests(unittest.TestCase):
             return self.trigger
         return self.issue
 
-    def invoke(self, snapshots=None):
+    def invoke(self, snapshots=None, snapshot_sequence=None):
         args = ['handoff.py', '--repo', 'o/r', '--config', str(self.config), '--pr', '8', '--head', SHA, '--run-id', '1', '--apply']
-        with patch.object(sys, 'argv', args), patch.object(ci, 'api', side_effect=self.api), patch.object(ci, 'pages', side_effect=lambda *a: self.comments), patch.object(ci, 'snapshot', return_value=snapshots or evidence()), contextlib.redirect_stdout(io.StringIO()):
+        with patch.object(sys, 'argv', args), patch.object(ci, 'api', side_effect=self.api), patch.object(ci, 'pages', side_effect=lambda *a: self.comments), patch.object(ci, 'snapshot', side_effect=snapshot_sequence, return_value=snapshots or evidence()), contextlib.redirect_stdout(io.StringIO()):
             return ci.main()
 
     def test_current_head_success_preserves_other_labels(self):
         self.assertEqual(self.invoke(), 0)
         self.assertIn(('repos/o/r/issues/7/labels', 'POST', {'labels': ['done']}), self.writes)
         self.assertIn(('repos/o/r/issues/7/labels/doing', 'DELETE', None), self.writes)
-        self.assertFalse(any('priority' in str(w) for w in self.writes))
+        self.assertFalse(any('/labels/priority' in w[0] for w in self.writes))
 
     def test_stale_head_before_and_during_evaluation(self):
         for move_on in (1, 2):
@@ -158,6 +170,7 @@ class ApplyTests(unittest.TestCase):
         snapshots[GATES[0]['path']][1][0]['conclusion'] = 'failure'
         self.invoke(snapshots)
         self.writes.clear()
+        self.issue['labels'] = [{'name': 'doing'}]  # later worker claim
         self.invoke(snapshots)
         self.assertEqual(self.writes, [])
 
@@ -172,9 +185,70 @@ class ApplyTests(unittest.TestCase):
         self.invoke(later)
         self.assertEqual(self.writes, [])
 
+    def test_snapshot_progress_after_intent_is_retryable(self):
+        first = evidence()
+        first[GATES[0]['path']][1][0]['conclusion'] = 'failure'
+        changed = evidence()
+        changed[GATES[0]['path']][1][0]['conclusion'] = 'failure'
+        changed[GATES[1]['path']][0]['run_attempt'] = 2
+        with self.assertRaises(RuntimeError):
+            self.invoke(first, snapshot_sequence=[first, changed])
+        self.assertIn(':pending -->', self.comments[0]['body'])
+        self.assertEqual({l['name'] for l in self.issue['labels']}, {'doing', 'priority:p1'})
+        self.invoke(changed)
+        self.assertIn('todo', {l['name'] for l in self.issue['labels']})
+        self.assertNotIn('doing', {l['name'] for l in self.issue['labels']})
+        self.assertIn(':applied -->', self.comments[0]['body'])
+
+    def test_ready_checkpoint_survives_api_failure_and_later_worker_claim(self):
+        failed = evidence()
+        failed[GATES[0]['path']][1][0]['conclusion'] = 'failure'
+        actual = self.api
+        def fail_delete(path, method='GET', data=None):
+            if method == 'DELETE':
+                raise RuntimeError('transient API failure')
+            return actual(path, method, data)
+        self.api = fail_delete
+        with self.assertRaises(RuntimeError):
+            self.invoke(failed)
+        self.assertIn(':ready -->', self.comments[0]['body'])
+        self.assertIn('todo', {l['name'] for l in self.issue['labels']})
+        self.api = actual
+        self.invoke(failed)
+        self.assertIn(':applied -->', self.comments[0]['body'])
+        self.issue['labels'] = [{'name': 'doing'}]
+        self.writes.clear()
+        self.invoke(failed)
+        self.assertEqual(self.writes, [])
+
+    def test_ready_receipt_never_readds_label_consumed_by_worker(self):
+        failed = evidence()
+        failed[GATES[0]['path']][1][0]['conclusion'] = 'failure'
+        self.invoke(failed)
+        self.comments[0]['body'] = self.comments[0]['body'].replace(':applied -->', ':ready -->')
+        self.issue['labels'] = [{'name': 'doing'}]
+        self.writes.clear()
+        self.invoke(failed)
+        self.assertTrue(all('/issues/comments/' in path for path, _, _ in self.writes))
+        self.assertEqual({l['name'] for l in self.issue['labels']}, {'doing'})
+
+    def test_new_failed_attempt_after_success_is_not_old_failure_receipt(self):
+        failed = evidence()
+        failed[GATES[0]['path']][1][0]['conclusion'] = 'failure'
+        self.invoke(failed)
+        self.invoke(evidence())
+        self.assertIn('done', {l['name'] for l in self.issue['labels']})
+        again = evidence()
+        again[GATES[0]['path']][0]['run_attempt'] = 2
+        again[GATES[0]['path']][1][0]['conclusion'] = 'failure'
+        self.invoke(again)
+        self.assertIn('todo', {l['name'] for l in self.issue['labels']})
+        self.assertNotIn('done', {l['name'] for l in self.issue['labels']})
+
     def test_untrusted_marker_cannot_suppress_handoff(self):
         self.invoke()
         self.comments[0]['user']['login'] = 'contributor'
+        self.issue['labels'] = [{'name': 'doing'}]
         self.writes.clear()
         self.invoke()
         self.assertTrue(self.writes)
@@ -190,6 +264,28 @@ class ApplyTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.invoke()
         self.assertEqual(self.writes, [])
+
+
+class ReconcileTests(unittest.TestCase):
+    def test_replacement_wake_reconciles_pr_b_even_when_event_only_names_c(self):
+        from argparse import Namespace
+        args = Namespace(repo='o/r', run_id=30, apply=False)
+        event = dict(event='pull_request', head_repository={'full_name': 'o/r'}, path=GATES[0]['path'], pull_requests=[{'number': 30}])
+        prs = [dict(number=n, body=f'Closes #{n}', head=dict(ref=f'issue/{n}', sha=str(n // 10) * 40, repo={'full_name': 'o/r'})) for n in (10, 20, 30)]
+        with patch.object(ci, 'api', return_value=event), patch.object(ci, 'pages', return_value=prs), patch.object(ci, 'process_head', return_value=0) as process:
+            self.assertEqual(ci.reconcile(args, {'workflows': GATES}), 0)
+        self.assertEqual([c.args[0].pr for c in process.call_args_list], [10, 20, 30])
+        self.assertTrue(all(c.kwargs == {'check_event': False} for c in process.call_args_list))
+
+    def test_one_stale_pr_does_not_prevent_other_pr_reconciliation(self):
+        from argparse import Namespace
+        args = Namespace(repo='o/r', run_id=30, apply=False)
+        event = dict(event='pull_request', head_repository={'full_name': 'o/r'}, path=GATES[0]['path'])
+        prs = [dict(number=n, body=f'Closes #{n}', head=dict(ref=f'issue/{n}', sha=SHA, repo={'full_name': 'o/r'})) for n in (10, 20)]
+        with patch.object(ci, 'api', return_value=event), patch.object(ci, 'pages', return_value=prs), patch.object(ci, 'process_head', side_effect=[RuntimeError('stale head'), 0]) as process:
+            with self.assertRaises(RuntimeError):
+                ci.reconcile(args, {'workflows': GATES})
+        self.assertEqual(process.call_count, 2)
 
 
 class LeaseTests(unittest.TestCase):
@@ -303,7 +399,7 @@ class WorkTests(unittest.TestCase):
 
 
 class ReviewerTests(unittest.TestCase):
-    def invoke(self, command, ci_status='0', moved=False):
+    def invoke_many(self, commands, ci_status='0', moved=False):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             log = root / 'calls'
@@ -316,54 +412,133 @@ with (root / 'calls').open('a') as f:
     f.write(' '.join(args) + '\n')
 if args[:2] == ['issue', 'view']:
     print('done')
+elif args[0] == 'api':
+    print('7\n9')
 elif args[:2] == ['pr', 'list']:
-    print('8')
+    print('10' if 'issue/9' in args else '8')
 elif args[:2] == ['repo', 'view']:
     print('o/r')
 elif args[:2] == ['pr', 'view']:
-    counter = root / 'heads'
-    count = int(counter.read_text()) if counter.exists() else 0
-    counter.write_text(str(count + 1))
-    print(('b' if count and os.environ.get('MOVED') == '1' else 'a') * 40)
+    if 'statusCheckRollup' in args:
+        print('4')
+    else:
+        counter = root / 'heads'
+        count = int(counter.read_text()) if counter.exists() else 0
+        counter.write_text(str(count + 1))
+        changed = (count and os.environ.get('MOVED') == '1') or ('8' in args and (root / 'newhead').exists())
+        print(('b' if changed else 'a') * 40)
 ''')
-            (root / 'git').write_text('#!/bin/bash\nif [[ "$*" == *rev-parse* ]]; then echo "$REVIEW_TEST_ROOT"; fi\n')
-            (root / 'python3').write_text('#!/bin/bash\necho "CI verify $*" >> "$REVIEW_TEST_ROOT/calls"\nexit "$CI_STATUS"\n')
+            (root / 'git').write_text('#!/bin/bash\nif [[ "$*" == *rev-parse* ]]; then echo "$REVIEW_TEST_ROOT"; elif [[ "$*" == *merge-base* ]]; then echo aaaa; fi\n')
+            (root / 'python3').write_text('#!' + sys.executable + "\n" + r'''import json, os, sys
+from pathlib import Path
+root = Path(os.environ['REVIEW_TEST_ROOT'])
+args = sys.argv[1:]
+with (root / 'calls').open('a') as f:
+    f.write('PY ' + ' '.join(args) + '\n')
+if args[0].endswith('receipt.py'):
+    saved = root / 'receipts'
+    receipts = json.loads(saved.read_text()) if saved.exists() else []
+    key = args[2] + ':' + args[4]
+    if args[1] == 'seen':
+        sys.exit(0 if key in receipts else 1)
+    if key not in receipts:
+        receipts.append(key)
+        saved.write_text(json.dumps(receipts))
+    sys.exit(0)
+sys.exit(int(os.environ['CI_STATUS']))
+''')
             for executable in (gh, root / 'git', root / 'python3'):
                 executable.chmod(0o755)
             report = root / 'review.md'
             report.write_text('specific review evidence')
-            args = ['bash', str(SKILLS / 'issue-review/scripts/review.sh'), command, '7']
-            args += [SHA] if command == 'pass' else [str(report)]
             env = dict(os.environ, PATH=str(root) + ':' + os.environ['PATH'], REVIEW_TEST_ROOT=str(root), ISSUE_CI_CONFIG='/trusted/gates.json', CI_STATUS=ci_status, MOVED='1' if moved else '0')
-            result = subprocess.run(args, env=env, capture_output=True, text=True)
-            return result, log.read_text()
+            results = []
+            for command in commands:
+                if command == 'move':
+                    (root / 'newhead').touch()
+                    continue
+                args = ['bash', str(SKILLS / 'issue-review/scripts/review.sh'), command]
+                if command != 'next':
+                    args += ['7', SHA]
+                    if command != 'pass':
+                        args += [str(report)]
+                results.append(subprocess.run(args, env=env, capture_output=True, text=True))
+            return results, log.read_text()
 
-    def test_pass_verifies_ci_same_head_and_only_comments(self):
+    def invoke(self, command, **kwargs):
+        results, calls = self.invoke_many([command], **kwargs)
+        return results[0], calls
+
+    def test_pass_verifies_ci_same_head_and_only_records_receipt(self):
         result, calls = self.invoke('pass')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('CI verify', calls)
+        self.assertIn('handoff.py', calls)
         self.assertIn('--head ' + SHA, calls)
-        self.assertIn('Review: accepted head ' + SHA, calls)
+        self.assertIn('record 7 8 ' + SHA + ' pass', calls)
         for forbidden in (' merge ', 'issue edit', 'issue close', '--apply'):
             self.assertNotIn(forbidden, calls)
 
     def test_pending_ci_refuses_acceptance(self):
         result, calls = self.invoke('pass', ci_status='2')
         self.assertEqual(result.returncode, 2)
-        self.assertNotIn('pr comment', calls)
+        self.assertNotIn('record 7 8', calls)
 
     def test_head_changed_after_verification_refuses_acceptance(self):
         result, calls = self.invoke('pass', moved=True)
         self.assertEqual(result.returncode, 2)
-        self.assertNotIn('pr comment', calls)
+        self.assertNotIn('record 7 8', calls)
 
     def test_fail_and_block_report_without_lifecycle_changes(self):
         for command in ('fail', 'block'):
             with self.subTest(command=command):
                 result, calls = self.invoke(command)
                 self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('record 7 8 ' + SHA + ' ' + command, calls)
                 self.assertNotIn('issue edit', calls)
                 self.assertNotIn(' merge ', calls)
+
+    def test_next_after_pass_selects_other_done_and_new_head_is_eligible(self):
+        results, calls = self.invoke_many(['next', 'pass', 'next', 'move', 'next'])
+        for result in results:
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('issue=7', results[0].stdout)
+        self.assertIn('issue=9', results[2].stdout)
+        self.assertIn('issue=7', results[3].stdout)
+        self.assertIn('head=' + 'b' * 40, results[3].stdout)
+
+
+class ReviewReceiptTests(unittest.TestCase):
+    def test_record_dedupes_authenticated_same_head_comment(self):
+        comments = []
+        writes = []
+        def api(path, data=None):
+            if data is not None:
+                writes.append(data)
+                comments.append(dict(body=data['body'], user={'login': 'reviewer'}))
+                return {}
+            if '/comments?' in path:
+                return comments
+            if '/pulls/' in path:
+                return dict(state='open', head={'sha': SHA})
+            return dict(state='open', labels=[{'name': 'done'}])
+        with patch.object(receipt, 'api', side_effect=api):
+            receipt.record('o/r', '7', '8', SHA, 'pass', 'verified', 'reviewer')
+            with contextlib.redirect_stdout(io.StringIO()):
+                receipt.record('o/r', '7', '8', SHA, 'pass', 'verified', 'reviewer')
+        self.assertEqual(len(writes), 1)
+        self.assertIn('issue-review:7:' + SHA, writes[0]['body'])
+
+    def test_spoofed_or_old_head_receipt_cannot_skip_review(self):
+        comments = [dict(body=f'<!-- issue-review:7:{SHA} -->', user={'login': 'attacker'}), dict(body=f'<!-- issue-review:7:{"b" * 40} -->', user={'login': 'reviewer'})]
+        with patch.object(receipt, 'api', return_value=comments):
+            self.assertFalse(receipt.seen('o/r', '7', '8', SHA, 'reviewer'))
+
+    def test_stale_head_or_mixed_lifecycle_cannot_record_acceptance(self):
+        for pr, labels in ((dict(state='open', head={'sha': 'b' * 40}), ['done']), (dict(state='open', head={'sha': SHA}), ['done', 'doing'])):
+            with self.subTest(labels=labels), patch.object(receipt, 'seen', return_value=False), patch.object(receipt, 'api', side_effect=[pr, dict(state='open', labels=[{'name': l} for l in labels])]) as api:
+                with self.assertRaises(RuntimeError):
+                    receipt.record('o/r', '7', '8', SHA, 'pass', 'verified', 'reviewer')
+                self.assertTrue(all(len(c.args) == 1 for c in api.call_args_list))
 
 
 if __name__ == '__main__':

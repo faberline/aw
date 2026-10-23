@@ -10,7 +10,8 @@ permissions:
   contents: read
   pull-requests: read
   issues: write
-# All handoff invocations must share this group. Do not cancel active writers.
+# All handoff invocations share this group. Default pending replacement is
+# safe because EVERY wake reconciles ALL managed PRs, including displaced wakes.
 concurrency:
   group: issue-ci-handoff
   cancel-in-progress: false
@@ -29,14 +30,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.event.workflow_run.id }}
-          HEAD: ${{ github.event.workflow_run.head_sha }}
         shell: bash
         run: |
           set -euo pipefail
-          # Metadata only; never download artifacts or check out/evaluate PR code.
-          gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.pull_requests[].number' |
-          while read -r pr; do
-            python3 plugins/faberline/skills/issue-ci/scripts/handoff.py \
-              --repo "$REPO" --pr "$pr" --head "$HEAD" --run-id "$RUN_ID" \
-              --config .github/issue-ci-required-gates.json --apply
-          done
+          # Reconcile all managed PRs from fresh metadata, not just this event's
+          # PR. This prevents pending replacement from stranding another PR.
+          python3 plugins/faberline/skills/issue-ci/scripts/handoff.py \
+            --repo "$REPO" --run-id "$RUN_ID" --reconcile \
+            --config .github/issue-ci-required-gates.json
