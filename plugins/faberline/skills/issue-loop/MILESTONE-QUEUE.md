@@ -47,7 +47,15 @@ paragraph, heading or blank line. A fenced code example is ignored.
 
 References can be `#N`, `owner/repo#N`, or a GitHub issue/PR URL; Markdown URL
 identity wins over its display text. `Blocks #N` and `Unblocks #N` are outgoing
-and are never treated as incoming. Generic references and arbitrary typed
+and are never treated as incoming. Incoming targets begin **after** their cue;
+`#15 depends on #10` therefore has only target #10. Semicolons (including
+full-width) and sentence boundaries separate explicit clauses: both
+`Depends on #10; blocks #20` and `Blocks #20; depends on #10` retain only #10.
+An inline outgoing cue also ends an incoming target span. Ambiguous subject or
+direction boundaries and multiple incoming cues without a clause separator
+produce an unknown blocker. An explicit current-issue **target** is excluded
+from the dependency set and reported as a self-prerequisite blocker, whereas
+a current-issue subject is not an error. Generic references and arbitrary typed
 relationship arrays are not imported. A dependency declaration without a
 resolvable reference is an explicit unknown prerequisite, not eligibility;
 `Dependencies: none` or a dependency-section `- none` is an empty declaration,

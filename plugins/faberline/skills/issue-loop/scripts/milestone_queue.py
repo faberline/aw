@@ -21,7 +21,8 @@ CUE = re.compile(r'\b(?:depends?\s+on|blocked\s+(?:by|on)|waits?\s+for)\b|'
                  r'(?:前置依賴|依賴|前置條件|先決條件)\s*[:：]', re.I)
 DEPENDENCY_HEADING = re.compile(r'^\s*#{1,6}\s+(?:dependencies|prerequisites?|前置依賴|依賴|前置條件|先決條件)\s*[:：]?\s*$', re.I)
 BARRIER = re.compile(r'(?:stays?|remains?)\s+open[^.\n]*?\buntil\s+|不能完成[^。\n]*?直到', re.I)
-OUTGOING = re.compile(r'^\s*(?:[-*]\s*)?(?:blocks|unblocks)\b', re.I)
+OUTGOING = re.compile(r'\b(?:blocks?|unblocks?)\b', re.I)
+CLAUSE = re.compile(r'[;；]|\.(?=\s)|[。!?](?=\s|$)')
 
 
 def version(title, repo):
@@ -65,46 +66,87 @@ def milestone_version(issue, repo, milestones):
     return version(m['title'], repo)
 
 
-def prose_dependencies(text, repo):
-    """Conservative line/section grammar, not an NLP or relationship importer.
+def prose_dependencies(text, repo, issue_number=None):
+    """Bounded incoming clauses, not natural-language relationship inference.
 
-    Dependency headings include their list until the next heading/blank line.
-    A declaration without resolvable refs is unknown, not permission to proceed.
-    Code fences are examples. `blocks #N` is outgoing and never reversed.
+    Subjects before an incoming cue are not targets. Explicit outgoing clauses
+    do not discard adjacent incoming ones. Multiple incoming cues without a
+    clause boundary are ambiguous and fail closed instead of guessing scope.
     """
     refs, unknown, section, fenced = set(), [], False, False
+
+    def reference(match):
+        return ((match[1] or match[4] or repo).lower(), match[2] or 'issues',
+                int(match[3] or match[5] or match[6]))
+
+    def targets(source, original):
+        found = list(REFERENCE.finditer(source))
+        for match in found:
+            target = reference(match)
+            if target == (repo.lower(), 'issues', issue_number):
+                unknown.append(f'self prerequisite #{issue_number}: {original.strip()}')
+            else:
+                refs.add(target)
+        return bool(found)
+
     for line in text.splitlines():
         if line.lstrip().startswith(('```', '~~~')):
             fenced = not fenced
+            section = False
             continue
         if fenced:
             continue
-        barrier = BARRIER.search(line)
-        cue = barrier or CUE.search(line) or DEPENDENCY_HEADING.fullmatch(line)
-        if line.startswith('#') or not line.strip():
-            section = False
-        if OUTGOING.search(line):
+        heading = DEPENDENCY_HEADING.fullmatch(line)
+        if heading:
+            section = True
             continue
-        if not cue and section and not re.match(r'^\s*[-*]\s+', line):
+        if (line.startswith('#') and re.match(r'^#{1,6}\s', line)) or not line.strip():
             section = False
-        if not cue and not section:
-            continue
-        # Markdown link labels are not independent issue references.
-        declaration = line[barrier.end():] if barrier else line
-        source = re.sub(r'\[[^\]]*\]\((https://github\.com/[^)]+)\)', r'\1', declaration)
-        found = list(REFERENCE.finditer(source))
-        for m in found:
-            target_repo = m[1] or m[4] or repo
-            kind = m[2] or 'issues'
-            number = int(m[3] or m[5] or m[6])
-            refs.add((target_repo.lower(), kind, number))
-        heading = bool(cue and re.fullmatch(r'\s*#{1,6}\s+[^#]+', line))
-        explicit_none = bool(re.fullmatch(r'\s*(?:[-*]\s*)?(?:(?:dependencies|prerequisites?)\s*:\s*)?(?:none|無)\.?\s*', line, re.I))
-        if (cue or section) and not found and not heading and not explicit_none:
-            unknown.append(line.strip())
-        if cue:
-            section = heading or line.rstrip().endswith(':')
-    return sorted(refs), unknown
+        # Normalize link identity before clause splitting (the display label is
+        # not a second reference, nor may its punctuation split the target URL).
+        source = re.sub(r'\[[^\]]*\]\((https://github\.com/[^)]+)\)', r'\1', line)
+        clauses = CLAUSE.split(source)
+        any_incoming = False
+        for clause in clauses:
+            incoming = sorted([*CUE.finditer(clause), *BARRIER.finditer(clause)], key=lambda m: m.start())
+            outgoing = list(OUTGOING.finditer(clause))
+            if len(incoming) > 1:
+                unknown.append(f'ambiguous incoming clause: {clause.strip()}')
+            if incoming:
+                any_incoming = True
+                for cue in incoming:
+                    # Everything before the cue is a subject/context, never a
+                    # target. Explicit foreign subjects require clarification.
+                    prefix = clause[:cue.start()]
+                    subjects = list(REFERENCE.finditer(prefix))
+                    if subjects and issue_number is not None and not any(m.start() < cue.start() for m in outgoing):
+                        if any(reference(m) != (repo.lower(), 'issues', issue_number) for m in subjects):
+                            unknown.append(f'ambiguous prerequisite subject: {clause.strip()}')
+                    next_direction = min((m.start() for m in [*incoming, *outgoing]
+                                          if m.start() >= cue.end()), default=len(clause))
+                    declaration = clause[cue.end():next_direction]
+                    if next_direction < len(clause) and re.search(r'(?:#\d+|/\d+)\s*$', declaration):
+                        # e.g. "Depends on #10, #20 blocks #30": the final ref
+                        # may be the next clause's subject; do not guess it.
+                        unknown.append(f'ambiguous direction boundary: {clause.strip()}')
+                    found = targets(declaration, clause)
+                    empty = not declaration.strip(' :：*')
+                    explicit_none = bool(re.fullmatch(r'\s*(?:none|無)\.?\s*', declaration, re.I))
+                    if not found and not explicit_none and not (empty and clause.rstrip().endswith(':')):
+                        unknown.append(clause.strip())
+                continue
+            if outgoing:
+                # Ignore only this explicit outgoing clause, never its siblings.
+                continue
+            if section and re.match(r'^\s*[-*]\s+', clause):
+                found = targets(clause, clause)
+                if not found and not re.fullmatch(r'\s*[-*]\s*(?:none|無)\.?\s*', clause, re.I):
+                    unknown.append(clause.strip())
+        if any_incoming:
+            section = source.rstrip().endswith((':', '：'))
+        elif not re.match(r'^\s*[-*]\s+', line):
+            section = False
+    return sorted(refs), sorted(set(unknown))
 
 
 def select(repo, issues, milestones, blockers):
@@ -188,7 +230,7 @@ class Client:
         sources = [issue.get('body') or ''] + [c.get('body') or '' for c in comments]
         refs, reasons = set(), []
         for source in sources:
-            parsed, unknown = prose_dependencies(source, self.repo)
+            parsed, unknown = prose_dependencies(source, self.repo, n)
             refs.update(parsed)
             reasons.extend(f'unresolved prose prerequisite: {v}' for v in unknown)
         for dep in self.pages(f'repos/{self.repo}/issues/{n}/dependencies/blocked_by'):

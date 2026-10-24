@@ -130,6 +130,32 @@ class ProseTests(unittest.TestCase):
         self.assertEqual(q.prose_dependencies('```\nDepends on #1\n```\nBlocks #31\nUnblocks #4', 'faberline/tape'), ([], []))
 
 
+class ClauseParserTests(unittest.TestCase):
+    def test_current_issue_subject_is_not_a_target(self):
+        self.assertEqual(q.prose_dependencies('#15 depends on #10', 'faberline/defer', 15),
+                         ([('faberline/defer', 'issues', 10)], []))
+
+    def test_mixed_direction_both_orders_and_boundaries(self):
+        for text in ('Depends on #10; blocks #20', 'Blocks #20; depends on #10',
+                     'Depends on #10 and blocks #20', 'Blocks #20 and depends on #10',
+                     'Depends on #10. Blocks #20', 'Blocks #20； depends on #10'):
+            with self.subTest(text=text):
+                self.assertEqual(q.prose_dependencies(text, 'faberline/defer', 15),
+                                 ([('faberline/defer', 'issues', 10)], []))
+
+    def test_explicit_self_target_excluded_with_blocking_diagnostic(self):
+        refs, unknown = q.prose_dependencies('Depends on #15', 'faberline/defer', 15)
+        self.assertEqual(refs, [])
+        self.assertIn('self prerequisite #15', unknown[0])
+
+    def test_other_issue_subject_or_unseparated_incoming_is_ambiguous(self):
+        for text in ('#8 depends on #10', '#8 depends on #10 and blocks #20',
+                     'Depends on #10 and #8 depends on #20',
+                     'Depends on #10, #20 blocks #30'):
+            with self.subTest(text=text):
+                self.assertTrue(q.prose_dependencies(text, 'faberline/defer', 15)[1])
+
+
 class FakeClient(q.Client):
     def __init__(self, issues=None, milestones=None):
         self.repo = 'faberline/tape'
@@ -229,6 +255,44 @@ class DependencyTests(unittest.TestCase):
         c.comment_rows = [dict(body='unrelated') for _ in range(150)] + [dict(body='Depends on #8')]
         c.targets[('faberline/tape', 8)] = issue(8)
         self.assertIn('#8', c.snapshot()['decision']['reasons'][0])
+
+
+class ClauseSelectionTests(unittest.TestCase):
+    def client(self, text):
+        c = FakeClient([issue(15)])
+        c.repo = 'faberline/defer'
+        c.milestones[0]['title'] = 'defer@0.9'
+        c.issues[0]['body'] = text
+        c.targets[('faberline/defer', 10)] = issue(10)
+        c.targets[('faberline/defer', 20)] = issue(20)
+        return c
+
+    def test_subject_and_mixed_directions_wait_for_incoming_only(self):
+        for text in ('#15 depends on #10', 'Depends on #10; blocks #20',
+                     'Blocks #20; depends on #10'):
+            with self.subTest(text=text):
+                c = self.client(text)
+                waits = c.blockers(c.issue(15), {1: c.milestones[0]})
+                self.assertEqual(len(waits), 1)
+                self.assertIn('#10 ', waits[0])
+                self.assertNotIn('#15 ', waits[0])
+                self.assertNotIn('#20 ', waits[0])
+                self.assertIsNone(c.snapshot()['decision']['selected'])
+                # #20 and the current #15 remain open; closing only #10 must
+                # make this issue eligible, without self/outgoing deadlock.
+                c.targets[('faberline/defer', 10)]['state'] = 'closed'
+                self.assertEqual(c.blockers(c.issue(15), {1: c.milestones[0]}), [])
+                self.assertEqual(c.snapshot()['decision']['selected'], 15)
+                self.assertEqual(c.writes, [])
+
+    def test_explicit_self_or_ambiguous_subject_stays_fail_closed(self):
+        for text in ('Depends on #15', '#8 depends on #10'):
+            with self.subTest(text=text):
+                c = self.client(text)
+                c.targets[('faberline/defer', 10)]['state'] = 'closed'
+                result = c.snapshot()['decision']
+                self.assertIsNone(result['selected'])
+                self.assertTrue(any('self prerequisite' in r or 'ambiguous prerequisite subject' in r for r in result['reasons']))
 
 
 class PaginationTests(unittest.TestCase):
