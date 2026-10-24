@@ -2,7 +2,7 @@ name: Trusted PR qualification and CI handoff
 description: Evaluate GitHub metadata with pinned aw logic and default-branch consumer policy.
 inputs:
   operation:
-    description: validate (read-only schema), qualify (read-only current PR), or handoff (serialized workflow_run reconciliation).
+    description: validate, qualify, handoff, readiness (publish read-only receipt), or verify-readiness (authenticate and refresh receipt).
     default: handoff
   policy:
     description: Policy JSON path on the consumer default branch. PR policy is never loaded.
@@ -13,6 +13,8 @@ inputs:
     description: PR number for read-only qualification.
   head:
     description: Exact PR head SHA for read-only qualification.
+  receipt:
+    description: Untrusted receipt JSON file to authenticate for verify-readiness; never grants permissions.
 runs:
   using: composite
   steps:
@@ -26,4 +28,5 @@ runs:
         INPUT_RUN_ID: ${{ inputs.run-id }}
         INPUT_PR: ${{ inputs.pr }}
         INPUT_HEAD: ${{ inputs.head }}
+        INPUT_RECEIPT: ${{ inputs.receipt }}
       run: python3 "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/action.py"

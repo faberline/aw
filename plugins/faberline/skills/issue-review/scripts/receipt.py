@@ -47,7 +47,30 @@ def record(repo, issue, pr, head, outcome, text, actor):
     return 0
 
 
+def verify_readiness(arguments):
+    # Separate read-only flow: no done-label requirement and no review receipt write.
+    if len(arguments) != 5:
+        raise RuntimeError('usage: receipt.py verify-readiness REPO PR HEAD EVALUATOR_SHA RECEIPT_JSON')
+    repo, pr, head, evaluator, path = arguments
+    import importlib.util
+    folder = Path(__file__).resolve().parents[2] / 'issue-ci/scripts'
+    def load(name):
+        spec = importlib.util.spec_from_file_location('review_' + name, folder / (name + '.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    readiness, ci, action = load('readiness'), load('handoff'), load('action')
+    if not pr.isdigit():
+        raise RuntimeError('PR must be numeric')
+    document = lambda: action.trusted_policy(ci, repo, '.github/issue-ci-required-gates.json', metadata=True)
+    verified = readiness.verify_file(ci, path, repo, int(pr), head, document, evaluator)
+    print(readiness.canonical(verified))
+    return {'ready': 0, 'wait': 3, 'fail': 2}[verified['payload']['status']]
+
+
 def main():
+    if sys.argv[1:2] == ['verify-readiness']:
+        return verify_readiness(sys.argv[2:])
     command, n, pr, head, *rest = sys.argv[1:]
     if command not in ('seen', 'record') or not n.isdigit() or not pr.isdigit() or not re.fullmatch('[0-9a-f]{40}', head):
         raise RuntimeError('usage: receipt.py seen|record N PR HEAD [pass|fail|block [file]]')

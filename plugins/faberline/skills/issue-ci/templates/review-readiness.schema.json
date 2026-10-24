@@ -1,0 +1,449 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AW review readiness receipt v1 (integrity is not authentication)",
+  "type": "object",
+  "properties": {
+    "payload": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "status": {
+          "enum": [
+            "ready",
+            "wait",
+            "fail"
+          ]
+        },
+        "inputs": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string"
+            },
+            "pr": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "head": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "base": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "changed_files": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "filename": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "previous_filename": {
+                    "type": "string"
+                  },
+                  "sha": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "additions": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "deletions": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "changes": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "filename",
+                  "status"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "changed_inventory_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "policy_path": {
+              "type": "string"
+            },
+            "policy_source": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "policy_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "evaluator_sha": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "selected": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "exemptions": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "pr_description_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "required_checks": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "workflow": {
+                    "type": "string"
+                  },
+                  "job": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "unit",
+                      "functional_e2e",
+                      "performance",
+                      "policy"
+                    ]
+                  },
+                  "assertion_names": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "workflow",
+                  "job",
+                  "kind",
+                  "assertion_names"
+                ],
+                "additionalProperties": true
+              }
+            }
+          },
+          "required": [
+            "repo",
+            "pr",
+            "head",
+            "base",
+            "changed_files",
+            "changed_inventory_sha256",
+            "policy_path",
+            "policy_source",
+            "policy_sha256",
+            "evaluator_sha",
+            "selected",
+            "exemptions",
+            "pr_description_sha256",
+            "required_checks"
+          ],
+          "additionalProperties": false
+        },
+        "producer": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string"
+            },
+            "workflow_id": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "path": {
+              "type": "string"
+            },
+            "definition_sha": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "run_id": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "run_attempt": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "head": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "job_id": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "job": {
+              "type": "string"
+            },
+            "event": {
+              "const": "workflow_run"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "repo",
+            "workflow_id",
+            "path",
+            "definition_sha",
+            "run_id",
+            "run_attempt",
+            "head",
+            "job_id",
+            "job",
+            "event",
+            "url"
+          ],
+          "additionalProperties": false
+        },
+        "transitive_pins": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "ref": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "blob_sha": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  }
+                },
+                "required": [
+                  "repo",
+                  "path",
+                  "ref",
+                  "blob_sha"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "docker": {
+                    "type": "string",
+                    "pattern": "^docker://.+@sha256:[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "docker"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "workflow": {
+                "type": "string"
+              },
+              "workflow_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "definition_sha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "run_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "run_number": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "run_attempt": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "status": {
+                "type": "string"
+              },
+              "conclusion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "url": {
+                "type": "string"
+              },
+              "jobs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "conclusion": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "status",
+                    "conclusion",
+                    "url"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "workflow",
+              "workflow_id",
+              "definition_sha",
+              "run_id",
+              "run_number",
+              "run_attempt",
+              "status",
+              "conclusion",
+              "url",
+              "jobs"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "observation_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "assertions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "check": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "assertions": {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": {
+                  "const": "passed"
+                }
+              },
+              "record_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "check",
+              "count",
+              "assertions",
+              "record_sha256"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "links": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "code",
+              "detail",
+              "links"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "version",
+        "status",
+        "inputs",
+        "producer",
+        "transitive_pins",
+        "evidence",
+        "observation_sha256",
+        "assertions",
+        "reasons"
+      ],
+      "additionalProperties": false
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "payload",
+    "sha256"
+  ],
+  "additionalProperties": false
+}

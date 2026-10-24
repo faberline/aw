@@ -33,7 +33,10 @@ def pages(path, key=None):
 
 
 def load_config(path):
-    config = json.loads(Path(path).read_text())
+    return validate_config(json.loads(Path(path).read_text()))
+
+
+def validate_config(config):
     if not isinstance(config, dict):
         raise RuntimeError('gate config must be an object')
     if '_qualification_context' in config:
@@ -98,7 +101,7 @@ def qualify_config(repo, pr, config):
     return module.scoped_config(config, pr, files, definitions)
 
 
-def evaluate(workflows, snapshots):
+def evaluate_evidence(workflows, snapshots):
     """Aggregate latest runs of ALL configured workflows; no vacuous all-green."""
     pending, failures, evidence = [], [], []
     for workflow in workflows:
@@ -128,8 +131,14 @@ def evaluate(workflows, snapshots):
                 elif job.get('conclusion') != 'success':
                     # Skips need a separate future policy; never assume justification.
                     pending.append(f'{path} / {name}: {job.get("conclusion")} {link}')
-    state = 'todo' if failures else 'pending' if pending else 'done'
-    return state, failures + pending, sorted(evidence)
+    return dict(failures=failures, pending=pending, evidence=sorted(evidence))
+
+
+def evaluate(workflows, snapshots):
+    # Legacy lifecycle adapter; evidence collection itself has no label authority.
+    result = evaluate_evidence(workflows, snapshots)
+    state = 'todo' if result['failures'] else 'pending' if result['pending'] else 'done'
+    return state, result['failures'] + result['pending'], result['evidence']
 
 
 def evaluate_policy(config, snapshots):
@@ -152,11 +161,13 @@ def evaluate_policy(config, snapshots):
     return state, reasons, evidence
 
 
-def snapshot(repo, sha, config):
+def snapshot(repo, sha, config, diagnostics=None):
     root = f'repos/{repo}'
     snapshots = {}
     for workflow in config['workflows']:
         if workflow['path'] in config.get('_qualification_context', {}).get('untrusted_workflows', []):
+            if diagnostics is not None:
+                diagnostics[workflow['path']] = 'untrusted_workflow'
             continue
         runs = pages(f'{root}/actions/workflows/{quote(workflow["path"].split("/")[-1], safe="")}/runs?head_sha={sha}&event=pull_request', 'workflow_runs')
         runs = [r for r in runs if r['head_sha'] == sha and r.get('event') == 'pull_request' and r.get('head_repository', {}).get('full_name') == repo and r.get('path') == workflow['path']]
@@ -164,6 +175,8 @@ def snapshot(repo, sha, config):
             continue
         latest = max(runs, key=lambda r: (r['run_number'], r.get('run_attempt', 1)))
         if '_qualification_context' in config and not qualification_module().trusted_run(latest, config):
+            if diagnostics is not None:
+                diagnostics[workflow['path']] = 'untrusted_latest_run'
             # Never fall back to an older green run when the newest identity
             # or PR/base binding is unknown or untrusted.
             continue
