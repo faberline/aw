@@ -79,7 +79,7 @@ not crate versions. No schedule, release/test gate or done change is implied.
 
 ## Primary main freshness
 
-After guard/owner checks, `next` fetches exact origin/main and reports a
+After guard/owner checks, `next` fetches all remote heads, binds exact origin/main and reports a
 [primary checkout FF attempt](MAIN-CHECKOUT.md). Update only clean, checked-out
 main with positive exclusive owner coordination (`ISSUE_MAIN_EXCLUSIVE_OWNER`
 matches the existing owner token), no lease/conflict and fast-forward history.
@@ -87,3 +87,8 @@ Dirty/untracked, ahead/diverged, non-main, active/unknown owner or concurrent
 change holds maintenance; never stash/reset/clean/rebase or hide user files.
 That hold does not stop safe fresh-origin issue work or change its original PR
 worktree. Do not set the coordination token merely because a lease is absent.
+
+Configured Git filters hold main maintenance before status/checkout; hidden
+index flags and sparse state also hold and are never cleared automatically.
+An existing PR with no available branch after fetch must hold, never fall back
+to creating its repair from main. Install the shared index guard with the worker.

@@ -2,9 +2,18 @@
 
 This is a small pre-work maintenance step, separate from Codex post-merge
 worktree cleanup. `next` retains the existing repository guard and owner/lease
-checks, explicitly fetches `refs/heads/main:refs/remotes/origin/main`, binds that
-exact commit, then attempts ordinary primary-checkout fast-forward maintenance.
+checks, fetches all `refs/heads/*:refs/remotes/origin/*` (preserving new remote
+PR branches), binds exact origin/main, then attempts ordinary primary-checkout fast-forward maintenance.
 A failed fetch refuses new selection; it never silently uses stale origin/main.
+An associated existing PR whose branch/ref is unavailable after fetch holds;
+its repair is never created from main.
+
+Before status or checkout, hold configured clean/smudge/process filters rather
+than executing them or blindly writing unsmudged/LFS content. A separate reviewed
+filter policy is required for such repos. Also hold assume-unchanged/skip-worktree
+index tags and sparse settings/patterns; do not clear flags. The shared read-only
+index guard is rechecked immediately before FF. A clean status alone cannot
+certify visible tracked content.
 
 Update the primary checkout only when it is on main, has no staged/tracked or
 untracked changes, has no issue owner lease/in-progress Git operation, is behind
@@ -36,6 +45,6 @@ preserve/move those files or update any live checkout. Those holds require
 separate deliberate owner coordination/content preservation before FF can run.
 
 Deployment: review the worker and affected tests, then update the shared worker
-and this documentation through the single installation owner. No new runtime
+and this documentation through the single installation owner. The worker and shared index guard must update coherently; no new package
 dependency, schedule, permissions, package version, CI/review or done change.
 The existing local guard is not a filesystem CAS against noncooperating writers.

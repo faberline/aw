@@ -1,5 +1,6 @@
 """Affected isolated Git fixtures, no product/network tests."""
 import contextlib
+import copy
 import fcntl
 import importlib.util
 import io
@@ -19,6 +20,8 @@ spec.loader.exec_module(work)
 
 class MainSyncTests(unittest.TestCase):
     def setUp(self):
+        environment=patch.dict(os.environ,GIT_CONFIG_GLOBAL=os.devnull,GIT_CONFIG_NOSYSTEM='1')
+        environment.start();self.addCleanup(environment.stop)
         self.tmp=tempfile.TemporaryDirectory(prefix='aw-main-ff-unit-')
         self.addCleanup(self.tmp.cleanup)
         root=Path(self.tmp.name).resolve()
@@ -71,6 +74,72 @@ class MainSyncTests(unittest.TestCase):
         self.assertEqual(self.git(self.main,'rev-parse','HEAD'),self.fetched)
         self.assertEqual((self.main/'tracked').read_text(),'latest')
         self.assertEqual(self.sync()['status'],'current')
+
+    def test_hidden_tracked_bytes_hold_without_clearing_index_flags(self):
+        for flag in ('--assume-unchanged','--skip-worktree'):
+            with self.subTest(flag=flag):
+                self.git(self.main,'update-index',flag,'tracked')
+                (self.main/'tracked').write_text('hidden valuable')
+                self.assertEqual(self.git(self.main,'status','--porcelain'),'')
+                flags=self.git(self.main,'ls-files','-v','tracked')
+                self.assert_held_unchanged('hidden/nonordinary index flags')
+                self.assertEqual((self.main/'tracked').read_text(),'hidden valuable')
+                self.assertEqual(self.git(self.main,'ls-files','-v','tracked'),flags)
+                # Clear only the disposable fixture before the next case.
+                self.git(self.main,'update-index','--no-assume-unchanged','--no-skip-worktree','tracked')
+                (self.main/'tracked').write_text('base')
+
+    def test_hidden_flags_added_during_revalidation_stop_fast_forward(self):
+        original=work.index_safety.inspect;calls=[0]
+        def changing(path):
+            calls[0]+=1
+            if calls[0]==2:
+                self.git(self.main,'update-index','--skip-worktree','tracked')
+                (self.main/'tracked').write_text('hidden concurrent content')
+            return original(path)
+        with patch.object(work.index_safety,'inspect',side_effect=changing):
+            self.assert_held_unchanged('hidden/nonordinary index flags')
+        self.assertEqual((self.main/'tracked').read_text(),'hidden concurrent content')
+        self.assertTrue(self.git(self.main,'ls-files','-v','tracked').startswith('S '))
+
+    def test_sparse_main_settings_or_patterns_are_held(self):
+        self.git(self.main,'config','core.sparseCheckout','true')
+        self.assert_held_unchanged('sparse')
+        self.git(self.main,'config','--unset','core.sparseCheckout')
+        (self.main/'.git/info/sparse-checkout').write_text('tracked\n')
+        self.assert_held_unchanged('sparse checkout metadata')
+
+    def test_clean_filter_is_held_before_status_can_execute_repo_script(self):
+        sentinel=Path(self.tmp.name)/'must-not-run-clean'
+        (self.main/'driver-script').write_text('#!/bin/sh\ntouch "'+str(sentinel)+'"\n')
+        (self.main/'.gitattributes').write_text('tracked filter=sentinel\n')
+        (self.main/'tracked').write_text('valuable local')
+        self.git(self.main,'config','filter.sentinel.clean','sh ./driver-script')
+        original=work.git
+        def audited(*args):
+            if 'status' in args or 'merge' in args:raise AssertionError('filter guard must precede status/checkout')
+            return original(*args)
+        with patch.object(work,'git',side_effect=audited):
+            self.assert_held_unchanged('configured Git filters')
+        self.assertFalse(sentinel.exists())
+        self.assertEqual((self.main/'tracked').read_text(),'valuable local')
+
+    def test_smudge_and_process_filters_are_held_before_ff_checkout(self):
+        sentinel=Path(self.tmp.name)/'must-not-run-checkout'
+        (self.seed/'driver-script').write_text('#!/bin/sh\ntouch "'+str(sentinel)+'"\n')
+        (self.seed/'.gitattributes').write_text('tracked filter=sentinel\n')
+        self.git(self.seed,'add','driver-script','.gitattributes');self.publish()
+        original=work.git
+        for field in ('smudge','process'):
+            with self.subTest(field=field):
+                self.git(self.main,'config','filter.sentinel.'+field,'sh ./driver-script')
+                def audited(*args):
+                    if 'status' in args or 'merge' in args:raise AssertionError('filter guard must precede status/checkout')
+                    return original(*args)
+                with patch.object(work,'git',side_effect=audited):
+                    self.assert_held_unchanged('configured Git filters')
+                self.assertFalse(sentinel.exists())
+                self.git(self.main,'config','--unset','filter.sentinel.'+field)
 
     def test_dirty_and_untracked_collision_preserve_user_content(self):
         (self.main/'tracked').write_text('user work')
@@ -155,6 +224,43 @@ class MainSyncTests(unittest.TestCase):
         hook.write_text('#!/bin/sh\ntouch "'+str(sentinel)+'"\n');hook.chmod(0o755)
         self.assertEqual(self.sync()['status'],'updated')
         self.assertFalse(sentinel.exists())
+
+    def test_new_remote_pr_branch_is_fetched_and_repair_uses_its_actual_head(self):
+        self.git(self.seed,'checkout','-q','-b','issue/7')
+        (self.seed/'tracked').write_text('actual remote PR content')
+        self.git(self.seed,'add','tracked');self.git(self.seed,'commit','-qm','remote issue')
+        pr_head=self.git(self.seed,'rev-parse','HEAD')
+        self.git(self.seed,'push','-q','origin','issue/7')
+        self.assertNotEqual(pr_head,self.fetched)
+        for ref in ('refs/heads/issue/7','refs/remotes/origin/issue/7'):
+            self.assertNotEqual(subprocess.run(['git','-C',str(self.main),'show-ref','--verify','--quiet',ref]).returncode,0)
+        item=dict(number=7,title='repair',body='fixture',state='open',created_at='2026-01-01',labels=['todo'])
+        class Client:
+            repo='faberline/tape'
+            def pages(client,path):
+                if '/pulls?' in path:return [dict(number=9,head=dict(ref='issue/7',sha=pr_head,repo=dict(full_name=client.repo)))]
+                return [copy.deepcopy(item)]
+            def issue(client,n):return copy.deepcopy(item)
+            def patch(client,n,**values):item.update(values)
+        def run(*args):
+            if args[-2:]==('rev-parse','--git-common-dir'):return str(self.main/'.git')
+            return subprocess.check_output(args,cwd=self.main,stderr=subprocess.PIPE,text=True).strip()
+        def exists(ref):return subprocess.run(['git','show-ref','--verify','--quiet',ref],cwd=self.main).returncode==0
+        with patch.object(sys,'argv',['work.py','next']),patch.dict(os.environ,ISSUE_WORK_OWNER='owner',ISSUE_MAIN_EXCLUSIVE_OWNER=''),patch.object(work,'run',side_effect=run),patch.object(work,'branch_exists',side_effect=exists),patch.object(work.queue,'Client',return_value=Client()),contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(work.main(),0)
+        issue=self.main/'.claude/worktrees/issue-7'
+        self.assertEqual(self.git(issue,'rev-parse','HEAD'),pr_head)
+        self.assertEqual((issue/'tracked').read_text(),'actual remote PR content')
+        self.assertEqual(self.git(self.main,'rev-parse','HEAD'),self.base)
+
+    def test_known_pr_without_local_or_remote_branch_never_falls_back_to_main(self):
+        def run(*args):
+            if args[-2:]==('rev-parse','--git-common-dir'):return str(self.main/'.git')
+            return subprocess.check_output(args,cwd=self.main,stderr=subprocess.PIPE,text=True).strip()
+        def exists(ref):return subprocess.run(['git','show-ref','--verify','--quiet',ref],cwd=self.main).returncode==0
+        with patch.object(work,'run',side_effect=run),patch.object(work,'branch_exists',side_effect=exists),self.assertRaisesRegex(RuntimeError,'never create its repair from main'):
+            work.prepare(self.main,7,'issue/7',existing_pr=9)
+        self.assertFalse((self.main/'.claude/worktrees/issue-7').exists())
 
     def test_failed_fetch_cannot_prepare_work_on_stale_origin(self):
         def git(*args):

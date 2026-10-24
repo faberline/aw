@@ -17,6 +17,11 @@ queue = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(queue)
 
 
+_index_spec = importlib.util.spec_from_file_location('index_safety', Path(__file__).resolve().parent / 'index_safety.py')
+index_safety = importlib.util.module_from_spec(_index_spec)
+_index_spec.loader.exec_module(index_safety)
+
+
 def run(*args):
     return subprocess.check_output(args, text=True).strip()
 
@@ -57,7 +62,7 @@ def branch_of(n, *, client=None, prs=None):
     return f'issue/{n}', None
 
 
-def prepare(main, n, branch):
+def prepare(main, n, branch, existing_pr=None):
     expected = main / '.claude/worktrees' / f'issue-{n}'
     # Preserve an existing branch checked out at any registered location.
     records = git('worktree', 'list', '--porcelain').split('\n\n')
@@ -75,6 +80,8 @@ def prepare(main, n, branch):
         git('worktree', 'add', str(expected), branch)
     elif branch_exists(f'refs/remotes/origin/{branch}'):
         git('worktree', 'add', '--track', '-b', branch, str(expected), f'origin/{branch}')
+    elif existing_pr is not None:
+        refuse('existing PR branch is unavailable after fetch; never create its repair from main')
     else:
         git('worktree', 'add', '--no-track', '-b', branch, str(expected), 'origin/main')
     return expected
@@ -143,13 +150,16 @@ def sync_main(checkout, owner, fetched):
         return held('cannot bind exact fetched origin/main')
     try:
         def snapshot():
+            if index_safety.configured_filters(checkout):
+                raise ValueError('configured Git filters require a separately reviewed policy; no status or checkout executed')
+            index = index_safety.inspect(checkout)
             branch = git('--no-optional-locks', '-C', str(checkout), 'symbolic-ref', '--quiet', '--short', 'HEAD')
             head = git('--no-optional-locks', '-C', str(checkout), 'rev-parse', 'HEAD')
             remote = git('--no-optional-locks', '-C', str(checkout), 'rev-parse', 'refs/remotes/origin/main')
             dirty = git('--no-optional-locks', '-C', str(checkout), 'status', '--porcelain=v1', '-z', '--untracked-files=all')
-            return branch, head, remote, dirty
+            return branch, head, remote, dirty, index
         before = snapshot()
-        branch, head, remote, dirty = before
+        branch, head, remote, dirty, index = before
         if branch != 'main':
             return held('primary checkout is not on main; never switch it')
         if remote != fetched:
@@ -170,6 +180,8 @@ def sync_main(checkout, owner, fetched):
             return held('local main is ahead/diverged; no reset/stash/rebase')
         if snapshot() != before or (common / 'issue-work.lock').exists():
             return held('primary checkout/ref/owner changed before fast-forward')
+        if index_safety.configured_filters(checkout) or index_safety.inspect(checkout) != index:
+            return held('index/filter visibility changed immediately before fast-forward')
         # No hooks/autostash and never overwrite valuable ignored path collisions.
         git('-c', 'core.hooksPath=/dev/null', '-C', str(checkout), 'merge', '--ff-only',
             '--no-edit', '--no-autostash', '--no-overwrite-ignore', fetched)
@@ -217,7 +229,7 @@ def main():
             if not lease_available(lease, owner, mine, now):
                 print('busy: lease belongs to another active or unverified session')
                 return 3
-            git('fetch', '-q', 'origin', 'refs/heads/main:refs/remotes/origin/main')
+            git('fetch', '-q', 'origin', 'refs/heads/*:refs/remotes/origin/*')
             fetched = git('rev-parse', '--verify', 'refs/remotes/origin/main^{commit}')
             print('main_update=' + json.dumps(sync_main(checkout, owner, fetched), sort_keys=True))
             client = queue.Client()
@@ -265,7 +277,7 @@ def main():
                 selected = next(i for i in snapshot['issues'] if i['number'] == snapshot['selected'])
             n = selected['number']
             branch, pr = association(n)
-            wt = prepare(checkout, n, branch)
+            wt = prepare(checkout, n, branch, pr)
             if continuation:
                 # Recheck lifecycle after potentially long prepare; planning policy
                 # is not re-run by an already-owned worker.
@@ -314,7 +326,7 @@ def main():
         if issue['state'] != 'OPEN' or {l['name'] for l in issue['labels']} & {'todo', 'done', 'blocked'} or 'doing' not in {l['name'] for l in issue['labels']}:
             refuse('finish requires an open doing issue')
         branch, pr = branch_of(n)
-        wt = prepare(checkout, n, branch)
+        wt = prepare(checkout, n, branch, pr)
         if git('-C', str(wt), 'status', '--porcelain'):
             refuse(f'uncommitted changes in {wt}; preserve and commit them first')
         if int(git('-C', str(wt), 'rev-list', '--count', 'origin/main..HEAD')) == 0:
