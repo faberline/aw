@@ -508,7 +508,7 @@ class WorkTests(unittest.TestCase):
             current['labels'] = [{'name': v} for v in kwargs['labels']]
             self.calls.append(('PATCH', n, tuple(kwargs['labels'])))
         client.patch.side_effect = patch_issue
-        with patch.object(sys, 'argv', ['work.py', *command]), patch.dict(os.environ, ISSUE_WORK_OWNER='mine'), patch.object(work, 'git', side_effect=git), patch.object(work, 'gh', side_effect=gh), patch.object(work, 'run', side_effect=lambda *a: self.calls.append(a)), patch.object(work, 'branch_of', return_value=('agy/issue-7', 8)), patch.object(work, 'prepare', return_value=Path(self.tmp.name)), patch.object(work.queue, 'Client', return_value=client), contextlib.redirect_stdout(io.StringIO()):
+        with patch.object(sys, 'argv', ['work.py', *command]), patch.dict(os.environ, ISSUE_WORK_OWNER='mine'), patch.object(work, 'git', side_effect=git), patch.object(work, 'gh', side_effect=gh), patch.object(work, 'run', side_effect=lambda *a: self.calls.append(a)), patch.object(work, 'branch_of', return_value=('agy/issue-7', 8)), patch.object(work, 'prepare', return_value=Path(self.tmp.name)), patch.object(work, 'sync_main', return_value={'status':'held','reason':'fixture'}), patch.object(work.queue, 'Client', return_value=client), contextlib.redirect_stdout(io.StringIO()):
             return work.main()
 
     def test_waiting_doing_not_resumed_even_with_mine(self):
