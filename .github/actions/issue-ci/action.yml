@@ -2,7 +2,7 @@ name: Trusted PR qualification and CI handoff
 description: Evaluate GitHub metadata with pinned aw logic and default-branch consumer policy.
 inputs:
   operation:
-    description: validate (read-only schema), qualify (read-only current PR), or handoff (serialized workflow_run reconciliation).
+    description: validate, qualify, handoff, readiness (publish read-only receipt), or verify-readiness (authenticate and refresh receipt).
     default: handoff
   policy:
     description: Policy JSON path on the consumer default branch. PR policy is never loaded.
@@ -13,12 +13,27 @@ inputs:
     description: PR number for read-only qualification.
   head:
     description: Exact PR head SHA for read-only qualification.
+  receipt:
+    description: Untrusted receipt JSON file to authenticate for verify-readiness; never grants permissions.
 runs:
   using: composite
   steps:
+    - name: Prepare hash-locked readiness parser
+      id: readiness-runtime
+      if: inputs.operation == 'readiness' || inputs.operation == 'verify-readiness'
+      shell: bash
+      run: |
+        set -euo pipefail
+        runtime="$(mktemp -d "$RUNNER_TEMP/aw-readiness-python-XXXXXX")"
+        python3 -I -m venv "$runtime"
+        "$runtime/bin/python" -I -m pip --isolated install --disable-pip-version-check --no-input \
+          --no-deps --only-binary=:all: --require-hashes --index-url https://pypi.org/simple \
+          -r "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/readiness-requirements.txt"
+        echo "python=$runtime/bin/python" >> "$GITHUB_OUTPUT"
     - name: Evaluate trusted policy and current GitHub evidence
       shell: bash
       env:
+        AW_READINESS_PYTHON: ${{ steps.readiness-runtime.outputs.python }}
         GH_TOKEN: ${{ github.token }}
         AW_ACTION_REF: ${{ github.action_ref }}
         INPUT_OPERATION: ${{ inputs.operation }}
@@ -26,4 +41,11 @@ runs:
         INPUT_RUN_ID: ${{ inputs.run-id }}
         INPUT_PR: ${{ inputs.pr }}
         INPUT_HEAD: ${{ inputs.head }}
-      run: python3 "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/action.py"
+        INPUT_RECEIPT: ${{ inputs.receipt }}
+      run: |
+        set -euo pipefail
+        script="$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/action.py"
+        if [[ -n "$AW_READINESS_PYTHON" ]]; then
+          exec "$AW_READINESS_PYTHON" -I -B "$script"
+        fi
+        exec python3 "$script"

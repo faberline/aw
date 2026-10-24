@@ -108,3 +108,13 @@ cannot silently fall back to legacy full. Legacy direct-CLI behavior remains
 compatible; existing live failure-only copies are not changed.
 Full-mode adoption is a separate reviewed pilot change with real positive and
 negative evidence; never merely clear current blockers or turn off failure-only.
+
+
+## Read-only review readiness (first phase)
+
+[REVIEW-READINESS.md](REVIEW-READINESS.md) defines the separate versioned
+ready/wait/fail contract and authenticated receipt verifier. It reuses this
+qualification selection and latest-attempt collector without lifecycle writes.
+Failure-only does not itself prevent objective review readiness; true coverage
+blockers still do. No live consumer, index publisher, reviewer dispatcher/lease,
+frequency or done activation is installed by that interface.
