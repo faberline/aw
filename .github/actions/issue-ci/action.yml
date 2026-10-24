@@ -2,7 +2,7 @@ name: Trusted PR qualification and CI handoff
 description: Evaluate GitHub metadata with pinned aw logic and default-branch consumer policy.
 inputs:
   operation:
-    description: validate, qualify, handoff, readiness (publish read-only receipt), or verify-readiness (authenticate and refresh receipt).
+    description: validate, qualify, handoff, readiness, verify-readiness, index, verify-index, or assertion-library (trusted test helper path).
     default: handoff
   policy:
     description: Policy JSON path on the consumer default branch. PR policy is never loaded.
@@ -15,12 +15,21 @@ inputs:
     description: Exact PR head SHA for read-only qualification.
   receipt:
     description: Untrusted receipt JSON file to authenticate for verify-readiness; never grants permissions.
+outputs:
+  assertion-library:
+    description: Trusted pinned helper module for a consumer enforcer; no assertions run by this output.
+    value: ${{ steps.assertion-library.outputs.path }}
 runs:
   using: composite
   steps:
+    - name: Locate pinned assertion library
+      id: assertion-library
+      if: inputs.operation == 'assertion-library'
+      shell: bash
+      run: echo "path=$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/assertion_record.py" >> "$GITHUB_OUTPUT"
     - name: Prepare hash-locked readiness parser
       id: readiness-runtime
-      if: inputs.operation == 'readiness' || inputs.operation == 'verify-readiness'
+      if: inputs.operation == 'readiness' || inputs.operation == 'verify-readiness' || inputs.operation == 'index' || inputs.operation == 'verify-index'
       shell: bash
       run: |
         set -euo pipefail
@@ -31,6 +40,7 @@ runs:
           -r "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/readiness-requirements.txt"
         echo "python=$runtime/bin/python" >> "$GITHUB_OUTPUT"
     - name: Evaluate trusted policy and current GitHub evidence
+      if: inputs.operation != 'assertion-library'
       shell: bash
       env:
         AW_READINESS_PYTHON: ${{ steps.readiness-runtime.outputs.python }}

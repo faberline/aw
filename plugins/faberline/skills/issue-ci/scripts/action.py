@@ -54,8 +54,31 @@ def main():
     ci = controller()
     repo = os.environ['GITHUB_REPOSITORY']
     operation = os.environ.get('INPUT_OPERATION', 'handoff')
-    if operation not in ('validate', 'qualify', 'handoff', 'readiness', 'verify-readiness'):
+    if operation not in ('validate', 'qualify', 'handoff', 'readiness', 'verify-readiness', 'index', 'verify-index'):
         raise RuntimeError('unknown issue-ci operation')
+    if operation in ('index', 'verify-index'):
+        index = ci_module('readiness_index')
+        load_document = lambda: trusted_policy(ci, repo, os.environ.get('INPUT_POLICY', '.github/issue-ci-required-gates.json'), metadata=True)
+        if operation == 'verify-index':
+            verified = index.discover(ci, repo, load_document, os.environ['AW_ACTION_REF'])
+            summary = index.summary(verified)
+            print(index.r.canonical(summary))
+            return {'ready': 0, 'no_ready': 3, 'blocked': 2}[summary['status']]
+        document = load_document()
+        index.r.validate_contract(ci, document['config'])
+        event = ci.strict_json_loads(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())
+        wake = event.get('workflow_run', {})
+        if (event.get('action') != 'completed' or wake.get('status') != 'completed'
+                or wake.get('event') != 'pull_request'
+                or wake.get('head_repository', {}).get('full_name') != repo
+                or wake.get('path') == document['config']['review_readiness']['producer']['path']
+                or wake.get('path') not in {w['path'] for w in document['config']['workflows']}):
+            raise RuntimeError('ignore self/foreign/unconfigured/nonterminal index wake')
+        run_id = os.environ.get('GITHUB_RUN_ID', '')
+        if not re.fullmatch('[1-9][0-9]*', run_id):
+            raise RuntimeError('index must run in its configured GitHub producer')
+        index.emit(index.produce(ci, repo, load_document, os.environ['AW_ACTION_REF'], int(run_id)))
+        return 0
     if operation in ('readiness', 'verify-readiness'):
         readiness = ci_module('readiness')
         pr, head = os.environ.get('INPUT_PR', ''), os.environ.get('INPUT_HEAD', '')

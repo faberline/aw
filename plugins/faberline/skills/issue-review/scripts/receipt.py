@@ -68,7 +68,40 @@ def verify_readiness(arguments):
     return {'ready': 0, 'wait': 3, 'fail': 2}[verified['payload']['status']]
 
 
+def verify_index(arguments, named=False):
+    # One bounded read-only preflight. No done label, completion writes or lease.
+    if len(arguments) != (5 if named else 2):
+        raise RuntimeError('usage: receipt.py verify-index REPO EVALUATOR_SHA | index-receipt REPO PR HEAD EVALUATOR_SHA RECEIPT_SHA256')
+    if named:
+        repo, number, head, evaluator, receipt_sha = arguments
+        if not number.isdigit():
+            raise RuntimeError('PR must be numeric')
+    else:
+        repo, evaluator = arguments
+    import importlib.util
+    folder = Path(__file__).resolve().parents[2] / 'issue-ci/scripts'
+    def load(name):
+        spec = importlib.util.spec_from_file_location('review_index_' + name, folder / (name + '.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    index, ci, action = load('readiness_index'), load('handoff'), load('action')
+    document = lambda: action.trusted_policy(ci, repo, '.github/issue-ci-required-gates.json', metadata=True)
+    if named:
+        receipt = index.named_receipt(ci, repo, int(number), head, receipt_sha, document, evaluator)
+        print(index.r.canonical(receipt))
+        return {'ready': 0, 'wait': 3, 'fail': 2}[receipt['payload']['status']]
+    verified = index.discover(ci, repo, document, evaluator)
+    result = index.summary(verified)
+    print(index.r.canonical(result))
+    return {'ready': 0, 'no_ready': 3, 'blocked': 2}[result['status']]
+
+
 def main():
+    if sys.argv[1:2] == ['index-receipt']:
+        return verify_index(sys.argv[2:], named=True)
+    if sys.argv[1:2] == ['verify-index']:
+        return verify_index(sys.argv[2:])
     if sys.argv[1:2] == ['verify-readiness']:
         return verify_readiness(sys.argv[2:])
     command, n, pr, head, *rest = sys.argv[1:]

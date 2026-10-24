@@ -193,11 +193,13 @@ This phase is not a constant-time receipt-only cache and does not scan all PRs.
 
 ## Integration and deliberate follow-ups
 
-No index transport/publisher is implemented in this first phase. No consumer
-has an approved index locator yet. Missing index means consumer_not_configured,
+The original phase-one revision did not include an index.
+[READINESS-INDEX.md](READINESS-INDEX.md) defines its separate bounded supplement
+and V2 assertion transport; no live consumer has an approved index locator yet.
+Missing index means consumer_not_configured,
 not an empty eligible queue; do not enable the draft thin prompt or fall back to
-model scanning all open PRs. A later index can list these authenticated receipt
-locators/digests; the index must prove completeness and is discovery, not review
+model scanning all open PRs. The supplemental index proves complete bounded
+inventory and publishes authenticated receipts; it is discovery, not review
 authority. Assertion source/log transport must be established by real pilot CI
 before any ready receipt is claimed in production.
 

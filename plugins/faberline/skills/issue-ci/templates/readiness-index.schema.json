@@ -1,0 +1,449 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AW authenticated review index and verified thin summary v1",
+  "$defs": {
+    "producer": {
+      "$ref": "review-readiness.schema.json#/properties/payload/properties/producer"
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "path",
+        "source",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "index": {
+      "type": "object",
+      "properties": {
+        "payload": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "kind": {
+              "const": "review-readiness-index"
+            },
+            "repo": {
+              "type": "string"
+            },
+            "evaluator_sha": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "policy": {
+              "$ref": "#/$defs/policy"
+            },
+            "producer": {
+              "$ref": "#/$defs/producer"
+            },
+            "producer_pins": {
+              "$ref": "review-readiness.schema.json#/properties/payload/properties/transitive_pins"
+            },
+            "coverage": {
+              "type": "object",
+              "properties": {
+                "complete": {
+                  "const": true
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 50
+                },
+                "prs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "pr": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "head": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      },
+                      "base": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      },
+                      "head_ref": {
+                        "type": "string"
+                      },
+                      "base_ref": {
+                        "type": "string"
+                      },
+                      "head_repo": {
+                        "type": "string"
+                      },
+                      "draft": {
+                        "type": "boolean"
+                      },
+                      "description_sha256": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      }
+                    },
+                    "required": [
+                      "pr",
+                      "head",
+                      "base",
+                      "head_ref",
+                      "base_ref",
+                      "head_repo",
+                      "draft",
+                      "description_sha256"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "maxItems": 50
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "complete",
+                "count",
+                "prs",
+                "sha256"
+              ],
+              "additionalProperties": false
+            },
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "pr": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "receipt": {
+                    "$ref": "review-readiness.schema.json"
+                  },
+                  "scope": {
+                    "type": "object",
+                    "properties": {
+                      "workflows": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "path": {
+                              "type": "string"
+                            },
+                            "jobs": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "jobs"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "context": {
+                        "type": "object",
+                        "properties": {
+                          "workflows": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "path": {
+                                  "type": "string"
+                                },
+                                "jobs": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "path",
+                                "jobs"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "selected": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "paths": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "base": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{40}$"
+                          },
+                          "exemptions": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "issues": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "head": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{40}$"
+                          },
+                          "pr": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "untrusted_workflows": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "workflows",
+                          "selected",
+                          "paths",
+                          "base",
+                          "exemptions",
+                          "issues",
+                          "head",
+                          "pr",
+                          "untrusted_workflows"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "workflows",
+                      "context"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "mechanical_review_key": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "pr",
+                  "receipt",
+                  "scope",
+                  "mechanical_review_key"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 50
+            }
+          },
+          "required": [
+            "version",
+            "kind",
+            "repo",
+            "evaluator_sha",
+            "policy",
+            "producer",
+            "producer_pins",
+            "coverage",
+            "entries"
+          ],
+          "additionalProperties": false
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "payload",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "verified-review-index"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "ready",
+            "no_ready",
+            "blocked"
+          ]
+        },
+        "complete": {
+          "const": true
+        },
+        "index_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "producer": {
+          "$ref": "#/$defs/producer"
+        },
+        "policy": {
+          "$ref": "#/$defs/policy"
+        },
+        "evaluator_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "counts": {
+          "type": "object",
+          "properties": {
+            "ready": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 50
+            },
+            "wait": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 50
+            },
+            "fail": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 50
+            }
+          },
+          "required": [
+            "ready",
+            "wait",
+            "fail"
+          ],
+          "additionalProperties": false
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ready": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "pr": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "head": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "base": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "receipt_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "mechanical_review_key": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "links": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 8
+              },
+              "link_count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "pr",
+              "head",
+              "base",
+              "receipt_sha256",
+              "mechanical_review_key",
+              "links",
+              "link_count"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 50
+        }
+      },
+      "required": [
+        "version",
+        "kind",
+        "repo",
+        "status",
+        "complete",
+        "index_sha256",
+        "producer",
+        "policy",
+        "evaluator_sha",
+        "counts",
+        "reason_codes",
+        "blockers",
+        "ready"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/index"
+    },
+    {
+      "$ref": "#/$defs/summary"
+    }
+  ]
+}
