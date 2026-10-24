@@ -25,6 +25,13 @@ class MainSyncTests(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory(prefix='aw-main-ff-unit-')
         self.addCleanup(self.tmp.cleanup)
         root=Path(self.tmp.name).resolve()
+        original_attributes_git = work.main_filters.git
+        def isolated_defaults(path, *args, **kwargs):
+            if args in (('var', 'GIT_ATTR_GLOBAL'), ('var', 'GIT_ATTR_SYSTEM')):
+                return (str(root / ('absent-'+args[1]))+'\n').encode()
+            return original_attributes_git(path, *args, **kwargs)
+        defaults = patch.object(work.main_filters, 'git', side_effect=isolated_defaults)
+        defaults.start();self.addCleanup(defaults.stop)
         self.seed=root/'seed';self.seed.mkdir()
         self.main=root/'main'
         self.remote=root/'remote.git'
