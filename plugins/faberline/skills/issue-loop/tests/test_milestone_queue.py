@@ -143,6 +143,16 @@ class ClauseParserTests(unittest.TestCase):
                 self.assertEqual(q.prose_dependencies(text, 'faberline/defer', 15),
                                  ([('faberline/defer', 'issues', 10)], []))
 
+    def test_reference_names_are_not_direction_or_cue_syntax(self):
+        for name in ('blocks', 'unblocks', 'dependencies', 'prerequisites', 'blocked-by'):
+            for target in (f'faberline/{name}#20', f'https://github.com/faberline/{name}/issues/20'):
+                with self.subTest(target=target):
+                    self.assertEqual(q.prose_dependencies(f'Depends on #10 and {target}', 'faberline/defer', 15),
+                                     (sorted([('faberline/defer', 'issues', 10), (f'faberline/{name}', 'issues', 20)]), []))
+        # Owner tokens and PR URLs receive the same reference protection.
+        self.assertEqual(q.prose_dependencies('Depends on https://github.com/blocks/tape/pull/20', 'faberline/defer', 15),
+                         ([('blocks/tape', 'pull', 20)], []))
+
     def test_explicit_self_target_excluded_with_blocking_diagnostic(self):
         refs, unknown = q.prose_dependencies('Depends on #15', 'faberline/defer', 15)
         self.assertEqual(refs, [])
@@ -282,6 +292,20 @@ class ClauseSelectionTests(unittest.TestCase):
                 # make this issue eligible, without self/outgoing deadlock.
                 c.targets[('faberline/defer', 10)]['state'] = 'closed'
                 self.assertEqual(c.blockers(c.issue(15), {1: c.milestones[0]}), [])
+                self.assertEqual(c.snapshot()['decision']['selected'], 15)
+                self.assertEqual(c.writes, [])
+
+    def test_cross_repo_direction_word_target_remains_required(self):
+        for target in ('faberline/blocks#20', 'https://github.com/faberline/blocks/issues/20'):
+            with self.subTest(target=target):
+                c = self.client(f'Depends on #10 and {target}')
+                c.targets[('faberline/defer', 10)]['state'] = 'closed'
+                c.targets[('faberline/blocks', 20)] = issue(20)
+                waits = c.blockers(c.issue(15), {1: c.milestones[0]})
+                self.assertEqual(len(waits), 1)
+                self.assertIn('faberline/blocks#20', waits[0])
+                self.assertIsNone(c.snapshot()['decision']['selected'])
+                c.targets[('faberline/blocks', 20)]['state'] = 'closed'
                 self.assertEqual(c.snapshot()['decision']['selected'], 15)
                 self.assertEqual(c.writes, [])
 

@@ -51,7 +51,9 @@ and are never treated as incoming. Incoming targets begin **after** their cue;
 `#15 depends on #10` therefore has only target #10. Semicolons (including
 full-width) and sentence boundaries separate explicit clauses: both
 `Depends on #10; blocks #20` and `Blocks #20; depends on #10` retain only #10.
-An inline outgoing cue also ends an incoming target span. Ambiguous subject or
+Reference spans are masked before cue/direction matching; names such as
+`faberline/blocks#20` and `/blocks/issues/20` remain reference data. An inline
+outgoing cue outside references also ends an incoming target span. Ambiguous subject or
 direction boundaries and multiple incoming cues without a clause separator
 produce an unknown blocker. An explicit current-issue **target** is excluded
 from the dependency set and reported as a self-prerequisite blocker, whereas

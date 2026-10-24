@@ -108,8 +108,12 @@ def prose_dependencies(text, repo, issue_number=None):
         clauses = CLAUSE.split(source)
         any_incoming = False
         for clause in clauses:
-            incoming = sorted([*CUE.finditer(clause), *BARRIER.finditer(clause)], key=lambda m: m.start())
-            outgoing = list(OUTGOING.finditer(clause))
+            # Reference identity is data, never relation syntax. Preserve offsets
+            # so matches on the masked grammar still select original targets.
+            # Non-whitespace masks cannot be swallowed by a cue's trailing \s+.
+            grammar = REFERENCE.sub(lambda m: '_' * len(m.group()), clause)
+            incoming = sorted([*CUE.finditer(grammar), *BARRIER.finditer(grammar)], key=lambda m: m.start())
+            outgoing = list(OUTGOING.finditer(grammar))
             if len(incoming) > 1:
                 unknown.append(f'ambiguous incoming clause: {clause.strip()}')
             if incoming:
