@@ -119,33 +119,66 @@ def source_bytes(ci, repo, path, ref, expected):
 
 
 def literal_uses(text):
-    """Narrow, fail-closed YAML subset. No YAML aliases, merges or dynamic uses."""
+    """Parse YAML nodes before restricting syntax; no YAML object constructors."""
+    try:
+        import yaml
+    except ImportError:
+        raise Refused('parser_dependency', 'PyYAML==6.0.3 is required; use the hash-locked runtime')
+    need(yaml.__version__ == '6.0.3', 'parser_dependency', 'require the reviewed PyYAML==6.0.3 parser')
+    need(len(text.encode()) <= 262144, 'source_limit', 'YAML source exceeds limit')
+    try:
+        for index, token in enumerate(yaml.scan(text, Loader=yaml.BaseLoader)):
+            need(index < 20000, 'source_limit', 'YAML token count exceeds limit')
+            need(not isinstance(token, (yaml.tokens.AliasToken, yaml.tokens.AnchorToken,
+                                       yaml.tokens.TagToken, yaml.tokens.DirectiveToken)),
+                 'unsupported_source_syntax', 'aliases, anchors, tags and directives are unsupported')
+            if isinstance(token, yaml.tokens.KeyToken):
+                need(text[token.start_mark.index:token.end_mark.index] != '?',
+                     'unsupported_source_syntax', 'explicit mapping keys are unsupported in every context')
+            if isinstance(token, yaml.tokens.ScalarToken) and token.style in ('"', "'"):
+                need(token.start_mark.line == token.end_mark.line,
+                     'unsupported_source_syntax', 'multiline quoted scalars/keys are unsupported')
+        root = yaml.compose(text, Loader=yaml.BaseLoader)
+    except (yaml.YAMLError, RecursionError) as exc:
+        raise Refused('unsupported_source_syntax', 'invalid or excessively nested YAML') from exc
+    need(isinstance(root, yaml.nodes.MappingNode), 'unsupported_source_syntax', 'YAML root must be one mapping')
     refs = []
-    for line in text.splitlines():
-        if not line.strip() or line.lstrip().startswith('#'):
-            continue
-        need(not re.search(r'(^|[\s:\[,])(?:[&*][A-Za-z0-9_-]|<<\s*:|![A-Za-z])', line)
-             and '\\u' not in line and '\\x' not in line,
-             'unsupported_source_syntax', 'aliases, YAML tags and escaped keys need explicit support')
-        # This subset admits only same-line keys. Explicit '?' keys and a
-        # standalone ':' can otherwise hide uses from the literal-key scanner.
-        token = re.sub(r'^\s*(?:-\s*)?', '', line)
-        need(not re.match(r'(?:\?(?:\s|$)|:)', token),
-             'unsupported_source_syntax', 'explicit or multiline mapping keys are unsupported')
-        if token[:1] in ('"', "'"):
-            # Also refuse a split quoted key, including escaped line folding.
-            need(re.match(r"""^(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*')""", token) is not None,
-                 'unsupported_source_syntax', 'multiline quoted keys/scalars are unsupported')
-        # Reject inline/flow/complex uses keys rather than overlooking dependencies.
-        if re.search(r'\buses\b\s*[\"\']?\s*:', line):
-            m = re.fullmatch(r'''\s*(?:-\s*)?(?:uses|"uses"|'uses'):\s*([^#]+?)(?:\s+#.*)?''', line)
-            need(m is not None, 'unsupported_source_syntax', 'uses must be a standalone literal scalar')
-            ref = m[1].strip()
-            if len(ref) >= 2 and ref[0] == ref[-1] and ref[0] in "\"'":
-                ref = ref[1:-1]
-            need(bool(ref) and not re.search(r'[\s${}\[\]"\']', ref),
-                 'mutable_dependency', 'dynamic or nonliteral uses is not pinned')
-            refs.append(ref)
+    visited = 0
+
+    def visit(node, depth):
+        nonlocal visited
+        visited += 1
+        need(depth <= 64 and visited <= 20000, 'source_limit', 'YAML node/depth limit exceeded')
+        if isinstance(node, yaml.nodes.MappingNode):
+            keys = set()
+            for key, value in node.value:
+                need(isinstance(key, yaml.nodes.ScalarNode),
+                     'unsupported_source_syntax', 'complex mapping keys are unsupported')
+                raw_key = text[key.start_mark.index:key.end_mark.index]
+                need(key.start_mark.line == key.end_mark.line and '\\' not in raw_key
+                     and key.value != '<<' and '${{' not in key.value and key.value not in keys,
+                     'unsupported_source_syntax', 'multiline/escaped/dynamic/merged/duplicate keys are unsupported')
+                keys.add(key.value)
+                if key.value == 'uses':
+                    need(isinstance(value, yaml.nodes.ScalarNode) and value.style in (None, '"', "'")
+                         and key.start_mark.line == value.start_mark.line == value.end_mark.line,
+                         'unsupported_source_syntax', 'uses needs a same-line literal scalar')
+                    ref = value.value
+                    need(bool(ref) and not re.search(r'[\s${}\[\]"\']', ref),
+                         'mutable_dependency', 'dynamic or nonliteral uses is not pinned')
+                    need(ref.startswith('./')
+                         or re.fullmatch(r'[\w.-]+/[\w.-]+(?:/[^@]+)?@[0-9a-f]{40}', ref)
+                         or re.fullmatch(r'docker://[^\s@]+@sha256:[0-9a-f]{64}', ref),
+                         'mutable_dependency', 'uses requires a local action or immutable commit/digest')
+                    refs.append(ref)
+                visit(value, depth + 1)
+        elif isinstance(node, yaml.nodes.SequenceNode):
+            for value in node.value:
+                visit(value, depth + 1)
+        else:
+            need(isinstance(node, yaml.nodes.ScalarNode), 'unsupported_source_syntax', 'unsupported YAML node')
+
+    visit(root, 0)
     return refs
 
 

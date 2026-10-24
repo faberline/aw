@@ -62,17 +62,54 @@ assertion-enforcement sources are verified at the manifest ref AND current
 head/base and must match protected roots. The producer's actual transitive
 closure must include `faberline/aw/.github/actions/issue-ci@EVALUATOR_SHA`.
 
-The YAML scanner deliberately supports only standalone literal uses scalars;
-anchors/aliases, merges, tags, explicit mapping keys, standalone mapping value
-lines, multiline quoted keys/scalars, escaped keys, inline/flow uses, mutable/
-dynamic refs and undeclared sources fail closed. Rejected syntax fixtures do not
-establish whether GitHub Actions accepts those special YAML forms; that runner
-behavior has not been exercised. This is not a general YAML interpreter.
+YAML dependency discovery uses the reviewed PyYAML 6.0.3 scanner and complete
+node AST (`yaml.scan` / `yaml.compose` with the pure-Python `BaseLoader`). It does
+not call `load`, `unsafe_load` or YAML object constructors. Keys are inspected
+from parsed mapping nodes in block and flow contexts, not found by line regex.
+Only literal scalar `uses` values with immutable refs are admitted. Token-level
+checks reject explicit `?` keys anywhere, including adjacent flow delimiters,
+and multiline quoted scalars before composition. AST checks reject complex,
+escaped, dynamic, merged and duplicate keys. Aliases/anchors, explicit tags,
+directives and multiple documents fail closed. Block script text stays scalar
+data and cannot masquerade as an action reference. Limits are 256 KiB source,
+20,000 tokens/nodes and 64 traversed levels; excessive parser nesting refuses.
+Rejected syntax fixtures do not establish whether GitHub Actions accepts those
+special YAML forms; runner acceptance has not been exercised.
 Proof covers declared action/workflow references and enforcement sources. Source
 review still owns complete enforcement imports, shell downloads/toolchain
 behavior, action runtime implementation and honest assertion meaning; the
 collector is not a hermetic-build or arbitrary-language dependency analyzer.
 A pinned top-level workflow alone is never sufficient.
+
+## Parser dependency and execution supply
+
+New readiness-only dependency: **PyYAML==6.0.3**, from the official
+[PyPI release](https://pypi.org/project/PyYAML/6.0.3/) and its
+[maintainer documentation](https://pyyaml.org/wiki/PyYAMLDocumentation).
+`scripts/readiness-requirements.txt` locks the SHA256 of all 72 published wheels
+from `https://pypi.org/pypi/PyYAML/6.0.3/json`; no sdist or transitive dependency
+is allowed. Lockfile SHA256: `eef6794465b73b5dc4ef909500bf5bcc56761b93bb1521a05a97746d1f7f298d`.
+These are release-file integrity hashes, not package signatures or attestations.
+
+For `readiness` / `verify-readiness` only, the shared composite action creates a
+new venv below `RUNNER_TEMP` using the existing runner Python and bundled pip.
+It installs with `--isolated --no-deps --only-binary=:all: --require-hashes
+--index-url https://pypi.org/simple -r readiness-requirements.txt`, then invokes
+the pinned evaluator with that interpreter in Python isolated mode (`-I`),
+ignoring ambient PYTHONPATH/user-site overrides. It does not upgrade runner pip,
+change global packages or request credentials/permissions. The immutable aw
+commit binds the action, evaluator and lockfile together; the consumer must
+review this dependency supply as part of its pinned transitive implementation.
+`validate`, `qualify` and `handoff` skip the bootstrap and retain their interpreter.
+The main aw CLI package dependencies and lock are unchanged.
+
+A standalone verifier must run from the same reviewed aw revision in an isolated
+environment prepared with that hash-lock; missing or different PyYAML versions
+refuse with `parser_dependency`, never silently use an ambient alternative.
+The affected tests exercise the parser locally, including a fresh `/tmp` venv
+installed through the lock. No GitHub workflow was executed to validate runner
+installation or its special YAML acceptance; a real consumer pilot is still
+required before activation.
 
 ## Nonzero assertions are evidence, not a green check name
 

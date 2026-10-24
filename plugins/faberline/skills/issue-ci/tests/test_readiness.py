@@ -491,3 +491,73 @@ class InputParsingTests(unittest.TestCase):
                     patch.object(r, 'produce', side_effect=AssertionError('duplicate reached producer')) as produce:
                 with self.assertRaisesRegex(ValueError, 'duplicate JSON'): action.main()
                 produce.assert_not_called()
+
+    def test_flow_adjacent_explicit_split_key_is_not_hidden(self):
+        text = 'steps:\n  - {? "us\\\n      es": owner/action@main}\n'
+        # Independent parser observation, not proof that GitHub accepts the workflow.
+        import yaml
+        node = yaml.compose(text, Loader=yaml.BaseLoader)
+        self.assertEqual(node.value[0][1].value[0].value[0][0].value, 'uses')
+        with self.assertRaisesRegex(r.Refused, 'unsupported_source_syntax'):
+            r.literal_uses(text)
+        h = Harness(); h.source['o/r', GATE] = text
+        h.config['qualification']['trusted_workflows'][GATE]['definition_sha'] = blob(text)
+        result = h.produce()['payload']
+        self.assertEqual(result['status'], 'fail')
+        self.assertIn('unsupported_source_syntax', [v['code'] for v in result['reasons']])
+
+    def test_ast_checks_flow_keys_and_ignores_block_scalar_script_text(self):
+        for text in [
+            'steps: [{? "us\\\n  es": owner/action@main}]\n',
+            'steps:\n  - {"us\\\n      es": owner/action@main}\n',
+            'steps: [{? uses: owner/action@main}]\n',
+            'steps: [{uses: owner/action@main}]\n',
+        ]:
+            with self.subTest(text=text), self.assertRaises(r.Refused):
+                r.literal_uses(text)
+            h = Harness(); h.source['o/r', GATE] = text
+            h.config['qualification']['trusted_workflows'][GATE]['definition_sha'] = blob(text)
+            self.assertEqual(h.produce()['payload']['status'], 'fail')
+        ref = 'owner/action@' + EVALUATOR
+        text = 'steps: [{uses: "' + ref + '"}]\nscript: |\n  uses: owner/not-an-action@main\n'
+        self.assertEqual(r.literal_uses(text), [ref])
+
+    def test_parser_dependency_version_is_explicit_and_fail_closed(self):
+        import sys
+        from types import SimpleNamespace
+        for module in [None, SimpleNamespace(__version__='6.0.2')]:
+            with patch.dict(sys.modules, {'yaml': module}):
+                with self.assertRaisesRegex(r.Refused, 'parser_dependency'):
+                    r.literal_uses('name: example\n')
+
+    def test_ast_refuses_duplicate_keys_tags_aliases_complex_keys_and_multiple_documents(self):
+        for text in [
+            'steps: [{uses: owner/action@' + EVALUATOR + ', uses: owner/action@main}]',
+            'x: !!python/object/apply:os.system [echo-not-executed]',
+            'x: &x {a: b}\ny: *x',
+            '? [a, b]\n: c',
+            'name: one\n---\nname: two',
+        ]:
+            with self.subTest(text=text), self.assertRaises(r.Refused):
+                r.literal_uses(text)
+        with self.assertRaises(r.Refused):
+            r.literal_uses('x: ' + '[' * 70 + 'value' + ']' * 70)
+
+    def test_readiness_parser_lock_and_action_runtime_are_scoped(self):
+        folder = legacy.SKILLS / 'issue-ci/scripts'
+        lock = (folder / 'readiness-requirements.txt').read_text()
+        self.assertEqual(lock.count('PyYAML==6.0.3'), 1)
+        hashes = [line.strip().split('sha256:', 1)[1].rstrip(' \\')
+                  for line in lock.splitlines() if '--hash=sha256:' in line]
+        self.assertEqual(len(hashes), 72)
+        self.assertTrue(all(len(value) == 64 and set(value) <= set('0123456789abcdef') for value in hashes))
+        self.assertIn('https://pypi.org/pypi/PyYAML/6.0.3/json', lock)
+        source = legacy.SKILLS.parents[2] / '.github/actions/issue-ci/action.yml'
+        # Parse as nodes, never construct objects or execute the action.
+        import yaml
+        action_data = yaml.compose(source.read_text(), Loader=yaml.BaseLoader)
+        self.assertIsInstance(action_data, yaml.nodes.MappingNode)
+        raw = source.read_text()
+        self.assertIn("if: inputs.operation == 'readiness' || inputs.operation == 'verify-readiness'", raw)
+        self.assertIn('--no-deps --only-binary=:all: --require-hashes --index-url https://pypi.org/simple', raw)
+        self.assertNotIn('pip install --upgrade', raw)
