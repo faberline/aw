@@ -10,6 +10,11 @@ import subprocess
 import sys
 from urllib.parse import quote
 
+_json_spec = importlib.util.spec_from_file_location('issue_ci_json_data', Path(__file__).with_name('json_data.py'))
+_json_data = importlib.util.module_from_spec(_json_spec)
+_json_spec.loader.exec_module(_json_data)
+strict_json_loads = _json_data.loads
+
 
 def api(path, method='GET', data=None):
     command = ['gh', 'api', '--method', method, path]
@@ -18,7 +23,7 @@ def api(path, method='GET', data=None):
         command += ['--input', '-']
         kwargs['input'] = json.dumps(data)
     output = subprocess.check_output(command, **kwargs)
-    return json.loads(output) if output.strip() else None
+    return strict_json_loads(output) if output.strip() else None
 
 
 def pages(path, key=None):
@@ -33,7 +38,7 @@ def pages(path, key=None):
 
 
 def load_config(path):
-    return validate_config(json.loads(Path(path).read_text()))
+    return validate_config(strict_json_loads(Path(path).read_text()))
 
 
 def validate_config(config):

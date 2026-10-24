@@ -399,3 +399,95 @@ class DistributionTests(unittest.TestCase):
         self.assertIn('missing-receipt.json', result.stderr)
         self.assertNotIn('done', result.stderr)
         self.assertNotIn('gh', result.stderr)
+
+
+class InputParsingTests(unittest.TestCase):
+    def test_explicit_and_multiline_yaml_keys_are_rejected(self):
+        for text in [
+            'steps:\n  - ? uses\n    : owner/action@main\n',
+            'steps:\n  - ? "uses"\n    : owner/action@main\n',
+            'steps:\n  - ?\n      uses\n    : owner/action@main\n',
+            'steps:\n  - "uses"\n    : owner/action@main\n',
+            'steps:\n  - "us\\\n    es": owner/action@main\n',
+        ]:
+            with self.subTest(text=text), self.assertRaisesRegex(r.Refused, 'unsupported_source_syntax'):
+                r.literal_uses(text)
+            h = Harness(); h.source['o/r', GATE] = text
+            h.config['qualification']['trusted_workflows'][GATE]['definition_sha'] = blob(text)
+            result = h.produce()['payload']
+            self.assertEqual(result['status'], 'fail')
+            self.assertIn('unsupported_source_syntax', [v['code'] for v in result['reasons']])
+
+    def test_duplicate_assertion_failed_or_passed_then_passed_is_not_overwritten(self):
+        for earlier in ['failed', 'passed']:
+            h = Harness()
+            raw = json.dumps(h.assertion()).replace('"policy-assertion": "passed"',
+                '"policy-assertion": "' + earlier + '", "policy-assertion": "passed"')
+            h.logs[101] = r.ASSERTION_MARKER + raw
+            with self.subTest(earlier=earlier):
+                result = h.produce()['payload']
+                self.assertEqual(result['status'], 'fail')
+                self.assertIn('malformed_record', [v['code'] for v in result['reasons']])
+
+    def test_duplicate_keys_at_arbitrary_depth_in_log_records_refuse(self):
+        for raw in ['{"a":1,"a":1}', '{"a":[{"b":{"c":"failed","c":"passed"}}]}',
+                    '{"assertions":{"a":"failed","\\u0061":"passed"}}']:
+            for marker in [r.ASSERTION_MARKER, r.RECEIPT_MARKER]:
+                with self.subTest(raw=raw, marker=marker), self.assertRaisesRegex(r.Refused, 'malformed_record'):
+                    r.records(marker + raw, marker)
+
+    def test_duplicate_keys_in_authenticated_producer_receipt_refuse(self):
+        h = Harness(); receipt = h.produce()
+        payload = r.canonical(receipt['payload'])
+        for raw in [
+            '{"payload":' + payload + ',"payload":' + payload + ',"sha256":' + json.dumps(receipt['sha256']) + '}',
+            r.canonical(receipt).replace('"version":1', '"version":1,"version":1', 1),
+        ]:
+            h.logs[901] = r.RECEIPT_MARKER + raw
+            with self.subTest(raw=raw), h.patches(), \
+                    patch.object(r, 'job_log', side_effect=lambda repo, job: h.logs[job]):
+                with self.assertRaisesRegex(r.Refused, 'malformed_record'):
+                    r.verify(ci, receipt, 'o/r', 8, HEAD, h.document, EVALUATOR)
+
+    def test_duplicate_receipt_file_refuses_before_verification_or_api(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'receipt.json'
+            path.write_text('{"payload":{"version":1,"version":1},"sha256":"fake"}')
+            with patch.object(r, 'verify', side_effect=AssertionError('duplicate reached verifier')) as verify, \
+                    patch.object(ci, 'api') as api:
+                with self.assertRaisesRegex(ValueError, 'duplicate JSON'):
+                    r.verify_file(ci, path, 'o/r', 8, HEAD, lambda: {}, EVALUATOR)
+                verify.assert_not_called()
+                api.assert_not_called()
+
+    def test_api_and_trusted_policy_json_also_reject_duplicate_keys(self):
+        with patch.object(ci.subprocess, 'check_output', return_value='{"status":"failed","status":"passed"}'):
+            with self.assertRaisesRegex(ValueError, 'duplicate JSON'): ci.api('fixture')
+        h = Harness()
+        raw = json.dumps(h.config).replace('"lifecycle_mode": "failure-only"',
+            '"lifecycle_mode": "full", "lifecycle_mode": "failure-only"')
+        def api(path):
+            if path == 'repos/o/r': return dict(default_branch='main')
+            if '/commits/' in path: return dict(sha=POLICY_SOURCE)
+            return dict(type='file', encoding='base64', content=base64.b64encode(raw.encode()).decode())
+        with patch.object(ci, 'api', side_effect=api):
+            with self.assertRaisesRegex(ValueError, 'duplicate JSON'):
+                action.trusted_policy(ci, 'o/r', '.github/policy.json', metadata=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'policy.json'; path.write_text(raw)
+            with self.assertRaisesRegex(ValueError, 'duplicate JSON'): ci.load_config(path)
+
+    def test_duplicate_wake_event_refuses_before_production(self):
+        h = Harness()
+        with tempfile.TemporaryDirectory() as tmp:
+            event = Path(tmp) / 'event.json'
+            wake = json.dumps(dict(path=GATE))
+            event.write_text('{"workflow_run":' + wake + ',"workflow_run":' + wake + '}')
+            env = dict(AW_ACTION_REF=EVALUATOR, GITHUB_REPOSITORY='o/r', INPUT_OPERATION='readiness',
+                       INPUT_PR='8', INPUT_HEAD=HEAD, GITHUB_RUN_ID='90', GITHUB_EVENT_PATH=str(event))
+            with patch.dict(action.os.environ, env, clear=True), patch.object(action, 'controller', return_value=ci), \
+                    patch.object(action, 'ci_module', return_value=r), \
+                    patch.object(action, 'trusted_policy', return_value=h.document()), \
+                    patch.object(r, 'produce', side_effect=AssertionError('duplicate reached producer')) as produce:
+                with self.assertRaisesRegex(ValueError, 'duplicate JSON'): action.main()
+                produce.assert_not_called()

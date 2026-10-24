@@ -2,7 +2,6 @@
 """Pinned action entrypoint: fetch only the consumer's default-branch policy."""
 import base64
 import importlib.util
-import json
 import os
 from pathlib import Path
 import re
@@ -36,7 +35,7 @@ def trusted_policy(ci, repo, path, metadata=False):
     if len(content) > 262144:
         raise RuntimeError('trusted policy exceeds size limit')
     # Parse before writing. No PR config, artifact or checkout is consulted.
-    config = json.loads(content)
+    config = ci.strict_json_loads(content)
     if metadata:
         return dict(config=config, source_commit=revision, path=path)
     return content
@@ -71,7 +70,7 @@ def main():
         document = load_document()
         readiness.validate_contract(ci, document['config'])
         event_path = os.environ.get('GITHUB_EVENT_PATH', '')
-        event = json.loads(Path(event_path).read_text())
+        event = ci.strict_json_loads(Path(event_path).read_text())
         wake = event.get('workflow_run', {})
         if (wake.get('path') == document['config']['review_readiness']['producer']['path']
                 or wake.get('path') not in {w['path'] for w in document['config']['workflows']}):

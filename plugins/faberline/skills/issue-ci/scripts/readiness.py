@@ -1,11 +1,18 @@
 """Read-only review prerequisites. Hashes are integrity, never authentication."""
 import base64
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
 import subprocess
 from urllib.parse import quote
+
+_json_spec = importlib.util.spec_from_file_location('issue_ci_json_data', Path(__file__).with_name('json_data.py'))
+_json_data = importlib.util.module_from_spec(_json_spec)
+_json_spec.loader.exec_module(_json_data)
+strict_json_loads = _json_data.loads
+
 
 VERSION = 1
 ASSERTION_MARKER = 'AW_ASSERTIONS_V1 '
@@ -49,7 +56,7 @@ def records(text, marker):
         line = re.sub(r'^\d{4}-\d\d-\d\dT\S+\s+', '', line)
         if line.startswith(marker):
             try:
-                found.append(json.loads(line[len(marker):]))
+                found.append(strict_json_loads(line[len(marker):]))
             except (ValueError, TypeError):
                 raise Refused('malformed_record', 'invalid JSON evidence record')
     return found
@@ -120,6 +127,15 @@ def literal_uses(text):
         need(not re.search(r'(^|[\s:\[,])(?:[&*][A-Za-z0-9_-]|<<\s*:|![A-Za-z])', line)
              and '\\u' not in line and '\\x' not in line,
              'unsupported_source_syntax', 'aliases, YAML tags and escaped keys need explicit support')
+        # This subset admits only same-line keys. Explicit '?' keys and a
+        # standalone ':' can otherwise hide uses from the literal-key scanner.
+        token = re.sub(r'^\s*(?:-\s*)?', '', line)
+        need(not re.match(r'(?:\?(?:\s|$)|:)', token),
+             'unsupported_source_syntax', 'explicit or multiline mapping keys are unsupported')
+        if token[:1] in ('"', "'"):
+            # Also refuse a split quoted key, including escaped line folding.
+            need(re.match(r"""^(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*')""", token) is not None,
+                 'unsupported_source_syntax', 'multiline quoted keys/scalars are unsupported')
         # Reject inline/flow/complex uses keys rather than overlooking dependencies.
         if re.search(r'\buses\b\s*[\"\']?\s*:', line):
             m = re.fullmatch(r'''\s*(?:-\s*)?(?:uses|"uses"|'uses'):\s*([^#]+?)(?:\s+#.*)?''', line)
@@ -410,4 +426,4 @@ def verify(ci, receipt, repo, number, head, load_document, evaluator_sha):
 def verify_file(ci, path, repo, number, head, load_document, evaluator_sha):
     raw = Path(path).read_bytes()
     need(len(raw) <= 262144, 'receipt_limit', 'receipt exceeds limit')
-    return verify(ci, json.loads(raw), repo, number, head, load_document, evaluator_sha)
+    return verify(ci, strict_json_loads(raw), repo, number, head, load_document, evaluator_sha)

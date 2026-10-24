@@ -63,8 +63,11 @@ head/base and must match protected roots. The producer's actual transitive
 closure must include `faberline/aw/.github/actions/issue-ci@EVALUATOR_SHA`.
 
 The YAML scanner deliberately supports only standalone literal uses scalars;
-anchors/aliases, merges, tags, escaped keys, inline/flow uses, mutable/dynamic refs
-and undeclared sources fail closed. This is not a general YAML interpreter.
+anchors/aliases, merges, tags, explicit mapping keys, standalone mapping value
+lines, multiline quoted keys/scalars, escaped keys, inline/flow uses, mutable/
+dynamic refs and undeclared sources fail closed. Rejected syntax fixtures do not
+establish whether GitHub Actions accepts those special YAML forms; that runner
+behavior has not been exercised. This is not a general YAML interpreter.
 Proof covers declared action/workflow references and enforcement sources. Source
 review still owns complete enforcement imports, shell downloads/toolchain
 behavior, action runtime implementation and honest assertion meaning; the
@@ -106,6 +109,12 @@ Canonical JSON schema: `templates/review-readiness.schema.json`. The envelope is
 `{payload, sha256}`; the digest is SHA256 of sorted compact ASCII JSON payload.
 A digest provides integrity, NOT authentication. Never authorize review by just
 recomputing it.
+
+All JSON decoding for this interface uses one shared `object_pairs_hook` that
+rejects duplicate object keys at any depth, including equal duplicates and keys
+made equal by JSON escapes. It applies to GitHub metadata, policy/config, wake
+events, assertion/producer log records and receipt files. Ambiguous JSON must
+not collapse a failed assertion into a later passed value before validation.
 
 Payload binds version, status, producer workflow/path/blob/head/run/attempt/job,
 repo/PR/exact head/base, complete normalized changed-file inventory and hash,
