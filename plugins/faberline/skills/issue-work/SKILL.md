@@ -76,3 +76,29 @@ AGY consumes already-planned todo by priority and creation time, without a
 milestone frontier or dependency-parser eligibility filter. Preserve active
 leases, dirty worktrees and same-PR CI repairs. Core milestones are repo batches,
 not crate versions. No schedule, release/test gate or done change is implied.
+
+## Implementation tree lifetime
+
+New AW-created issue trees record provenance and owner handoff under the existing
+repository guard; historical trees are reused without name-based adoption.
+`finish` releases coding ownership after PR submission and **never removes the
+worktree**. Codex may request the shared [post-merge maintenance](WORKTREE-MAINTENANCE.md)
+only after a separately authorized, verified merge. Unknown/live owners, dirty
+or ignored content, unique history and unproven historical trees stay held.
+No new root, migration, scheduler, merge authority or lifecycle rule is implied.
+
+## Primary main freshness
+
+After guard/owner checks, `next` fetches all remote heads, binds exact origin/main and reports a
+[primary checkout FF attempt](MAIN-CHECKOUT.md). Update only clean, checked-out
+main with positive exclusive owner coordination (`ISSUE_MAIN_EXCLUSIVE_OWNER`
+matches the existing owner token), no lease/conflict and fast-forward history.
+Dirty/untracked, ahead/diverged, non-main, active/unknown owner or concurrent
+change holds maintenance; never stash/reset/clean/rebase or hide user files.
+That hold does not stop safe fresh-origin issue work or change its original PR
+worktree. Do not set the coordination token merely because a lease is absent.
+
+Configured Git filters hold main maintenance before status/checkout; hidden
+index flags and sparse state also hold and are never cleared automatically.
+An existing PR with no available branch after fetch must hold, never fall back
+to creating its repair from main. Install the shared index guard with the worker.
