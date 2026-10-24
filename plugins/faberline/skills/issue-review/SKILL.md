@@ -109,3 +109,13 @@ ${CLAUDE_SKILL_DIR}/scripts/review.sh block <N> <head> <question-file>
 - `2` — refused; report the printed reason. Fix it and run the step again.
   Leave lifecycle unchanged and end the run when evidence/config is missing.
 - `3` — nothing to review; end the run.
+
+## Separate post-merge maintenance
+
+Review acceptance is not merge or cleanup authority. After a separately
+authorized merge is read back as MERGED at its exact head/base/merge commit,
+Codex can request the shared [worktree maintenance](../issue-work/WORKTREE-MAINTENANCE.md)
+dry-run, then an explicitly authorized apply. Do not reuse legacy `review.sh
+pass` deletion or a queued merge state as cleanup permission. The shared helper
+keeps branches/recovery, checks AGY owner release and never changes labels or
+merges. AGY finish only hands off a PR; it does not own post-merge deletion.

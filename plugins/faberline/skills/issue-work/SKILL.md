@@ -76,3 +76,13 @@ AGY consumes already-planned todo by priority and creation time, without a
 milestone frontier or dependency-parser eligibility filter. Preserve active
 leases, dirty worktrees and same-PR CI repairs. Core milestones are repo batches,
 not crate versions. No schedule, release/test gate or done change is implied.
+
+## Implementation tree lifetime
+
+New AW-created issue trees record provenance and owner handoff under the existing
+repository guard; historical trees are reused without name-based adoption.
+`finish` releases coding ownership after PR submission and **never removes the
+worktree**. Codex may request the shared [post-merge maintenance](WORKTREE-MAINTENANCE.md)
+only after a separately authorized, verified merge. Unknown/live owners, dirty
+or ignored content, unique history and unproven historical trees stay held.
+No new root, migration, scheduler, merge authority or lifecycle rule is implied.

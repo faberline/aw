@@ -16,6 +16,11 @@ queue = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(queue)
 
 
+_state_spec = importlib.util.spec_from_file_location('worktree_state', Path(__file__).resolve().parent / 'worktree_state.py')
+tree_state = importlib.util.module_from_spec(_state_spec)
+_state_spec.loader.exec_module(tree_state)
+
+
 def run(*args):
     return subprocess.check_output(args, text=True).strip()
 
@@ -76,6 +81,7 @@ def prepare(main, n, branch):
         git('worktree', 'add', '--track', '-b', branch, str(expected), f'origin/{branch}')
     else:
         git('worktree', 'add', '--no-track', '-b', branch, str(expected), 'origin/main')
+    tree_state.created(main, n, branch, expected, os.getenv('ISSUE_WORK_OWNER', ''))
     return expected
 
 
@@ -243,6 +249,7 @@ def main():
             claimed['phase'] = 'coding'
             temp_lease.write_text(json.dumps(claimed))
             temp_lease.replace(lease_path)
+            tree_state.update(checkout, n, branch, wt, owner)
             print(f'issue={n}\nbranch={branch}\nworktree={wt}\npr={pr or "none"}')
             return 0
         if len(sys.argv) != 4 or not sys.argv[2].isdigit():
@@ -283,6 +290,7 @@ def main():
         temp_lease.write_text(json.dumps(lease))
         temp_lease.replace(lease_path)
         run('gh', 'issue', 'comment', str(n), '--body', f'Work submitted in #{pr}; waiting for required CI on the current head.')
+        tree_state.update(checkout, n, branch, wt, owner, pr=pr, submitted=True)
         lease_path.unlink()
         print(f'pr={pr}; issue #{n} remains doing; waiting for CI')
     return 0
