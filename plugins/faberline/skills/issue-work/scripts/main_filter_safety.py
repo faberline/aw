@@ -103,8 +103,15 @@ def inspect(path, incoming):
         parts = filename.split(b'/')
         if any(p in (b'', b'.', b'..') for p in parts):
             raise ValueError('unsupported repository path')
-        if parts[-1] == b'.gitattributes':
-            raise ValueError('configured Git filters/attributes tracked source; hold before status/checkout')
+        # Git's tree/index attribute lookup is byte-sensitive, whereas checkout
+        # may alias names on the target filesystem (e.g. macOS ignorecase).
+        # Do not infer filesystem equivalence from core.ignorecase or a clean
+        # check-attr result. Restrict this narrow proof to printable ASCII path
+        # components; Unicode/other normalization equivalence remains unknown.
+        if any(any(c < 32 or c > 126 for c in part) for part in parts):
+            raise ValueError('uncertain filesystem name equivalence; no absence proof')
+        if any(part.lower() == b'.gitattributes' for part in parts):
+            raise ValueError('configured Git filters/attributes tracked source or case alias; hold before status/checkout')
         parent = path
         for part in parts[:-1]:
             parent = parent / os.fsdecode(part)

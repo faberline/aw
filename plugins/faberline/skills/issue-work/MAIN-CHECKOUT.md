@@ -26,7 +26,12 @@ again immediately before FF. Read errors, overrides, unsupported Git, symlink
 sources/repository ancestors, submodule or unknown modes, missing/unknown results
 and any identity change hold. Standard platform default directory aliases such
 as macOS /etc are resolved and bound; the attribute file itself must be absent.
-No filename-based allowlist or arbitrary YAML/attributes parser is introduced.
+Every inventory path component must be printable ASCII, and `.gitattributes`
+case aliases are rejected in HEAD/index/incoming at any depth, regardless of
+core.ignorecase. Byte-sensitive Git tree/attribute reads cannot certify that
+checkout names will remain distinct on a case-insensitive filesystem. Unicode,
+control-byte or other uncertain name equivalence holds rather than guessing at
+normalization. No Unicode normalization or attributes parser is introduced.
 
 Also hold assume-unchanged/skip-worktree index tags and sparse settings/patterns;
 do not clear flags. The shared read-only index guard is rechecked immediately

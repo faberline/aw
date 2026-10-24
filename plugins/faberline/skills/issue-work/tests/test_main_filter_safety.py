@@ -77,6 +77,72 @@ class MainFilterSafetyTests(unittest.TestCase):
         self.no_status('attributes tracked source')
         self.assertFalse(marker.exists())
 
+    def incoming_alias(self, filename):
+        # Seed has no configured driver. Only the isolated destination defines
+        # malicious global drivers; no incoming attributes are checked out there.
+        source = self.seed / filename
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text('* filter=sentinel\n')
+        self.git(self.seed, 'add', filename); self.publish()
+        self.git(self.main, 'config', 'core.ignorecase', 'true')
+        self.assertFalse((self.main / filename).exists())
+        marker = self.driver()
+        config = Path(self.tmp.name)/'alias-global.gitconfig'
+        for field in ('clean', 'smudge', 'process', 'required'):
+            value = self.git(self.main, 'config', '--get', 'filter.sentinel.'+field)
+            self.command('git', 'config', '--file', str(config), 'filter.sentinel.'+field, value)
+            self.git(self.main, 'config', '--unset', 'filter.sentinel.'+field)
+        before = config.read_bytes()
+        with patch.dict(os.environ, GIT_CONFIG_GLOBAL=str(config)):
+            self.no_status('attributes tracked source or case alias')
+        self.assertEqual(config.read_bytes(), before)
+        self.assertFalse(marker.exists())
+        self.assertFalse((self.main / filename).exists())
+
+    def test_incoming_only_uppercase_root_attributes_hold_without_execution(self):
+        self.incoming_alias('.GITATTRIBUTES')
+
+    def test_incoming_only_mixedcase_root_attributes_hold_without_execution(self):
+        self.incoming_alias('.GitAttributes')
+
+    def test_incoming_only_uppercase_nested_attributes_hold_without_execution(self):
+        self.incoming_alias('nested/.GITATTRIBUTES')
+
+    def test_incoming_only_mixedcase_nested_attributes_hold_without_execution(self):
+        self.incoming_alias('nested/.gItAtTrIbUtEs')
+
+    def test_index_only_case_alias_holds_without_worktree_source(self):
+        source = self.main/'nested/.GitAttributes'
+        source.parent.mkdir()
+        source.write_text('* filter=sentinel\n')
+        self.git(self.main, 'add', 'nested/.GitAttributes')
+        source.unlink()
+        marker = self.driver()
+        self.no_status('attributes tracked source or case alias')
+        self.assertFalse(marker.exists())
+
+    def test_head_only_case_alias_holds_after_index_and_worktree_removal(self):
+        source = self.main/'.GITATTRIBUTES'
+        source.write_text('* filter=sentinel\n')
+        self.git(self.main, 'add', '.GITATTRIBUTES')
+        self.git(self.main, 'commit', '-qm', 'fixture head-only alias')
+        self.git(self.main, 'update-index', '--force-remove', '.GITATTRIBUTES')
+        source.unlink()
+        marker = self.driver()
+        self.no_status('attributes tracked source or case alias')
+        self.assertFalse(marker.exists())
+
+    def test_uncertain_unicode_or_control_name_equivalence_holds(self):
+        marker = self.driver()
+        oid = self.git(self.main, 'rev-parse', 'HEAD:tracked')
+        # Raw index plumbing creates no checkout and invokes no filters.
+        for filename in ('.gitattributes\u200c', 'nested/naïve', 'nested/control\tname'):
+            with self.subTest(filename=filename):
+                self.git(self.main, 'update-index', '--add', '--cacheinfo', '100644,'+oid+','+filename)
+                self.no_status('uncertain filesystem name equivalence')
+                self.git(self.main, 'update-index', '--force-remove', filename)
+        self.assertFalse(marker.exists())
+
     def test_index_attributes_hold_even_when_worktree_copy_absent(self):
         (self.main/'.gitattributes').write_text('tracked filter=sentinel\n')
         self.git(self.main, 'add', '.gitattributes')
