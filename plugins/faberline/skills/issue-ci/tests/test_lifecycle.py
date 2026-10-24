@@ -480,7 +480,7 @@ class WorkTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.common = Path(self.tmp.name) / '.git'
         self.common.mkdir()
-        self.todo = [dict(number=7, createdAt='2026-01-01', labels=[{'name': 'todo'}])]
+        self.todo = [dict(number=7, state='open', created_at='2026-01-01', labels=[{'name': 'todo'}])]
         self.lease = dict(issue=7, owner='mine', since=0, pid=os.getpid(), host=socket.gethostname())
         self.calls = []
 
@@ -493,7 +493,24 @@ class WorkTests(unittest.TestCase):
             if 'rev-list' in args:
                 return '1'
             return ''
-        with patch.object(sys, 'argv', ['work.py', *command]), patch.dict(os.environ, ISSUE_WORK_OWNER='mine'), patch.object(work, 'git', side_effect=git), patch.object(work, 'gh', side_effect=gh), patch.object(work, 'run', side_effect=lambda *a: self.calls.append(a)), patch.object(work, 'branch_of', return_value=('agy/issue-7', 8)), patch.object(work, 'prepare', return_value=Path(self.tmp.name)), contextlib.redirect_stdout(io.StringIO()):
+        # Planner/worker selection now shares the paginated REST queue adapter.
+        # Keep these lease/finish regression tests offline at that boundary.
+        from unittest.mock import MagicMock
+        client = MagicMock()
+        raw = gh('issue', 'view', '7') if command[0] == 'next' else None
+        rows = raw if isinstance(raw, list) else []
+        current = dict(rows[0]) if rows else (dict(raw) if raw else {})
+        current['state'] = current.get('state', 'open').lower()
+        current.setdefault('number', 7)
+        client.issue.side_effect = lambda n: dict(current)
+        client.continuation.side_effect = lambda n: dict(current)
+        client.pages.return_value = rows
+        client.snapshot.return_value = dict(decision=dict(selected=None, state='idle', reasons=[]))
+        def patch_issue(n, **kwargs):
+            current['labels'] = [{'name': v} for v in kwargs['labels']]
+            self.calls.append(('PATCH', n, tuple(kwargs['labels'])))
+        client.patch.side_effect = patch_issue
+        with patch.object(sys, 'argv', ['work.py', *command]), patch.dict(os.environ, ISSUE_WORK_OWNER='mine'), patch.object(work, 'git', side_effect=git), patch.object(work, 'gh', side_effect=gh), patch.object(work, 'run', side_effect=lambda *a: self.calls.append(a)), patch.object(work, 'branch_of', return_value=('agy/issue-7', 8)), patch.object(work, 'prepare', return_value=Path(self.tmp.name)), patch.object(work.queue, 'Client', return_value=client), contextlib.redirect_stdout(io.StringIO()):
             return work.main()
 
     def test_waiting_doing_not_resumed_even_with_mine(self):
@@ -516,7 +533,7 @@ class WorkTests(unittest.TestCase):
         self.assertEqual(self.invoke(['next'], lambda *a: self.todo), 0)
         lease = json.loads((self.common / 'issue-work.lock').read_text())
         self.assertEqual(lease['issue'], 7)
-        self.assertIn(('gh', 'issue', 'edit', '7', '--remove-label', 'todo', '--add-label', 'doing'), self.calls)
+        self.assertIn(('PATCH', 7, ('doing',)), self.calls)
 
     def test_finish_reuses_pr_and_never_writes_lifecycle(self):
         (self.common / 'issue-work.lock').write_text(json.dumps(self.lease))

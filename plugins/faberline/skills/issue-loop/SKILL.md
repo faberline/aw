@@ -55,3 +55,12 @@ state:
 ```bash
 ${CLAUDE_SKILL_DIR}/scripts/loop.sh labels
 ```
+
+## Milestone queue contract
+
+Use the shared [milestone queue contract](../issue-loop/MILESTONE-QUEUE.md).
+Version milestone order precedes priority. Empty milestones do not block; open
+blocked/backlog/review work at an earlier version does. Missing/invalid/closed
+assignments and unresolved prerequisites fail closed with diagnostics. Preserve
+owned coding leases and same-PR CI repair. Core milestones are repo batches,
+not crate versions. No new release or qualification gate is implied.

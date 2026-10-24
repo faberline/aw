@@ -117,7 +117,8 @@ Each run does one step and ends. A run with nothing to do ends at once.
   at most `ISSUE_TODO_MAX` (default 3) at once. Each issue has Goal,
   Acceptance, Never, and Gate (the exact unit-test commands) sections.
 - **work** (`/faberline:issue-work`), every 15 minutes: take the
-  highest-priority `todo` issue, implement it in its own worktree, run its
+  eligible `todo` issue from the earliest unresolved version milestone, then
+  priority and age within that batch, implement it in its own worktree, run its
   unit-test gate, and open a PR with `Closes #<N>`. One issue at a time.
 - **review** (`/faberline:issue-review`), every 15 minutes: take the oldest
   `done` issue. Read the issue, the PR, its diff, and its CI checks, and
@@ -129,6 +130,9 @@ Each run does one step and ends. A run with nothing to do ends at once.
   findings needing a human are reported as evidence.
 
 `/faberline:issue-loop` shows the counts and existing `blocked` issues.
+The shared [milestone queue contract](skills/issue-loop/MILESTONE-QUEUE.md)
+requires version milestones before new todo adoption, reports unresolved earlier
+batches, and preserves existing coding leases and same-PR CI repairs.
 
 | Label | Set by | Meaning |
 |---|---|---|

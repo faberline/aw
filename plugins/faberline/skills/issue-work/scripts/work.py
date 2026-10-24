@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """One worker lease per repository; never reset branches or infer CI success."""
 import fcntl
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,11 @@ import socket
 import subprocess
 import sys
 import time
+
+
+_spec = importlib.util.spec_from_file_location('milestone_queue', Path(__file__).resolve().parents[2] / 'issue-loop/scripts/milestone_queue.py')
+queue = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(queue)
 
 
 def run(*args):
@@ -30,14 +36,16 @@ def branch_exists(ref):
     return subprocess.run(['git', 'show-ref', '--verify', '--quiet', ref]).returncode == 0
 
 
-def branch_of(n):
+def branch_of(n, *, client=None, prs=None):
     # An existing PR is authoritative, including a CI retry.
+    client = client or queue.Client()
     matches = []
-    for b in (f'issue/{n}', f'agy/issue-{n}'):
-        for pr in gh('pr', 'list', '--head', b, '--state', 'open', '--json', 'number,headRefName,isCrossRepository'):
-            if pr.get('isCrossRepository'):
-                refuse(f'foreign PR branch collision for issue #{n}; resolve association')
-            matches.append(pr)
+    for pr in (prs if prs is not None else client.pages(f'repos/{client.repo}/pulls?state=open')):
+        if pr['head']['ref'] not in (f'issue/{n}', f'agy/issue-{n}'):
+            continue
+        if not pr['head'].get('repo') or pr['head']['repo']['full_name'].lower() != client.repo.lower():
+            refuse(f'foreign PR branch collision for issue #{n}; resolve association')
+        matches.append(dict(number=pr['number'], headRefName=pr['head']['ref']))
     if len(matches) > 1:
         refuse(f'multiple open PRs for issue #{n}; resolve association')
     if matches:
@@ -129,36 +137,97 @@ def main():
                 print('busy: lease belongs to another active or unverified session')
                 return 3
             git('fetch', '-q', 'origin')
-            issues = gh('issue', 'list', '--state', 'open', '--label', 'todo', '--limit', '200', '--json', 'number,createdAt,labels')
-            def priority(issue):
-                values = [int(l['name'][-1]) for l in issue['labels'] if len(l['name']) == 11 and l['name'].startswith('priority:p') and l['name'][-1].isdigit()]
-                return min(values, default=2), issue['createdAt']
-            issues.sort(key=priority)
-            selected = None
+            client = queue.Client()
+            pr_inventory = None
+            def association(n, fresh=False):
+                nonlocal pr_inventory
+                if pr_inventory is None or fresh:
+                    pr_inventory = client.pages(f'repos/{client.repo}/pulls?state=open')
+                return branch_of(n, client=client, prs=pr_inventory)
+            selected, snapshot = None, None
+            continuation = False
             if lease:
-                prior = gh('issue', 'view', str(lease['issue']), '--json', 'number,state,labels')
-                labels = {l['name'] for l in prior['labels']}
-                if prior['state'] == 'OPEN' and 'doing' in labels and not labels & {'todo', 'done', 'blocked'}:
-                    branch, pr = branch_of(prior['number'])
-                    # A coding lease may be a CI retry with an existing PR.
-                    # Submitted leases wait even if finish's final comment failed.
-                    if not pr or lease.get('phase') == 'coding':
-                        selected = prior
+                prior = client.issue(lease['issue'])
+                ls = queue.labels(prior)
+                if prior['state'] == 'open' and ls & queue.STATES == {'doing'}:
+                    branch, pr = association(prior['number'])
+                    if not pr or lease.get('phase') in ('coding', 'claiming'):
+                        selected = client.continuation(prior['number'])
+                        continuation = True
+                elif lease.get('phase') in ('coding', 'claiming'):
+                    # CI retry can reclaim the same PR, never replace a live owner
+                    # with another issue after a metadata/lifecycle change.
+                    if prior['state'] == 'open' and ls & queue.STATES == {'todo'}:
+                        branch, pr = association(prior['number'])
+                        if pr:
+                            selected = client.continuation(prior['number'])
+                            continuation = True
+                        elif lease.get('phase') == 'claiming':
+                            # An unexecuted initial claim is not already coding.
+                            # Revalidate its frontier instead of granting a retry
+                            # a new continuity exemption. Never switch its issue.
+                            snapshot = client.snapshot()
+                            if snapshot['decision']['selected'] != prior['number']:
+                                refuse('pending initial claim no longer eligible; preserve intent/worktree')
+                            selected = next(i for i in snapshot['issues'] if i['number'] == prior['number'])
+                    if selected is None:
+                        refuse('owned issue paused by lifecycle change; preserve lease/worktree')
             if selected is None:
-                selected = next((i for i in issues if not {'doing', 'done', 'blocked'} & {l['name'] for l in i['labels']}), None)
+                # Existing same-PR CI repairs survive batch reprioritization. This
+                # is continuity, not permission to start new future-batch work.
+                issues = [i for i in client.pages(f'repos/{client.repo}/issues?state=open')
+                          if 'pull_request' not in i and i['state'] == 'open' and queue.labels(i) & queue.STATES == {'todo'}]
+                for candidate in sorted(issues, key=queue.priority):
+                    branch, pr = association(candidate['number'])
+                    if pr:
+                        try:
+                            selected = client.continuation(candidate['number'])
+                        except ValueError as exc:
+                            print(f'paused repair #{candidate["number"]}: {exc}')
+                            continue
+                        continuation = True
+                        break
             if selected is None:
-                if lease:
-                    lease_path.unlink()
-                print('idle: no todo work; submitted doing issues wait for CI')
-                return 3
+                snapshot = client.snapshot()
+                decision = snapshot['decision']
+                if decision['selected'] is None:
+                    if lease and lease.get('phase') not in ('coding', 'claiming'):
+                        lease_path.unlink()
+                    print(json.dumps(decision, sort_keys=True))
+                    return 3
+                selected = next(i for i in snapshot['issues'] if i['number'] == decision['selected'])
             n = selected['number']
-            branch, pr = branch_of(n)
+            branch, pr = association(n)
             wt = prepare(checkout, n, branch)
+            if continuation:
+                # Recheck dependencies and lifecycle after potentially long prepare.
+                fresh = client.continuation(n)
+                if queue.issue_identity(fresh) != queue.issue_identity(selected):
+                    refuse('owned/repair issue changed during preparation; preserve worktree and retry')
+            else:
+                fresh_snapshot = client.snapshot()
+                if queue.fingerprint(fresh_snapshot) != queue.fingerprint(snapshot):
+                    refuse('queue/milestone/prerequisite changed during preparation; no claim made')
+                fresh = next(i for i in fresh_snapshot['issues'] if i['number'] == n)
+            # Last read immediately precedes intent/label write, under repository
+            # guard. GitHub labels have no distributed CAS; remote actors remain a
+            # documented race. An uncertain PATCH retains intent, never replays it.
+            if association(n, fresh=True) != (branch, pr):
+                refuse('PR/branch association changed before claim; preserve worktree')
+            if queue.issue_identity(client.issue(n)) != queue.issue_identity(fresh):
+                refuse('issue changed immediately before claim; no label write')
             temp_lease = common / 'issue-work.lock.new'
-            temp_lease.write_text(json.dumps(dict(issue=n, owner=owner, since=now, pid=os.getppid(), host=socket.gethostname(), phase='coding')))
+            claimed = dict(issue=n, owner=owner, since=now, pid=os.getppid(), host=socket.gethostname(), phase='claiming')
+            temp_lease.write_text(json.dumps(claimed))
             temp_lease.replace(lease_path)
-            if 'todo' in {l['name'] for l in selected['labels']}:
-                run('gh', 'issue', 'edit', str(n), '--remove-label', 'todo', '--add-label', 'doing')
+            if 'todo' in queue.labels(fresh):
+                client.patch(n, labels=sorted((queue.labels(fresh) - {'todo'}) | {'doing'}))
+                confirmed = client.issue(n)
+                if confirmed['state'] != 'open' or queue.labels(confirmed) & queue.STATES != {'doing'}:
+                    refuse('claim outcome changed; intent retained for read-before-retry recovery')
+            claimed['phase'] = 'coding'
+            temp_lease.write_text(json.dumps(claimed))
+            temp_lease.replace(lease_path)
             print(f'issue={n}\nbranch={branch}\nworktree={wt}\npr={pr or "none"}')
             return 0
         if len(sys.argv) != 4 or not sys.argv[2].isdigit():

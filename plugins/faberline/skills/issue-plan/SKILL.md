@@ -48,8 +48,8 @@ argument, such as `loop` or `once`.
 | `priority:p2` | Normal. An issue without a priority label counts as this. |
 | `priority:p3` | Some day. |
 
-The work step takes the `todo` issue with the highest priority, then the
-oldest.
+The work step uses the earliest unresolved version milestone, then priority
+and creation time within that batch. Empty milestones do not block selection.
 
 ## Spec
 
@@ -86,14 +86,14 @@ spec or adopt it.
 ${CLAUDE_SKILL_DIR}/scripts/plan.sh status
 ```
 
-   It prints each loop issue by state, `room=` (free places in the `todo`
-   queue), `backlog=` and `untriaged=` counts, then the oldest untriaged
-   issues and the top of the backlog by priority.
+   It prints a shared queue decision with explicit blockers, `room=`,
+   `backlog=` and `untriaged=` counts, then every open issue in milestone order.
+   Missing or invalid assignments require milestone triage before new claims.
 
 2. When there is something to do (`room` above 0, an untriaged issue, or a
    backlog issue to spec), read the repository's goals and status (README,
-   roadmap, status or handoff docs), the open issues (`gh issue list --state
-   open --limit 200`), and the recent commits. Otherwise skip to step 6.
+   roadmap, status or handoff docs), the complete open issue inventory from
+   `status`, and the recent commits. Otherwise skip to step 6.
 
 3. Triage. Give each untriaged issue that `status` printed a priority:
 
@@ -108,21 +108,22 @@ ${CLAUDE_SKILL_DIR}/scripts/plan.sh prioritize <N> <p0-p3>
 ${CLAUDE_SKILL_DIR}/scripts/plan.sh block <N> <question-file>
 ```
 
-4. Fill the queue, up to `room`. Take the backlog first, highest priority
-   first:
+4. Fill the queue, up to `room`. Take backlog from the earliest unresolved
+   milestone first, then priority within that batch. Do not skip a blocked or
+   awaiting-review batch to fill the queue from a later release:
    - A backlog issue without a spec: write the spec to a file, then
      `plan.sh spec <N> <spec-file>`.
    - Then put it in the queue:
 
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/plan.sh adopt <N> <p0-p3>
+${CLAUDE_SKILL_DIR}/scripts/plan.sh adopt <N> <p0-p3> [--milestone <existing-number>]
 ```
 
    - Only when no backlog issue fits, open new work. Write the body with the
      four spec sections, then:
 
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/plan.sh new "<title>" <body-file> <p0-p3>
+${CLAUDE_SKILL_DIR}/scripts/plan.sh new "<title>" <body-file> <p0-p3> --milestone <existing-number>
 ```
 
 5. With `room=0`, prepare instead: write the spec of the top backlog issue
@@ -138,3 +139,12 @@ ${CLAUDE_SKILL_DIR}/scripts/plan.sh new "<title>" <body-file> <p0-p3>
 - `2` — refused; report the printed reason. Fix it and run the step again.
 
 Nothing worth doing is a valid result. Report it with the reason.
+
+## Milestone queue contract
+
+Use the shared [milestone queue contract](../issue-loop/MILESTONE-QUEUE.md).
+Version milestone order precedes priority. Empty milestones do not block; open
+blocked/backlog/review work at an earlier version does. Missing/invalid/closed
+assignments and unresolved prerequisites fail closed with diagnostics. Preserve
+owned coding leases and same-PR CI repair. Core milestones are repo batches,
+not crate versions. No new release or qualification gate is implied.
