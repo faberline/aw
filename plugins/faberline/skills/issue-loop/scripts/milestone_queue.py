@@ -1,4 +1,6 @@
-"""Shared queue contract. Read-only selection; no lifecycle/release inference.
+"""Planner milestone contract plus shared REST/label helpers.
+
+AGY uses transport/identity helpers only, never this planner selection policy.
 
 All GitHub lists use explicit pages. Unsupported dependency reads fail closed.
 Only explicit incoming prose dependencies are interpreted; never reverse `blocks`.
@@ -113,6 +115,16 @@ def prose_dependencies(text, repo, issue_number=None):
             # Non-whitespace masks cannot be swallowed by a cue's trailing \s+.
             grammar = REFERENCE.sub(lambda m: '_' * len(m.group()), clause)
             incoming = sorted([*CUE.finditer(grammar), *BARRIER.finditer(grammar)], key=lambda m: m.start())
+            # A component relationship is not a work-item prerequisite. Require
+            # a declaration, explicit work-item subject, or tracker reference
+            # (including malformed tracker syntax that must fail closed).
+            incoming = [cue for cue in incoming if section
+                        or not clause[:cue.start()].strip(' -*`')
+                        or cue.group().rstrip().endswith((':', '：'))
+                        or REFERENCE.search(clause)
+                        or re.search(r'(?<![\w/#])#[^#\s]|[\w.-]+/[\w.-]+#|github\.com/', clause, re.I)
+                        or re.fullmatch(r'\s*(?:(?:this|current|the)\s+)?(?:issue|task|PR|work item)\s*',
+                                        clause[:cue.start()], re.I)]
             outgoing = list(OUTGOING.finditer(grammar))
             if len(incoming) > 1:
                 unknown.append(f'ambiguous incoming clause: {clause.strip()}')
@@ -156,7 +168,7 @@ def prose_dependencies(text, repo, issue_number=None):
 def select(repo, issues, milestones, blockers):
     """Frontier is earliest version containing OPEN issues, including review waits.
 
-    Empty milestones are ignored. Metadata errors block new claims globally.
+    Empty milestones are ignored. Metadata errors block planner admission globally.
     Dependencies only affect their issue; no future batch leap when frontier waits.
     """
     catalog = {m['number']: m for m in milestones}

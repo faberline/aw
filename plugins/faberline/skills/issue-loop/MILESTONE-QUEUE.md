@@ -1,19 +1,20 @@
-# Shared milestone queue v1
+# Planner milestone admission; worker consumes todo
 
-This contract is shared by `issue-plan/scripts/plan.py` and
-`issue-work/scripts/work.py` through `scripts/milestone_queue.py`. Deploy these
-skills as one reviewed version. No live installation, schedule change, CI
-qualification rule, release gate, package version or tag is changed by this PR.
-Core's milestone is a repository development batch; library versions remain
-independent.
+Milestone ordering and dependency admission belong to Claude **plan** only.
+`issue-plan/scripts/plan.py` uses `scripts/milestone_queue.py` for that policy.
+AGY `issue-work/scripts/work.py` consumes already-planned exclusive todo issues
+by priority and creation time; it uses only shared REST/label helpers, not the
+milestone frontier or dependency parser. Milestones remain assigned metadata.
+Core milestones are repo development batches; crate versions remain independent.
+No schedule, permission, CI qualification, release gate or done policy changes.
 
-## Ordering and frontier
+## Planner ordering and frontier
 
 Every open **issue**, including backlog, blocked, doing and done awaiting review,
-must reference an existing **open** version milestone before a new claim can be
-selected. Pull requests and closed historical issues are excluded. Missing,
+must reference an existing **open** version milestone before planner admission
+to todo. This rule is not re-run by AGY on existing todo. Pull requests and closed historical issues are excluded. Missing,
 closed, absent or malformed assigned milestones produce explicit metadata
-blockers, never a default version. An unreferenced empty milestone does not
+planner blockers, never a default version. An unreferenced empty milestone does not
 block, even if open or named with an old non-version title. No manual closure of
 empty milestones is required.
 
@@ -27,19 +28,24 @@ version titles form the same batch. Milestone numbers and due/creation dates
 never order batches.
 
 The frontier is the lowest version with any open issue. Only exclusive `todo`
-issues at that frontier without unresolved prerequisites are eligible. Within a
+issues at that frontier without unresolved prerequisites are planner-eligible. Within a
 batch: p0, p1, p2, p3 (missing defaults p2), oldest issue creation timestamp,
 then issue number for deterministic ties. Priority never jumps a version.
 Blocked/backlog/doing/review work can coexist with eligible work in the **same**
 batch; if none is eligible, report that frontier's reasons and do not jump to a
 later batch. Milestone assignment itself adds no test/release acceptance gate.
-The queue never decides that a partial PR completes its parent issue.
+The planner never decides that a partial PR completes its parent issue.
 
-## Dependencies and ambiguous prose
+## Planner dependencies and ambiguous prose
 
 Read native incoming `dependencies/blocked_by` with full pagination; no native
 edges are created or inverted. Also read the issue body and **all** comments,
-including spec comments. Recognize explicit `Depends on`, `Blocked by/on`,
+including spec comments. Only explicit work-item declarations, work-item
+subjects or tracker relations establish issue prerequisites. Component
+architecture prose such as `ingest and persistence depend on each other` and
+its quoted code-comment example do not. A direct `Depends on quota approval`,
+`This issue depends on ...`, dependency-section entry or malformed issue
+reference remains unknown and fail-closed. Recognize explicit `Depends on`, `Blocked by/on`,
 `Dependency/Dependencies:` or `Prerequisite(s):` (also headings), `Waits for`,
 `依賴:` / `前置條件:` / `先決條件:` (ASCII or full-width colon), and `stays/remains open ... until` declarations. Dependency headings
 or colon-only declarations include following bullet lines until another normal
@@ -112,24 +118,28 @@ or guess release versions. `new` now requires the explicit option. Existing
 all unrelated metadata are preserved except normalization of the numeric
 priority namespace by an explicitly requested prioritize/adopt operation.
 
-## Ownership, claim and recovery boundary
+## Worker ownership, claim and recovery boundary
 
-Planner mutations and worker claims share the existing repository kernel guard
-`issue-work.guard`, never unlinking its inode. Full queue/prerequisite snapshots
-are re-read after potentially long preparation and compared before a new
-claim. The selected issue is read again immediately before labels. Planner
-adoption similarly revalidates the full frontier and issue/catalog before todo.
-These are local serialized operations with fresh remote validation; GitHub's
-labels PATCH has **no distributed compare-and-swap**, so another remote actor
-can still race the last read. This PR does not claim a distributed atomic lease.
+AGY selects **already-planned** open exclusive todo by p0/p1/p2/p3 (default p2),
+then oldest creation timestamp and issue number. A later-milestone todo remains
+consumable while earlier work is blocked/backlog/doing/review. Missing, invalid
+or closed milestone metadata and prose/native prerequisites do not become a
+second worker admission filter. Claude planner remains responsible for new
+admission; AGY still reads the issue/spec and respects its implementation scope.
+An open PR does not make an unowned lower-priority todo outrank other planned
+work; when its issue is selected, CI repair reuses that same PR/branch/worktree.
 
-An existing owned coding lease resumes its preserved worktree, and an existing
-same-PR CI retry retains its branch/PR even if milestones are reordered or still
-being migrated. This continuity exception does not waive blocked/dependency
-constraints or permit a second owner. Reprioritization cannot replace a paused
-owned issue with unrelated work. Submitted doing work waits for CI; unknown or
-foreign leases and live PIDs keep the old refusal rules. Finish/block do not
-re-evaluate a new batch or change CI-owned done behavior.
+Planner mutations and worker claims keep the same `issue-work.guard` inode.
+Planner adoption revalidates full milestone/prerequisite state. Worker claims
+revalidate the complete planned todo inventory/spec identity and PR association
+after preparation and immediately before labels. Neither provides distributed
+GitHub CAS. Remote last-read races remain documented.
+
+Owned coding resumes ahead of new work; real blocked/conflicting lifecycle
+labels still pause it without dropping its lease. Existing own same-PR repairs
+preserve dirty worktrees. Submitted doing work waits for CI. Live PID, host,
+owner, TTL, malformed lease, foreign/multiple PR and main-checkout protections
+remain. Finish/block and CI-owned lifecycle remain unchanged.
 
 Before todo→doing, save a `claiming` intent in the existing lease, perform one
 label PATCH preserving unrelated labels, verify doing, then save `coding`.
@@ -139,7 +149,7 @@ recovers without replaying the PATCH. A confirmed todo may be freshly
 revalidated and claimed; no unknown/foreign owner is stolen. No reset, force
 push, lease bypass, worktree removal or issue-done write is added.
 
-Deployment is a separate reviewed action. Install planner, shared selector and
-worker coherently; an old partial bundle lacks the module and fails import
-rather than silently using priority-only ordering. Existing live sessions are
+Deployment is a separate reviewed action. Install planner policy, shared helpers
+and corrected worker coherently; an old partial bundle lacks the module and fails import
+rather than silently assuming planner admission policy. Existing live sessions are
 not restarted or modified by preparing this draft PR.

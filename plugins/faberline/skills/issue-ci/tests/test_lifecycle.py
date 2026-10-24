@@ -493,7 +493,7 @@ class WorkTests(unittest.TestCase):
             if 'rev-list' in args:
                 return '1'
             return ''
-        # Planner/worker selection now shares the paginated REST queue adapter.
+        # Worker shares paginated REST transport, not planner milestone eligibility.
         # Keep these lease/finish regression tests offline at that boundary.
         from unittest.mock import MagicMock
         client = MagicMock()
@@ -503,9 +503,7 @@ class WorkTests(unittest.TestCase):
         current['state'] = current.get('state', 'open').lower()
         current.setdefault('number', 7)
         client.issue.side_effect = lambda n: dict(current)
-        client.continuation.side_effect = lambda n: dict(current)
         client.pages.return_value = rows
-        client.snapshot.return_value = dict(decision=dict(selected=None, state='idle', reasons=[]))
         def patch_issue(n, **kwargs):
             current['labels'] = [{'name': v} for v in kwargs['labels']]
             self.calls.append(('PATCH', n, tuple(kwargs['labels'])))
