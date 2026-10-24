@@ -56,11 +56,12 @@ state:
 ${CLAUDE_SKILL_DIR}/scripts/loop.sh labels
 ```
 
-## Milestone queue contract
+## Planner milestones and planned work
 
-Use the shared [milestone queue contract](../issue-loop/MILESTONE-QUEUE.md).
-Version milestone order precedes priority. Empty milestones do not block; open
-blocked/backlog/review work at an earlier version does. Missing/invalid/closed
-assignments and unresolved prerequisites fail closed with diagnostics. Preserve
-owned coding leases and same-PR CI repair. Core milestones are repo batches,
-not crate versions. No new release or qualification gate is implied.
+See the [planner admission contract](../issue-loop/MILESTONE-QUEUE.md).
+Claude plan uses milestone versions before priority for new/adopt admission;
+empty milestones do not block, while earlier unresolved work remains visible.
+AGY consumes already-planned todo by priority and creation time, without a
+milestone frontier or dependency-parser eligibility filter. Preserve active
+leases, dirty worktrees and same-PR CI repairs. Core milestones are repo batches,
+not crate versions. No schedule, release/test gate or done change is implied.

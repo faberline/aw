@@ -23,8 +23,8 @@ PID. Legacy/malformed/foreign leases refuse; verify the old session ended
 before manually reconciling metadata, preserving its branch and worktree.
 Never bypass a lock just because a run took longer than expected.
 
-`next` selects todo from the earliest unresolved version milestone, then
-priority and creation time within that batch, or resumes the recoverable
+`next` selects already-planned todo by priority, then creation time, or
+resumes the recoverable
 lease's doing issue in coding phase (including an active CI retry with a PR). Submitted doing issues wait for CI and are
 not selected again as coding work. A CI-failed todo reuses the SAME open PR,
 branch and registered worktree, including local commits and uncommitted
@@ -42,6 +42,15 @@ and resolve deliberately while preserving both writers' work.
    cluster commands, or workflow dispatch. Report cloud validation still
    needed: MR affected unit/functional/e2e/performance; release complete
    declared functional/performance qualification.
+   Classify tests by behavior, not the command name or filter. A pure helper
+   assertion with isolated in-memory inputs is a local unit. A test that launches
+   the product CLI (e.g. `relay profile`, `relay render`, `--out`), checks CLI
+   exit/output/files, starts a server/child product process, or exercises network,
+   Raft/cluster or performance behavior is functional/integration and belongs in
+   authorized cloud CI, even when offline or selected by `cargo test -- ...`.
+   Running the isolated unit/static harness itself is permitted; no blanket
+   subprocess ban or new command permissions are introduced. Inspect selected
+   test bodies/fixtures before running them locally.
 4. Commit completed work, write a concise summary outside the worktree with
    changes, tests passed and tests not run. Call
    `scripts/work.sh finish N summary-file`. It pushes normally and opens or
@@ -58,11 +67,12 @@ lifecycle labels, or run bare `git stash`. AGY's sole lifecycle transition
 is `todo -> doing`. Exit 2 means refused: preserve work and report evidence;
 fix a justified scoped problem or wait for human direction.
 
-## Milestone queue contract
+## Planner milestones and planned work
 
-Use the shared [milestone queue contract](../issue-loop/MILESTONE-QUEUE.md).
-Version milestone order precedes priority. Empty milestones do not block; open
-blocked/backlog/review work at an earlier version does. Missing/invalid/closed
-assignments and unresolved prerequisites fail closed with diagnostics. Preserve
-owned coding leases and same-PR CI repair. Core milestones are repo batches,
-not crate versions. No new release or qualification gate is implied.
+See the [planner admission contract](../issue-loop/MILESTONE-QUEUE.md).
+Claude plan uses milestone versions before priority for new/adopt admission;
+empty milestones do not block, while earlier unresolved work remains visible.
+AGY consumes already-planned todo by priority and creation time, without a
+milestone frontier or dependency-parser eligibility filter. Preserve active
+leases, dirty worktrees and same-PR CI repairs. Core milestones are repo batches,
+not crate versions. No schedule, release/test gate or done change is implied.

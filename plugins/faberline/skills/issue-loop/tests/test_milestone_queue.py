@@ -177,6 +177,7 @@ class FakeClient(q.Client):
         self.writes = []
         self.before_snapshot = None
         self.snapshots = 0
+        self.reads = []
 
     def issue(self, n, repo=None):
         for i in self.issues:
@@ -185,6 +186,7 @@ class FakeClient(q.Client):
         return copy.deepcopy(self.targets[(repo or self.repo, n)])
 
     def pages(self, path):
+        self.reads.append(path)
         if '/comments' in path:
             return copy.deepcopy(self.comment_rows)
         if '/dependencies/blocked_by' in path:
@@ -399,6 +401,36 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(self.c.writes, [])
 
 
+class ArchitectureProseTests(unittest.TestCase):
+    LUMEN = ('`ingest` and `persistence` depend on each other.\n'
+             'Three B4 exceptions record the other direction (see the comment above them, '
+             '"ingest and persistence depend on each other (E16)").')
+
+    def test_lumen164_architecture_and_quoted_comment_are_not_issue_relations(self):
+        for text in (self.LUMEN, 'C# components depend on each other.',
+                     '## How components depend on each other'):
+            with self.subTest(text=text):
+                self.assertEqual(q.prose_dependencies(text, 'faberline/lumen', 164), ([], []))
+
+    def test_explicit_unknown_or_malformed_issue_prerequisite_stays_blocked(self):
+        for text in ('Depends on quota approval', 'Depends on #oops',
+                     'The implementation depends on faberline/core#oops',
+                     '#164 depends on an unresolved decision', 'This issue depends on quota approval',
+                     '## Dependencies\n- unresolved quota approval'):
+            with self.subTest(text=text):
+                self.assertTrue(q.prose_dependencies(text, 'faberline/lumen', 164)[1])
+
+    def test_lumen_architecture_does_not_block_planner_adoption(self):
+        c = FakeClient([issue(164, state=None)])
+        c.repo = 'faberline/lumen'
+        c.milestones[0]['title'] = 'lumen@0.9'
+        c.issues[0]['body'] = '\n'.join('## '+v for v in ('Goal','Acceptance','Never','Gate')) + '\n' + self.LUMEN + '\nParent #158 is decomposition ancestry.'
+        with contextlib.redirect_stdout(io.StringIO()):
+            plan.adopt(c, 164, 'p2')
+        self.assertIn('todo', c.issues[0]['labels'])
+        self.assertFalse(any('waits' in str(v) for v in c.writes))
+
+
 class WorkerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -410,7 +442,7 @@ class WorkerTests(unittest.TestCase):
         self.pr = None
 
     def invoke(self, args=('next',)):
-        with patch.object(sys, 'argv', ['work.py', *args]), patch.dict(os.environ, ISSUE_WORK_OWNER='mine'), patch.object(work, 'git', side_effect=lambda *a: str(self.common) if a[0] == 'rev-parse' else ''), patch.object(work.queue, 'Client', return_value=self.c), patch.object(work, 'branch_of', side_effect=lambda n, **kw: (f'issue/{n}', self.pr)), patch.object(work, 'prepare', side_effect=self.preparing), contextlib.redirect_stdout(io.StringIO()):
+        with patch.object(sys, 'argv', ['work.py', *args]), patch.dict(os.environ, ISSUE_WORK_OWNER='mine'), patch.object(work, 'git', side_effect=lambda *a: str(self.common) if a[0] == 'rev-parse' else ''), patch.object(work.queue, 'Client', return_value=self.c), patch.object(work, 'branch_of', side_effect=lambda n, **kw: (f'issue/{n}', self.pr)), patch.object(work, 'prepare', side_effect=self.preparing), patch.object(self.c, 'snapshot', side_effect=AssertionError('worker must not run milestone policy')), patch.object(self.c, 'continuation', side_effect=AssertionError('worker must not run old parser eligibility')), patch.object(self.c, 'blockers', side_effect=AssertionError('worker must not parse dependency eligibility')), contextlib.redirect_stdout(io.StringIO()):
             return work.main()
 
     def lease(self, **kw):
@@ -422,22 +454,20 @@ class WorkerTests(unittest.TestCase):
         self.c.issues[0]['labels'].append(dict(name='app:tape'))
         self.assertEqual(self.invoke(), 0)
         self.assertEqual(set(self.c.issues[0]['labels']), {'doing', 'app:tape'})
-        self.assertEqual(self.c.snapshots, 2)
+        self.assertEqual(self.c.reads.count('repos/faberline/tape/issues?state=open&labels=todo'), 2)
         self.assertEqual(json.loads((self.common / 'issue-work.lock').read_text())['phase'], 'coding')
 
-    def test_frontier_added_during_prepare_refuses_no_label_or_lease(self):
+    def test_earlier_unresolved_batch_added_during_prepare_does_not_block_todo(self):
         def prepare(*args):
             earlier = m(2, '0.1')
             self.c.milestones.append(earlier)
             self.c.issues.append(issue(2, earlier, state='blocked'))
             return Path(self.tmp.name)
         self.preparing = prepare
-        with self.assertRaisesRegex(RuntimeError, 'changed during preparation'):
-            self.invoke()
-        self.assertEqual(self.c.writes, [])
-        self.assertFalse((self.common / 'issue-work.lock').exists())
+        self.assertEqual(self.invoke(), 0)
+        self.assertEqual(self.c.writes[0][1]['labels'], ['doing'])
 
-    def test_dependency_change_during_prepare_refuses(self):
+    def test_changed_spec_during_prepare_still_refuses(self):
         def prepare(*args):
             self.c.issues[0]['body'] = 'Depends on #9'
             self.c.targets[('faberline/tape', 9)] = issue(9)
@@ -456,25 +486,67 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(self.c.snapshots, 0)
         self.assertEqual(self.c.writes, [])
 
-    def test_existing_same_pr_ci_retry_continues_before_frontier(self):
+    def test_selected_ci_retry_reuses_same_pr_without_milestone_policy(self):
         self.c.issues[0]['milestone'] = None
         self.pr = 9
         self.assertEqual(self.invoke(), 0)
         self.assertEqual(self.c.snapshots, 0)
         self.assertEqual(self.c.writes[0][1]['labels'], ['doing'])
 
-    def test_owned_blocked_or_prerequisite_wait_keeps_lease(self):
-        for scenario in ('blocked', 'dependency'):
-            self.setUp()
-            self.lease()
-            self.c.issues[0]['labels'] = ['blocked' if scenario == 'blocked' else 'doing']
-            if scenario == 'dependency':
-                self.c.issues[0]['body'] = 'Depends on #8'
-                self.c.targets[('faberline/tape', 8)] = issue(8)
-            with self.assertRaises((RuntimeError, ValueError)):
-                self.invoke(('next', '--mine'))
-            self.assertEqual(self.c.writes, [])
-            self.assertEqual(json.loads((self.common / 'issue-work.lock').read_text())['issue'], 1)
+    def test_owned_blocked_state_keeps_lease(self):
+        self.lease()
+        self.c.issues[0]['labels'] = ['blocked']
+        with self.assertRaises(RuntimeError):
+            self.invoke(('next', '--mine'))
+        self.assertEqual(self.c.writes, [])
+        self.assertEqual(json.loads((self.common / 'issue-work.lock').read_text())['issue'], 1)
+
+    def test_owned_work_does_not_reparse_dependency_eligibility(self):
+        self.lease()
+        self.c.issues[0]['labels'] = ['doing']
+        self.c.issues[0]['body'] = 'Depends on #8'
+        self.c.targets[('faberline/tape', 8)] = issue(8)
+        self.pr = 9
+        self.assertEqual(self.invoke(('next', '--mine')), 0)
+        self.assertEqual(self.c.writes, [])
+        self.assertFalse(any('milestone' in p or 'comments' in p or 'dependencies' in p for p in self.c.reads))
+
+    def test_later_planned_todo_consumed_while_planner_frontier_waits(self):
+        earlier = m(2, '0.1')
+        self.c.milestones.append(earlier)
+        self.c.issues.append(issue(2, earlier, state='blocked'))
+        self.assertIsNone(self.c.snapshot()['decision']['selected'])
+        self.assertEqual(self.invoke(), 0)
+        self.assertEqual(self.c.writes[0][0], 1)
+
+    def test_worker_priority_can_out_rank_milestone_but_planner_cannot(self):
+        earlier = m(2, '0.1')
+        self.c.milestones.append(earlier)
+        old = issue(2, earlier)
+        old['labels'].append(dict(name='priority:p3'))
+        self.c.issues.append(old)
+        self.c.issues[0]['labels'].append(dict(name='priority:p0'))
+        self.assertEqual(self.c.snapshot()['decision']['selected'], 2)
+        self.assertEqual(self.invoke(), 0)
+        self.assertEqual(self.c.writes[0][0], 1)
+
+    def test_worker_does_not_validate_missing_closed_or_invalid_milestones(self):
+        for assigned in (None, m(state='closed'), m(title='not a version'), 'opaque invalid milestone'):
+            with self.subTest(assigned=assigned):
+                self.setUp()
+                self.c.issues[0]['milestone'] = assigned
+                self.assertEqual(self.invoke(), 0)
+                self.assertFalse(any('milestone' in p or 'comments' in p or 'dependencies' in p for p in self.c.reads))
+
+    def test_owned_coding_continues_ahead_of_other_planned_priority(self):
+        self.lease()
+        self.c.issues[0]['labels'] = ['doing']
+        self.c.issues.append(issue(2))
+        self.c.issues[-1]['labels'].append(dict(name='priority:p0'))
+        self.pr = 9
+        self.assertEqual(self.invoke(('next', '--mine')), 0)
+        self.assertEqual(json.loads((self.common / 'issue-work.lock').read_text())['issue'], 1)
+        self.assertEqual(self.c.writes, [])
 
     def test_uncertain_label_write_retains_intent_no_retry(self):
         with patch.object(self.c, 'patch', side_effect=OSError('network outcome uncertain')) as write:
@@ -557,11 +629,13 @@ class PendingClaimTests(unittest.TestCase):
     invoke = WorkerTests.invoke
     lease = WorkerTests.lease
 
-    def test_unexecuted_initial_claim_does_not_bypass_new_frontier(self):
+    def test_unexecuted_initial_claim_does_not_bypass_new_higher_priority_todo(self):
         self.lease(phase='claiming')
         earlier = m(2, '0.1')
         self.c.milestones.append(earlier)
-        self.c.issues.append(issue(2, earlier, state='blocked'))
+        higher = issue(2, earlier)
+        higher['labels'].append(dict(name='priority:p0'))
+        self.c.issues.append(higher)
         with self.assertRaisesRegex(RuntimeError, 'pending initial claim no longer eligible'):
             self.invoke(('next', '--mine'))
         self.assertEqual(self.c.writes, [])

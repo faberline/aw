@@ -99,6 +99,36 @@ def lease_available(lease, owner, mine, now):
         return False
 
 
+def work_identity(issue):
+    # Milestones are planner metadata, not worker selection/eligibility input.
+    return dict(number=issue['number'], state=issue['state'],
+                labels=sorted(queue.labels(issue)), title=issue.get('title'),
+                body=issue.get('body'), updated_at=issue.get('updated_at'),
+                created_at=issue.get('created_at'))
+
+
+def current_work(client, n):
+    issue = client.issue(n)
+    if issue['state'] != 'open' or queue.labels(issue) & queue.STATES not in ({'todo'}, {'doing'}):
+        refuse('owned/repair work is not exclusively open todo or doing; preserve lease/worktree')
+    return issue
+
+
+def planned_snapshot(client):
+    # Consume the existing plan. No milestone/catalog/comment/dependency reads.
+    issues = [i for i in client.pages(f'repos/{client.repo}/issues?state=open&labels=todo')
+              if 'pull_request' not in i and i['state'] == 'open'
+              and queue.labels(i) & queue.STATES == {'todo'}]
+    if len({i['number'] for i in issues}) != len(issues):
+        refuse('unstable paginated todo inventory; no truncated or duplicate claim')
+    issues.sort(key=queue.priority)
+    return dict(issues=issues, selected=issues[0]['number'] if issues else None)
+
+
+def planned_identity(snapshot):
+    return [work_identity(i) for i in snapshot['issues']]
+
+
 def main():
     command = sys.argv[1] if len(sys.argv) > 1 else ''
     if command not in ('next', 'finish', 'block'):
@@ -152,7 +182,7 @@ def main():
                 if prior['state'] == 'open' and ls & queue.STATES == {'doing'}:
                     branch, pr = association(prior['number'])
                     if not pr or lease.get('phase') in ('coding', 'claiming'):
-                        selected = client.continuation(prior['number'])
+                        selected = current_work(client, prior['number'])
                         continuation = True
                 elif lease.get('phase') in ('coding', 'claiming'):
                     # CI retry can reclaim the same PR, never replace a live owner
@@ -160,61 +190,46 @@ def main():
                     if prior['state'] == 'open' and ls & queue.STATES == {'todo'}:
                         branch, pr = association(prior['number'])
                         if pr:
-                            selected = client.continuation(prior['number'])
+                            selected = current_work(client, prior['number'])
                             continuation = True
                         elif lease.get('phase') == 'claiming':
                             # An unexecuted initial claim is not already coding.
-                            # Revalidate its frontier instead of granting a retry
+                            # Revalidate the planned todo ordering instead of granting a retry
                             # a new continuity exemption. Never switch its issue.
-                            snapshot = client.snapshot()
-                            if snapshot['decision']['selected'] != prior['number']:
+                            snapshot = planned_snapshot(client)
+                            if snapshot['selected'] != prior['number']:
                                 refuse('pending initial claim no longer eligible; preserve intent/worktree')
                             selected = next(i for i in snapshot['issues'] if i['number'] == prior['number'])
                     if selected is None:
                         refuse('owned issue paused by lifecycle change; preserve lease/worktree')
             if selected is None:
-                # Existing same-PR CI repairs survive batch reprioritization. This
-                # is continuity, not permission to start new future-batch work.
-                issues = [i for i in client.pages(f'repos/{client.repo}/issues?state=open')
-                          if 'pull_request' not in i and i['state'] == 'open' and queue.labels(i) & queue.STATES == {'todo'}]
-                for candidate in sorted(issues, key=queue.priority):
-                    branch, pr = association(candidate['number'])
-                    if pr:
-                        try:
-                            selected = client.continuation(candidate['number'])
-                        except ValueError as exc:
-                            print(f'paused repair #{candidate["number"]}: {exc}')
-                            continue
-                        continuation = True
-                        break
-            if selected is None:
-                snapshot = client.snapshot()
-                decision = snapshot['decision']
-                if decision['selected'] is None:
+                snapshot = planned_snapshot(client)
+                if snapshot['selected'] is None:
                     if lease and lease.get('phase') not in ('coding', 'claiming'):
                         lease_path.unlink()
-                    print(json.dumps(decision, sort_keys=True))
+                    print('idle: no planned todo work; submitted doing issues wait for CI')
                     return 3
-                selected = next(i for i in snapshot['issues'] if i['number'] == decision['selected'])
+                selected = next(i for i in snapshot['issues'] if i['number'] == snapshot['selected'])
             n = selected['number']
             branch, pr = association(n)
             wt = prepare(checkout, n, branch)
             if continuation:
-                # Recheck dependencies and lifecycle after potentially long prepare.
-                fresh = client.continuation(n)
-                if queue.issue_identity(fresh) != queue.issue_identity(selected):
+                # Recheck lifecycle after potentially long prepare; planning policy
+                # is not re-run by an already-owned worker.
+                fresh = current_work(client, n)
+                if work_identity(fresh) != work_identity(selected):
                     refuse('owned/repair issue changed during preparation; preserve worktree and retry')
             else:
-                fresh_snapshot = client.snapshot()
-                if queue.fingerprint(fresh_snapshot) != queue.fingerprint(snapshot):
-                    refuse('queue/milestone/prerequisite changed during preparation; no claim made')
+                fresh_snapshot = planned_snapshot(client)
+                if planned_identity(fresh_snapshot) != planned_identity(snapshot):
+                    refuse('planned todo/spec changed during preparation; no claim made')
                 fresh = next(i for i in fresh_snapshot['issues'] if i['number'] == n)
             # Last read immediately precedes intent/label write, under repository
             # guard. GitHub labels have no distributed CAS; remote actors remain a
             # documented race. An uncertain PATCH retains intent, never replays it.
             if association(n, fresh=True) != (branch, pr):
                 refuse('PR/branch association changed before claim; preserve worktree')
-            if queue.issue_identity(client.issue(n)) != queue.issue_identity(fresh):
+            if work_identity(client.issue(n)) != work_identity(fresh):
                 refuse('issue changed immediately before claim; no label write')
             temp_lease = common / 'issue-work.lock.new'
             claimed = dict(issue=n, owner=owner, since=now, pid=os.getppid(), host=socket.gethostname(), phase='claiming')

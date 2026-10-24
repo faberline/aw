@@ -48,8 +48,9 @@ argument, such as `loop` or `once`.
 | `priority:p2` | Normal. An issue without a priority label counts as this. |
 | `priority:p3` | Some day. |
 
-The work step uses the earliest unresolved version milestone, then priority
-and creation time within that batch. Empty milestones do not block selection.
+The plan step admits work from the earliest unresolved version milestone, then
+priority within that batch. Empty milestones do not block admission. AGY consumes
+already-planned todo by priority and age; it does not re-run milestone ordering.
 
 ## Spec
 
@@ -63,6 +64,10 @@ The work and review steps read these four sections of a queued issue:
 They are in the latest comment that starts with `<!-- issue-plan:spec -->`,
 else in the body. `plan.sh spec` writes that comment. Read the code before
 you write a spec: name the files, and check that each Gate command exists.
+Inspect selected test behavior, not just a cargo filter: pure isolated helper
+units/static checks may run locally; product CLI subprocess/output/file checks,
+server/network/cluster and performance tests belong in authorized cloud CI.
+Do not classify an offline `relay render --out ...` contract as a pure unit.
 
 ## Blocked
 
@@ -88,7 +93,7 @@ ${CLAUDE_SKILL_DIR}/scripts/plan.sh status
 
    It prints a shared queue decision with explicit blockers, `room=`,
    `backlog=` and `untriaged=` counts, then every open issue in milestone order.
-   Missing or invalid assignments require milestone triage before new claims.
+   Missing or invalid assignments require milestone triage before new admission.
 
 2. When there is something to do (`room` above 0, an untriaged issue, or a
    backlog issue to spec), read the repository's goals and status (README,
@@ -140,11 +145,12 @@ ${CLAUDE_SKILL_DIR}/scripts/plan.sh new "<title>" <body-file> <p0-p3> --mileston
 
 Nothing worth doing is a valid result. Report it with the reason.
 
-## Milestone queue contract
+## Planner milestones and planned work
 
-Use the shared [milestone queue contract](../issue-loop/MILESTONE-QUEUE.md).
-Version milestone order precedes priority. Empty milestones do not block; open
-blocked/backlog/review work at an earlier version does. Missing/invalid/closed
-assignments and unresolved prerequisites fail closed with diagnostics. Preserve
-owned coding leases and same-PR CI repair. Core milestones are repo batches,
-not crate versions. No new release or qualification gate is implied.
+See the [planner admission contract](../issue-loop/MILESTONE-QUEUE.md).
+Claude plan uses milestone versions before priority for new/adopt admission;
+empty milestones do not block, while earlier unresolved work remains visible.
+AGY consumes already-planned todo by priority and creation time, without a
+milestone frontier or dependency-parser eligibility filter. Preserve active
+leases, dirty worktrees and same-PR CI repairs. Core milestones are repo batches,
+not crate versions. No schedule, release/test gate or done change is implied.
