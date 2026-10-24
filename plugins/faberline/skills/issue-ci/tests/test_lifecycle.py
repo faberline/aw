@@ -567,7 +567,7 @@ class WorkTests(unittest.TestCase):
         self.assertEqual(git.call_count, 1)
 
     def test_existing_local_branch_not_reset_to_remote(self):
-        with patch.object(work, 'git', return_value='') as git, patch.object(work, 'branch_exists', return_value=True):
+        with patch.object(work, 'git', return_value='') as git, patch.object(work, 'branch_exists', return_value=True), patch.object(work.tree_state, 'created'):
             work.prepare(Path(self.tmp.name), 7, 'issue/7')
         args = git.call_args.args
         self.assertEqual(args[-1], 'issue/7')
