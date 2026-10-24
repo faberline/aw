@@ -8,12 +8,29 @@ A failed fetch refuses new selection; it never silently uses stale origin/main.
 An associated existing PR whose branch/ref is unavailable after fetch holds;
 its repair is never created from main.
 
-Before status or checkout, hold configured clean/smudge/process filters rather
-than executing them or blindly writing unsmudged/LFS content. A separate reviewed
-filter policy is required for such repos. Also hold assume-unchanged/skip-worktree
-index tags and sparse settings/patterns; do not clear flags. The shared read-only
-index guard is rechecked immediately before FF. A clean status alone cannot
-certify visible tracked content.
+Before status or checkout, the main-only absence proof rejects every relevant
+attribute source, including an empty/non-filter file or macro: index/HEAD/incoming
+`.gitattributes`, physical root/nested path ancestors, info/global/system sources,
+and attributesFile/attribute environment overrides. Global media/LFS driver
+**definitions alone** may remain configured only when all those sources are
+proven absent. No driver is disabled, executed, or declared safe; repositories
+with attributes need a separate reviewed policy. Cleanup's existing configured-
+filter hold is unchanged and never uses this main-only exception.
+
+The proof binds exact HEAD, staged index records, incoming commit/path inventory,
+relevant effective config with origins/scopes, environment, source absence and
+resolved source parent identity. Built-in Git check-attr must return complete
+`filter: unspecified` results for every path in worktree/index/HEAD/incoming.
+Recheck sources/config/index/refs after those reads, before each status, and
+again immediately before FF. Read errors, overrides, unsupported Git, symlink
+sources/repository ancestors, submodule or unknown modes, missing/unknown results
+and any identity change hold. Standard platform default directory aliases such
+as macOS /etc are resolved and bound; the attribute file itself must be absent.
+No filename-based allowlist or arbitrary YAML/attributes parser is introduced.
+
+Also hold assume-unchanged/skip-worktree index tags and sparse settings/patterns;
+do not clear flags. The shared read-only index guard is rechecked immediately
+before FF. A clean status alone cannot certify visible tracked content.
 
 Update the primary checkout only when it is on main, has no staged/tracked or
 untracked changes, has no issue owner lease/in-progress Git operation, is behind
@@ -45,6 +62,8 @@ preserve/move those files or update any live checkout. Those holds require
 separate deliberate owner coordination/content preservation before FF can run.
 
 Deployment: review the worker and affected tests, then update the shared worker
-and this documentation through the single installation owner. The worker and shared index guard must update coherently; no new package
-dependency, schedule, permissions, package version, CI/review or done change.
+and this documentation through the single installation owner. The worker,
+main_filter_safety.py and shared index guard must be available coherently; no new
+package dependency, schedule, permissions, package version, CI/review or done
+change.
 The existing local guard is not a filesystem CAS against noncooperating writers.

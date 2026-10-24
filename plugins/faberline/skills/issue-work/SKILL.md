@@ -98,7 +98,9 @@ change holds maintenance; never stash/reset/clean/rebase or hide user files.
 That hold does not stop safe fresh-origin issue work or change its original PR
 worktree. Do not set the coordination token merely because a lease is absent.
 
-Configured Git filters hold main maintenance before status/checkout; hidden
-index flags and sparse state also hold and are never cleared automatically.
+Main maintenance permits configured driver definitions only with the strict
+[all-attributes-absent proof](MAIN-CHECKOUT.md); actual/unknown attribute sources
+hold before status/checkout. Cleanup retains its original configured-filter hold.
+Hidden index flags and sparse state also hold and are never cleared automatically.
 An existing PR with no available branch after fetch must hold, never fall back
 to creating its repair from main. Install the shared index guard with the worker.

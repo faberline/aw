@@ -25,6 +25,10 @@ _index_spec = importlib.util.spec_from_file_location('index_safety', Path(__file
 index_safety = importlib.util.module_from_spec(_index_spec)
 _index_spec.loader.exec_module(index_safety)
 
+_filter_spec = importlib.util.spec_from_file_location('main_filter_safety', Path(__file__).resolve().parent / 'main_filter_safety.py')
+main_filters = importlib.util.module_from_spec(_filter_spec)
+_filter_spec.loader.exec_module(main_filters)
+
 
 def run(*args):
     return subprocess.check_output(args, text=True).strip()
@@ -155,16 +159,19 @@ def sync_main(checkout, owner, fetched):
         return held('cannot bind exact fetched origin/main')
     try:
         def snapshot():
-            if index_safety.configured_filters(checkout):
-                raise ValueError('configured Git filters require a separately reviewed policy; no status or checkout executed')
             index = index_safety.inspect(checkout)
             branch = git('--no-optional-locks', '-C', str(checkout), 'symbolic-ref', '--quiet', '--short', 'HEAD')
             head = git('--no-optional-locks', '-C', str(checkout), 'rev-parse', 'HEAD')
             remote = git('--no-optional-locks', '-C', str(checkout), 'rev-parse', 'refs/remotes/origin/main')
+            if remote != fetched:
+                raise ValueError('origin/main changed after fetch')
+            filters = main_filters.inspect(checkout, fetched)
+            if filters['head'] != head:
+                raise ValueError('HEAD changed during attribute proof')
             dirty = git('--no-optional-locks', '-C', str(checkout), 'status', '--porcelain=v1', '-z', '--untracked-files=all')
-            return branch, head, remote, dirty, index
+            return branch, head, remote, dirty, index, filters
         before = snapshot()
-        branch, head, remote, dirty, index = before
+        branch, head, remote, dirty, index, filters = before
         if branch != 'main':
             return held('primary checkout is not on main; never switch it')
         if remote != fetched:
@@ -185,7 +192,7 @@ def sync_main(checkout, owner, fetched):
             return held('local main is ahead/diverged; no reset/stash/rebase')
         if snapshot() != before or (common / 'issue-work.lock').exists():
             return held('primary checkout/ref/owner changed before fast-forward')
-        if index_safety.configured_filters(checkout) or index_safety.inspect(checkout) != index:
+        if index_safety.inspect(checkout) != index or main_filters.inspect(checkout, fetched) != filters:
             return held('index/filter visibility changed immediately before fast-forward')
         # No hooks/autostash and never overwrite valuable ignored path collisions.
         git('-c', 'core.hooksPath=/dev/null', '-C', str(checkout), 'merge', '--ff-only',
@@ -193,7 +200,7 @@ def sync_main(checkout, owner, fetched):
         if git('-C', str(checkout), 'rev-parse', 'HEAD') != fetched:
             return held('fast-forward outcome uncertain; inspect without retry')
         return dict(status='updated', before=head, head=fetched, commits=behind)
-    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+    except (OSError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError) as exc:
         return held(f'Git maintenance refused/uncertain; inspect, no automatic retry: {exc}')
 
 
