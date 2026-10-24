@@ -23,7 +23,8 @@ PID. Legacy/malformed/foreign leases refuse; verify the old session ended
 before manually reconciling metadata, preserving its branch and worktree.
 Never bypass a lock just because a run took longer than expected.
 
-`next` selects highest-priority todo then oldest, or resumes the recoverable
+`next` selects todo from the earliest unresolved version milestone, then
+priority and creation time within that batch, or resumes the recoverable
 lease's doing issue in coding phase (including an active CI retry with a PR). Submitted doing issues wait for CI and are
 not selected again as coding work. A CI-failed todo reuses the SAME open PR,
 branch and registered worktree, including local commits and uncommitted
@@ -56,3 +57,12 @@ Never merge, close issues, delete branches, force-push, manually change
 lifecycle labels, or run bare `git stash`. AGY's sole lifecycle transition
 is `todo -> doing`. Exit 2 means refused: preserve work and report evidence;
 fix a justified scoped problem or wait for human direction.
+
+## Milestone queue contract
+
+Use the shared [milestone queue contract](../issue-loop/MILESTONE-QUEUE.md).
+Version milestone order precedes priority. Empty milestones do not block; open
+blocked/backlog/review work at an earlier version does. Missing/invalid/closed
+assignments and unresolved prerequisites fail closed with diagnostics. Preserve
+owned coding leases and same-PR CI repair. Core milestones are repo batches,
+not crate versions. No new release or qualification gate is implied.
