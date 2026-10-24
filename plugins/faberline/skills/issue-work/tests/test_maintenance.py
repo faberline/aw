@@ -59,6 +59,8 @@ class Fixture(unittest.TestCase):
     strategy = 'squash'
 
     def setUp(self):
+        environment=patch.dict(os.environ,GIT_CONFIG_GLOBAL=os.devnull,GIT_CONFIG_NOSYSTEM='1')
+        environment.start();self.addCleanup(environment.stop)
         self.tmp = tempfile.TemporaryDirectory(prefix='aw-maintenance-unit-')
         self.addCleanup(self.tmp.cleanup)
         self.main = Path(self.tmp.name).resolve()/'repo'
@@ -152,6 +154,54 @@ class MaintenanceTests(Fixture):
                     self.inspect()
                 if before is None: p.unlink()
                 else: p.write_bytes(before)
+        self.assertTrue(self.path.exists())
+
+    def test_hidden_tracked_modifications_hold_dry_run_and_apply_without_clearing_flags(self):
+        for flag in ('--assume-unchanged','--skip-worktree'):
+            with self.subTest(flag=flag):
+                plan=self.plan()
+                self.git('-C',str(self.path),'update-index',flag,'tracked')
+                (self.path/'tracked').write_text('valuable hidden local content')
+                self.assertEqual(self.git('-C',str(self.path),'status','--porcelain'),'')
+                before=self.git('-C',str(self.path),'ls-files','-v','tracked')
+                with self.assertRaisesRegex(ValueError,'hidden/nonordinary index flags'):self.inspect()
+                with self.assertRaisesRegex(ValueError,'hidden/nonordinary index flags'):self.apply(plan)
+                file=Path(self.tmp.name)/'merge.json';file.write_text(json.dumps(self.binding))
+                with patch.object(m.Path,'cwd',return_value=self.main),patch.object(m.queue,'Client',return_value=self.remote),contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(m.main(['--receipt',str(file)]),3)
+                self.assertIn('hidden/nonordinary index flags',json.loads(output.getvalue())['reason'])
+                self.assertEqual((self.path/'tracked').read_text(),'valuable hidden local content')
+                self.assertEqual(self.git('-C',str(self.path),'ls-files','-v','tracked'),before)
+                self.assertFalse((Path(self.ctx['common'])/'issue-work.maintenance').exists())
+                # Restore only this disposable fixture for the second case.
+                self.git('-C',str(self.path),'update-index','--no-assume-unchanged','--no-skip-worktree','tracked')
+                (self.path/'tracked').write_text('changed\n')
+
+    def test_hidden_index_change_after_recovery_aborts_removal(self):
+        plan=self.plan()
+        original=m.inspect;calls=[0]
+        def changing(*args):
+            calls[0]+=1
+            if calls[0]==2:
+                self.git('-C',str(self.path),'update-index','--skip-worktree','tracked')
+                (self.path/'tracked').write_text('hidden after recovery')
+            return original(*args)
+        with patch.object(m,'inspect',side_effect=changing),self.assertRaisesRegex(ValueError,'hidden/nonordinary index flags'):
+            self.apply(plan)
+        self.assertEqual((self.path/'tracked').read_text(),'hidden after recovery')
+        self.assertTrue(self.git('-C',str(self.path),'ls-files','-v','tracked').startswith('S '))
+        self.assertTrue(list((Path(self.ctx['common'])/'issue-work.maintenance').glob('*/branch.bundle')))
+
+    def test_sparse_configuration_or_patterns_always_hold(self):
+        plan=self.plan()
+        for key in ('core.sparseCheckout','core.sparseCheckoutCone','index.sparse'):
+            with self.subTest(key=key):
+                self.git('config',key,'true')
+                with self.assertRaisesRegex(ValueError,'sparse'):self.inspect()
+                with self.assertRaisesRegex(ValueError,'sparse'):self.apply(plan)
+                self.git('config','--unset',key)
+        sparse=self.main/'.git/info/sparse-checkout';sparse.write_text('tracked\n')
+        with self.assertRaisesRegex(ValueError,'sparse checkout metadata'):self.inspect()
         self.assertTrue(self.path.exists())
 
     def test_extra_local_commit_even_same_tree_holds(self):
@@ -334,11 +384,11 @@ class MaintenanceTests(Fixture):
         (Path(record['identity']['admin'])/'config.worktree').write_text('valuable unknown config')
         with self.assertRaisesRegex(ValueError,'unknown/in-progress'): self.inspect()
 
-    def test_configured_filter_is_disabled_without_persistent_config_change(self):
+    def test_configured_filter_holds_before_status_without_config_change(self):
         sentinel=Path(self.tmp.name)/'must-not-run'
         self.git('config','filter.example.clean',f'touch {sentinel}')
         (self.path/'.gitattributes').write_text('tracked filter=example\n')
-        with self.assertRaisesRegex(ValueError,'content present'): self.inspect()
+        with self.assertRaisesRegex(ValueError,'configured Git filters'): self.inspect()
         self.assertFalse(sentinel.exists())
         self.assertEqual(self.git('config','filter.example.clean'),f'touch {sentinel}')
 

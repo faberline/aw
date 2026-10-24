@@ -24,6 +24,7 @@ def module(name, path):
 
 HERE = Path(__file__).resolve().parent
 state = module('worktree_state', HERE / 'worktree_state.py')
+index_safety = module('index_safety', HERE / 'index_safety.py')
 queue = module('queue_transport', HERE.parents[1] / 'issue-loop/scripts/milestone_queue.py')
 SHA = re.compile(r'[0-9a-f]{40}')
 ADMIN = {'HEAD', 'gitdir', 'commondir', 'index', 'ORIG_HEAD', 'COMMIT_EDITMSG', 'logs/HEAD'}
@@ -35,7 +36,7 @@ def digest(value):
 
 def code_hash():
     return digest({str(p.name): hashlib.sha256(p.read_bytes()).hexdigest() for p in
-                   (Path(__file__).resolve(), HERE/'worktree_state.py', Path(queue.__file__))})
+                   (Path(__file__).resolve(), HERE/'worktree_state.py', HERE/'index_safety.py', Path(queue.__file__))})
 
 
 def require(condition, message):
@@ -88,23 +89,12 @@ def owners_inactive(record):
 
 
 def filter_options(path):
-    # Inspect names only, never credentials/command values. Disable every
-    # configured driver for status AND git's internal remove cleanliness check.
-    try:
-        names = state.git(path, 'config', '--name-only', '--get-regexp', r'^filter\..*\.(clean|smudge|process|required)$')
-    except subprocess.CalledProcessError as exc:
-        if exc.returncode != 1:
-            raise
-        names = b''
-    require(len(names) < 16_000, 'filter configuration bound exceeded')
-    keys = sorted(set(names.decode().splitlines()))
-    require(all(re.fullmatch(r'filter\.[A-Za-z0-9_.-]+\.(clean|smudge|process|required)', k) for k in keys), 'unsupported filter configuration identity')
-    drivers = sorted({k.rsplit('.', 1)[0] for k in keys})
-    options = []
-    for driver in drivers:
-        for field, value in (('clean',''),('smudge',''),('process',''),('required','false')):
-            options += ['-c', driver+'.'+field+'='+value]
-    return keys, options
+    # Do not infer raw-byte equivalence from cached filtered working-tree stats,
+    # and never execute a clean/smudge/process driver. Filter-aware support is a
+    # separate reviewed policy, not a reason to clear or ignore configuration.
+    keys = index_safety.configured_filters(path)
+    require(not keys, 'configured Git filters require a separately reviewed content policy; hold before status/removal')
+    return keys, []
 
 
 def local_snapshot(ctx, record):
@@ -138,6 +128,7 @@ def local_snapshot(ctx, record):
     owners_inactive(record)
     head = state.git(path, 'rev-parse', 'HEAD').decode().strip()
     require(registered['HEAD'] == head == state.git(ctx['main'], 'rev-parse', 'refs/heads/'+record['branch']).decode().strip(), 'HEAD/ref changed')
+    index = index_safety.inspect(path)
     # .gitattributes is untrusted data, never permission to run a driver.
     filter_keys, options = filter_options(path)
     staged = state.git(path, 'ls-files', '--stage', '-z')
@@ -162,7 +153,7 @@ def local_snapshot(ctx, record):
     if orig.exists():
         history.add(orig.read_text().strip())
     require(all(SHA.fullmatch(h) for h in history), 'unknown reflog/ORIG_HEAD identity')
-    return dict(path=str(path), head=head, registered=registered, admin_hashes=metadata, history=sorted(history), filter_keys=filter_keys)
+    return dict(path=str(path), head=head, registered=registered, admin_hashes=metadata, history=sorted(history), filter_keys=filter_keys, index=index)
 
 
 def ancestor(main, a, b):
@@ -289,6 +280,7 @@ def apply(ctx, plan, client):
     try:
         filter_keys, options = filter_options(fresh['local']['path'])
         require(filter_keys == fresh['local']['filter_keys'], 'filter identity changed before removal')
+        require(index_safety.inspect(fresh['local']['path']) == fresh['local']['index'], 'index visibility changed immediately before removal')
         state.git(ctx['main'], *options, 'worktree', 'remove', fresh['local']['path'])
     except (OSError, subprocess.CalledProcessError):
         journal.write_text(json.dumps(dict(plan=plan, saved=saved, outcome='uncertain; inspect registration/path before any retry'), sort_keys=True)+'\n')

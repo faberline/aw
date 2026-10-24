@@ -92,17 +92,22 @@ exact proof hold; it never assumes ancestry failure means loss or success.
 
 Every HEAD reflog/ORIG_HEAD commit must be preserved in the submitted history or
 fresh default; unknown unique history holds. Branches are kept regardless.
+Assume-unchanged/skip-worktree (including lowercase index tags), sparse settings
+or patterns hold before status inspection; flags are never automatically cleared.
+The shared read-only index guard is bound into plan evidence and rechecked
+immediately before removal: a clean status cannot certify hidden tracked bytes.
 Tracked/staged/untracked/**all ignored** content holds, including caches with
 unknown value. No cache deletion policy is inferred. Submodule/gitlink trees,
 locked/detached/prunable registrations, moved paths/admin inode, symlinks,
 foreign ownership and unknown/in-progress admin state hold. Status errors and
 path absence never permit pruning. No reset/clean/force/remove-branch exists.
 
-Hooks/fsmonitor, external diff/textconv and configured clean/smudge/process
-filters cannot execute PR-selected programs during inspection/removal. Filter
-names are read without command values and disabled via invocation-only Git
-options, including Git's internal non-force remove cleanliness check; persistent
-configuration is unchanged. The command executes no product/test/build code.
+Hooks/fsmonitor and external diff/textconv cannot execute PR-selected programs.
+Any configured clean/smudge/process filter holds before status/removal, using the
+same shared predicate as main FF. Names are read without command values; neither
+disabling filters nor cached filtered stats certify raw worktree bytes. A
+separate reviewed filter-aware content policy is required even for a globally
+configured driver. No persistent configuration changes or product code run.
 
 ## Apply, recovery and concurrency
 
@@ -133,7 +138,7 @@ are **not** certified deletion eligibility, and no live cleanup occurs in this P
 
 ## Deployment
 
-Install the worker, new state helper and maintenance entrypoints/docs coherently
+Install the worker, new state/index helpers and maintenance entrypoints/docs coherently
 only after independent review/approval. The existing issue-loop transport module
 is reused; no second evaluator, cron, credential or SDK is added. AGY creation,
 claim and finish only maintain provenance; Codex invokes cleanup after an
