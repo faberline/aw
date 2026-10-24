@@ -93,9 +93,10 @@ def validate_adoption(config):
     return config
 
 
-def qualify_config(repo, pr, config):
+def qualify_config(repo, pr, config, files=None):
     module = qualification_module()
-    files = pages(f'repos/{repo}/pulls/{pr["number"]}/files')
+    if files is None:
+        files = pages(f'repos/{repo}/pulls/{pr["number"]}/files')
     plan = module.select(config, pr, files)
     definitions = {}
     for workflow in plan['workflows']:

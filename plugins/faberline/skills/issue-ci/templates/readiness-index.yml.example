@@ -1,0 +1,27 @@
+# TEMPLATE ONLY: replace the test workflow name and immutable aw SHA after review.
+# Register the actual producer workflow ID/blob/job in default-branch policy.
+# Never include this producer's own name or a wildcard in workflow_run.workflows.
+name: Review readiness index
+on:
+  workflow_run:
+    workflows: [REPLACE_WITH_REVIEWED_TEST_WORKFLOW_NAME]
+    types: [completed]
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: review-readiness-index
+  cancel-in-progress: false
+jobs:
+  publish:
+    name: publish readiness index
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.path != '.github/workflows/review-readiness.yml'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # No checkout, PR executable, artifact download, issue/check write or dispatch.
+      - uses: faberline/aw/.github/actions/issue-ci@REPLACE_WITH_REVIEWED_40_HEX_AW_SHA
+        with:
+          operation: index
+          policy: .github/issue-ci-required-gates.json

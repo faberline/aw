@@ -16,6 +16,7 @@ strict_json_loads = _json_data.loads
 
 VERSION = 1
 ASSERTION_MARKER = 'AW_ASSERTIONS_V1 '
+ASSERTION_V2_MARKER = 'AW_ASSERTIONS_V2 '
 RECEIPT_MARKER = 'AW_REVIEW_READINESS_V1 '
 HEX = re.compile(r'[0-9a-f]{40}')
 REPO = re.compile(r'[\w.-]+/[\w.-]+')
@@ -182,7 +183,7 @@ def literal_uses(text):
     return refs
 
 
-def pin_proof(ci, repo, pr, config, producer_ref, evaluator_sha):
+def pin_proof(ci, repo, pr, config, producer_ref, evaluator_sha, producer_only=False):
     contract = config['review_readiness']
     manifest = contract['sources']
     proof, visited, edges = {}, set(), {}
@@ -231,7 +232,7 @@ def pin_proof(ci, repo, pr, config, producer_ref, evaluator_sha):
             edges[key].add((subrepo, child['path'], subref))
             visit(subrepo, child['path'], subref, child['blob_sha'])
 
-    for workflow in config['workflows']:
+    for workflow in ([] if producer_only else config['workflows']):
         blob = config['qualification']['trusted_workflows'][workflow['path']]['definition_sha']
         for ref in (pr['head']['sha'], pr['base']['sha']):
             visit(repo, workflow['path'], ref, blob)
@@ -245,7 +246,7 @@ def pin_proof(ci, repo, pr, config, producer_ref, evaluator_sha):
             pending.extend(edges.get(node, ()))
     need(('faberline/aw', '.github/actions/issue-ci/action.yml', evaluator_sha) in reachable,
          'evaluator_binding', 'producer must transitively invoke the exact pinned aw evaluator')
-    for check in config['_qualification_context']['selected']:
+    for check in ([] if producer_only else config['_qualification_context']['selected']):
         need(check in contract['assertions'], 'missing_assertion_contract', 'no reviewed assertion contract for ' + check)
         for key in contract['assertions'][check]['enforcers']:
             source = manifest[key]
@@ -287,11 +288,19 @@ def producer_identity(ci, repo, config, run_id, completed=False):
 
 
 def assertion_evidence(repo, pr, run, job, check, rule):
-    found = records(job_log(repo, job['id']), ASSERTION_MARKER)
+    log = job_log(repo, job['id'])
+    found = [(1, value) for value in records(log, ASSERTION_MARKER)]
+    found += [(2, value) for value in records(log, ASSERTION_V2_MARKER)]
     need(len(found) == 1, 'missing_assertions', 'exactly one trusted assertion record required for ' + check)
-    record = found[0]
-    expected = dict(version=VERSION, repo=repo, pr=pr['number'], head=pr['head']['sha'], base=pr['base']['sha'],
-                    run_id=run['id'], run_attempt=run['run_attempt'], job_id=job['id'], check=check)
+    wire_version, record = found[0]
+    need(isinstance(record, dict) and type(record.get('version')) is int and record['version'] == wire_version,
+         'untrusted_assertions', 'unsupported assertion protocol version')
+    expected = dict(version=record['version'], repo=repo, pr=pr['number'], head=pr['head']['sha'], base=pr['base']['sha'],
+                    run_id=run['id'], run_attempt=run['run_attempt'], check=check)
+    if record['version'] == 1:
+        expected['job_id'] = job['id']
+    # V2 binds numeric job identity through the authenticated exact-attempt API
+    # transport, not a self-reported field requiring extra permissions in tests.
     need(isinstance(record, dict) and set(record) == set(expected) | {'assertions'}
          and all(type(record.get(k)) is type(v) and record[k] == v for k, v in expected.items()),
          'untrusted_assertions', 'assertion identity does not bind this exact execution')
@@ -300,6 +309,11 @@ def assertion_evidence(repo, pr, run, job, check, rule):
          and all(v == 'passed' for v in assertions.values()),
          'zero_or_failed_assertions', 'all declared nonzero assertions must actually pass')
     return dict(check=check, count=len(assertions), assertions=assertions, record_sha256=digest(record))
+
+
+def changed_inventory(files):
+    return sorted([{key: file[key] for key in ('filename', 'status', 'previous_filename', 'sha',
+                   'additions', 'deletions', 'changes') if key in file} for file in files], key=canonical)
 
 
 def collect_once(ci, repo, number, head, document, evaluator_sha, producer_run_id, completed=False):
@@ -320,8 +334,7 @@ def collect_once(ci, repo, number, head, document, evaluator_sha, producer_run_i
                    for w in plan['workflows'] for ref in (head, plan['base']) if HEX.fullmatch(ref or '')}
     scoped = q.scoped_config(config, pull, files, definitions)
     producer = producer_identity(ci, repo, config, producer_run_id, completed)
-    inventory = sorted([{key: file[key] for key in ('filename', 'status', 'previous_filename', 'sha',
-                        'additions', 'deletions', 'changes') if key in file} for file in files], key=canonical)
+    inventory = changed_inventory(files)
     inputs = dict(repo=repo, pr=number, head=head, base=plan['base'], changed_files=inventory,
                   changed_inventory_sha256=digest(inventory), policy_path=document['path'],
                   policy_source=document['source_commit'], policy_sha256=digest(config), evaluator_sha=evaluator_sha,
