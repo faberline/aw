@@ -4,6 +4,7 @@ import fcntl
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import subprocess
@@ -129,6 +130,56 @@ def planned_identity(snapshot):
     return [work_identity(i) for i in snapshot['issues']]
 
 
+def sync_main(checkout, owner, fetched):
+    """Best-effort FF-only primary checkout maintenance, under the caller guard.
+
+    A hold skips this maintenance only; fresh-origin issue work remains valid.
+    The caller attests exclusive primary-checkout ownership with the existing
+    owner token. This is coordination context, not a credential or lease bypass.
+    """
+    def held(reason):
+        return dict(status='held', reason=reason, fetched=fetched)
+    if not isinstance(fetched, str) or not re.fullmatch(r'[0-9a-f]{40}', fetched):
+        return held('cannot bind exact fetched origin/main')
+    try:
+        def snapshot():
+            branch = git('--no-optional-locks', '-C', str(checkout), 'symbolic-ref', '--quiet', '--short', 'HEAD')
+            head = git('--no-optional-locks', '-C', str(checkout), 'rev-parse', 'HEAD')
+            remote = git('--no-optional-locks', '-C', str(checkout), 'rev-parse', 'refs/remotes/origin/main')
+            dirty = git('--no-optional-locks', '-C', str(checkout), 'status', '--porcelain=v1', '-z', '--untracked-files=all')
+            return branch, head, remote, dirty
+        before = snapshot()
+        branch, head, remote, dirty = before
+        if branch != 'main':
+            return held('primary checkout is not on main; never switch it')
+        if remote != fetched:
+            return held('origin/main changed after fetch')
+        if dirty:
+            return held('primary checkout has tracked/staged/untracked content; preserve it')
+        common = Path(git('--no-optional-locks', '-C', str(checkout), 'rev-parse', '--path-format=absolute', '--git-common-dir')).resolve()
+        if (common / 'issue-work.lock').exists() or (common / 'issue-work.lock').is_symlink():
+            return held('existing/unknown issue owner lease; preserve main and issue worktree')
+        if any((common / name).exists() for name in ('MERGE_HEAD','CHERRY_PICK_HEAD','REVERT_HEAD','rebase-merge','rebase-apply')):
+            return held('primary checkout has an in-progress Git operation')
+        if head == fetched:
+            return dict(status='current', head=head, fetched=fetched)
+        if not owner or os.getenv('ISSUE_MAIN_EXCLUSIVE_OWNER') != owner:
+            return held('exclusive primary-checkout owner coordination is not confirmed')
+        ahead, behind = map(int, git('--no-optional-locks', '-C', str(checkout), 'rev-list', '--left-right', '--count', head+'...'+fetched).split())
+        if ahead:
+            return held('local main is ahead/diverged; no reset/stash/rebase')
+        if snapshot() != before or (common / 'issue-work.lock').exists():
+            return held('primary checkout/ref/owner changed before fast-forward')
+        # No hooks/autostash and never overwrite valuable ignored path collisions.
+        git('-c', 'core.hooksPath=/dev/null', '-C', str(checkout), 'merge', '--ff-only',
+            '--no-edit', '--no-autostash', '--no-overwrite-ignore', fetched)
+        if git('-C', str(checkout), 'rev-parse', 'HEAD') != fetched:
+            return held('fast-forward outcome uncertain; inspect without retry')
+        return dict(status='updated', before=head, head=fetched, commits=behind)
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+        return held(f'Git maintenance refused/uncertain; inspect, no automatic retry: {exc}')
+
+
 def main():
     command = sys.argv[1] if len(sys.argv) > 1 else ''
     if command not in ('next', 'finish', 'block'):
@@ -166,7 +217,9 @@ def main():
             if not lease_available(lease, owner, mine, now):
                 print('busy: lease belongs to another active or unverified session')
                 return 3
-            git('fetch', '-q', 'origin')
+            git('fetch', '-q', 'origin', 'refs/heads/main:refs/remotes/origin/main')
+            fetched = git('rev-parse', '--verify', 'refs/remotes/origin/main^{commit}')
+            print('main_update=' + json.dumps(sync_main(checkout, owner, fetched), sort_keys=True))
             client = queue.Client()
             pr_inventory = None
             def association(n, fresh=False):

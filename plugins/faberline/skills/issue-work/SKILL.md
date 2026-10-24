@@ -76,3 +76,14 @@ AGY consumes already-planned todo by priority and creation time, without a
 milestone frontier or dependency-parser eligibility filter. Preserve active
 leases, dirty worktrees and same-PR CI repairs. Core milestones are repo batches,
 not crate versions. No schedule, release/test gate or done change is implied.
+
+## Primary main freshness
+
+After guard/owner checks, `next` fetches exact origin/main and reports a
+[primary checkout FF attempt](MAIN-CHECKOUT.md). Update only clean, checked-out
+main with positive exclusive owner coordination (`ISSUE_MAIN_EXCLUSIVE_OWNER`
+matches the existing owner token), no lease/conflict and fast-forward history.
+Dirty/untracked, ahead/diverged, non-main, active/unknown owner or concurrent
+change holds maintenance; never stash/reset/clean/rebase or hide user files.
+That hold does not stop safe fresh-origin issue work or change its original PR
+worktree. Do not set the coordination token merely because a lease is absent.
