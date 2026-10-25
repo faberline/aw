@@ -10,6 +10,8 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import tempfile
+import time
 
 LIMIT = 16_000_000
 OVERRIDES = ('GIT_ATTR_SOURCE', 'GIT_ATTR_NOSYSTEM', 'GIT_CONFIG_COUNT',
@@ -18,17 +20,66 @@ OVERRIDES = ('GIT_ATTR_SOURCE', 'GIT_ATTR_NOSYSTEM', 'GIT_CONFIG_COUNT',
              'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE')
 
 
+COMMAND_TIMEOUT = 30
+REAP_TIMEOUT = 1
+POLL_INTERVAL = 0.01
+
+
 def git(path, *args, input=None, optional=False):
-    result = subprocess.run(['git', '--no-optional-locks', '-c', 'core.fsmonitor=false',
-        '-c', 'core.hooksPath=/dev/null', '-C', str(path), *args], input=input,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
-    if result.returncode:
-        if optional and result.returncode == 1:
-            return b''
-        raise ValueError('attribute proof Git read failed: '+args[0])
-    if len(result.stdout) > LIMIT:
-        raise ValueError('attribute proof inventory bound exceeded')
-    return result.stdout
+    # Python 3.12/macOS pipe controls can stall inside communicate beyond its
+    # timeout. Finite regular-file stdin has kernel EOF regardless of the parent
+    # keeping the descriptor open; output files avoid full-duplex pipe waits.
+    if input is not None and (not isinstance(input, (bytes, bytearray)) or len(input) > LIMIT):
+        raise ValueError('attribute proof input bound/type exceeded')
+    command = ['git', '--no-optional-locks', '-c', 'core.fsmonitor=false',
+               '-c', 'core.hooksPath=/dev/null', '-C', str(path), *args]
+    with tempfile.TemporaryFile() as source, tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+        if input is not None:
+            source.write(input)
+            source.seek(0)
+        child = None
+        deadline = time.monotonic() + COMMAND_TIMEOUT
+        try:
+            child = subprocess.Popen(command, stdin=source if input is not None else subprocess.DEVNULL,
+                                     stdout=output, stderr=errors, close_fds=True)
+            # Deadline/size enforcement is independent of communicate/pipe IO.
+            # The caller's guard is non-inherited; never signal a caller/group.
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, COMMAND_TIMEOUT)
+                if os.fstat(output.fileno()).st_size > LIMIT or os.fstat(errors.fileno()).st_size > LIMIT:
+                    raise ValueError('attribute proof output bound exceeded')
+                code = child.poll()
+                if code is not None:
+                    break
+                time.sleep(min(POLL_INTERVAL, remaining))
+            # A child can finish after the last size observation. Bound reads
+            # too; polling caps accepted output, not instantaneous disk growth.
+            output.seek(0)
+            errors.seek(0)
+            data, error_data = output.read(LIMIT + 1), errors.read(LIMIT + 1)
+            if len(data) > LIMIT or len(error_data) > LIMIT:
+                raise ValueError('attribute proof output bound exceeded')
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(command, COMMAND_TIMEOUT)
+            if code:
+                if optional and code == 1:
+                    return b''
+                raise ValueError('attribute proof Git read failed: ' + args[0])
+            return data
+        finally:
+            # Only this invocation's Popen child may be stopped. No context-
+            # manager __exit__ or unbounded wait can hide the original deadline.
+            if child is not None and child.poll() is None:
+                try:
+                    child.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    child.wait(timeout=REAP_TIMEOUT)
+                except subprocess.TimeoutExpired as exc:
+                    raise RuntimeError('owned Git reap uncertain; hold without retry') from exc
 
 
 def digest(value):
