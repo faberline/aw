@@ -94,6 +94,12 @@ ${CLAUDE_SKILL_DIR}/scripts/plan.sh status
    It prints a shared queue decision with explicit blockers, `room=`,
    `backlog=` and `untriaged=` counts, then every open issue in milestone order.
    Missing or invalid assignments require milestone triage before new admission.
+   `status` is a read-only, non-atomic remote snapshot. It does not acquire or
+   create the local work guard, even while a writer holds it. Its output sets
+   `mutation_authorized=false`: a selected issue, free queue room or successful
+   read is not permission to write or proof of exclusive planner activity.
+   Failed/incomplete reads remain errors, never an empty queue. Every mutation
+   must use its normal guarded command and fresh revalidation.
 
 2. When there is something to do (`room` above 0, an untriaged issue, or a
    backlog issue to spec), read the repository's goals and status (README,
@@ -142,6 +148,7 @@ ${CLAUDE_SKILL_DIR}/scripts/plan.sh new "<title>" <body-file> <p0-p3> --mileston
 - `0` — done; report each issue triaged, specced, adopted, opened,
   reprioritized, or blocked, and why.
 - `2` — refused; report the printed reason. Fix it and run the step again.
+- `3` — a mutating command is busy; preserve the existing writer and stop.
 
 Nothing worth doing is a valid result. Report it with the reason.
 

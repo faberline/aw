@@ -96,7 +96,12 @@ https://docs.github.com/en/rest/issues/issue-dependencies#list-dependencies-an-i
 
 - `plan.sh status`: JSON decision followed by all open issues with milestone,
   labels and todo prerequisite diagnostics. It reports blocked frontiers and
-  invalid metadata without changing anything.
+  invalid metadata without changing anything. This read-only remote snapshot
+  does not open/acquire the local work guard. It is non-atomic and explicitly
+  sets `mutation_authorized=false`; neither `selected` nor `room` is a claim or
+  write receipt. Unknown/incomplete reads fail rather than report an empty queue.
+  Mutating commands still acquire the original exclusive guard and revalidate
+  current state independently of any earlier status output.
 - `plan.sh new TITLE BODY_FILE pN --milestone NUMBER`: validate an existing open
   version milestone, complete spec, capacity and duplicate title; create with
   milestone/priority **without todo**, then run normal adoption. If adoption

@@ -108,7 +108,8 @@ def execute(client, args):
     command, *args = args
     if command == 'status' and not args:
         snapshot = client.snapshot()
-        print(json.dumps(snapshot['decision'], sort_keys=True))
+        print(json.dumps(dict(snapshot['decision'], read_only_snapshot=True,
+                              snapshot_consistency='non-atomic', mutation_authorized=False), sort_keys=True))
         todo = sum('todo' in queue.labels(i) for i in snapshot['issues'])
         maximum = int(os.getenv('ISSUE_TODO_MAX', '3'))
         backlog = [i for i in snapshot['issues'] if not queue.labels(i) & queue.STATES]
@@ -177,6 +178,11 @@ def execute(client, args):
 
 
 def main():
+    # A remote inventory read neither needs nor grants the writer's guard.
+    # Every mutation still enters the original exclusive path below and reads
+    # its own current state; status is never an admission/ownership receipt.
+    if sys.argv[1:] == ['status']:
+        return execute(queue.Client(), ['status'])
     common = Path(subprocess.check_output(['git', '-c', 'core.fsmonitor=false', 'rev-parse', '--git-common-dir'], text=True).strip()).resolve()
     with (common / 'issue-work.guard').open('a') as guard:
         try:
