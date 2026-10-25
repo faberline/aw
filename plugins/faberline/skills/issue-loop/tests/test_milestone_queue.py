@@ -569,7 +569,7 @@ class AdditionalBoundaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with (Path(tmp) / 'issue-work.guard').open('a') as held:
                 fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                with patch.object(plan.subprocess, 'check_output', return_value=tmp), patch.object(plan.queue, 'Client') as client, patch.object(sys, 'argv', ['plan.py', 'status']), contextlib.redirect_stdout(io.StringIO()):
+                with patch.object(plan.subprocess, 'check_output', return_value=tmp), patch.object(plan.queue, 'Client') as client, patch.object(sys, 'argv', ['plan.py', 'prioritize', '1', 'p1']), contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(plan.main(), 3)
                 client.assert_not_called()
 
