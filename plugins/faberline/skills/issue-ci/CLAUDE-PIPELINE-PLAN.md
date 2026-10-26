@@ -5,6 +5,11 @@ activates no schedule and provides no acceptance receipt. The existing
 qualification, readiness and index code remains the source of deterministic
 test evidence. A new implementation must be reviewed before consumer rollout.
 
+The first implementation candidate is now in `scripts/claude_review.py` and
+`.github/actions/claude-review`. See [its operation/security contract](CLAUDE-FINAL-REVIEW.md)
+for implemented behavior, isolated test commands and explicit rollout blockers.
+The steps below describe the original design boundary, not deployed behavior.
+
 ## Observed shared state
 
 The shared action already supplies qualification, authenticated readiness and

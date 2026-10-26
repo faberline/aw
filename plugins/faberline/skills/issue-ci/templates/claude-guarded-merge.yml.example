@@ -1,0 +1,49 @@
+# NOT INSTALLED. Independent review and separately approved rollout required.
+# The guarded-merge protected environment must already be correctly configured;
+# merely naming it does not create an approval boundary.
+name: Claude guarded merge
+on:
+  workflow_run:
+    workflows: [Claude final review]
+    types: [completed]
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+  issues: read
+concurrency:
+  group: claude-guarded-merge
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      eligible: ${{ steps.target.outputs.eligible }}
+      pr: ${{ steps.target.outputs.pr }}
+      head: ${{ steps.target.outputs.head }}
+    steps:
+      # Discover only from authenticated current-attempt review job logs.
+      - uses: faberline/aw/.github/actions/claude-review@AW_REVIEWED_40_HEX
+        id: target
+        with:
+          operation: discover
+          review-run: ${{ github.event.workflow_run.id }}
+  merge:
+    needs: verify
+    if: needs.verify.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    environment: guarded-merge
+    permissions:
+      contents: write
+      actions: read
+      pull-requests: read
+      issues: read
+    steps:
+      # This job gets no Claude secret and executes no PR code or model output.
+      # It independently rechecks review provenance and fresh required gates.
+      - uses: faberline/aw/.github/actions/claude-review@AW_REVIEWED_40_HEX
+        with:
+          operation: merge
+          pr: ${{ needs.verify.outputs.pr }}
+          head: ${{ needs.verify.outputs.head }}
+          review-run: ${{ github.event.workflow_run.id }}

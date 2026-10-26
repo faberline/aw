@@ -1,0 +1,43 @@
+name: Trusted Claude final review and separate guarded merge
+description: Default-branch policy, metadata-only gates, tool-free review and authenticated log transport.
+inputs:
+  operation:
+    description: preflight, review, discover, verify, or merge. Merge requires a separately trusted write job.
+    required: true
+  pr:
+    description: Exact same-repository PR number.
+    required: false
+    default: ''
+  head:
+    description: Exact current PR head SHA.
+    required: false
+    default: ''
+  review-run:
+    description: Review producer run ID; for preflight/review this is the current review workflow run.
+    required: true
+outputs:
+  eligible:
+    description: true only after successful preflight or authenticated pass discovery.
+    value: ${{ steps.controller.outputs.eligible }}
+  pr:
+    description: Validated PR number from trusted metadata or authenticated review.
+    value: ${{ steps.controller.outputs.pr }}
+  head:
+    description: Validated exact PR head.
+    value: ${{ steps.controller.outputs.head }}
+runs:
+  using: composite
+  steps:
+    - name: Run pinned trusted controller
+      id: controller
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        AW_ACTION_REF: ${{ github.action_ref }}
+        INPUT_OPERATION: ${{ inputs.operation }}
+        INPUT_PR: ${{ inputs.pr }}
+        INPUT_HEAD: ${{ inputs.head }}
+        INPUT_REVIEW_RUN: ${{ inputs.review-run }}
+      run: |
+        set -euo pipefail
+        exec python3 -I -B "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/claude_review.py"
