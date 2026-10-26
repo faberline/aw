@@ -134,7 +134,7 @@ def publication_context(api, repo, document, source, publisher_id, publisher_att
                        and run.get('head_repository', {}).get('full_name') == repo,
                        'findings_history_identity')
                 peers.append(run)
-        if len(batch) < 100:
+        if len(all_ids) == total or len(batch) < 100:
             break
     else:
         raise g.Refused('findings_history_limit')

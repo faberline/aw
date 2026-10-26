@@ -84,7 +84,7 @@ class PublisherHarness(Harness):
         if path=='repos/o/r/actions/workflows/40': return dict(id=40,path=self.publisher_path)
         if path.startswith('repos/o/r/actions/workflows/40/runs?'):
             return dict(total_count=len(self.peers) if self.history_total is None else self.history_total,
-                        workflow_runs=copy.deepcopy(self.peers))
+                        workflow_runs=copy.deepcopy(self.peers[(int(path.rsplit('page=',1)[1])-1)*100:int(path.rsplit('page=',1)[1])*100]))
         if path.startswith('repos/o/r/contents/'+self.publisher_path+'?ref='):
             from test_claude_review import git_blob
             return dict(type='file',encoding='base64',sha=git_blob(self.publisher_workflow),
@@ -154,6 +154,10 @@ class FindingsTests(unittest.TestCase):
             if kind=='limit': self.h.history_total=1001
             with self.assertRaises(f.g.Refused): self.publish()
             self.assertEqual(self.h.post_count,0)
+    def test_complete_thousand_run_history_boundary(self):
+        self.h.peers.extend(dict(id=1000+i,display_title='other-review') for i in range(999))
+        self.publish(); self.assertEqual(self.h.post_count,1)
+
     def test_untrusted_workflow_run_name_branch_repo_or_blob_refuses(self):
         for key,value in (('display_title','model-selected-name'),('head_branch','pr-branch'),
                           ('head_repository',dict(full_name='evil/r')),('event','pull_request'),('path','.github/workflows/evil.yml')):
