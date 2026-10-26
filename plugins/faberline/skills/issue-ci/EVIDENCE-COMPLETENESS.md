@@ -121,3 +121,52 @@ Standard JSON Schema validation is not a new live Claude/provider compatibility
 claim. The fix remains offline until independently reviewed and separately
 authorized for deployment and bounded revalidation; the prior live allowance
 was exhausted and no failed run was retried.
+
+## 2026-10-26 phase-contract failure and offline repair
+
+The approved deployment #47 merged to Tape main
+`555f60c0b4ed443ecf6ba7527e37682d3cca1edd`, using AW `5c557da`.
+PR #45 head `add6ac72cd4eb20d5df65f9c7c1c4daa3e5314a2` retained the exact
+three-rustdoc-line patch. GKE run [40351343279](https://github.com/faberline/tape/actions/runs/40351343279)
+attempt 1 completed success with all eight required gates. Recovery reported
+2 passed/0 failed; HA reported 1 passed/0 failed.
+
+Review run [40354593660](https://github.com/faberline/tape/actions/runs/40354593660):
+handoff job 121683524828 and preflight job 121683678129 succeeded. Final job
+121683893838 failed at 15:59:42 UTC with `context_plan_requires_clarification`.
+The planner CLI completed and its output passed schema/runtime validation. Its
+retained uncertainties said render/reconcile source was not supplied and noted
+that two sentences occupied the requested three rustdoc lines. The controller
+aborted before supporting-source collection: one planner CLI invocation, zero
+final CLI invocations, zero review receipts. Raw planned paths were NOT retained
+and remain unknown. This does not prove missing repository files or product
+nonconformance. Provider-internal request count, model/effort and usage were not
+recorded; no explicit model/effort override was added.
+
+Publisher run [40354783602](https://github.com/faberline/tape/actions/runs/40354783602),
+job 121684281115, was skipped. Issue #44 had zero comments at 16:01:42 UTC.
+No protocol error was posted as a code finding. PR #45 remains open, AW #86
+remains draft; no retry, extra paid run, credential or cron change occurred.
+The single live validation authorization is exhausted.
+
+Proven mechanism: any planner uncertainty stops before the source fetch. The
+shared skill's final-evidence block instruction was also supplied to planning;
+phase conflation is plausible, not a uniquely proved model-internal cause.
+
+This offline repair makes the existing two phases explicit in the skill,
+planner task/prompt and schema descriptions. Wire fields, path/quote/provenance
+validators, uncertainty refusal, CI gates and final evidence rules are unchanged.
+Supporting paths are bounded source requests. Planning uncertainties mean only
+material contract ambiguity that source cannot resolve, not source absent from
+the intentionally partial initial packet, ordinary notes or resolved readings.
+The final reviewer still blocks for ambiguity or insufficient evidence after
+collection. There is no extra phase, new tool, heuristic prose classifier,
+uncertainty suppression or per-PR manual approval.
+
+Synthetic regression proves source requests are fetched at exact base/head
+before final invocation; missing, stale, external/parent/absolute and unadopted
+spec requests refuse. Genuine contract ambiguity still holds before fetch, and
+final insufficient evidence cannot pass. The retained failed uncertainty list
+still refuses unchanged. Classification of contract ambiguity is semantic agent
+judgment, not mechanically certified by these tests. Future model compliance
+with the clarified prompt is UNKNOWN until separately approved live validation.

@@ -273,8 +273,25 @@ A separate OAuth-free findings job proposes issues:write plus contents/actions/
 pull-requests:read using GITHUB_TOKEN. Existing model jobs remain issues:read.
 The earlier handoff grant is not silently reused. This write capability and live
 rollout need explicit approval and independent review. No new persistent storage
-is required. The deployed 0b3bbff version still has its embedded prompt and no
-findings publisher. No valid new-policy review receipt exists yet; prior protocol
-failure is not backfilled as code findings. Hourly routines and merge hard-off
+is required. Tape now deploys AW 5c557da through Tape #47; native discovery is still off.
+Its next validation completed planning but held on pre-collection uncertainty;
+there is still no valid new-policy final receipt or findings writeback. The
+phase-contract clarification is offline only; see EVIDENCE-COMPLETENESS.md.
+The failed planning result is not backfilled as code findings. Hourly routines and merge hard-off
 are unchanged. The planner protocol repair remains part of this unpublished
 candidate and has not received live validation.
+
+## Offline phase-contract clarification after the deployed validation
+
+The issue-conformance skill now has separate Planning and Final review sections.
+The initial planner packet intentionally omits supporting files; request them
+through existing supporting_paths. Only issue ambiguity that reading requested
+source cannot resolve belongs in blocking uncertainties. After collection, final
+review remains responsible for insufficient evidence and exact issue fit.
+Schema descriptions and planner task/system instructions say the same thing.
+The existing uncertainty guard is retained, not suppressed or reclassified by
+prose heuristics. Wire fields and validators are unchanged. The distinction is
+agent judgment; synthetic regression does not prove future model compliance.
+No extra phase, model call, permission or new manual admission is introduced.
+Any later deployment needs independent review; any new paid validation needs
+new bounded authorization. No live action is performed by this repair.

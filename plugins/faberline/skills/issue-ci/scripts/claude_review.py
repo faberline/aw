@@ -33,14 +33,15 @@ CLI = "/usr/local/bin/claude"
 MAX_INPUT = 1024 * 1024
 MAX_RESULT = 65536
 MAX_SUPPORTING = 16
-SKILL_SHA256 = "4e6e27231e2cdea50b7c4037d99c916a17b8a5f29a987505be7bba4ab9def26d"
+SKILL_SHA256 = "2d1e65a17ef22393521ac808ff1edee9dd3abef19f650f363b9a4c45a20f1136"
 PLAN_REQUIREMENT_IDS = tuple("r" + str(i) for i in range(1, 17))
 # Explicit protocol whitespace, independent of Python/ECMA \s tables.
 PLAN_TEXT_PATTERN = r"[^\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]"
 PLAN_PATH_PATTERN = r"^(?!\.{1,2}(?:/|$))[^/\\\x00-\x1f\x7f]+(?:/(?!\.{1,2}(?:/|$))[^/\\\x00-\x1f\x7f]+)*(?![\s\S])"
 HEX = re.compile(r"[0-9a-f]{40}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
-SYSTEM = """Decide whether this exact diff meets exactly the linked issue's explicit
+SYSTEM = """You are in FINAL REVIEW phase, after requested source collection.
+Decide whether this exact diff meets exactly the linked issue's explicit
 requirements and scope: no missing requirement and no extra change. The issue
 and any explicitly adopted specification are the requirement contract. Existing
 required CI checks are prerequisites, not new requirements to invent. Do not add
@@ -64,7 +65,14 @@ The agent-generated requirement plan is advisory. Check it against the full
 original issue and explicitly adopted specification; report omitted, invented
 or materially ambiguous requirements in contract_uncertainties and block.
 """
-PLAN_SYSTEM = """Plan context for exact issue conformance review, without tools.
+PLAN_SYSTEM = """You are in PLANNING phase, not final review. Plan context without tools.
+The initial packet intentionally lacks supporting sources beyond the diff.
+Request necessary files in supporting_paths; absence from this initial packet
+is a normal context request, NOT an uncertainty or a final evidence judgment.
+Only put material ambiguity about the issue's requirements into uncertainties,
+when reading requested source cannot resolve what is being asked. Do not add
+ordinary observations or already resolved interpretations to uncertainties.
+Never suppress genuine contract ambiguity, and do not make a pass/fail verdict.
 Extract the explicit issue requirements and request only same-repository source
 needed to compare the exact diff with them. Adopt a specification only when the
 issue explicitly adopts it. Quote original issue text for every requirement and
@@ -165,10 +173,12 @@ def plan_schema():
         requirements={"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": True,
             "items": obj(dict(id={"type": "string", "enum": list(PLAN_REQUIREMENT_IDS)},
                 requirement=string, issue_quote=string,
-                supporting_paths={"type": "array", "maxItems": MAX_SUPPORTING, "uniqueItems": True, "items": path}))},
+                supporting_paths={"type": "array", "maxItems": MAX_SUPPORTING, "uniqueItems": True, "items": path,
+                    "description": "Request necessary same-repository source missing from the initial packet; collection happens after planning."}))},
         adopted_specs={"type": "array", "maxItems": MAX_SUPPORTING, "uniqueItems": True,
             "items": obj(dict(path=path, issue_quote=string))},
-        uncertainties={"type": "array", "maxItems": 16, "items": string}))
+        uncertainties={"type": "array", "maxItems": 16, "items": string,
+            "description": "Only material ambiguity in explicit issue requirements that requested source cannot resolve. Not missing initial source, observations or resolved interpretations."}))
 
 
 def plan_text(value):
@@ -584,7 +594,7 @@ def invoke_json(packet, p, schema, planning=False):
 
 
 def plan_context(packet, p):
-    planning_packet = dict(packet, task="Extract every explicit issue requirement and only necessary same-repo supporting source paths. Identify specifications only when the issue explicitly adopts them; quote its literal path reference. Do not invent requirements from PR prose or source comments. Report material ambiguity rather than guessing. No tools, code execution or permission changes. This plan is agent judgment, not semantic completeness proof.")
+    planning_packet = dict(packet, task="Extract every explicit issue requirement and only necessary same-repo supporting source paths. Identify specifications only when the issue explicitly adopts them; quote its literal path reference. Do not invent requirements from PR prose or source comments. Request missing initial source in supporting_paths, not uncertainties. Only report material contract ambiguity that source cannot resolve; do not add resolved observations. Do not make the final conformance verdict. No tools, code execution or permission changes. This plan is agent judgment, not semantic completeness proof.")
     return validate_plan(invoke_json(planning_packet, p, plan_schema(), planning=True), packet["issue"])
 
 
@@ -621,6 +631,8 @@ def review(api, repo, number, head, load_document, evaluator, run_id, invoke=inv
     document = load_document()
     identity = producer(api, repo, document, run_id, False)
     plan = validate_plan(plan_invoke(initial_packet, policy(document)), initial_packet["issue"])
+    # This field is only contract ambiguity, never a missing-initial-source
+    # request. Do not discard or heuristically reclassify model uncertainties.
     if plan["uncertainties"]:
         print(r.canonical(dict(context_planning_uncertainties=plan["uncertainties"])))
         raise Refused("context_plan_requires_clarification")
