@@ -228,51 +228,53 @@ interpreted. No tools/MCP/settings/credential authority is added. This packages
 the exact-issue objective; it does not fix the planner protocol by itself or
 prove that the model obeys it. The earlier protocol fix is retained separately.
 
-`claude_findings.py` is a separate, unwired controller library. It authenticates
-a completed successful pinned producer's strict result receipt (pass/fail/block),
-fresh exact HEAD/base, issue contract and all existing gates before rendering
-an informational comment. Acceptance verification remains pass-only. Planner,
-protocol, CLI or missing-receipt failures are not code findings and produce no
-comment. Destination is exclusively the freshly verified unique linked issue.
-Missing/extra items cite requirements and validated changed-file locations;
-missing work with no changed location keeps an empty list rather than inventing
-a line. Extra changes are explicitly outside the issue contract, which is listed
-for reference. All model text is inert JSON; mentions, HTML and fences are escaped.
-No issue close/merge/label or arbitrary destination API exists.
+`claude_findings.py` is a separate deterministic controller and action. The
+GitHub-only candidate replaces the earlier local-journal implementation (kept
+in commit aaa5963). Neither is live. The controller authenticates a completed
+successful pinned producer's strict result receipt (pass/fail/block), fresh
+exact HEAD/base, issue contract and all existing gates. Acceptance remains
+pass-only. Protocol/CLI/missing-receipt failures never become code findings.
+The only destination is the verified unique linked issue. Review status,
+concrete missing/extra findings and requirement uncertainties are separate
+fields; absent missing-work locations are not fabricated. Model prose is inert
+JSON with mentions, HTML and fences escaped. No close/merge/label API exists.
 
-Each publisher call has one durable intent for repo/PR/head/review-run; the stored
-record and body bind issue, base, producer attempt and receipt digest too.
-Reconciliation returns historical=true plus that original receipt/producer/head/
-base identity; a later attempt is never reported as newly published. The
-exclusive intent permits at most one POST. Later calls only reconcile exact
-body plus GitHub Actions bot identity. A timeout with no visible match stays
-unknown, even across retries; it never licenses another POST. This deliberately
-holds even a known local pre-POST crash until controller recovery is reviewed.
-A run's later attempt cannot silently replace the first intent. Comments name
-historical exact commits, not an atomic assertion that HEAD/base cannot move.
+The proposed consumer follow-up workflow receives completed Issue CI runs.
+Its fixed run-name and concurrency group bind the source run ID/attempt;
+cancel-in-progress is false. Default pending replacement only affects duplicate
+wakes for that same review, not another review. The controller verifies the
+publisher's workflow/path/blob/default branch/repository/job and bounded fully
+paginated Actions history. Only the earliest matching publisher run, attempt 1,
+may POST. Reruns and prior duplicate runs reconcile-only; absent exact bot-owned
+body holds unknown. Run-name is an index, never sole authorization. History
+incomplete, changed, missing self, ambiguous or over 1000 recent runs refuses.
+No artifact input, PR checkout, OAuth, cloud credentials or new storage is used.
 
-Deployment gaps: the library has no action operation or workflow wiring. It
-requires a trusted persistent journal shared across all publisher runs/hosts;
-`RUNNER_TEMP`, ephemeral runners and concurrency alone do not supply that
-persistence. No new storage/infrastructure is provisioned by this candidate.
-The current Tape handoff has issues:write, but runs BEFORE review. Its grant
-cannot silently be transferred to a later publisher. Review jobs have only
-issues:read. A separate OAuth-free job with issues:write is a material capability
-expansion requiring approval and independent workflow review. Keep model jobs
-read-only. GitHub lacks a comment POST idempotency key and head/base transaction;
-without the stated journal and deployment contract, writeback stays disabled.
+A single POST is followed by up to three read-only comment checks. Network
+failure/timeout never causes a second POST in that invocation. Subsequent
+publisher attempts/runs use bot identity + exact marker/body and run history.
+Reconciliation returns historical=true with the original receipt/head/base/
+producer identity. It does not mean a new review occurred or current acceptance.
+GitHub has no comment POST idempotency key or atomic head/base transaction.
+Practical deduplication is NOT exactly-once: crash/visibility/history-deletion
+windows can still cause duplicates or no delivery. Unknown stays held, with
+no automatic paid rerun or blind write retry. A cancelled first publisher may
+also conservatively hold later attempts; recovery is exceptional, not per-PR
+manual admission. Comments grant no merge/lifecycle authority.
 
-The deployed `0b3bbff` controller still embeds its original prompt and does not
-publish findings. This offline candidate and its protocol repair are unpublished;
-no new issue-conformance result exists. The historical failed planner run is not
-converted into a code finding. Hourly routines and hard-disabled merge remain.
+Issue requirement hashing binds number/title/body. GitHub updated_at remains
+structurally required but is an activity timestamp changed by comments; excluding
+it prevents findings from invalidating their own receipt. Exact title/body edits
+still invalidate it. Uncollected adopted comments/external specs are insufficient
+evidence and must block; a timestamp does not prove their content.
 
-Issue requirement hashing binds exactly number/title/body. GitHub's updated_at
-is still structurally required but is an activity timestamp changed by comments;
-it is excluded from this requirement hash so a findings comment does not stale
-its own review. Exact title/body edits still invalidate the receipt, with
-regression tests. No CI gate or source/producer identity check is relaxed.
-Comments and labels do not define requirements in this protocol. A requirement
-that materially depends on uncollected comments or external specification bytes
-is insufficient evidence and must block; the timestamp is never a substitute
-for those contents. No new external retrieval capability is added here.
+Permission/deployment gap: the candidate action and Tape workflow are offline.
+A separate OAuth-free findings job proposes issues:write plus contents/actions/
+pull-requests:read using GITHUB_TOKEN. Existing model jobs remain issues:read.
+The earlier handoff grant is not silently reused. This write capability and live
+rollout need explicit approval and independent review. No new persistent storage
+is required. The deployed 0b3bbff version still has its embedded prompt and no
+findings publisher. No valid new-policy review receipt exists yet; prior protocol
+failure is not backfilled as code findings. Hourly routines and merge hard-off
+are unchanged. The planner protocol repair remains part of this unpublished
+candidate and has not received live validation.

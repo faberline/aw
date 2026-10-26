@@ -57,149 +57,187 @@ class SkillTests(unittest.TestCase):
 class PublisherHarness(Harness):
     def __init__(self):
         super().__init__(); self.comments=[]; self.post_count=0; self.behavior='success'
-    def pages(self, path, key=None):
-        if path == 'repos/o/r/issues/7/comments': return copy.deepcopy(self.comments)
-        return super().pages(path, key)
-    def api(self, path, method='GET', data=None):
-        if method == 'POST':
-            assert path == 'repos/o/r/issues/7/comments'
-            assert set(data) == {'body'}
-            self.post_count += 1
-            if self.behavior != 'timeout_before':
-                self.comments.append(dict(id=55, body=data['body'], user=dict(login='github-actions[bot]', type='Bot')))
+        self.publisher_path='.github/workflows/claude-findings.yml'
+        self.publisher_workflow=b'name: synthetic findings workflow\n'
+        from test_claude_review import git_blob, SOURCE
+        self.config['claude_findings']=dict(version=1,path=self.publisher_path,
+            definition_sha=git_blob(self.publisher_workflow),job='publish-findings')
+        self.publisher=dict(id=300,run_attempt=1,run_number=1,workflow_id=40,event='workflow_run',
+            path=self.publisher_path,head_repository=dict(full_name='o/r'),head_branch='main',
+            head_sha=SOURCE,display_title='claude-findings-200-1',status='in_progress')
+        self.peers=[self.publisher]; self.history_total=None
+        self.review_run['created_at']='2026-10-26T14:00:00Z'
+    def pages(self,path,key=None):
+        if path=='repos/o/r/issues/7/comments': return copy.deepcopy(self.comments)
+        if path.startswith('repos/o/r/actions/runs/300/attempts/'):
+            return [dict(id=301,name='publish-findings',status='in_progress')]
+        return super().pages(path,key)
+    def api(self,path,method='GET',data=None):
+        if method=='POST':
+            assert path=='repos/o/r/issues/7/comments'; assert set(data)=={'body'}
+            self.post_count+=1
+            if self.behavior!='timeout_before':
+                self.comments.append(dict(id=55,body=data['body'],user=dict(login='github-actions[bot]',type='Bot')))
             if self.behavior.startswith('timeout'): raise TimeoutError('synthetic exception never emitted')
             return self.comments[-1]
-        return super().api(path, method, data)
+        if path=='repos/o/r/actions/runs/300': return copy.deepcopy(self.publisher)
+        if path=='repos/o/r/actions/workflows/40': return dict(id=40,path=self.publisher_path)
+        if path.startswith('repos/o/r/actions/workflows/40/runs?'):
+            return dict(total_count=len(self.peers) if self.history_total is None else self.history_total,
+                        workflow_runs=copy.deepcopy(self.peers))
+        if path.startswith('repos/o/r/contents/'+self.publisher_path+'?ref='):
+            from test_claude_review import git_blob
+            return dict(type='file',encoding='base64',sha=git_blob(self.publisher_workflow),
+                        content=g.base64.b64encode(self.publisher_workflow).decode())
+        return super().api(path,method,data)
 
 
 class FindingsTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
         self.h=PublisherHarness(); self.h.produce()
     def publish(self):
-        with patch.dict(os.environ, {}, clear=True):
-            return f.publish(self.h, 'o/r', 1, HEAD, self.h.document, EVALUATOR, 200, self.tmp.name, lambda repo, job: self.h.log)
-    def test_success_duplicate_and_own_comment_updates_issue(self):
-        first=self.publish()
-        self.assertEqual(first['status'], 'confirmed'); self.assertEqual(first['comment_id'],55)
+        with patch.dict(os.environ,{},clear=True):
+            return f.publish(self.h,'o/r',1,HEAD,self.h.document,EVALUATOR,200,300,
+                             self.h.publisher['run_attempt'],lambda repo,job:self.h.log)
+    def test_success_duplicate_and_own_comment_activity(self):
+        first=self.publish(); self.assertEqual(first['status'],'confirmed')
         self.assertTrue(first['historical']); self.assertEqual(first['head'],HEAD)
-        self.assertEqual(first['producer']['run_attempt'],1)
         self.h.issue['updated_at']='changed-by-comment'
-        self.assertEqual(self.publish()['comment_id'], 55)
-        self.assertEqual(self.h.post_count, 1)
-        self.h.verify()  # Comment activity alone cannot invalidate exact issue bytes.
-        body=self.h.comments[0]['body']
-        for text in ('"issue":7', '"pr":1', HEAD, '"base":', '"review_sha256":', '"decision":"pass"'):
-            self.assertIn(text, body)
+        self.assertEqual(first,self.publish()); self.h.verify(); self.assertEqual(self.h.post_count,1)
+        for text in ('"issue":7','"pr":1',HEAD,'"base":','"review_sha256":','"review_status":"pass"','"findings":[]'):
+            self.assertIn(text,self.h.comments[0]['body'])
     def test_timeout_after_server_write_reconciles_once(self):
-        self.h.behavior='timeout_after'; self.assertEqual(self.publish()['status'], 'confirmed')
-        self.publish(); self.assertEqual(self.h.post_count, 1)
-    def test_timeout_before_write_holds_across_new_invocations(self):
+        self.h.behavior='timeout_after'; self.assertEqual(self.publish()['status'],'confirmed')
+        self.h.publisher['run_attempt']=2; self.publish(); self.assertEqual(self.h.post_count,1)
+    def test_timeout_before_write_rerun_holds(self):
         self.h.behavior='timeout_before'
-        for _ in range(2):
-            with self.assertRaisesRegex(f.g.Refused, 'findings_write_unknown_no_retry'): self.publish()
-        self.assertEqual(self.h.post_count, 1)
-    def test_uncertain_later_appears_reconciliation_only(self):
-        self.h.behavior='timeout_before'
-        with self.assertRaises(f.g.Refused): self.publish()
-        intent=g.ci.strict_json_loads(next(Path(self.tmp.name).iterdir()).read_bytes())
-        self.h.comments=[dict(id=56, body=intent['body'], user=dict(login='github-actions[bot]', type='Bot'))]
-        self.assertEqual(self.publish()['comment_id'],56); self.assertEqual(self.h.post_count,1)
-    def test_user_spoof_not_authenticated(self):
-        self.publish(); self.h.comments[0]['user']=dict(login='contributor', type='User')
         with self.assertRaisesRegex(f.g.Refused,'findings_write_unknown_no_retry'): self.publish()
+        self.h.publisher['run_attempt']=2
+        with self.assertRaisesRegex(f.g.Refused,'findings_prior_attempt_unknown_no_retry'): self.publish()
         self.assertEqual(self.h.post_count,1)
-    def test_duplicate_bot_comments_block(self):
-        self.publish(); self.h.comments*=2
+    def test_distinct_prior_publisher_run_holds_without_post(self):
+        prior=copy.deepcopy(self.h.publisher); prior.update(id=299,run_number=0+1,status='completed')
+        self.h.publisher['run_number']=2; self.h.peers.insert(0,prior)
+        with self.assertRaisesRegex(f.g.Refused,'findings_prior_attempt_unknown_no_retry'): self.publish()
+        self.assertEqual(self.h.post_count,0)
+    def test_cancelled_first_publisher_conservatively_holds(self):
+        prior=copy.deepcopy(self.h.publisher); prior.update(id=299,run_number=1,status='completed',conclusion='cancelled')
+        self.h.publisher['run_number']=2; self.h.peers.insert(0,prior)
+        with self.assertRaisesRegex(f.g.Refused,'findings_prior_attempt_unknown_no_retry'): self.publish()
+        self.assertEqual(self.h.post_count,0)
+    def test_delayed_comment_reconciles_without_second_post(self):
+        original=self.h.pages; calls=[]
+        def pages(path,key=None):
+            if path.endswith('/comments') and self.h.post_count:
+                calls.append(1)
+                if len(calls)<3: return []
+            return original(path,key)
+        with patch.object(self.h,'pages',side_effect=pages): self.publish()
+        self.assertEqual(self.h.post_count,1)
+    def test_spoofed_author_or_duplicate_bot_body_blocks(self):
+        self.publish(); self.h.publisher['run_attempt']=2
+        self.h.comments[0]['user']=dict(login='contributor',type='User')
+        with self.assertRaisesRegex(f.g.Refused,'findings_prior_attempt_unknown_no_retry'): self.publish()
+        self.h.comments[0]['user']=dict(login='github-actions[bot]',type='Bot'); self.h.comments*=2
         with self.assertRaisesRegex(f.g.Refused,'findings_duplicate_receipts'): self.publish()
         self.assertEqual(self.h.post_count,1)
-    def test_protocol_failure_no_receipt_no_post_or_intent(self):
+    def test_protocol_failure_no_receipt_no_post(self):
         self.h.log='refused: context_plan_requirement_id'
         with self.assertRaises(f.g.Refused): self.publish()
-        self.assertEqual(self.h.post_count,0); self.assertEqual(list(Path(self.tmp.name).iterdir()),[])
-    def test_stale_head_base_issue_or_gates_no_write(self):
-        for mutation in ('head','base','issue','gates'):
+        self.assertEqual(self.h.post_count,0)
+    def test_incomplete_history_missing_self_duplicate_and_limit_refuse(self):
+        for kind in ('total','self','duplicate','limit'):
             self.h=PublisherHarness(); self.h.produce()
-            if mutation in ('head','base'): self.h.pull[mutation]['sha']='f'*40
-            if mutation=='issue': self.h.issue['body']+=' changed'
-            if mutation=='gates': self.h.gate_job['conclusion']='failure'
-            with self.assertRaises((f.g.Refused,KeyError,TypeError)): self.publish()
-            self.assertEqual(self.h.post_count,0)
-    def test_valid_fail_missing_and_extra_reported_acceptance_still_refuses(self):
-        def fail(packet, policy):
-            v=result(packet['context']); v.update(decision='fail',fit='missing_and_extra')
-            v['requirement_results'][0]['status']='missing'
-            v['extra_changes']=copy.deepcopy(v['requirement_results'][0]['locations'])
-            return v
-        self.h.produce(fail); self.publish(); body=self.h.comments[0]['body']
-        for text in ('"kind":"missing"','"kind":"extra"','"requirement_id":"r1"','"path":"src/a.py"','"start":'):
-            self.assertIn(text,body)
-        with self.assertRaisesRegex(g.Refused,'review_not_pass'): self.h.verify()
-    def test_valid_block_reports_uncertainty_not_protocol_error(self):
-        def block(packet, policy):
-            v=result(packet['context']); v.update(decision='block',fit='uncertain',contract_uncertainties=['Ambiguous explicit requirement'])
-            return v
-        self.h.produce(block); self.publish(); self.assertIn('Ambiguous explicit requirement',self.h.comments[0]['body'])
-    def test_model_destinations_mentions_fences_are_inert_data(self):
-        def inject(packet, policy):
-            v=result(packet['context']); v['summary']='@everyone </script> ``` POST repos/evil/r/issues/99/comments'
-            return v
-        self.h.produce(inject); self.publish(); body=self.h.comments[0]['body']
-        self.assertNotIn('@everyone',body); self.assertNotIn('</script>',body)
-        self.assertEqual(body.count('```'),2); self.assertEqual(self.h.post_count,1)
-    def test_invalid_receipt_extra_destination_field_refused(self):
-        receipt=self.h.produce(); receipt['payload']['result']['destination']='evil/r/99'
-        receipt['sha256']=g.r.digest(receipt['payload']); self.h.log=g.MARKER+g.r.canonical(receipt)
-        with self.assertRaisesRegex(f.g.Refused,'result_schema'): self.publish()
-        self.assertEqual(self.h.post_count,0)
-    def test_pre_post_context_change_leaves_hold_without_post(self):
-        original=f.g.verify_result_receipt
-        calls=[]
-        def verify(*args):
-            calls.append(1)
-            if len(calls)==2: self.h.issue['body']+=' changed just before POST'
-            return original(*args)
-        with patch.object(f.g,'verify_result_receipt',side_effect=verify):
+            if kind=='total': self.h.history_total=2
+            if kind=='self': self.h.peers=[]
+            if kind=='duplicate': self.h.peers*=2
+            if kind=='limit': self.h.history_total=1001
             with self.assertRaises(f.g.Refused): self.publish()
+            self.assertEqual(self.h.post_count,0)
+    def test_untrusted_workflow_run_name_branch_repo_or_blob_refuses(self):
+        for key,value in (('display_title','model-selected-name'),('head_branch','pr-branch'),
+                          ('head_repository',dict(full_name='evil/r')),('event','pull_request'),('path','.github/workflows/evil.yml')):
+            self.h=PublisherHarness(); self.h.produce(); self.h.publisher[key]=value
+            with self.assertRaises(f.g.Refused): self.publish()
+            self.assertEqual(self.h.post_count,0)
+        self.h=PublisherHarness(); self.h.produce(); self.h.publisher_workflow=b'changed workflow'
+        with self.assertRaises(f.g.Refused): self.publish()
         self.assertEqual(self.h.post_count,0)
-        with self.assertRaisesRegex(f.g.Refused,'findings_write_unknown_no_retry'): self.publish()
-
-    def test_competing_writer_exclusive_intent_prevents_post(self):
-        real_open=f.os.open
-        def exclusive(path, flags, *args):
-            if flags & os.O_EXCL: raise FileExistsError()
-            return real_open(path,flags,*args)
-        with patch.object(f.os,'open',side_effect=exclusive):
-            with self.assertRaisesRegex(f.g.Refused,'findings_concurrent_intent_reconcile_only'): self.publish()
-        self.assertEqual(self.h.post_count,0)
-
-    def test_missing_work_does_not_fabricate_location(self):
+    def test_stale_head_base_issue_or_gates_no_write(self):
+        for mutation in ('head','base','title','body','gates'):
+            self.h=PublisherHarness(); self.h.produce()
+            if mutation in ('head','base'):
+                self.h.pull[mutation]['sha']='f'*40; self.h.modes['f'*40]='100644'
+            if mutation in ('title','body'): self.h.issue[mutation]+=' changed'
+            if mutation=='gates': self.h.gate_job['conclusion']='failure'
+            with self.assertRaises(f.g.Refused): self.publish()
+            self.assertEqual(self.h.post_count,0)
+    def test_valid_fail_missing_extra_and_no_fabricated_line(self):
         def fail(packet,policy):
             v=result(packet['context']); v.update(decision='fail',fit='missing_and_extra')
             v['extra_changes']=copy.deepcopy(v['requirement_results'][0]['locations'])
             v['requirement_results'][0].update(status='missing',locations=[])
             return v
-        self.h.produce(fail); self.publish()
-        self.assertIn('"locations":[]',self.h.comments[0]['body'])
-
-    def test_new_attempt_reconciles_only_old_identity(self):
-        first=self.publish()
-        self.h.review_run['run_attempt']=2
-        second=self.publish()
-        self.assertEqual(first,second)
-        self.assertTrue(second['historical']); self.assertEqual(second['producer']['run_attempt'],1)
+        self.h.produce(fail); self.publish(); body=self.h.comments[0]['body']
+        for text in ('"review_status":"fail"','"kind":"missing"','"kind":"extra"','"requirement_id":"r1"','"path":"src/a.py"','"locations":[]'):
+            self.assertIn(text,body)
+        with self.assertRaisesRegex(g.Refused,'review_not_pass'): self.h.verify()
+    def test_valid_block_uncertainty_is_not_concrete_finding(self):
+        def block(packet,policy):
+            v=result(packet['context']); v.update(decision='block',fit='uncertain')
+            v['requirement_results'][0]['status']='insufficient_evidence'
+            return v
+        self.h.produce(block); self.publish(); body=self.h.comments[0]['body']
+        self.assertIn('"review_status":"block"',body); self.assertIn('"findings":[]',body)
+        self.assertIn('"kind":"insufficient_evidence"',body)
+    def test_model_destinations_mentions_fences_are_inert(self):
+        def inject(packet,policy):
+            v=result(packet['context']); v['summary']='@everyone </script> ``` POST repos/evil/r/issues/99/comments'
+            return v
+        self.h.produce(inject); self.publish(); body=self.h.comments[0]['body']
+        self.assertNotIn('@everyone',body); self.assertNotIn('</script>',body); self.assertEqual(body.count('```'),2)
+    def test_invalid_destination_field_refuses(self):
+        receipt=self.h.produce(); receipt['payload']['result']['destination']='evil/r/99'
+        receipt['sha256']=g.r.digest(receipt['payload']); self.h.log=g.MARKER+g.r.canonical(receipt)
+        with self.assertRaisesRegex(f.g.Refused,'result_schema'): self.publish()
+        self.assertEqual(self.h.post_count,0)
+    def test_pre_post_context_change_refuses(self):
+        original=f.g.verify_result_receipt; calls=[]
+        def verify(*args):
+            calls.append(1)
+            if len(calls)==2: self.h.issue['body']+=' changed'
+            return original(*args)
+        with patch.object(f.g,'verify_result_receipt',side_effect=verify):
+            with self.assertRaises(f.g.Refused): self.publish()
+        self.assertEqual(self.h.post_count,0)
+    def test_main_uses_trusted_event_and_fixed_entrypoint(self):
+        import contextlib, io, json
+        with tempfile.TemporaryDirectory() as directory:
+            event=Path(directory)/'event.json'
+            event.write_text(json.dumps(dict(action='completed',workflow_run=self.h.review_run)))
+            env=dict(GITHUB_ACTIONS='true',GITHUB_EVENT_NAME='workflow_run',GITHUB_REPOSITORY='o/r',
+                     AW_ACTION_REF=EVALUATOR,GITHUB_EVENT_PATH=str(event),GITHUB_RUN_ID='300',GITHUB_RUN_ATTEMPT='1')
+            with patch.dict(os.environ,env,clear=True), patch.object(f.g,'ci',self.h), patch.object(f.g.action,'trusted_policy',side_effect=lambda *a,**k:self.h.document()), patch.object(f.g.r,'job_log',side_effect=lambda *a:self.h.log), contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(f.main(),0)
+                self.assertEqual(json.loads(output.getvalue())['comment_id'],55)
         self.assertEqual(self.h.post_count,1)
 
-    def test_issue_title_and_body_edits_remain_stale(self):
-        for key in ('title','body'):
-            self.h=PublisherHarness(); self.h.produce(); self.h.issue[key]+=' changed'
-            with self.assertRaises(f.g.Refused): self.publish()
-            self.assertEqual(self.h.post_count,0)
+    def test_main_foreign_or_stale_wake_never_posts(self):
+        import json
+        for key,value in (('workflow_id',999),('run_attempt',2),('head_repository',dict(full_name='evil/r'))):
+            wake=copy.deepcopy(self.h.review_run); wake[key]=value
+            with tempfile.TemporaryDirectory() as directory:
+                event=Path(directory)/'event.json'; event.write_text(json.dumps(dict(action='completed',workflow_run=wake)))
+                env=dict(GITHUB_ACTIONS='true',GITHUB_EVENT_NAME='workflow_run',GITHUB_REPOSITORY='o/r',
+                         AW_ACTION_REF=EVALUATOR,GITHUB_EVENT_PATH=str(event),GITHUB_RUN_ID='300',GITHUB_RUN_ATTEMPT='1')
+                with patch.dict(os.environ,env,clear=True), patch.object(f.g,'ci',self.h), patch.object(f.g.action,'trusted_policy',side_effect=lambda *a,**k:self.h.document()):
+                    with self.assertRaisesRegex(f.g.Refused,'findings_wake_identity'): f.main()
+        self.assertEqual(self.h.post_count,0)
 
-    def test_oauth_presence_and_missing_store_refuse(self):
-        with patch.dict(os.environ, {'CLAUDE_CODE_OAUTH_TOKEN':'synthetic-only'}):
+    def test_oauth_presence_refuses(self):
+        with patch.dict(os.environ,{'CLAUDE_CODE_OAUTH_TOKEN':'synthetic-only'}):
             with self.assertRaisesRegex(f.g.Refused,'findings_oauth_scope_refused'):
-                f.publish(self.h,'o/r',1,HEAD,self.h.document,EVALUATOR,200,self.tmp.name,lambda *a:self.h.log)
+                f.publish(self.h,'o/r',1,HEAD,self.h.document,EVALUATOR,200,300,1,lambda *a:self.h.log)
         self.assertEqual(self.h.post_count,0)
 
 if __name__=='__main__': unittest.main()
