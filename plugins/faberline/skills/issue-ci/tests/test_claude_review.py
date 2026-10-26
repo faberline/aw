@@ -52,7 +52,7 @@ class Harness:
                          mergeable_state="clean")
         self.files = [dict(filename="src/a.py", status="modified", sha=git_blob(self.code))]
         self.issue = dict(number=7, title="Synthetic issue", body="Review one source file.", updated_at="2026-01-01")
-        self.plan = dict(version=1, requirements=[dict(id="acceptance", requirement="Review one source file.",
+        self.plan = dict(version=1, requirements=[dict(id="r1", requirement="Review one source file.",
             issue_quote="Review one source file.", supporting_paths=["src/support.py"])], adopted_specs=[], uncertainties=[])
         self.supporting = {(ref, "src/support.py"): b"# synthetic acceptance dependency; never executed\n" for ref in (HEAD, BASE)}
         self.config = dict(workflows=[dict(path=WORKFLOW, jobs=["unit"])], lifecycle_mode="failure-only",
@@ -642,7 +642,7 @@ class AgentContextPlanTests(unittest.TestCase):
         h = Harness(); path = "docs/spec.md"
         h.plan["adopted_specs"] = [dict(path=path, issue_quote="Adopt docs/spec.md")]
         h.plan["requirements"][0]["supporting_paths"].append(path)
-        with self.assertRaisesRegex(g.Refused, "context_plan_spec_not_referenced"): h.produce()
+        with self.assertRaisesRegex(g.Refused, "context_plan_spec_quote_not_literal"): h.produce()
         h.issue["body"] += "\nAdopt docs/spec.md"
         for ref in (HEAD, BASE): h.supporting[(ref, path)] = b"Explicitly adopted synthetic spec.\n"
         def review(packet, policy):
