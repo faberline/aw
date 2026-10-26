@@ -2,7 +2,7 @@
 """Metadata-only preflight, tool-free Claude review, separate guarded merge.
 
 No checkout, PR execution, artifact inputs, label writes or policy overrides.
-This candidate is not deployed. All live writes are behind the merge operation.
+This candidate is not deployed. Merge is hard disabled; no provider write exists.
 """
 import base64
 import hashlib
@@ -80,26 +80,30 @@ def policy(document):
     ci.validate_config(document["config"])
     need(sha(document.get("source_commit")), "policy_source")
     p = document["config"].get("claude_final_review")
-    need(exact(p, "version producer merge_producer gates protected_paths cli_sha256 merge_method"), "policy_schema")
+    required = {"version", "producer", "gates", "protected_paths", "cli_sha256"}
+    need(isinstance(p, dict) and required <= set(p)
+         and set(p) <= required | {"merge_producer", "merge_method"}, "policy_schema")
     need(type(p["version"]) is int and p["version"] == 1, "policy_version")
-    for producer in (p["producer"], p["merge_producer"]):
+    for producer in (p["producer"], *([p["merge_producer"]] if p.get("merge_producer") is not None else [])):
         need(exact(producer, "path id definition_sha job") and integer(producer["id"])
              and isinstance(producer["path"], str)
              and re.fullmatch(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml", producer["path"])
              and sha(producer["definition_sha"]) and text(producer["job"], 200), "producer_policy")
     workflows = document["config"]["workflows"]
     paths = {w["path"] for w in workflows}
-    need(p["producer"]["path"] not in paths and p["merge_producer"]["path"] not in paths
-         and p["producer"]["path"] != p["merge_producer"]["path"]
-         and p["producer"]["id"] != p["merge_producer"]["id"] and isinstance(p["gates"], dict)
+    need(p["producer"]["path"] not in paths and isinstance(p["gates"], dict)
          and set(p["gates"]) == paths, "gate_policy")
+    if p.get("merge_producer") is not None:
+        need(p["merge_producer"]["path"] not in paths
+             and p["producer"]["path"] != p["merge_producer"]["path"]
+             and p["producer"]["id"] != p["merge_producer"]["id"], "merge_producer_policy")
     for value in p["gates"].values():
         need(exact(value, "id definition_sha") and integer(value["id"])
              and sha(value["definition_sha"]), "gate_identity_policy")
     need(isinstance(p["protected_paths"], list) and p["protected_paths"]
          and all(safe_path(v.rstrip("/")) for v in p["protected_paths"]), "protected_paths")
-    need(isinstance(p["cli_sha256"], str) and SHA256.fullmatch(p["cli_sha256"])
-         and p["merge_method"] in ("squash", "merge", "rebase"), "executor_policy")
+    need(isinstance(p["cli_sha256"], str) and SHA256.fullmatch(p["cli_sha256"]), "executor_policy")
+    need(p.get("merge_method") in (None, "squash", "merge", "rebase"), "merge_method_policy")
     return p
 
 
@@ -350,36 +354,13 @@ def verify_review(api, repo, number, head, load_document, evaluator, run_id, log
 
 
 def guarded_merge(api, repo, number, head, load_document, evaluator, run_id, log_reader=r.job_log):
-    """One attempted provider merge, no retry/admin/bypass/update operation."""
-    receipt = verify_review(api, repo, number, head, load_document, evaluator, run_id, log_reader)
-    # Repeat authenticated review + current required checks immediately before
-    # the final PR read. Neither artifacts nor caller-selected JSON are accepted.
-    need(verify_review(api, repo, number, head, load_document, evaluator, run_id, log_reader) == receipt,
-         "merge_inputs_changed")
-    pull = api.api(f"repos/{repo}/pulls/{number}")
-    pull_identity(pull, repo, number, head)
-    context = receipt["payload"]["context"]
-    need(pull["base"]["sha"] == context["base"] and pull.get("mergeable") is True
-         and pull.get("mergeable_state") == "clean", "provider_protection_not_ready")
-    document = load_document()
-    need(r.digest(document) == context["policy_sha256"], "policy_changed")
-    # Durable Actions log intent. An uncertain provider response is never retried.
-    print("AW_GUARDED_MERGE_INTENT_V1 " + r.canonical(dict(repo=repo, pr=number, head=head,
-          base=context["base"], review_run=run_id, receipt=receipt["sha256"])), flush=True)
-    try:
-        response = api.api(f"repos/{repo}/pulls/{number}/merge", "PUT",
-                           dict(sha=head, merge_method=policy(document)["merge_method"]))
-    except Exception:
-        raise Refused("merge_outcome_unknown_reconcile_before_retry") from None
-    need(isinstance(response, dict) and response.get("merged") is True and sha(response.get("sha")),
-         "merge_not_confirmed_reconcile_before_retry")
-    try:
-        final = api.api(f"repos/{repo}/pulls/{number}")
-    except Exception:
-        raise Refused("merge_readback_unknown_reconcile_before_retry") from None
-    need(final.get("merged") is True and final.get("merge_commit_sha") == response["sha"]
-         and final.get("head", {}).get("sha") == head, "merge_readback_unknown_reconcile_before_retry")
-    return dict(merged=True, head=head, merge_commit=response["sha"])
+    """Hard hold: a run-local attempt guard cannot reconcile cross-run writes.
+
+    No provider write remains in this implementation. A separately reviewed
+    durable cross-run intent/result journal + mutex/reconciler and approved
+    provider base/protection binding are prerequisites for future merge code.
+    """
+    raise Refused("merge_disabled_pending_cross_run_journal_and_base_protection")
 
 
 def validate_wake(event, operation, repo, number, head, review_run, document):
@@ -404,6 +385,8 @@ def validate_wake(event, operation, repo, number, head, review_run, document):
 def main():
     operation = os.environ.get("INPUT_OPERATION")
     need(operation in ("preflight", "review", "discover", "verify", "merge"), "operation")
+    if operation == "merge":
+        raise Refused("merge_disabled_pending_cross_run_journal_and_base_protection")
     need(os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("GITHUB_EVENT_NAME") == "workflow_run",
          "trusted_workflow_run_required")
     repo, head = os.environ.get("GITHUB_REPOSITORY"), os.environ.get("INPUT_HEAD")
@@ -411,8 +394,6 @@ def main():
     need(re.fullmatch(r"[1-9][0-9]*", run_id)
          and (operation == "discover" or re.fullmatch(r"[1-9][0-9]*", number)), "numeric_input")
     evaluator = os.environ.get("AW_ACTION_REF")
-    if operation == "merge":
-        need(os.environ.get("GITHUB_RUN_ATTEMPT") == "1", "merge_retry_requires_reconciliation")
     need(operation == "review" or not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"), "oauth_scope_refused")
     load_document = lambda: action.trusted_policy(ci, repo, ".github/issue-ci-required-gates.json", metadata=True)
     event = ci.strict_json_loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
@@ -446,12 +427,6 @@ def main():
     elif operation == "verify":
         verify_review(ci, repo, int(number), head, load_document, evaluator, int(run_id))
         print("authenticated_review_pass")
-    else:
-        own_run = os.environ.get("GITHUB_RUN_ID", "")
-        need(re.fullmatch(r"[1-9][0-9]*", own_run), "merge_run_identity")
-        identity = producer(ci, repo, load_document(), int(own_run), False, "merge_producer")
-        need(identity["run_attempt"] == 1, "merge_retry_requires_reconciliation")
-        print(r.canonical(guarded_merge(ci, repo, int(number), head, load_document, evaluator, int(run_id))))
     return 0
 
 

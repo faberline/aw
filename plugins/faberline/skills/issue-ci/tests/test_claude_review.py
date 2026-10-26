@@ -207,41 +207,39 @@ class GateTests(unittest.TestCase):
     def test_fail_block_and_forged_result_never_merge(self):
         for decision in ("fail", "block"):
             h = Harness(); h.produce(lambda packet, policy: dict(result(packet["context"]), decision=decision))
-            with self.assertRaisesRegex(g.Refused, "review_not_pass"): h.merge()
+            with self.assertRaisesRegex(g.Refused, "review_not_pass"): h.verify()
             self.assertEqual(h.writes, [])
         h = Harness(); receipt = h.produce()
         receipt["payload"]["producer"]["job_id"] = 999
         receipt["sha256"] = g.r.digest(receipt["payload"])
         h.log = g.MARKER + g.r.canonical(receipt)
-        with self.assertRaisesRegex(g.Refused, "review_stale"): h.merge()
+        with self.assertRaisesRegex(g.Refused, "review_stale"): h.verify()
         self.assertEqual(h.writes, [])
 
-    def test_one_guarded_merge_expected_head_and_provider_readback(self):
+    def test_merge_hard_hold_across_distinct_run_ids_and_attempt_one(self):
         h = Harness(); h.produce()
-        self.assertEqual(h.merge(), dict(merged=True, head=HEAD, merge_commit="f" * 40))
-        self.assertEqual(h.writes, [("repos/o/r/pulls/1/merge", "PUT", dict(sha=HEAD, merge_method="squash"))])
-
-    def test_provider_protection_unknown_or_blocked_no_write(self):
-        for state in ("blocked", "behind", "unstable", "unknown", None):
-            h = Harness(); h.produce(); h.pull["mergeable_state"] = state
-            with self.assertRaisesRegex(g.Refused, "provider_protection_not_ready"): h.merge()
-            self.assertEqual(h.writes, [])
-
-    def test_current_gate_movement_at_second_merge_verification_no_write(self):
-        h = Harness(); h.produce(); h.reads = 0
-        def move(count):
-            if count == 2: h.gate_run["run_attempt"] = 2
-        h.snapshots_hook = move
-        with self.assertRaisesRegex(g.Refused, "review_stale"): h.merge()
+        before = h.reads
+        for run in (900, 901):
+            with patch.dict(os.environ, {"GITHUB_RUN_ID": str(run), "GITHUB_RUN_ATTEMPT": "1"}):
+                with self.assertRaisesRegex(g.Refused, "merge_disabled_pending_cross_run_journal_and_base_protection"):
+                    h.merge()
+                with patch.dict(os.environ, {"INPUT_OPERATION": "merge"}), self.assertRaisesRegex(g.Refused, "merge_disabled_pending_cross_run_journal_and_base_protection"):
+                    g.main()
         self.assertEqual(h.writes, [])
+        self.assertEqual(h.reads, before)
 
-    def test_uncertain_provider_response_no_retry(self):
-        h = Harness(); h.produce(); h.merge_error = OSError("synthetic timeout")
-        with self.assertRaisesRegex(g.Refused, "merge_outcome_unknown_reconcile_before_retry"): h.merge()
-        self.assertEqual(len(h.writes), 1)
-        h = Harness(); h.produce(); h.merge_response = dict(merged=False)
-        with self.assertRaisesRegex(g.Refused, "merge_not_confirmed_reconcile_before_retry"): h.merge()
-        self.assertEqual(len(h.writes), 1)
+    def test_review_only_policy_without_merge_registration_still_reviews_and_verifies(self):
+        for omitted in (True, False):
+            h = Harness()
+            p = h.config["claude_final_review"]
+            if omitted:
+                del p["merge_producer"]
+                del p["merge_method"]
+            else:
+                p["merge_producer"] = p["merge_method"] = None
+            receipt = h.produce()
+            self.assertEqual(receipt, h.verify())
+            self.assertEqual(h.writes, [])
 
     def test_cli_command_has_no_tools_repo_settings_or_github_token(self):
         h = Harness(); context, packet = h.collect(True)
@@ -316,7 +314,7 @@ class GateTests(unittest.TestCase):
             with self.assertRaisesRegex(g.Refused, "trusted_workflow_run_required"): g.main()
         env = dict(INPUT_OPERATION="merge", GITHUB_ACTIONS="true", GITHUB_EVENT_NAME="workflow_run", GITHUB_REPOSITORY="o/r", INPUT_HEAD=HEAD, INPUT_PR="1", INPUT_REVIEW_RUN="200", AW_ACTION_REF=EVALUATOR, GITHUB_RUN_ATTEMPT="2")
         with patch.dict(os.environ, env), patch.object(g.ci, "api", side_effect=AssertionError("no API")):
-            with self.assertRaisesRegex(g.Refused, "merge_retry_requires_reconciliation"): g.main()
+            with self.assertRaisesRegex(g.Refused, "merge_disabled_pending_cross_run_journal_and_base_protection"): g.main()
 
 
 if __name__ == "__main__":

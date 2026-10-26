@@ -2,7 +2,7 @@ name: Trusted Claude final review and separate guarded merge
 description: Default-branch policy, metadata-only gates, tool-free review and authenticated log transport.
 inputs:
   operation:
-    description: preflight, review, discover, verify, or merge. Merge requires a separately trusted write job.
+    description: preflight, review, discover or verify. merge is hard disabled pending durable cross-run reconciliation.
     required: true
   pr:
     description: Exact same-repository PR number.

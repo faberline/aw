@@ -64,47 +64,43 @@ the previous run. Policy, issue text, PR description, head/base or required
 attempt changes invalidate review. An unchanged successful test rerun also
 invalidates this pilot receipt; semantic completion deduplication is separate.
 
-`merge` is a separate job with contents-write and read-only Actions/PR/issues access,
-no Claude secret. Its own configured default-branch workflow/job is authenticated
-independently from the review producer. It re-verifies the complete review and
-current required gates twice, reads fresh PR identity/base and requires provider
-mergeable=true and mergeable_state=clean. One ordinary provider merge request
-contains the expected head SHA and configured merge method. There is no admin,
-bypass, force, branch update, auto-merge enabling, lifecycle or protection edit.
-GitHub enforces its existing branch/ruleset checks on the request. The consumer
-must use the normal Actions token with no bypass grant; the tooling does not
-provision credentials, grant roles or alter repository settings.
+`merge` is **hard disabled in code** before any API call. `guarded_merge()`
+also always raises `merge_disabled_pending_cross_run_journal_and_base_protection`.
+No provider write remains in this implementation. Distinct workflow runs, each
+with run_attempt=1, cannot issue a first or second PUT. Merely enabling a YAML
+job, supplying a write token or removing optional merge policy fields cannot
+bypass this hold. The merge template remains unconditionally disabled and asks
+for no write permission. Review-only operation does not depend on registering a
+merge workflow or deciding its merge method.
 
-A flushed durable log intent precedes the single PUT. Unknown response or failed
-readback is an uncertain outcome, never success or an automatic retry. The job's
-run attempt must be 1; rerunning a merge job is refused until explicit human
-reconciliation. Reconcile the PR's merged state, original exact head and merge
-commit before separately authorizing another attempt. There is no distributed
-cross-run merge journal in v1; do not configure external automatic retries or
-duplicate dispatch. The guarded merge concurrency group must remain serialized.
+Independent review found that the initial candidate's attempt=1 check plus log
+intent did not provide durable cross-run reconciliation: another new run could
+write after a timeout. A future merge implementation requires a separately
+reviewed durable intent/result journal, cross-run mutual exclusion and recovery
+of unknown results before another write. Concurrency alone is insufficient.
 
-GitHub supplies an expected-head guard, not atomic compare-and-swap across base,
-policy, issue, review and checks. Changes after the final metadata reads remain
-a documented API race; this implementation does not claim atomic exact-base or
-all-evidence binding at the server merge boundary. Existing required protections
-and any deployment approval remain mandatory. Stronger atomic behavior would
-require a separately reviewed provider merge-queue/protection integration.
+GitHub's ordinary merge API supplies an expected-head guard, not atomic
+compare-and-swap across base, policy, issue, review and checks. Exact base can
+advance after the last read. No atomic exact-head/base merge claim is made.
+A future write also requires an approved existing merge-queue/protection binding
+or an explicit independently approved limitation policy. This candidate creates
+no queue, protection, environment, credential, role or infrastructure.
 
 ## Trusted policy extension (not installed)
 
 The existing default-branch `.github/issue-ci-required-gates.json` keeps its
 workflow list, blockers and lifecycle_mode. Add `claude_final_review` containing
-exactly these fields (the code refuses missing/extra keys):
+these fields (unknown keys refuse; merge fields are optional):
 
 | Field | Required reviewed value |
 | --- | --- |
 | version | integer 1 |
 | producer | path, numeric id, definition_sha Git blob, exact review job name |
-| merge_producer | distinct path/id/blob and exact merge job name |
+| merge_producer | optional/null; future distinct path/id/blob and merge job name |
 | gates | every existing workflow path mapped to actual numeric id and definition_sha |
 | protected_paths | nonempty exact file/directory roots for all test selection/enforcement dependencies |
 | cli_sha256 | approved installed Linux CLI binary hash |
-| merge_method | squash, merge or rebase |
+| merge_method | optional/null; future squash, merge or rebase |
 
 Workflow definitions must match the reviewed blobs at head/base for tests and
 at the run/default-policy revisions for privileged producers. `.github/` and
@@ -124,7 +120,8 @@ existing richer readiness/index transport is retained independently.
 - Independent code/security review, then separately authorized publication.
 - Tape policy and true existing gate mapping retained; missing/skipped current
   GKE jobs cannot be replaced with candidate docs jobs to make the pilot green.
-- Registered producer/merge workflow IDs/blobs and reviewed immutable AW pin.
+- Registered review producer workflow ID/blob and reviewed immutable AW pin.
+  An unregistered merge workflow does not block read-only review.
 - Approved ephemeral Linux CLI provisioning with verified binary hash. The
   examples use ubuntu-latest, which this candidate does not provision with CLI;
   there is no mutable installer. They are not ready to deploy as supplied.
@@ -132,11 +129,10 @@ existing richer readiness/index transport is retained independently.
   administrator-managed hooks; any organization-delivered managed settings also
   need independent inspection before credentialed execution. Unknown machine or
   account policy is a rollout blocker, not permission to assume hooks are off.
-- Existing `guarded-merge` environment must already enforce the approved human
-  deployment/reviewer policy. Merely naming it does not create that protection.
 - Read-only contents/Actions/PR/issues review token scopes (issues-read binds the
-  current issue contract); isolated ordinary contents-write merge token
-  without bypass privileges; shared action access must already be permitted.
+  current issue contract); shared action access must already be permitted.
+- Merge remains pending a durable cross-run journal/mutex/reconciler and an
+  approved provider base/protection contract. No write token is requested now.
 - Real runner OAuth/structured-output/log transport and positive/negative pilot
   evidence after rollout approval; local mocks are not that evidence.
 
