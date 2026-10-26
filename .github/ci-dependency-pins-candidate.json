@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "status": "offline_unpublished_candidate_not_qualified",
+  "source_base": "59ed3084c991606fc41b55a3d59088307b6aef62",
+  "observed_on": "2026-10-26",
+  "workflow": ".github/workflows/gke-test.yml",
+  "references": [
+    {
+      "repo": "actions/checkout",
+      "observed_ref": "tags/v4",
+      "source_url": "https://api.github.com/repos/actions/checkout/git/ref/tags/v4",
+      "ref_object": {
+        "sha": "11d5960a326750d5838078e36cf38b85af677262",
+        "type": "commit",
+        "url": "https://api.github.com/repos/actions/checkout/git/commits/11d5960a326750d5838078e36cf38b85af677262"
+      },
+      "commit": "11d5960a326750d5838078e36cf38b85af677262",
+      "tag_dereference": null
+    },
+    {
+      "repo": "actions/upload-artifact",
+      "observed_ref": "tags/v4",
+      "source_url": "https://api.github.com/repos/actions/upload-artifact/git/ref/tags/v4",
+      "ref_object": {
+        "sha": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+        "type": "commit",
+        "url": "https://api.github.com/repos/actions/upload-artifact/git/commits/ea165f8d65b6e75b540449e92b4886f43607fa02"
+      },
+      "commit": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+      "tag_dereference": null
+    },
+    {
+      "repo": "google-github-actions/auth",
+      "observed_ref": "tags/v2",
+      "source_url": "https://api.github.com/repos/google-github-actions/auth/git/ref/tags/v2",
+      "ref_object": {
+        "sha": "c200f3691d83b41bf9bbd8638997a462592937ed",
+        "type": "commit",
+        "url": "https://api.github.com/repos/google-github-actions/auth/git/commits/c200f3691d83b41bf9bbd8638997a462592937ed"
+      },
+      "commit": "c200f3691d83b41bf9bbd8638997a462592937ed",
+      "tag_dereference": null
+    },
+    {
+      "repo": "google-github-actions/setup-gcloud",
+      "observed_ref": "tags/v2",
+      "source_url": "https://api.github.com/repos/google-github-actions/setup-gcloud/git/ref/tags/v2",
+      "ref_object": {
+        "sha": "e427ad8a34f8676edf47cf7d7925499adf3eb74f",
+        "type": "commit",
+        "url": "https://api.github.com/repos/google-github-actions/setup-gcloud/git/commits/e427ad8a34f8676edf47cf7d7925499adf3eb74f"
+      },
+      "commit": "e427ad8a34f8676edf47cf7d7925499adf3eb74f",
+      "tag_dereference": null
+    }
+  ],
+  "scope": "Replace only existing remote uses refs; no commands, jobs, permissions or cloud infrastructure changes.",
+  "limits": [
+    "No workflow or cluster executed.",
+    "Pinned action source references do not freeze hosted-runner tools, gcloud components or dependencies fetched by actions.",
+    "Other consumers retain the existing aw-ref input default; this candidate does not activate them."
+  ],
+  "baseline_workflow_blob": "112a940c05b48cd2b93afe9007aff92c47c13ca1",
+  "candidate_workflow_blob": "74202e4d7aa87e2a69f7804ac68866ca9b7f193d",
+  "replacements": [
+    {
+      "before": "actions/checkout@v4",
+      "after": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+    },
+    {
+      "before": "actions/upload-artifact@v4",
+      "after": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+    },
+    {
+      "before": "google-github-actions/auth@v2",
+      "after": "google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed"
+    },
+    {
+      "before": "google-github-actions/setup-gcloud@v2",
+      "after": "google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f"
+    }
+  ]
+}
