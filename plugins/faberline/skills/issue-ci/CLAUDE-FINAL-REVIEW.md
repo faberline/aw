@@ -36,10 +36,15 @@ ambiguity or missing necessary evidence produces a specific uncertainty and
 `block`, not an invented requirement or unsupported `pass`. Supporting context
 must be necessary for that mapping. It is not a general repository audit.
 
-The offline candidate requires a separately reviewed trusted acceptance/evidence
-contract bound to both the issue text and exact change bytes. See
-[EVIDENCE-COMPLETENESS.md](EVIDENCE-COMPLETENESS.md) for admission cost, limits and
-the distinction between machine-checked evidence delivery and semantic judgment.
+The recommended offline alternative reads the original issue directly. Its first
+bounded agent call proposes requirements and necessary supporting paths; the
+controller checks/fetches exact source identities, then the second isolated call
+checks the full issue/spec against the exact diff. No per-issue or per-diff policy
+admission is required. The plan is advisory agent judgment, not an authoritative
+replacement for the issue. The final reviewer can block if that plan omitted or
+invented a requirement. See [EVIDENCE-COMPLETENESS.md](EVIDENCE-COMPLETENESS.md).
+The earlier manual-admission alternative is preserved at local commit `03527f2`;
+it is not the recommended default and has not been deployed.
 This decision supersedes the deployed v1 result's mandatory general coverage
 commentary for the new candidate; it does not delete existing CI gates/blockers,
 change schedules, or authorize publication. Historical run evidence remains
@@ -55,7 +60,10 @@ repo, missing PR/head/base association or changed workflow bytes refuses.
 Two observations must agree. Its outputs contain only eligible=true, validated
 PR number and head; nothing produces eligible=true on an exception.
 
-`review` repeats preflight before contacting Claude, fetches complete before/after
+`review` repeats preflight before contacting Claude. It performs at most two
+isolated tool-free calls: context planning followed by exact-issue review. A
+planning uncertainty stops before the second call. No recursive retrieval or
+automatic retry exists. It fetches complete before/after
 UTF-8 file contents through GitHub contents APIs, and never checks out a PR. The
 one exact `Closes #N` contract binds issue title/body/update revision, alongside
 PR text, head/base, full inventory, trusted policy revision, required gate
@@ -133,12 +141,12 @@ The supported Max OAuth/endpoint isolation boundary is specified in
 
 The existing default-branch `.github/issue-ci-required-gates.json` keeps its
 workflow list, blockers and lifecycle_mode. Add `claude_final_review` containing
-these fields (unknown keys refuse; merge fields are optional):
+these fields (unknown keys refuse; merge fields are optional). No per-issue or
+per-diff policy field is added; the agent plan is generated at runtime:
 
 | Field | Required reviewed value |
 | --- | --- |
 | version | integer 1 |
-| evidence_contracts | required bounded trusted issue/diff/requirement/source contracts; no legacy fallback |
 | producer | path, numeric id, definition_sha Git blob, exact review job name |
 | merge_producer | optional/null; future distinct path/id/blob and merge job name |
 | gates | every existing workflow path mapped to actual numeric id and definition_sha |

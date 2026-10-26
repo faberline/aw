@@ -1,142 +1,86 @@
-# Offline exact-issue-fit and supporting-source contract candidate
+# Offline agent context alternative: exact issue fit
 
-This change is not deployed. The successful Tape #45 production invocation used
-the previous changed-files-only protocol. Its pass receipt proves that invocation
-worked; it does not prove the unprovided reconciliation implementation was
-reviewed. Do not reinterpret that receipt as evidence for this new protocol.
+This alternative is not deployed. Production Tape #45 proved the earlier single
+Claude invocation and strict receipt path, not this context-planning alternative.
+The original manual-admission candidate remains reviewable at local AW commit
+`03527f2b7b31496e5ad6b80335963161460498d8` in its separate worktree.
 
-## Narrow admission contract
+## Why per-diff admission is not the default
 
-The trusted default-branch `claude_final_review` policy must now include
-`evidence_contracts`. No legacy/default/PR-supplied fallback exists. An entry is
-independently reviewed before admission and has exactly this shape:
+The earlier candidate implements no automatic contract generator/adopter. A
+trusted default-branch policy maintainer/controller must add a requirement and
+source manifest and arrange its separate admission. A new issue/title/body,
+changed path set, before/after bytes or Git mode/blob/size change requires a new
+admission. Ordinary PRs without that policy update refuse. A human or trusted
+process could prepare proposals, but none automatically adopts them there; in
+practice this adds an unrequested manual/process bottleneck to each patch.
+Do not deploy that requirement merely to claim stronger completeness guarantees.
 
-```json
-{
-  "acceptance_sha256": "SHA256_OF_CANONICAL_NUMBER_TITLE_BODY_OBJECT",
-  "diff_sha256": "SHA256_OF_CANONICAL_FULL_BEFORE_AFTER_CHANGE_RECORDS",
-  "changed_paths": ["crates/tape-operator/src/lib.rs"],
-  "claims": [
-    {
-      "id": "render_purity",
-      "requirement": "Check the rustdoc claim that desired child rendering performs no cluster I/O.",
-      "supporting_paths": [
-        "crates/tape-operator/src/render.rs",
-        "crates/tape-operator/src/render/backup.rs",
-        "crates/tape-operator/src/render/observability.rs",
-        "crates/tape-operator/src/render/placement.rs",
-        "crates/tape-operator/src/render/statefulset.rs"
-      ]
-    },
-    {
-      "id": "controller_connection",
-      "requirement": "Check that the reconciliation module implements Tape's ManagedService contract and delegates to the shared Kubernetes controller.",
-      "supporting_paths": ["crates/tape-operator/src/reconcile.rs"]
-    }
-  ]
-}
-```
+## Recommended bounded agent flow
 
-This example is illustrative, not an approved Tape contract. Replace the hash
-with SHA256 of canonical JSON `{number, title, body}` for the exact issue.
-Canonical JSON uses sorted keys, ASCII escapes, and comma/colon separators with
-no whitespace. Cosmetic issue metadata updates do not require new admission;
-title/body changes do. The receipt still binds the existing full issue snapshot,
-including its update timestamp, so drift during a review remains a refusal.
-The diff hash is SHA256 of the canonical ordered records
-`[{path, previous, before, after, before_source, after_source}]`, sorted by path,
-with full decoded before/after UTF-8 text and JSON null for an absent side.
-Each source metadata object binds `{blob, mode, size}` from the exact commit's
-Git tree. Executable-bit changes cannot reuse a content-only admission and are
-shown explicitly in the packet. A new assertion or extra behavior in the same
-allowed file cannot reuse an old admission: changed bytes require independent
-contract review even when issue text and paths stay unchanged.
+1. The controller reads the authoritative issue and exact PR diff, binds current
+   head/base, complete regular-file bytes/modes/blobs/sizes and existing successful
+   required CI gates. There is no requirement registry or default-branch edit per
+   issue or diff.
+2. One isolated agent call extracts explicit issue requirements and proposes only
+   necessary same-repository supporting paths. Each requirement quotes original
+   issue text. Explicitly adopted specifications have a path and literal issue
+   reference. Material ambiguity is reported specifically and stops the flow.
+3. The controller validates request shape, exact quote presence, safe paths and
+   hard bounds, then fetches complete supporting/spec source from exact base/head
+   trees. No model tool, arbitrary URL, shell or repository execution is enabled.
+4. A second isolated agent call reads the full original issue, explicitly adopted
+   spec/source and exact diff. The plan is advisory: omissions/invented items or
+   material uncertainty are reported in `contract_uncertainties`, requiring block.
+   Per-requirement mappings, all-changed-range accounting and extra-change
+   locations/reasons follow the exact-issue-fit schema. Scripts remain responsible
+   for coverage, unit, e2e and other deterministic CI gates; the agent neither
+   duplicates nor waives them.
+5. A fresh collection after review must match. Receipts bind the agent plan and
+   every source/diff identity. Verification revalidates that authenticated plan
+   against the current issue and refetches the same exact source context.
 
-Each `claims` entry is an explicit issue requirement, not a general quality wish.
-The trusted reviewer inventories all explicit requirements and any explicitly
-adopted specification; the machine does not infer that inventory. Only sources
-necessary to verify those requirements belong in `supporting_paths`. An empty
-list is allowed explicitly when complete changed-file bytes are sufficient; it
-is not an implicit fallback for an unregistered requirement.
+Maximum two CLI processes, each with a 900-second timeout, distinct fresh HOME/
+config/cwd, no tools/MCP/hooks/GitHub token. There is no automatic retry, recursive
+context expansion or human per-diff admission. The first call may consume Max
+quota even if a requested source is then missing; missing source prevents the
+final-review call and pass receipt. No live call was made for this candidate.
 
-The changed-path set must match exactly. Renames from outside that set refuse.
-Unknown issue acceptance hashes refuse before the model. Contract selection,
-claim requirements and source paths come only from the trusted policy, never
-from the PR, an artifact, a model-generated dependency list or an arbitrary
-`verified` flag. Existing protected-path and test gates still apply first.
+## Mechanical integrity versus agent judgment
 
-## What machines establish
+Machines enforce: successful existing gates; exact issue/PR/head/base snapshots;
+request/schema/quote/path/count limits; complete regular Git file identities,
+mode, size, SHA256 and source IDs; no silent truncation; actual changed-location
+bounds/accounting; consistent exact/pass, missing-or-extra/fail and uncertainty/
+block; current authenticated producer and receipt digest. Changed-source bytes
+and modes are computed and bound automatically, not manually pre-approved.
 
-For every declared source, the collector reads the immutable base and head Git
-trees, rejects truncated/ambiguous inventories, and requires a regular file.
-It fetches the full UTF-8 bytes and checks Git blob identity and tree size.
-Receipts bind path, commit, Git blob, mode, byte count, content SHA256 and source ID.
-Both versions and the per-claim source IDs enter the review context. Full bytes
-enter the model packet; no silent excerpt or truncation is accepted.
+Machines do not prove: that every requirement was extracted, that a path is
+semantically necessary, that a reference truly adopts a normative spec, that the
+model understood all supplied text, or that no extra behavior exists. Exact
+quotes and structured source echoes are integrity checks, not completeness or
+correctness attestations. These remain the agent's judgment against the full
+issue and explicitly adopted spec, with specific uncertainty/block when needed.
+Do not market this flow as machine-certified semantic completeness.
 
-Bounds: at most 32 admitted issue contracts, 16 claims per contract, 16 distinct
-supporting paths, 256 KiB per source version, 10,000 tree entries and the existing
-1 MiB total packet limit. Exceeding a bound blocks rather than dropping context.
-The packet is validated again before credential lookup/CLI execution. Collection
-after the model and fresh receipt verification bind the same sources again.
+Bounds remain 80 changed files, 16 requirements, 16 distinct supporting paths,
+256 KiB per source version, 10,000 tree entries, 1 MiB packet and 64 KiB result.
+Exact line alignment strips equal prefix/suffix and disables autojunk; remaining
+line-count product above 1,000,000 blocks rather than approximating locations.
+Only same-repository base/head sources are supported. If an issue adopts an
+external or separately versioned specification, the agent must identify that
+unsupported evidence need and block; this alternative does not silently claim
+to have fetched it. Insufficient context after the second call blocks without
+automatically starting another call.
 
-The strict model result must echo the contract digest and include exactly one
-`requirement_results` assessment per explicit requirement, referencing every
-prescribed source ID and mapping met work to real changed-file locations.
-Pure-text diff ranges are computed from full before/after bytes; fabricated,
-unchanged or supporting-only locations cannot satisfy a met mapping. File-only
-changes such as empty-file metadata and executable-bit changes have an explicit
-zero-line `file` marker. Every changed range must be accounted for by requirement
-or extra-work locations; an unclassified changed line refuses.
-The exact matcher disables popularity-based autojunk after stripping equal
-prefix/suffix lines. If the remaining base/head line-count product exceeds
-1,000,000 it blocks rather than approximating location evidence.
-Missing claim/source, stale digest, `missing`, `ambiguous` or
-`insufficient_evidence` cannot accompany `pass`. Extra changes carry specific
-changed locations and reasons. The validator derives fit and decision:
-exact/pass; missing, extra or both/fail; uncertainty/block. Inconsistent
-combinations refuse. A valid block remains a non-passing review receipt.
-A statement such as "I reviewed everything" cannot replace delivered bytes,
-machine identity checks or structured requirement mappings.
+## Before any deployment
 
-All repository text, including supporting source, stays untrusted model data.
-No import, build, shell execution or repository checkout is introduced into the
-credentialed reviewer. The existing tools/MCP/hooks/environment isolation and
-hard-disabled merge writer remain unchanged.
-Deterministic coverage/unit/e2e gates remain owned by scripts. Their evidence is
-used only when needed to map an explicit requirement; the agent cannot waive or
-replace them and this candidate adds no coverage threshold or general quality
-certification field. The separate five-milestone >=99% goal is preserved.
-
-## What this does not establish
-
-The contract is a human-reviewed declaration of relevant evidence, not an
-automatically proven transitive dependency closure. The machine proves that the
-declared evidence arrived intact and that the result meets the strict contract;
-it cannot prove semantic correctness, that a model actually understood every
-line, or that the human omitted no necessary source. Source-ID echoes and
-`met` statuses alone are not proof of semantic completeness or the absence of
-extra behavior. Correct extraction of all issue requirements and selection of
-necessary sources remain an independent admission responsibility. If an external
-dependency or additional evidence is needed, the model must block and the
-contract must receive another independent review. Cross-repository source
-fetching and model-driven retrieval are outside this candidate.
-
-## Deployment decision and remaining work
-
-The tradeoff is deliberately narrow: each issue contract and exact admitted diff
-needs trusted default-branch admission. Every patch revision needs readmission;
-there is no path-only reuse. This is stricter
-than a broad automatic dependency guess and can block ordinary PRs until their
-contracts are reviewed. Agree on that pilot maintenance cost before deployment;
-do not silently replace it with a PR-controlled declaration or wildcard bypass.
-
-Deployment needs independent review, a newly published immutable AW action,
-consumer policy admission, refreshed producer blob binding/action pin and a
-separately authorized bounded live validation plan. The current consumer policy
-has no `evidence_contracts`; pointing it at this candidate would refuse. Old
-receipts do not satisfy the new result/context schema. No such publication or
-consumer change is included here. No additional GKE/Claude run was launched.
-
-Automated merge remains hard-disabled. Durable cross-run reconciliation, mutex
-and provider base/protection binding are separate unresolved requirements.
+Obtain independent code review and a separate bounded live-validation plan.
+Compared with the deployed single-call pilot, this flow uses up to two Max calls
+and up to 1800 seconds of CLI subprocess time, with unknown quota/cost effects.
+There is no new human-admission decision to approve, credential, permission,
+coverage threshold or general quality certification field. The five-milestone
+>=99% coverage goal stays separate. Consumer action/producer binding still needs
+normal reviewed deployment. No publication, live CI, merge or schedule change
+is included. Automated merge remains hard-disabled; its durable reconciliation,
+mutual exclusion and base/protection contract are separate unresolved work.
