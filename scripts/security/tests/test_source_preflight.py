@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location("preflight", Path(__file__).parents[1] / "source_preflight.py")
 p = importlib.util.module_from_spec(spec)
@@ -18,7 +19,7 @@ SYNTHETIC = b"CLAUDE_CODE_OAUTH_TOKEN=synthetic-fixture-only\n"
 class ParserTests(unittest.TestCase):
     def test_literal_forms(self):
         for value in (b"fixture-token", b"'fixture-token'", b'"fixture-token"'):
-            for prefix in (b"", b"export "):
+            for prefix in (b"", b"export ", b"export\t", b"export \t "):
                 with self.subTest():
                     self.assertEqual(p.parse_status(prefix + p.KEY.encode() + b"=" + value + b"\n"), "source_preflight_ok_no_write")
 
@@ -40,6 +41,12 @@ class ParserTests(unittest.TestCase):
         for value in (b"$(anything)", b"`anything`", b"$VARIABLE", b"x\\ny", b"x # comment", b"'mismatch", b"a b", b"a\tb"):
             with self.subTest():
                 self.assertEqual(p.parse_status(p.KEY.encode() + b"=" + value), "parse_nonliteral")
+
+    def test_export_horizontal_whitespace_cannot_hide_ambiguous_target(self):
+        for whitespace in (b" ", b"\t", b" \t ", b"\t\t"):
+            prefix = b"export" + whitespace
+            self.assertEqual(p.parse_status(SYNTHETIC + prefix + SYNTHETIC), "parse_duplicate")
+            self.assertEqual(p.parse_status(SYNTHETIC + prefix + p.KEY.encode() + b" =x"), "parse_assignment")
 
 
 class FileTests(unittest.TestCase):
@@ -117,6 +124,54 @@ class FileTests(unittest.TestCase):
     def test_unexpected_failure_is_not_success_or_exception_text(self):
         with patch.object(p.os, "read", side_effect=RuntimeError("DO_NOT_PRINT")):
             self.assertEqual(self.diagnose(), "source_internal_unknown")
+
+
+class EntrypointTests(unittest.TestCase):
+    def invoke(self, args):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            status = p.main(args)
+        return status, output.getvalue()
+
+    def test_default_or_custom_path_never_reads(self):
+        with patch.object(p, "authorized_source_status", side_effect=AssertionError("no source call")):
+            for args in ([], ["/some/path"], ["--diagnose-authorized-source", "extra"]):
+                self.assertEqual(self.invoke(args), (2, "diagnostic_operation_required\n"))
+
+    def test_fixed_account_home_source_single_call_and_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            source = root / ".env"
+            source.write_bytes(SYNTHETIC)
+            source.chmod(0o600)
+            with patch.object(p.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir=str(root))), patch.dict(os.environ, {"HOME": "/ignored/environment/home"}), patch.object(p, "diagnose_at", wraps=p.diagnose_at) as diagnose:
+                self.assertEqual(self.invoke(["--diagnose-authorized-source"]), (0, "source_preflight_ok_no_write\n"))
+                self.assertEqual(diagnose.call_count, 1)
+                self.assertEqual(diagnose.call_args.args[1], ".env")
+            self.assertEqual(source.read_bytes(), SYNTHETIC)
+
+    def test_parent_denial_stops_without_source_call_or_retry(self):
+        for number, reason in ((errno.EPERM, "operation_denied"), (errno.EACCES, "access_denied"), (errno.EIO, "io_unknown")):
+            with patch.object(p.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir="/synthetic/home")), patch.object(p.os, "open", side_effect=OSError(number, "DO_NOT_PRINT")) as opened, patch.object(p, "diagnose_at") as diagnose:
+                self.assertEqual(self.invoke(["--diagnose-authorized-source"]), (2, "home_open_" + reason + "\n"))
+                self.assertEqual(opened.call_count, 1)
+                diagnose.assert_not_called()
+
+    def test_no_follow_parent_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "real").mkdir()
+            (root / "alias").symlink_to(root / "real", target_is_directory=True)
+            with patch.object(p.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir=str(root / "alias"))), patch.object(p, "diagnose_at") as diagnose:
+                status, output = self.invoke(["--diagnose-authorized-source"])
+                self.assertEqual(status, 2)
+                self.assertIn(output, ("home_open_not_directory\n", "home_open_symlink_refused\n"))
+                diagnose.assert_not_called()
+
+    def test_source_denial_fixed_output_single_call(self):
+        with patch.object(p, "authorized_source_status", return_value="source_open_operation_denied") as diagnose:
+            self.assertEqual(self.invoke(["--diagnose-authorized-source"]), (2, "source_open_operation_denied\n"))
+            diagnose.assert_called_once_with()
 
 
 if __name__ == "__main__":

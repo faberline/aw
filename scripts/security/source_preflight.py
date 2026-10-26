@@ -1,4 +1,4 @@
-"""Review-only source diagnostic library. No CLI, destination, network or writer.
+"""Review candidate: explicit fixed-source diagnostic, no network or writer.
 
 Callers must supply an already-authorized directory descriptor and basename.
 This module is currently exercised only against synthetic temporary files.
@@ -6,8 +6,10 @@ It deliberately returns no credential bytes and cannot perform a transfer.
 """
 import errno
 import os
+import pwd
 import re
 import stat
+import sys
 
 KEY = "CLAUDE_CODE_OAUTH_TOKEN"
 MAX_BYTES = 65536
@@ -41,8 +43,9 @@ def parse_status(raw):
         line = line.strip(" \t")
         if not line or line.startswith("#"):
             continue
-        if line.startswith("export "):
-            line = line[7:].lstrip(" \t")
+        exported = re.match(r"export[ \t]+", line)
+        if exported:
+            line = line[exported.end():]
         # Catch malformed assignments to the target, while ignoring other keys.
         if re.match(re.escape(KEY) + r"(?:$|[^A-Za-z0-9_])", line):
             if not line.startswith(KEY + "="):
@@ -124,3 +127,61 @@ def diagnose_at(directory_fd, basename):
                 os.close(descriptor)
             except OSError:
                 pass
+
+
+def authorized_source_status():
+    """One fixed source: account database home/.env, never HOME or CLI paths.
+
+    Walk from / using no-follow directory descriptors. No real-source caller
+    has been executed during development; tests patch the account home to a
+    synthetic private temporary directory.
+    """
+    descriptors = []
+    stage = "home_lookup"
+    try:
+        home = pwd.getpwuid(os.geteuid()).pw_dir
+        if (not isinstance(home, str) or not home.startswith("/") or home == "/"
+                or any(part in ("", ".", "..") for part in home[1:].split("/"))):
+            return "home_path_refused"
+        stage = "home_open"
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        descriptor = os.open("/", flags)
+        descriptors.append(descriptor)
+        for part in home[1:].split("/"):
+            descriptor = os.open(part, flags, dir_fd=descriptor)
+            descriptors.append(descriptor)
+            stage = "home_stat"
+            info = os.fstat(descriptor)
+            # Root-owned sticky temporary ancestors are safe to traverse using
+            # anchored descriptors; the actual home must belong to this user.
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, os.geteuid())
+                    or (info.st_mode & 0o022 and not (info.st_uid == 0 and info.st_mode & stat.S_ISVTX))):
+                return "home_permissions_refused"
+            stage = "home_open"
+        if os.fstat(descriptor).st_uid != os.geteuid():
+            return "home_owner_refused"
+        return diagnose_at(descriptor, ".env")
+    except OSError as error:
+        return error_code(stage, error)
+    except Exception:
+        return "home_internal_unknown"
+    finally:
+        for descriptor in reversed(descriptors):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def main(argv=None):
+    # Explicit operation required. Plain execution is an error, never a pass.
+    if (sys.argv[1:] if argv is None else argv) != ["--diagnose-authorized-source"]:
+        print("diagnostic_operation_required")
+        return 2
+    code = authorized_source_status()
+    print(code)
+    return 0 if code == "source_preflight_ok_no_write" else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
