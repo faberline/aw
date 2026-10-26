@@ -33,6 +33,7 @@ CLI = "/usr/local/bin/claude"
 MAX_INPUT = 1024 * 1024
 MAX_RESULT = 65536
 MAX_SUPPORTING = 16
+SKILL_SHA256 = "4e6e27231e2cdea50b7c4037d99c916a17b8a5f29a987505be7bba4ab9def26d"
 PLAN_REQUIREMENT_IDS = tuple("r" + str(i) for i in range(1, 17))
 # Explicit protocol whitespace, independent of Python/ECMA \s tables.
 PLAN_TEXT_PATTERN = r"[^\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]"
@@ -382,7 +383,10 @@ def collect(api, repo, number, head, load_document, evaluator, include_sources=F
                    base_ref=pull["base"]["ref"], evaluator=evaluator, policy_source=document["source_commit"],
                    policy_sha256=r.digest(document), inventory=sorted(inventory, key=lambda f: f["path"]),
                    pr_description_sha256=r.digest([pull.get("title"), pull.get("body")]),
-                   issue_sha256=r.digest(issue), gates=gates,
+                   # Activity timestamps also change when our publisher comments. Bind
+                   # exact requirement bytes, not unrelated issue activity.
+                   issue_sha256=r.digest({k: issue[k] for k in ("number", "title", "body")}), gates=gates,
+                   review_skill_sha256=hashlib.sha256(trusted_skill().encode()).hexdigest(),
                    requirement_plan_sha256=plan_sha, supporting_sources=supporting, evidence_claims=claims,
                    requirement_plan=source_plan, diff_sha256=r.digest(contents),
                    changed_ranges=changed_ranges(contents),
@@ -529,8 +533,25 @@ def validate_supporting_packet(packet, planning=False):
     need(len(r.canonical(packet).encode()) <= MAX_INPUT, "review_input_limit")
 
 
+def trusted_skill():
+    """Read only this immutable action distribution, never a PR/HOME path.
+
+    SKILL.md is opaque prompt text. No frontmatter permissions, substitutions,
+    shell expansion, supporting-file discovery or native skill loader runs.
+    """
+    try:
+        raw = (Path(__file__).resolve().parents[2] / "issue-conformance/SKILL.md").read_bytes()
+        need(len(raw) <= 16384 and hashlib.sha256(raw).hexdigest() == SKILL_SHA256,
+             "review_skill_identity")
+        return raw.decode("utf-8")
+    except (OSError, UnicodeError):
+        raise Refused("review_skill_unavailable") from None
+
+
 def invoke_json(packet, p, schema, planning=False):
     """Only the review job calls this. Fresh non-repo HOME; no GitHub token/tools."""
+    skill = trusted_skill()
+    need(packet["context"].get("review_skill_sha256") == SKILL_SHA256, "review_skill_context")
     endpoint_policy_preflight(p)
     validate_supporting_packet(packet, planning)
     token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
@@ -544,7 +565,7 @@ def invoke_json(packet, p, schema, planning=False):
         command = [CLI, "--print", "--safe-mode", "--output-format", "json", "--json-schema", r.canonical(schema),
                    "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
                    "--setting-sources", "", "--settings", '{"disableAllHooks":true}',
-                   "--disable-slash-commands", "--no-chrome", "--no-session-persistence", "--system-prompt", PLAN_SYSTEM if planning else SYSTEM]
+                   "--disable-slash-commands", "--no-chrome", "--no-session-persistence", "--system-prompt", skill + "\n\n" + (PLAN_SYSTEM if planning else SYSTEM)]
         try:
             run = subprocess.run(command, input=r.canonical(packet), text=True, stdout=subprocess.PIPE,
                                  stderr=subprocess.DEVNULL, cwd=directory, env=env, timeout=900, check=False)
@@ -615,7 +636,7 @@ def review(api, repo, number, head, load_document, evaluator, run_id, invoke=inv
     return dict(payload=payload, sha256=r.digest(payload))
 
 
-def verify_review(api, repo, number, head, load_document, evaluator, run_id, log_reader=r.job_log):
+def verify_result_receipt(api, repo, number, head, load_document, evaluator, run_id, log_reader=r.job_log):
     document = load_document()
     p = policy(document)
     runs = api.pages(f'repos/{repo}/actions/workflows/{p["producer"]["id"]}/runs', "workflow_runs")
@@ -633,11 +654,16 @@ def verify_review(api, repo, number, head, load_document, evaluator, run_id, log
     current, _ = collect(api, repo, number, head, load_document, evaluator, source_plan=payload["context"].get("requirement_plan"))
     need(payload["producer"] == identity and payload["context"] == current, "review_stale")
     validate_result(payload["result"], current)
-    need(payload["result"]["decision"] == "pass", "review_not_pass")
     latest_again = api.pages(f'repos/{repo}/actions/workflows/{p["producer"]["id"]}/runs', "workflow_runs")
     need(latest_again and max(latest_again, key=lambda run: (run["run_number"], run["run_attempt"])) == latest
          and producer(api, repo, document, run_id, True) == identity, "review_changed_during_verification")
     need(load_document() == document, "policy_changed")
+    return receipt
+
+
+def verify_review(api, repo, number, head, load_document, evaluator, run_id, log_reader=r.job_log):
+    receipt = verify_result_receipt(api, repo, number, head, load_document, evaluator, run_id, log_reader)
+    need(receipt["payload"]["result"]["decision"] == "pass", "review_not_pass")
     return receipt
 
 

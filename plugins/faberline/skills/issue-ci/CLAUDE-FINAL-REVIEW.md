@@ -211,3 +211,68 @@ CLI capability evidence: local `claude --help` lists --tools, --setting-sources,
 [hooks reference](https://code.claude.com/docs/en/hooks) documents disableAllHooks
 and its administrator-managed-settings exception. No authenticated invocation
 has been made by this validation.
+
+## Requested skill and issue findings (offline, not deployed)
+
+Sources: `Sentinel_cbc847dacc8c819195bf46e7601ea141` approves the offline
+skill-text integration proposed in `Sentinel_568408e1bd4c81918ebdcf11c36374b9`;
+`Sentinel_145162f1d9848191b2735e8964334fa5` requires findings on the linked
+GitHub issue. Neither authorizes a new live call, CI run or rollout.
+
+The pure-text [issue-conformance skill](../issue-conformance/SKILL.md) is read
+only from the immutable action distribution. Its byte digest is compiled into
+the controller, carried in context and authenticated in the review receipt.
+The text is explicitly included in both prompts. Native discovery remains off;
+YAML permissions, shell substitutions and skill-relative dynamic files are not
+interpreted. No tools/MCP/settings/credential authority is added. This packages
+the exact-issue objective; it does not fix the planner protocol by itself or
+prove that the model obeys it. The earlier protocol fix is retained separately.
+
+`claude_findings.py` is a separate, unwired controller library. It authenticates
+a completed successful pinned producer's strict result receipt (pass/fail/block),
+fresh exact HEAD/base, issue contract and all existing gates before rendering
+an informational comment. Acceptance verification remains pass-only. Planner,
+protocol, CLI or missing-receipt failures are not code findings and produce no
+comment. Destination is exclusively the freshly verified unique linked issue.
+Missing/extra items cite requirements and validated changed-file locations;
+missing work with no changed location keeps an empty list rather than inventing
+a line. Extra changes are explicitly outside the issue contract, which is listed
+for reference. All model text is inert JSON; mentions, HTML and fences are escaped.
+No issue close/merge/label or arbitrary destination API exists.
+
+Each publisher call has one durable intent for repo/PR/head/review-run; the stored
+record and body bind issue, base, producer attempt and receipt digest too.
+Reconciliation returns historical=true plus that original receipt/producer/head/
+base identity; a later attempt is never reported as newly published. The
+exclusive intent permits at most one POST. Later calls only reconcile exact
+body plus GitHub Actions bot identity. A timeout with no visible match stays
+unknown, even across retries; it never licenses another POST. This deliberately
+holds even a known local pre-POST crash until controller recovery is reviewed.
+A run's later attempt cannot silently replace the first intent. Comments name
+historical exact commits, not an atomic assertion that HEAD/base cannot move.
+
+Deployment gaps: the library has no action operation or workflow wiring. It
+requires a trusted persistent journal shared across all publisher runs/hosts;
+`RUNNER_TEMP`, ephemeral runners and concurrency alone do not supply that
+persistence. No new storage/infrastructure is provisioned by this candidate.
+The current Tape handoff has issues:write, but runs BEFORE review. Its grant
+cannot silently be transferred to a later publisher. Review jobs have only
+issues:read. A separate OAuth-free job with issues:write is a material capability
+expansion requiring approval and independent workflow review. Keep model jobs
+read-only. GitHub lacks a comment POST idempotency key and head/base transaction;
+without the stated journal and deployment contract, writeback stays disabled.
+
+The deployed `0b3bbff` controller still embeds its original prompt and does not
+publish findings. This offline candidate and its protocol repair are unpublished;
+no new issue-conformance result exists. The historical failed planner run is not
+converted into a code finding. Hourly routines and hard-disabled merge remain.
+
+Issue requirement hashing binds exactly number/title/body. GitHub's updated_at
+is still structurally required but is an activity timestamp changed by comments;
+it is excluded from this requirement hash so a findings comment does not stale
+its own review. Exact title/body edits still invalidate the receipt, with
+regression tests. No CI gate or source/producer identity check is relaxed.
+Comments and labels do not define requirements in this protocol. A requirement
+that materially depends on uncollected comments or external specification bytes
+is insufficient evidence and must block; the timestamp is never a substitute
+for those contents. No new external retrieval capability is added here.
