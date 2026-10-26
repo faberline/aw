@@ -80,7 +80,7 @@ def policy(document):
     ci.validate_config(document["config"])
     need(sha(document.get("source_commit")), "policy_source")
     p = document["config"].get("claude_final_review")
-    required = {"version", "producer", "gates", "protected_paths", "cli_sha256"}
+    required = {"version", "producer", "gates", "protected_paths", "cli_sha256", "credential_profile"}
     need(isinstance(p, dict) and required <= set(p)
          and set(p) <= required | {"merge_producer", "merge_method"}, "policy_schema")
     need(type(p["version"]) is int and p["version"] == 1, "policy_version")
@@ -103,6 +103,7 @@ def policy(document):
     need(isinstance(p["protected_paths"], list) and p["protected_paths"]
          and all(safe_path(v.rstrip("/")) for v in p["protected_paths"]), "protected_paths")
     need(isinstance(p["cli_sha256"], str) and SHA256.fullmatch(p["cli_sha256"]), "executor_policy")
+    need(p["credential_profile"] == "personal-claude-max-oauth", "unsupported_oauth_credential_profile")
     need(p.get("merge_method") in (None, "squash", "merge", "rebase"), "merge_method_policy")
     return p
 
@@ -261,20 +262,38 @@ def validate_result(value, context):
     return value
 
 
+def endpoint_policy_preflight(p):
+    """Bounded supported profile, not a token/account attestation.
+
+    The deployment owner must bind the opaque credential to a personal Max
+    setup. Server-managed delivery is documented for Team/Enterprise, outside
+    this profile. Linux endpoint policy is checked separately; unknown refuses.
+    No account/credential probe or user-provided verified flag is accepted.
+    """
+    need(p.get("credential_profile") == "personal-claude-max-oauth", "unsupported_oauth_credential_profile")
+    try:
+        os.lstat("/etc/claude-code")
+    except FileNotFoundError:
+        return
+    except OSError:
+        raise Refused("managed_cli_configuration_unknown") from None
+    # Includes files, directories and dangling symlinks. Do not read policy or
+    # pretend CLI flags override it. A managed endpoint is outside this pilot.
+    raise Refused("managed_cli_configuration_refused")
+
+
 def invoke_claude(packet, p):
     """Only the review job calls this. Fresh non-repo HOME; no GitHub token/tools."""
+    endpoint_policy_preflight(p)
     token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
     need(isinstance(token, str) and bool(token), "oauth_missing")
-    # CLI settings flags cannot override administrator-managed hooks. This
-    # pilot requires a fresh Linux runner without that machine policy tree.
-    need(not Path("/etc/claude-code").exists(), "managed_cli_configuration_refused")
     need(hashlib.sha256(Path(CLI).read_bytes()).hexdigest() == p["cli_sha256"], "cli_identity")
     context = packet["context"]
     with tempfile.TemporaryDirectory(prefix="aw-claude-review-") as directory:
         env = dict(PATH="/usr/bin:/bin", HOME=directory, CLAUDE_CONFIG_DIR=directory,
                    CLAUDE_CODE_OAUTH_TOKEN=token, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1",
                    DISABLE_AUTOUPDATER="1")
-        command = [CLI, "--print", "--output-format", "json", "--json-schema", r.canonical(result_schema(context)),
+        command = [CLI, "--print", "--safe-mode", "--output-format", "json", "--json-schema", r.canonical(result_schema(context)),
                    "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
                    "--setting-sources", "", "--settings", '{"disableAllHooks":true}',
                    "--disable-slash-commands", "--no-chrome", "--no-session-persistence", "--system-prompt", SYSTEM]

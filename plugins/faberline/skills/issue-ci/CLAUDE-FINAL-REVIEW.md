@@ -88,6 +88,9 @@ no queue, protection, environment, credential, role or infrastructure.
 
 ## Trusted policy extension (not installed)
 
+The supported Max OAuth/endpoint isolation boundary is specified in
+[OAUTH-ISOLATION.md](OAUTH-ISOLATION.md).
+
 The existing default-branch `.github/issue-ci-required-gates.json` keeps its
 workflow list, blockers and lifecycle_mode. Add `claude_final_review` containing
 these fields (unknown keys refuse; merge fields are optional):
@@ -100,6 +103,7 @@ these fields (unknown keys refuse; merge fields are optional):
 | gates | every existing workflow path mapped to actual numeric id and definition_sha |
 | protected_paths | nonempty exact file/directory roots for all test selection/enforcement dependencies |
 | cli_sha256 | approved installed Linux CLI binary hash |
+| credential_profile | personal-claude-max-oauth; owner-bound opaque credential from a personal Max setup |
 | merge_method | optional/null; future squash, merge or rebase |
 
 Workflow definitions must match the reviewed blobs at head/base for tests and
@@ -128,7 +132,9 @@ existing richer readiness/index transport is retained independently.
 - No `/etc/claude-code` policy tree on the review runner. CLI flags cannot disable
   administrator-managed hooks; any organization-delivered managed settings also
   need independent inspection before credentialed execution. Unknown machine or
-  account policy is a rollout blocker, not permission to assume hooks are off.
+  account policy is not inferred from endpoint absence. This pilot supports
+  personal Max OAuth only; server-managed Team/Enterprise delivery is outside
+  that reviewed profile, as documented in OAUTH-ISOLATION.md.
 - Read-only contents/Actions/PR/issues review token scopes (issues-read binds the
   current issue contract); shared action access must already be permitted.
 - Merge remains pending a durable cross-run journal/mutex/reconciler and an
