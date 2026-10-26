@@ -212,7 +212,7 @@ CLI capability evidence: local `claude --help` lists --tools, --setting-sources,
 and its administrator-managed-settings exception. No authenticated invocation
 has been made by this validation.
 
-## Requested skill and issue findings (offline, not deployed)
+## Skill and issue findings: deployment history
 
 Sources: `Sentinel_cbc847dacc8c819195bf46e7601ea141` approves the offline
 skill-text integration proposed in `Sentinel_568408e1bd4c81918ebdcf11c36374b9`;
@@ -268,20 +268,18 @@ it prevents findings from invalidating their own receipt. Exact title/body edits
 still invalidate it. Uncollected adopted comments/external specs are insufficient
 evidence and must block; a timestamp does not prove their content.
 
-Permission/deployment gap: the candidate action and Tape workflow are offline.
-A separate OAuth-free findings job proposes issues:write plus contents/actions/
-pull-requests:read using GITHUB_TOKEN. Existing model jobs remain issues:read.
-The earlier handoff grant is not silently reused. This write capability and live
-rollout need explicit approval and independent review. No new persistent storage
-is required. Tape now deploys AW 5c557da through Tape #47; native discovery is still off.
-Its next validation completed planning but held on pre-collection uncertainty;
-there is still no valid new-policy final receipt or findings writeback. The
-phase-contract clarification is offline only; see EVIDENCE-COMPLETENESS.md.
-The failed planning result is not backfilled as code findings. Hourly routines and merge hard-off
-are unchanged. The planner protocol repair remains part of this unpublished
-candidate and has not received live validation.
+Deployment history: Tape #47 approved/deployed the isolated issues:write
+publisher configuration; model jobs remain issues:read. No new storage is needed.
+Tape #48 now deploys AW e06e407, including the phase-contract clarification.
+Its GKE run40358167392 passed all eight gates. Review40361188564 completed both
+CLI processes, then refused review_incomplete before a receipt; publisher skipped
+and issue44 had no comments. Actual returned reviewed_files and planner paths
+were not retained and remain unknown. These protocol failures are not code
+findings. The comprehensive [output-contract repair](OUTPUT-CONTRACT-AUDIT.md)
+is offline only, with no new write capability, model pin or live authorization.
+Hourly routines and merge hard-off remain unchanged.
 
-## Offline phase-contract clarification after the deployed validation
+## Phase contract (deployed e06e407, preserved by this candidate)
 
 The issue-conformance skill now has separate Planning and Final review sections.
 The initial planner packet intentionally omits supporting files; request them
@@ -295,3 +293,17 @@ agent judgment; synthetic regression does not prove future model compliance.
 No extra phase, model call, permission or new manual admission is introduced.
 Any later deployment needs independent review; any new paid validation needs
 new bounded authorization. No live action is performed by this repair.
+
+## Offline comprehensive output contract
+
+[OUTPUT-CONTRACT-AUDIT.md](OUTPUT-CONTRACT-AUDIT.md) enumerates every planner and
+final field, representable structure versus runtime relations, all known
+semantic/provenance uncertainty, CLI documentation limits and a cheaper staged
+validation proposal. Changed inventory paths are distinct from supporting IDs.
+Only finite mathematical JSON integers normalize to canonical int after exact
+value/range checks; no identity strings or source bytes normalize. Rename base
+locations bind the actual previous path. Large enum schemas hold before planning
+at an explicit120000-byte argv budget. The aggregate-count telemetry helper is
+unwired, emits no names/IDs/text/hashes and changes no live logging. No new
+threshold for CI quality/coverage, production phase, per-PR manual approval,
+model/effort pin or runtime acceptance waiver is introduced.
