@@ -31,6 +31,11 @@ _filter_spec.loader.exec_module(main_filters)
 
 
 def run(*args):
+    if (args and args[0] == 'gh') or 'push' in args:
+        queue.coordination.verify_for(os.getenv('GH_REPO', ''))
+    if 'push' in args or (args[:3] in (('gh', 'issue', 'comment'),
+                                       ('gh', 'pr', 'create'), ('gh', 'pr', 'comment'))):
+        queue.coordination.mark_mutation_for(os.getenv('GH_REPO', ''))
     return subprocess.check_output(args, text=True).strip()
 
 
@@ -204,7 +209,7 @@ def sync_main(checkout, owner, fetched):
         return held(f'Git maintenance refused/uncertain; inspect, no automatic retry: {exc}')
 
 
-def main():
+def local_main():
     command = sys.argv[1] if len(sys.argv) > 1 else ''
     if command not in ('next', 'finish', 'block'):
         refuse('usage: work.sh next [--mine] | finish N summary-file | block N evidence-file')
@@ -365,6 +370,14 @@ def main():
         lease_path.unlink()
         print(f'pr={pr}; issue #{n} remains doing; waiting for CI')
     return 0
+
+
+def main():
+    if os.getenv('ISSUE_COORDINATION_MODE', 'local') == 'local':
+        return local_main()
+    repo = os.getenv('GH_REPO', '')
+    with queue.coordination.shared_guard(repo, required=True):
+        return local_main()
 
 
 if __name__ == '__main__':

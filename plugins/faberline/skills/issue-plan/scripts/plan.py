@@ -183,6 +183,14 @@ def main():
     # its own current state; status is never an admission/ownership receipt.
     if sys.argv[1:] == ['status']:
         return execute(queue.Client(), ['status'])
+    if sys.argv[1:2] == ['--cloud']:
+        if len(sys.argv) < 3:
+            raise ValueError('expected --cloud COMMAND')
+        client = queue.Client(repo=os.environ['GH_REPO'])
+        if sys.argv[2:] == ['status']:
+            return execute(client, ['status'])
+        with queue.coordination.shared_guard(client.repo, required=True):
+            return execute(client, sys.argv[2:])
     common = Path(subprocess.check_output(['git', '-c', 'core.fsmonitor=false', 'rev-parse', '--git-common-dir'], text=True).strip()).resolve()
     with (common / 'issue-work.guard').open('a') as guard:
         try:
@@ -192,7 +200,9 @@ def main():
             return 3
         if len(sys.argv) < 2:
             raise ValueError('expected plan command')
-        return execute(queue.Client(), sys.argv[1:])
+        client = queue.Client()
+        with queue.coordination.shared_guard(client.repo):
+            return execute(client, sys.argv[1:])
 
 
 if __name__ == '__main__':
