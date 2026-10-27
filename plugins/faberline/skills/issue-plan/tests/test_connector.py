@@ -21,6 +21,7 @@ class Transport:
     def __init__(self):
         self.calls = []
         self.issue = dict(number=7, state='open', title='Example', body='',
+                          html_url=f'https://github.com/{REPO}/issues/7',
                           labels=['priority:p2', 'keep-me'], created_at='2026-01-01',
                           milestone=dict(number=1, title='0.1', state='open'))
         self.state = dict(protocol=guard.PROTOCOL, repo=REPO, status='free',
@@ -103,8 +104,8 @@ class ConnectorTests(unittest.TestCase):
             self.assertEqual(transport.calls, [])
 
     def test_malformed_patch_response_never_reports_success_or_releases_guard(self):
-        for response in ({}, {'message': 'failure'}, {'number': 8, 'state': 'open', 'labels': ['priority:p1']},
-                         {'number': 7, 'state': 'open', 'labels': ['keep-me', 'priority:p2']}):
+        for response in ({}, {'message': 'failure'}, {'number': 8, 'state': 'open', 'labels': ['priority:p1'], 'html_url': f'https://github.com/{REPO}/issues/8'},
+                         {'number': 7, 'state': 'open', 'labels': ['keep-me', 'priority:p2'], 'html_url': f'https://github.com/{REPO}/issues/7'}):
             transport = Transport()
             transport.patch_response = response
             with self.subTest(response=response), self.assertRaises(ValueError):
@@ -119,6 +120,22 @@ class ConnectorTests(unittest.TestCase):
             connector.run(REPO, ['prioritize', '7', 'p1'], transport, str(uuid.uuid4()))
         self.assertEqual(transport.state['status'], 'free')
         self.assertFalse(any(c[0] == 'PATCH' for c in transport.calls))
+
+    def test_wrong_repository_read_is_rejected_before_write(self):
+        transport = Transport()
+        transport.issue['html_url'] = 'https://github.com/faberline/lumen/issues/7'
+        with self.assertRaises(ValueError):
+            connector.run(REPO, ['prioritize', '7', 'p1'], transport, str(uuid.uuid4()))
+        self.assertEqual(transport.state['status'], 'free')
+        self.assertFalse(any(c[0] == 'PATCH' for c in transport.calls))
+
+    def test_wrong_repository_write_response_retains_guard(self):
+        transport = Transport()
+        transport.patch_response = dict(transport.issue,
+            html_url='https://github.com/faberline/lumen/issues/7', labels=['keep-me', 'priority:p1'])
+        with self.assertRaises(ValueError):
+            connector.run(REPO, ['prioritize', '7', 'p1'], transport, str(uuid.uuid4()))
+        self.assertEqual(transport.state['status'], 'held')
 
     def test_malformed_comment_response_retains_guard(self):
         for response in ({}, {'message': 'failure'}, {'id': 5, 'body': 'different'}):

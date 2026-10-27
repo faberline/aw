@@ -49,7 +49,9 @@ class Client(queue.Client):
             if path != f'repos/{self.repo}/issues':
                 number = int(path.split('/issues/', 1)[1].split('/')[0])
                 target = self.issue(number)
-                if (not isinstance(target, dict) or target.get('number') != number
+                if (not isinstance(target, dict) or type(target.get('number')) is not int
+                        or target['number'] != number
+                        or target.get('html_url') != f'https://github.com/{self.repo}/issues/{number}'
                         or target.get('state') != 'open' or 'pull_request' in target):
                     raise ValueError('native planner target is not the expected open issue')
             queue.coordination.mark_mutation_for(self.repo, required=True)
@@ -65,6 +67,7 @@ class Client(queue.Client):
         elif method == 'PATCH':
             number = int(path.rsplit('/', 1)[1])
             valid = (type(response.get('number')) is int and response['number'] == number
+                     and response.get('html_url') == f'https://github.com/{self.repo}/issues/{number}'
                      and response.get('state') == 'open' and 'pull_request' not in response)
             if 'labels' in payload:
                 labels = response.get('labels')

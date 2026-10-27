@@ -16,7 +16,7 @@ the existing deterministic planner and shared guard. Its issue PATCH scope is
 limited to labels/milestone and refuses body overwrite, closure and cross-repo
 writes. The previous gh-only probe cannot qualify or disqualify this adapter.
 
-The native adapter and current guard passed 26 planner and 75 loop controls.
+The native adapter and current guard passed 28 planner and 75 loop controls.
 The native path rejects PR targets and requires operation-specific success
 identity/results. Empty responses, error envelopes and mismatched fields retain
 the guard for reconciliation instead of reporting success.
