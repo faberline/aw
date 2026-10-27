@@ -141,9 +141,9 @@ class Guard:
 
 
 @contextmanager
-def shared_guard(repo, required=False):
+def shared_guard(repo, required=False, request=None, owner=None, mode=None):
     global _active
-    mode = os.getenv('ISSUE_COORDINATION_MODE', 'local')
+    mode = mode or os.getenv('ISSUE_COORDINATION_MODE', 'local')
     if mode == 'local' and not required:
         yield None
         return
@@ -151,7 +151,7 @@ def shared_guard(repo, required=False):
         raise Refused('hosted mutations require ISSUE_COORDINATION_MODE=github')
     if _active is not None:
         raise Refused('nested coordination acquisition is not supported')
-    guard = Guard(repo, os.getenv('ISSUE_COORDINATION_OWNER', ''))
+    guard = Guard(repo, owner or os.getenv('ISSUE_COORDINATION_OWNER', ''), request)
     guard.acquire()
     _active = guard
     try:
@@ -168,15 +168,15 @@ def shared_guard(repo, required=False):
         _active = None
 
 
-def verify_for(repo):
-    if os.getenv('ISSUE_COORDINATION_MODE', 'local') == 'local':
+def verify_for(repo, required=False):
+    if _active is None and not required and os.getenv('ISSUE_COORDINATION_MODE', 'local') == 'local':
         return
     if _active is None or _active.repo != repo:
         raise Refused('GitHub mutation has no matching shared guard')
     _active.verify()
 
 
-def mark_mutation_for(repo):
-    verify_for(repo)
+def mark_mutation_for(repo, required=False):
+    verify_for(repo, required=required)
     if _active is not None:
         _active.mutation_attempted = True

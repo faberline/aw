@@ -39,6 +39,8 @@ def reprioritize(labels, value):
 
 def required_open(client, n):
     issue = client.issue(int(n))
+    if 'pull_request' in issue:
+        raise ValueError('planner mutation requires an issue, not a pull request')
     if issue['state'] != 'open':
         raise ValueError('issue is not open')
     return issue

@@ -6,6 +6,24 @@ hosted cutover is **not ready**.
 Scope: Core, Defer, Keep, Lumen, Relay and Tape issue planning. Keep the existing
 two-hour cadence. Do not change product issues or owners as part of validation.
 
+## Scope correction
+
+Issue planning reads product source through GitHub and writes issue metadata or
+spec comments. It does not require a local product checkout or shell GitHub
+credentials. The initial hosted probe over-constrained the target by requiring
+shell `gh`. A native connector adapter now injects canonical REST requests into
+the existing deterministic planner and shared guard. Its issue PATCH scope is
+limited to labels/milestone and refuses body overwrite, closure and cross-repo
+writes. The previous gh-only probe cannot qualify or disqualify this adapter.
+
+The native adapter and current guard passed 26 planner and 75 loop controls.
+The native path rejects PR targets and requires operation-specific success
+identity/results. Empty responses, error envelopes and mismatched fields retain
+the guard for reconciliation instead of reporting success.
+Actual hosted connector bindings, endpoint coverage and coordination context
+still need live verification. Neither the fixture transport nor tool descriptions
+prove the connected GitHub tools can satisfy every canonical API request.
+
 ## Candidate
 
 - Portable issue-plan rules, milestone policy, wrapper, Python helpers and

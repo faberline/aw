@@ -65,7 +65,7 @@ class BundleTests(unittest.TestCase):
             prompts = json.loads((path / 'prompts.json').read_text())
             self.assertEqual(set(prompts), set(bundle.REPOS))
             for repo, prompt in prompts.items():
-                self.assertIn('GH_REPO=faberline/' + repo, prompt)
+                self.assertIn('Target faberline/' + repo, prompt)
                 self.assertNotIn('/Users/', prompt)
             self.assertEqual(manifest['interval_hours'], 2)
 
