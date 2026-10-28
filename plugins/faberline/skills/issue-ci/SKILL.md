@@ -6,6 +6,17 @@ user-invocable: false
 
 # CI lifecycle handoff
 
+The separate [native auto-merge adapter](NATIVE-AUTO-MERGE.md) connects an
+authenticated Claude PASS and complete qualification to GitHub's durable
+auto-merge request. It needs its own reviewed producer and provider ruleset.
+Publishing the adapter does not activate consumers or clear their holds. Its
+outcome adapter replaces `.github/workflows/issue-ci.yml` with one unified
+writer in `issue-ci-handoff`. Every wake reconciles both existing CI handoff
+and Claude outcomes. Do not install a second lifecycle writer in that group.
+An authenticated negative Claude result returns the linked issue to doing.
+A qualified native merge closes the linked issue through GitHub closing
+keywords. No queued or rejected PR closes an issue.
+
 The optional [PR qualification v1 contract](QUALIFICATION.md) adds trusted
 per-path applicability and evidence provenance to the existing full-mode
 controller. The pinned `.github/actions/issue-ci` distribution reads only
