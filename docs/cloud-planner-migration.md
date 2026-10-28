@@ -29,9 +29,10 @@ the coding lease is released. These are simulated-provider checks, not deploymen
 
 Local read-only inventory found Lumen #45 and Tape #19 in coding phase. Their
 existing local leases remain untouched. The installed marketplace skills still
-need a verified update and scoped activation. Six legacy Claude skill files
-contain prompts without activation state; supported scheduler evidence is still
-needed. No production schedule has been cut over or disabled during this phase.
+need a verified update and scoped activation. The legacy skill files do not
+contain activation state. A later desktop status check confirmed all six legacy
+Claude planners are paused. No production schedule was cut over or disabled
+during this phase.
 
 The final source integration for this phase passed 58 planner, 99 loop and 85
 worker controls (242 total, exit 0), shell syntax and diff checks. The rollout
@@ -87,10 +88,39 @@ settings or plugins were changed. An inline settings catalog is unsuitable here:
 the local schedules call the marketplace directory directly, and an inline
 catalog has no such source root.
 
-Legacy Claude scheduled-task folders contain only `SKILL.md` prompts. They
-provide no activation state. CLI help provides no scheduler pause control, and
-the native UI did not provide usable automation state during this check. Their
-pause state remains unknown. An old idle session is not a pause receipt.
+The deployment inventory found twelve project declarations of the same
+`faberline` marketplace under `/Users/chrischeng/faberlines`, all without a ref.
+Claude documents a per-user shared marketplace registry and re-fetches a
+marketplace when a declared source changes. A later startup from an unchanged
+project could therefore replace the shared checkout with default/main. That
+specific downgrade is an inference from the documented shared registry and
+source-change behavior. The proposal now includes the other existing
+declarations and their input hashes. Resolve all conflicting sources before
+relying on the shared absolute script paths. Alternatively, move every affected
+caller to a verified immutable installed entrypoint and test its lifecycle.
+No other project settings were changed during this inventory.
+
+At 2026-10-28 04:28 UTC, the native Claude desktop UI became readable. Its
+Scheduled tasks page showed all six `issue-plan core`, `issue-plan defer`,
+`issue-plan keep`, `issue-plan lumen`, `issue-plan relay`, and `issue-plan tape`
+entries as **Paused**, with an hourly cadence. Their URLs end in
+`/epitaxy/scheduled/issue-plan-<repo>`. The Core detail also showed its enable
+switch off and its latest history entry as skipped at 12:04 PM local time.
+The current eight Claude review schedules were visible separately as active;
+they were not changed. Only the task-list filter was cleared. These UI results
+replace the earlier unknown planner activation state. They do not establish
+that every old run has ended.
+
+The six-row pause receipt is
+`/private/tmp/aw-legacy-planner-paused-receipt.json`. A narrow plugin settings
+proposal records exact existing file hashes and source-ref patches at
+`/private/tmp/aw-plugin-deployment-proposal.json`. An unapplied coordination
+seed proposal at `/private/tmp/aw-coordination-seed-proposal.json` records the
+current protected lease input hashes and opaque owner identifiers. Fresh local
+reads still show Lumen #45 and Tape #19 in coding phase. Missing lease files in
+the other four repositories do not prove that no writer exists. All proposals
+require fresh input and adoption checks before any live write. No raw owner
+value was copied, and no live lease or settings file was changed.
 
 Scope: Core, Defer, Keep, Lumen, Relay and Tape issue planning. Keep the existing
 two-hour cadence. Do not change product issues or owners as part of validation.
