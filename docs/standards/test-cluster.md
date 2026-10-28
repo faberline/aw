@@ -52,14 +52,14 @@ tears down.
 - Cluster `faberline-test`, zone `asia-east1-a`, project
   `axiom-502607`. The free tier covers the management fee of one zonal cluster
   only, so there is no second cluster.
-- `system-pool`: one e2-standard-2 on-demand (not Spot) node for kube-system.
+- `system-pool`: one n4-standard-2 on-demand (not Spot) node for kube-system.
   It has no autoscaling. A test run sets it to 1 node (`scripts/gke-test/wake.sh`).
   The parker sets it to 0 when no test namespace is left; see
   [The parker](#the-parker). Teardown leaves it up, so the next call (for
   example the next test suite) does not wait for a new system node. Idle cost:
   one node for 5 to 15 minutes after the last run.
 - `pool-<pool>`: one pool per row of `infra/gke-test/pools.yaml`. Its machine
-  type is e2-standard-2 or bigger. It has 0 to
+  type is `n4-standard-2` (2 vCPU, 8 GB memory). It has 0 to
   `max_nodes` nodes, label `faberline.dev/pool=<pool>`, and taint
   `faberline.dev/pool=<pool>:NoSchedule`. The taint keeps every other pod off
   it, so repositories do not compete for CPU and memory.
@@ -67,20 +67,23 @@ tears down.
   `<repo>-<role>`, for example `lumen-server` for the server and
   `lumen-client` for the test Job. Terraform refuses another name.
 - Cost cap: the sum of `max_nodes` over all rows, while tests run. Idle cost
-  is 0 nodes.
+  is 0 nodes. Each node has a 16 GB Hyperdisk Balanced boot disk. All 12
+  repository pools allow up to 24 nodes in total; the system pool adds one.
+  The 25 boot disks alone can require 400 GB of Hyperdisk capacity. Data
+  PVCs consume additional capacity. Check Hyperdisk capacity, IOPS,
+  throughput and CPU quotas before applying or running tests.
 
 ## Add a repository
 
 1. **Pools.** Open a pull request on `aw` that adds rows to
    `infra/gke-test/pools.yaml`: usually `<repo>-server` for the server and
-   `<repo>-client` for the test Job. Pick the smallest `machine_type` on
-   which the biggest pod fits, and at least e2-standard-2: a shared-core type
-   (e2-micro, e2-small, e2-medium) leaves too little CPU after GKE's own
-   DaemonSets, and Terraform refuses it. Set `max_nodes` of a pool to at least
+   `<repo>-client` for the test Job. Use `machine_type: n4-standard-2`. Pod requests
+   must fit after GKE's CPU and memory reservations. A request for all 2 CPUs
+   cannot fit. Set `max_nodes` of a pool to at least
    the number of pods on it, because each pod gets its own node.
-   For performance tests, use `spot: false` and a machine series with one CPU
-   generation, for example `n4-highmem-4`. An E2 node can have one of several
-   Intel or AMD generations, so E2 numbers do not compare from run to run.
+   For performance tests, use `spot: false` on the same N4 profile. Results
+   from larger machines do not qualify this profile. Existing acceptance
+   requirements that need more CPU or memory remain blocked until reviewed.
    An `aw` maintainer runs `terraform apply` after merge. Until then a run
    stops at its checks with "the cluster has no node pool", or with "pools.yaml
    says <type>" when the row changed the machine type. The first row of a

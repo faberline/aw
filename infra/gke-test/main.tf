@@ -68,7 +68,9 @@ resource "google_container_cluster" "test" {
   remove_default_node_pool = true
   initial_node_count       = 1
   node_config {
-    machine_type    = "e2-medium"
+    machine_type    = "n4-standard-2"
+    disk_size_gb    = 16
+    disk_type       = "hyperdisk-balanced"
     spot            = true
     service_account = google_service_account.nodes.email
     oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
@@ -99,7 +101,7 @@ resource "google_container_cluster" "test" {
 # --- Pools --------------------------------------------------------------------
 
 # kube-system only. No autoscaling and no taint; wake.sh, the parker, and
-# park.sh own its size. e2-standard-2, not e2-medium: the DaemonSets plus kube-dns,
+# park.sh own its size. The DaemonSets plus kube-dns,
 # konnectivity, and metrics-server request about 1.2 CPU.
 # On-demand, not Spot: kube-dns and konnectivity run only here. On 2026-10-19
 # GCE preempted the Spot node twice in two minutes during tape run
@@ -120,10 +122,10 @@ resource "google_container_node_pool" "system" {
     enable_private_nodes = true
   }
   node_config {
-    machine_type    = "e2-standard-2"
+    machine_type    = "n4-standard-2"
     spot            = false
-    disk_size_gb    = 50
-    disk_type       = "pd-balanced"
+    disk_size_gb    = 16
+    disk_type       = "hyperdisk-balanced"
     service_account = google_service_account.nodes.email
     oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
     metadata        = { disable-legacy-endpoints = "true" }
@@ -162,7 +164,7 @@ resource "google_container_node_pool" "repo" {
   node_config {
     machine_type    = each.value.machine_type
     spot            = each.value.spot
-    disk_size_gb    = 50
+    disk_size_gb    = 16
     disk_type       = can(regex(local.hyperdisk_only_re, each.value.machine_type)) ? "hyperdisk-balanced" : "pd-balanced"
     service_account = google_service_account.nodes.email
     oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]

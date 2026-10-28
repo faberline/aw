@@ -24,67 +24,58 @@
 # Fields:
 #   repo          GitHub repository name under faberline; also the namespace.
 #   pool          Pool name: `<repo>-<role>`, for example `keep-server`.
-#   machine_type  GCE machine type, at least e2-standard-2. The biggest pod
-#                 must fit on one node.
-#                 A performance pool uses a series with one CPU generation,
-#                 for example n4; E2 mixes generations. N4 and C4 take only
-#                 Hyperdisk: boot disks follow on their own, and a PVC on
-#                 such a pool uses storageClassName dynamic-rwo.
+#   machine_type  n4-standard-2 for every pool (2 vCPU, 8 GB memory).
+#                 Pod requests must fit after GKE system reservations.
+#                 N4 uses Hyperdisk boot disks. A PVC on these pools uses
+#                 storageClassName dynamic-rwo. Results from larger machines
+#                 do not qualify this hardware profile.
 #   spot          true for Spot VMs (about 70% cheaper; GCE may stop them).
 #   max_nodes     Upper bound for this pool. At least the server replicas,
 #                 because the server puts one replica on each node. The sum
 #                 of all rows is the cost cap.
 pools:
-  # keep requests 2 CPU and 4Gi per pod (QoS Guaranteed), which does not fit
-  # the 1930m allocatable of an e2-standard-2.
+  # Keep server. Consumer requests must fit the N4 two-vCPU node; a 2-CPU
+  # request cannot fit after GKE system reservations.
   - repo: keep
     pool: keep-server
-    machine_type: e2-standard-4
+    machine_type: n4-standard-2
     spot: true
     max_nodes: 1
   # The test Job (kubectl, curl, jq) requests 250m and 256Mi.
   - repo: keep
     pool: keep-client
-    machine_type: e2-standard-2
+    machine_type: n4-standard-2
     spot: true
     max_nodes: 1
-  # lumen's server pool. The operator's raft StatefulSet puts one replica on
-  # each node (required pod anti-affinity on the hostname), up to 3 voters at
-  # 1 CPU and 4Gi each. The direct-install Deployment (1 replica, 1 CPU, 4Gi)
-  # and the operator itself share these nodes, which an e2-standard-2 cannot
-  # hold.
+  # Lumen server pool. Up to three voters, one per node. Consumer requests
+  # and the number of server-side pods must fit this pool's node budget.
   - repo: lumen
     pool: lumen-server
-    machine_type: e2-standard-4
+    machine_type: n4-standard-2
     spot: true
     max_nodes: 3
   # The e2e test Job (kubectl, curl, jq; jq builds the 100k-doc fixture)
   # requests 250m and 1Gi.
   - repo: lumen
     pool: lumen-client
-    machine_type: e2-standard-2
+    machine_type: n4-standard-2
     spot: true
     max_nodes: 1
-  # lumen's perf matrix: one server cell per node, up to 2.5 CPU and 16Gi.
-  # Up to 3 cells run at the same time, each in its own lane (namespace).
-  # Not 4: the project quota CPUS_ALL_REGIONS is 32. 3 lanes use
-  # 3 x (4 + 4) = 24 CPUs, plus 2 CPUs for system-pool. Raise that quota
-  # before you raise max_nodes here.
-  # Not Spot, because a preempted node would void a cell and its PVC
-  # cold-restart measurement. N4, not E2: an N4 node always has the same CPU
-  # generation, and an E2 node can have one of several Intel or AMD
-  # generations, so E2 numbers do not compare from run to run. N4 takes only
-  # Hyperdisk, so the PVC uses storageClassName dynamic-rwo.
+  # Lumen performance server: one cell per node, up to three lanes.
+  # The new profile is 2 vCPU and 8 GB before GKE reservations. Existing
+  # results or acceptance assumptions for 2.5 CPU/16 GiB need fresh review;
+  # changing the pool does not waive a performance or memory requirement.
+  # Non-Spot keeps preemption out of cold-restart measurements.
   - repo: lumen
     pool: lumen-perf-server
-    machine_type: n4-highmem-4
+    machine_type: n4-standard-2
     spot: false
     max_nodes: 3
-  # The perf load generator, one per lane, kept off the measured server's
-  # node. Not Spot, and N4, for the same reasons.
+  # Performance load generator: one per lane, separate from the server.
+  # Non-Spot, with the same fixed N4 hardware profile.
   - repo: lumen
     pool: lumen-perf-client
-    machine_type: n4-standard-4
+    machine_type: n4-standard-2
     spot: false
     max_nodes: 3
   # tape's server pool: the operator's 2 replicas (leader election, required
@@ -93,29 +84,29 @@ pools:
   # requests at most 500m and 512Mi.
   - repo: tape
     pool: tape-server
-    machine_type: e2-standard-2
+    machine_type: n4-standard-2
     spot: true
     max_nodes: 4
   # The e2e test Job (tape-it, kubectl) requests 250m and 256Mi.
   - repo: tape
     pool: tape-client
-    machine_type: e2-standard-2
+    machine_type: n4-standard-2
     spot: true
     max_nodes: 1
   # defer's server pool. The e2e installs the operator (2 replicas, 100m and
   # 128Mi each, no anti-affinity) and one Defer instance that it renders; the
-  # direct-install StatefulSet requests 1 CPU and 4Gi. One e2-standard-4 holds
-  # all of them; the second node is room for the recovery step, which deletes
-  # the Defer pod and waits for its replacement on the same PVC.
+  # direct-install StatefulSet and operator requests must fit the node.
+  # The second node is room for the recovery step, which deletes the Defer
+  # pod and waits for its replacement on the same PVC.
   - repo: defer
     pool: defer-server
-    machine_type: e2-standard-4
+    machine_type: n4-standard-2
     spot: true
     max_nodes: 2
   # The e2e test Job requests at most 250m and 256Mi.
   - repo: defer
     pool: defer-client
-    machine_type: e2-standard-2
+    machine_type: n4-standard-2
     spot: true
     max_nodes: 1
   # relay's server pool: the raft failover suite runs 3 voters, one pod per
@@ -124,12 +115,12 @@ pools:
   # same node and zonal PVC; no spare node is needed.
   - repo: relay
     pool: relay-server
-    machine_type: e2-standard-2
+    machine_type: n4-standard-2
     spot: true
     max_nodes: 3
   # The e2e test Job (relay-it, kubectl) requests 250m and 256Mi.
   - repo: relay
     pool: relay-client
-    machine_type: e2-standard-2
+    machine_type: n4-standard-2
     spot: true
     max_nodes: 1
