@@ -59,7 +59,10 @@ class Client(queue.Client):
                         or target.get('html_url') != f'https://github.com/{self.repo}/issues/{number}'
                         or target.get('state') != 'open' or 'pull_request' in target):
                     raise ValueError('native planner target is not the expected open issue')
-            queue.coordination.mark_mutation_for(self.repo, required=True)
+            # Only a transport that owns this contract may mark at its own
+            # final dispatch boundary. Other callbacks remain conservative.
+            if getattr(self.request, 'marks_mutations', False) is not True:
+                queue.coordination.mark_mutation_for(self.repo, required=True)
         response = self.request(method, path, payload)
         if (not isinstance(response, (dict, list))
                 or method != 'GET' and not isinstance(response, dict)):

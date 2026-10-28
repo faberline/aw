@@ -126,12 +126,12 @@ class TransportTests(unittest.TestCase):
         self.assertEqual([(a['status'], b['status']) for a, b in state['guard_writes']], [('free', 'held'), ('held', 'free')])
         self.assertIsNone(coord._active)
 
-    def _real_run_fixture(self, uncertain=False):
+    def _real_run_fixture(self, uncertain=False, fail_target_read=False):
         connector_spec = importlib.util.spec_from_file_location('native_run_connector', Path(__file__).parents[1] / 'scripts/connector.py')
         connector = importlib.util.module_from_spec(connector_spec)
         connector_spec.loader.exec_module(connector)
         coord = connector.queue.coordination
-        state = {'guard': FREE.copy(), 'issue': issue(), 'writes': [], 'issue_attempts': 0}
+        state = {'guard': FREE.copy(), 'issue': issue(), 'writes': [], 'issue_attempts': 0, 'issue_reads': 0}
         def sha():
             return hashlib.sha1(json.dumps(state['guard'], sort_keys=True).encode()).hexdigest()
         def call(name, args):
@@ -143,6 +143,9 @@ class TransportTests(unittest.TestCase):
                 state['writes'].append(state['guard']['status'])
                 return env({'content_sha': sha()})
             if name.endswith('_fetch'):
+                state['issue_reads'] += 1
+                if fail_target_read and state['issue_reads'] == 3:
+                    raise RuntimeError('native target read failed')
                 return env({'content': json.dumps(state['issue'])})
             if name.endswith('_update_issue'):
                 state['issue_attempts'] += 1
@@ -159,6 +162,16 @@ class TransportTests(unittest.TestCase):
             source.flush()
             with self.assertRaises(native.Unsupported):
                 connector.run(REPO, ['spec', '7', source.name], transport, str(uuid.uuid4()))
+        self.assertEqual(state['writes'], ['held', 'free'])
+        self.assertEqual(state['guard']['status'], 'free')
+        self.assertEqual(state['issue_attempts'], 0)
+        self.assertIsNone(connector.queue.coordination._active)
+
+    def test_failed_native_target_read_releases_real_guard(self):
+        connector, transport, state = self._real_run_fixture(fail_target_read=True)
+        with self.assertRaisesRegex(RuntimeError, 'native target read failed'):
+            connector.run(REPO, ['prioritize', '7', 'p1'], transport, str(uuid.uuid4()))
+        self.assertEqual(state['issue_reads'], 3)
         self.assertEqual(state['writes'], ['held', 'free'])
         self.assertEqual(state['guard']['status'], 'free')
         self.assertEqual(state['issue_attempts'], 0)

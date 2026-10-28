@@ -53,6 +53,10 @@ def _string_list(v):
 
 
 class NativeTransport:
+    # Connector may defer its mark because this adapter marks immediately
+    # before issuing the provider mutation, after all pre-write reads.
+    marks_mutations = True
+
     def __init__(self, repo, call_tool, coordination):
         if not isinstance(repo, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo):
             raise Refused('invalid repository')

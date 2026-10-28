@@ -88,18 +88,20 @@ This local recovery does not make AW available to hosted runs.
 
 The human requested Terra/Luna parallel work. Terra prepared the new
 `native_transport.py` and its tests in an isolated temporary tree. The controller
-integrated them into the claimed worktree. The planner suite now passes 43 tests,
-including 15 binding controls and a real shared-guard fixture with native tool
+integrated them into the claimed worktree. The planner suite now passes 44 tests,
+including 16 binding controls and a real shared-guard fixture with native tool
 envelopes, SHA-checked transitions, one issue update and owner-only release.
-Together with the unchanged loop and worker suite results, 199 focused controls
+Together with the unchanged loop and worker suite results, 200 focused controls
 have passed. These are fixture checks, not live mutation acceptance.
 
 Independent forward review reproduced a known unsupported-comment refusal that
 retained the guard even though no issue write was dispatched. The correction
-adds a pure prevalidation hook before marking a write attempted. Full-cycle
-fixtures prove that this known refusal releases the guard, while an uncertain
-provider PATCH remains held after exactly one attempt. Generic request callbacks
-retain their conservative pre-dispatch marking behavior.
+adds a pure prevalidation hook before marking a write attempted. Follow-up review
+also reproduced retention after the native transport's last target read failed.
+The native transport now owns marking at its final provider dispatch boundary.
+Full-cycle fixtures prove that known capability refusals and failed pre-write
+reads release the guard, while an uncertain provider PATCH remains held after
+exactly one attempt. Generic callbacks keep conservative pre-dispatch marking.
 
 The binding maps native tool envelopes and base64 file metadata explicitly.
 The host still needs a verified synchronous callback bridge. Real issue mutation
