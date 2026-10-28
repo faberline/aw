@@ -122,6 +122,52 @@ the other four repositories do not prove that no writer exists. All proposals
 require fresh input and adoption checks before any live write. No raw owner
 value was copied, and no live lease or settings file was changed.
 
+### AGY worker adoption gate
+
+The AGY installation is a separate physical copy at
+`/Users/chrischeng/.gemini/config/plugins/faberline`. Its `work.py` SHA-256 is
+`b389f2ef7aeb5dd36b0def8e4f73ddc4d8de87185afff834c69203e01cd9d553`.
+The pinned `f50add3` file is
+`0660004a34834888512108e7085c3788af3def29bf050ef1bb549525941cb3bf`.
+Updating only Claude's marketplace or caches cannot establish AGY adoption.
+
+The running Antigravity UI showed the Core worker dispatcher as Running. Its
+automation invokes the installed `issue-loop/scripts/pipeline_observer.py`
+with `dispatch-core-sidecar --managed-execute`, every ten minutes. Its configured
+prompt routes work through installed `observed_work.py`, which executes the
+sibling `work.sh`. The other five inspected sidecar configurations explicitly
+name the same installed AGY `work.sh`. These are configured routes; they do not
+prove what every already-running conversation loaded. No worker was restarted
+or its schedule changed. The six PLAN schedules still use a two-hour cadence.
+
+The configured AGY MCP proxy uses the same `http://127.0.0.1:8766/mcp` service.
+The supported native CLI is
+`/Users/chrischeng/.gemini/antigravity/bin/agentapi`. It exposes conversation
+metadata, new-conversation and send-message commands, without plugin update or
+reload controls. Read-only metadata queries from this controller returned
+`ANTIGRAVITY_LS_ADDRESS is not set`. The native runtime connection must be
+provided by the actor or operator. No credential was copied or new conversation
+started. The CLI's task-generated log was preserved outside the checkout at
+`/private/tmp/aw-cloud-planners-agentapi-error-20261028.log` without displaying
+its contents.
+
+Six read-only readiness requests were stored under AW task
+`cloud-issue-planner-migration`, addressed to stable registered worker IDs.
+The current receipts are **queued**, with no acknowledgment or reply. Queued
+means mailbox storage. Forwarded would mean native transport acceptance only.
+Neither establishes that a worker read the request or adopted the protocol.
+The registered candidates are not assumed to own the protected leases.
+Only each recipient may use its own private session file to receive messages;
+this controller must not run a receiver with another actor's credentials.
+
+`/private/tmp/aw-actor-adoption-proposal.json` records the distinct installed
+roots, required config provisioning, source hashes and acknowledgment gates.
+The absence of `coordination.json` in the source is intentional: provision the
+exact six-repository sidecar config only during an admitted installation.
+The remaining adoption gate needs an actor reply or a supported native runtime
+interface. It cannot be replaced by a local fixture pass or an old idle status.
+The private cloud publication remains a separate live pending operation.
+
 Scope: Core, Defer, Keep, Lumen, Relay and Tape issue planning. Keep the existing
 two-hour cadence. Do not change product issues or owners as part of validation.
 
