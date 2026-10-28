@@ -1,0 +1,25 @@
+name: Claude review outcome and native auto-merge
+description: Authenticate the exact current review; return rejected issues to doing or merge qualified passing PRs with native issue closure.
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+      with:
+        version: 0.12.1
+        enable-cache: false
+    - name: Provision hash-locked metadata parser without controller credentials
+      shell: bash
+      run: |
+        set -euo pipefail
+        uv venv --python 3.13.9 "$RUNNER_TEMP/aw-native-merge-runtime"
+        uv pip install --python "$RUNNER_TEMP/aw-native-merge-runtime/bin/python" \
+          --require-hashes --only-binary :all: --no-deps \
+          -r "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/readiness-requirements.txt"
+    - name: Reconcile all current PRs from trusted policy
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        AW_ACTION_REF: ${{ github.action_ref }}
+      run: |
+        set -euo pipefail
+        exec "$RUNNER_TEMP/aw-native-merge-runtime/bin/python" -I -B "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/native_merge.py"

@@ -30,6 +30,7 @@ ci = sibling("handoff")
 action = sibling("action")
 r = sibling("readiness")
 MARKER = "AW_CLAUDE_REVIEW_V1 "
+TARGET_MARKER = "AW_CLAUDE_REVIEW_TARGET_V1 "
 CLI = "/usr/local/bin/claude"
 MAX_INPUT = 1024 * 1024
 MAX_RESULT = 65536
@@ -697,6 +698,14 @@ def invoke_claude(packet, p):
 
 def producer(api, repo, document, run_id, completed, role="producer"):
     spec = policy(document)[role]
+    return producer_identity(api, repo, document, run_id, completed, spec)
+
+
+def producer_identity(api, repo, document, run_id, completed, spec):
+    need(exact(spec, "path id definition_sha job") and integer(spec["id"])
+         and isinstance(spec["path"], str)
+         and re.fullmatch(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml", spec["path"])
+         and sha(spec["definition_sha"]) and text(spec["job"], 200), "producer_policy")
     meta = api.api(f"repos/{repo}")
     run = api.api(f"repos/{repo}/actions/runs/{run_id}")
     need(integer(run_id) and run.get("id") == run_id and run.get("workflow_id") == spec["id"]
@@ -718,6 +727,7 @@ def producer(api, repo, document, run_id, completed, role="producer"):
 
 
 def review(api, repo, number, head, load_document, evaluator, run_id, invoke=invoke_claude, plan_invoke=plan_context):
+    print(TARGET_MARKER + r.canonical(dict(version=1, repo=repo, pr=number, head=head)), flush=True)
     initial, initial_packet = collect(api, repo, number, head, load_document, evaluator, include_sources=True)
     document = load_document()
     identity = producer(api, repo, document, run_id, False)
@@ -739,14 +749,16 @@ def review(api, repo, number, head, load_document, evaluator, run_id, invoke=inv
     return dict(payload=payload, sha256=r.digest(payload))
 
 
-def verify_result_receipt(api, repo, number, head, load_document, evaluator, run_id, log_reader=r.job_log):
+def verify_result_receipt(api, repo, number, head, load_document, evaluator, run_id,
+                          log_reader=r.job_log, latest_selector=None, allow_rejected=False):
     document = load_document()
     p = policy(document)
     runs = api.pages(f'repos/{repo}/actions/workflows/{p["producer"]["id"]}/runs', "workflow_runs")
     need(bool(runs), "review_missing")
-    latest = max(runs, key=lambda run: (run["run_number"], run["run_attempt"]))
+    select = latest_selector or (lambda values: max(values, key=lambda run: (run["run_number"], run["run_attempt"])))
+    latest = select(runs)
     need(latest["id"] == run_id, "review_superseded")
-    identity = producer(api, repo, document, run_id, True)
+    identity = producer(api, repo, document, run_id, not allow_rejected)
     records = r.records(log_reader(repo, identity["job_id"]), MARKER)
     need(len(records) == 1, "review_record_ambiguous")
     receipt = records[0]
@@ -757,9 +769,17 @@ def verify_result_receipt(api, repo, number, head, load_document, evaluator, run
     current, _ = collect(api, repo, number, head, load_document, evaluator, source_plan=payload["context"].get("requirement_plan"))
     need(payload["producer"] == identity and payload["context"] == current, "review_stale")
     validate_result(payload["result"], current)
+    if allow_rejected:
+        run = api.api(f"repos/{repo}/actions/runs/{run_id}")
+        jobs = api.pages(f'repos/{repo}/actions/runs/{run_id}/attempts/{identity["run_attempt"]}/jobs', "jobs")
+        job = next(j for j in jobs if j["id"] == identity["job_id"])
+        allowed = {"success", "failure"} if payload["result"]["decision"] in ("fail", "block") else {"success"}
+        need(run.get("status") == job.get("status") == "completed"
+             and run.get("conclusion") in allowed and job.get("conclusion") in allowed,
+             "review_not_completed_result")
     latest_again = api.pages(f'repos/{repo}/actions/workflows/{p["producer"]["id"]}/runs', "workflow_runs")
-    need(latest_again and max(latest_again, key=lambda run: (run["run_number"], run["run_attempt"])) == latest
-         and producer(api, repo, document, run_id, True) == identity, "review_changed_during_verification")
+    need(latest_again and select(latest_again) == latest
+         and producer(api, repo, document, run_id, not allow_rejected) == identity, "review_changed_during_verification")
     need(load_document() == document, "policy_changed")
     return receipt
 
@@ -841,6 +861,8 @@ def main():
         need(run_id == os.environ.get("GITHUB_RUN_ID"), "review_run_identity")
         receipt = review(ci, repo, int(number), head, load_document, evaluator, int(run_id))
         print(MARKER + r.canonical(receipt))
+        if receipt["payload"]["result"]["decision"] != "pass":
+            return 1
     elif operation == "verify":
         verify_review(ci, repo, int(number), head, load_document, evaluator, int(run_id))
         print("authenticated_review_pass")

@@ -1,0 +1,42 @@
+name: Native auto-merge controls
+on:
+  pull_request:
+    paths:
+      - ".github/actions/native-auto-merge/**"
+      - ".github/workflows/native-auto-merge-controls.yml"
+      - "plugins/faberline/skills/issue-ci/**"
+  push:
+    branches: [codex/claude-native-automerge]
+    paths:
+      - ".github/actions/native-auto-merge/**"
+      - ".github/workflows/native-auto-merge-controls.yml"
+      - "plugins/faberline/skills/issue-ci/**"
+permissions:
+  contents: read
+concurrency:
+  group: native-merge-controls-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  controls:
+    name: complete isolated native merge controls
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: 0.12.1
+          enable-cache: false
+      - name: Create pinned isolated control runtime
+        run: |
+          uv venv --python 3.13.9 "$RUNNER_TEMP/native-merge-controls"
+          uv pip install --python "$RUNNER_TEMP/native-merge-controls/bin/python" \
+            --require-hashes --only-binary :all: --no-deps \
+            -r plugins/faberline/skills/issue-ci/scripts/native-controls-requirements.txt
+      - name: Run the complete control suite with no skipped controls
+        env:
+          CONTROL_PYTHON: ${{ runner.temp }}/native-merge-controls/bin/python
+        run: |
+          "$CONTROL_PYTHON" -c 'import sys,unittest; s=unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-ci/tests"); n=s.countTestCases(); r=unittest.TextTestRunner(verbosity=2).run(s); sys.exit(0 if n > 0 and r.wasSuccessful() and not r.skipped else 1)'

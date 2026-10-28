@@ -1,0 +1,150 @@
+# Claude pass to native auto-merge
+
+This is a separate adapter for GitHub native auto-merge. The legacy
+`guarded_merge` operation stays disabled. Publishing this source does not
+activate a consumer or approve its qualification policy.
+
+The human requested merge after the latest commit passes CI and Claude review.
+Core #74 and Lumen #185 were delivered under that direct authorization after
+their exact head, base, successful CI and authenticated review were rechecked.
+Core merged to main. Lumen merged to its existing dependency branch. Those
+one-off reviews are not receipts from the formal default-branch producer.
+
+## Required consumer state
+
+The consumer needs a separately reviewed complete qualification contract v1,
+`lifecycle_mode: full`, no unresolved global qualification blockers, and the
+existing nonempty unit, functional/E2E and performance selection rules. Unknown
+paths, missing evidence and unapproved applicability stay blocked. Changing a
+label or clearing a string list does not supply this evidence.
+
+The default-branch `claude_final_review` policy binds the review producer.
+The separate `native_auto_merge` policy binds the native merge producer.
+Each identity has a workflow ID, definition blob hash and exact job name.
+The legacy merge-producer fields stay disabled. The review producer uses the
+reviewed immutable action. It remains read-only. Only its
+model step receives the existing personal Claude credential. The merge job
+gets no model credential and executes no PR source or artifact.
+
+The review workflow uses this exact run-name shape so completed and active
+attempts have an authenticated target:
+
+```yaml
+run-name: AW Claude review PR ${{ github.event.workflow_run.pull_requests[0].number }} head ${{ github.event.workflow_run.head_sha }}
+```
+
+The new review action also prints one strict target record before collection
+and paid execution. The index compares that record with the run title and
+producer identity. A newer failed, skipped, cancelled or active attempt for
+the same PR supersedes its old PASS. Another PR's review does not supersede it.
+The original verifier's default behavior remains unchanged for old callers.
+
+The consumer additionally declares this native-provider contract with its
+actual reviewed ruleset and integration IDs. `enabled: false` is preparation
+state; the adapter refuses it.
+
+```json
+{
+  "native_auto_merge": {
+    "version": 1,
+    "enabled": false,
+    "status_context": "claude/verified-merge",
+    "status_app_id": 15368,
+    "merge_method": "SQUASH",
+    "ruleset_id": 1,
+    "producer": {
+      "path": ".github/workflows/claude-native-merge.yml",
+      "id": 1,
+      "definition_sha": "REVIEWED_NATIVE_WORKFLOW_BLOB_SHA",
+      "job": "native-auto-merge"
+    }
+  }
+}
+```
+
+The IDs and workflow blob are placeholders, not deployed identities. Native auto-merge and squash
+must be enabled in the repository. An active branch ruleset must require
+`claude/verified-merge` from the declared integration and require tests against
+the current base. This proposal accepts no ruleset bypass actors. Repository
+workflow writers and ruleset administrators remain trusted authorities.
+The adapter reads actual active rules; the checked-in declaration is not proof
+that the provider enforces them.
+
+## Native write sequence
+
+1. Verify the formal review producer, current attempt and strict passing receipt.
+   Recollect the exact head, base, issue, source inventory and configured CI.
+2. Compute qualification with the approved selector. Every required category
+   needs real passing evidence or its explicit reviewed applicability decision.
+3. Read the current provider PR, repository setting and active strict ruleset.
+4. Publish a pending status on that exact head. Enable the native request with
+   `expectedHeadOid`, the PR node ID and squash method.
+5. Verify the same receipt, issue, CI, policy, native request, head and base
+   again. Only then publish the passing head status.
+6. Read GitHub's request or merged result. Record the observed state.
+
+GitHub stores the pending auto-merge request and final PR result across runs.
+The adapter does not implement a second immediate merge endpoint. A queued
+request cannot inherit a passing status from a different head. An error after
+a write is held for observation. The same attempt does not blindly repeat the
+queue or success write. An already merged matching head is observed without a
+new write. Existing native requests with another merge method are refused.
+
+The outcome workflow serializes all status and lifecycle writes in the existing
+repository-wide `issue-ci-handoff` group.
+Each wake paginates all open PRs and all producer attempts. It re-evaluates the
+complete queue in stable PR order. A refused PR does not stop another PR. This
+recovers PRs whose pending wake was replaced. GitHub applies the final merge and closes the single issue named by the
+required `Closes #N` line, because only the default target branch is accepted.
+No issue is closed while a request is merely queued.
+
+A fresh authenticated `fail` or `block` decision returns the linked open issue
+to `agy:doing`. It adds doing before it removes todo or done. Other labels
+remain. Each removal rechecks the exact PR, issue contract and latest review.
+Closed or blocked issues, stale heads and missing/invalid review receipts are
+held. An interrupted mixed-label update can finish on a later wake. Existing
+CI failure-only behavior remains unchanged; the later Claude outcome owns its
+requested return to doing. The writer runs in the same serialized lifecycle
+group as CI. It never writes issue bodies or comments or deletes branches.
+
+See the [native merge workflow template](templates/claude-native-merge.yml.example)
+and [review producer template](templates/claude-final-review.yml.example).
+Consumer rollout must bind real source hashes and workflow IDs before enabling
+the adapter. Preserve the other sessions' planner schedules and existing
+qualification holds during preparation.
+
+## Validation boundary
+
+`test_native_merge.py` covers pending-before-queue ordering, the expected-head
+argument, repeat verification, durable native requests, replay observation,
+failure-only and qualification holds, missing/non-success/unmapped evidence,
+provider rules, draft/head/base drift, method conflicts, ambiguous responses,
+credential separation and complete queue processing.
+
+`test_native_review_index.py` uses the actual review verifier with synthetic
+provider metadata. It checks per-PR ordering, superseding failed/active attempts,
+target-record agreement, duplicate/boolean rejection, rerun attempts and foreign
+producer exclusion. The full inherited control suite remains required, with
+the pinned parser and both JSON Schema interoperability validators installed.
+The added hosted workflow refuses skipped controls.
+
+These controls are not a live consumer merge proof. Read back a real current
+review, qualification result, native request and final merge before declaring
+a production rollout operational.
+
+GitHub documents the expected-head auto-merge input in the
+[GraphQL reference](https://docs.github.com/en/graphql/reference/pulls#enablepullrequestautomergeinput)
+and the active strict rule metadata in the
+[branch rules API](https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch).
+
+## Requested lifecycle
+
+- Claude PASS plus complete approved qualification: queue native squash merge.
+  GitHub closes the explicitly linked issue only after the merge completes.
+- Claude fail or block: return the linked open issue to `agy:doing`.
+- CI pending/failing, missing review, stale inputs or coverage hold: do not merge.
+
+`test_review_lifecycle.py` covers rejection, blocked/closed issues, contract or
+head drift, unrelated labels, interrupted recovery and retained coverage holds.
+The writer contract also verifies the shared mutex, one pinned action step,
+exact permissions and the trusted review trigger.

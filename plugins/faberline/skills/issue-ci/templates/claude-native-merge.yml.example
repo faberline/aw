@@ -1,0 +1,29 @@
+# Install only with the reviewed full qualification policy, pinned action,
+# explicit merge-producer identity, and required native provider ruleset.
+name: Claude review outcome
+on:
+  workflow_run:
+    workflows: [Claude final review]
+    types: [completed]
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+  issues: read
+concurrency:
+  group: issue-ci-handoff
+  cancel-in-progress: false
+jobs:
+  native-auto-merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+      statuses: write
+      issues: write
+    steps:
+      # No checkout, model, Claude credential, PR artifact or PR program.
+      # Every wake recomputes all open PRs, including displaced pending wakes.
+      - uses: faberline/aw/.github/actions/native-auto-merge@AW_REVIEWED_40_HEX
