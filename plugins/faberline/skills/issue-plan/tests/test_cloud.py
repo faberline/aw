@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -69,8 +70,32 @@ class BundleTests(unittest.TestCase):
                 self.assertNotIn('/Users/', prompt)
             self.assertEqual(manifest['interval_hours'], 2)
 
+    def test_bundled_cloud_entrypoint_runs_without_checkout_or_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context = root / 'context'
+            self.build(context)
+            tools = root / 'bin'
+            tools.mkdir()
+            gh = tools / 'gh'
+            gh.write_text('#!/usr/bin/env python3\nimport sys\n'
+                          'if len(sys.argv) < 3 or sys.argv[1] != "api": sys.exit(99)\n'
+                          'if "--method" in sys.argv and sys.argv[sys.argv.index("--method")+1] != "GET": sys.exit(99)\n'
+                          'print("[]")\n')
+            gh.chmod(0o700)
+            env = dict(os.environ, GH_REPO='faberline/core',
+                       ISSUE_COORDINATION_MODE='local',
+                       PATH=str(tools) + os.pathsep + os.environ['PATH'])
+            result = subprocess.run(
+                [str(context / 'issue-plan/scripts/plan.sh'), '--cloud', 'status'],
+                cwd=root, env=env, text=True, capture_output=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            snapshot = json.loads(result.stdout.splitlines()[0])
+            self.assertTrue(snapshot['read_only_snapshot'])
+            self.assertFalse(snapshot['mutation_authorized'])
+
     def test_tampered_missing_or_added_manifest_file_is_refused(self):
-        for change in ('tamper', 'missing', 'extra'):
+        for change in ('tamper', 'missing', 'extra', 'nonexecutable'):
             with self.subTest(change=change), tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / 'context'
                 self.build(path)
@@ -79,6 +104,8 @@ class BundleTests(unittest.TestCase):
                     target.write_text('different')
                 elif change == 'missing':
                     target.unlink()
+                elif change == 'nonexecutable':
+                    (path / 'issue-plan/scripts/plan.sh').chmod(0o600)
                 else:
                     m = json.loads((path / 'manifest.json').read_text())
                     m['files']['../../foreign'] = 'a' * 64

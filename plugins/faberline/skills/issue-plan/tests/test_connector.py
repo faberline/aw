@@ -28,9 +28,18 @@ class Transport:
                           generation=str(uuid.uuid4()), owner=None)
         self.fail_patch = False
         self.patch_response = None
+        self.lease_entries = []
+        self.missing_ledger = False
 
     def __call__(self, method, path, payload=None):
         self.calls.append((method, path, copy.deepcopy(payload)))
+        if '/contents/issue-work-leases.json' in path and method == 'GET':
+            if self.missing_ledger:
+                raise RuntimeError('ledger unavailable')
+            state = dict(protocol='aw-issue-leases-v1', repo=REPO,
+                         generation='11111111-1111-4111-8111-111111111111', leases=self.lease_entries)
+            return dict(type='file', path='issue-work-leases.json', encoding='base64',
+                        content=guard.encode(state), sha='a' * 40)
         if '/contents/' in path:
             sha = hashlib.sha1(guard.encode(self.state).encode()).hexdigest()
             if method == 'GET':
@@ -57,6 +66,41 @@ class Transport:
 
 
 class ConnectorTests(unittest.TestCase):
+    def test_released_active_or_review_issue_refuses_all_target_writes(self):
+        for labels in (['doing'], [{'name': 'doing'}], ['done'], [{'name': 'done'}]):
+            with self.subTest(labels=labels):
+                transport = Transport()
+                transport.issue['labels'] = labels
+                with guard.shared_guard(REPO, required=True, mode='github', owner=str(uuid.uuid4()), request=transport):
+                    client = connector.Client(REPO, transport)
+                    for method, suffix, payload in [('PATCH', '', {'labels': ['todo']}), ('PATCH', '', {'milestone': 1}), ('POST', '/comments', {'body': 'spec'})]:
+                        with self.assertRaisesRegex(ValueError, 'active or awaiting review'):
+                            client.command('api', '--method', method, f'repos/{REPO}/issues/7' + suffix, payload=payload)
+                self.assertFalse(any(c[0] == 'PATCH' or c[0] == 'POST' for c in transport.calls))
+
+    def test_unleased_backlog_is_mutable(self):
+        transport = Transport()
+        transport.issue['labels'] = []
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(connector.run(REPO, ['prioritize', '7', 'p1'], transport, str(uuid.uuid4())), 0)
+        self.assertEqual(transport.issue['labels'], ['priority:p1'])
+
+    def test_claiming_lease_blocks_todo_issue_before_write(self):
+        transport = Transport()
+        transport.lease_entries = [dict(issue=7, owner_nonce='a' * 64, phase='claiming')]
+        with self.assertRaisesRegex(ValueError, 'persistent worker lease'):
+            connector.run(REPO, ['prioritize', '7', 'p1'], transport, str(uuid.uuid4()))
+        self.assertEqual(transport.state['status'], 'free')
+        self.assertFalse(any(call[0] == 'PATCH' for call in transport.calls))
+
+    def test_missing_ledger_blocks_write(self):
+        transport = Transport()
+        transport.missing_ledger = True
+        with self.assertRaisesRegex(RuntimeError, 'ledger unavailable'):
+            connector.run(REPO, ['prioritize', '7', 'p1'], transport, str(uuid.uuid4()))
+        self.assertEqual(transport.state['status'], 'free')
+        self.assertFalse(any(call[0] == 'PATCH' for call in transport.calls))
+
     def test_status_uses_native_reads_without_shell_or_checkout(self):
         transport = Transport()
         with patch.object(connector.queue.subprocess, 'check_output', side_effect=AssertionError('no shell')), contextlib.redirect_stdout(io.StringIO()) as out:

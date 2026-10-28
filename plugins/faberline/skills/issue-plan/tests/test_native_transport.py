@@ -97,6 +97,10 @@ class TransportTests(unittest.TestCase):
             return hashlib.sha1(json.dumps(state['guard'], sort_keys=True).encode()).hexdigest()
         def call(name, args):
             if name.endswith('_fetch_file'):
+                if args['path'] == 'issue-work-leases.json':
+                    return env({'content': enc({'protocol': 'aw-issue-leases-v1', 'repo': REPO,
+                        'generation': str(uuid.uuid4()), 'leases': []}), 'encoding': 'base64', 'sha': 'c' * 40,
+                        'display_url': f'https://github.com/{REPO}/blob/aw-coordination/issue-work-leases.json'})
                 self.assertEqual(args['ref'], 'aw-coordination')
                 return env({'content': enc(state['guard']), 'encoding': 'base64', 'sha': file_sha()})
             if name.endswith('_update_file'):
@@ -126,6 +130,37 @@ class TransportTests(unittest.TestCase):
         self.assertEqual([(a['status'], b['status']) for a, b in state['guard_writes']], [('free', 'held'), ('held', 'free')])
         self.assertIsNone(coord._active)
 
+    def test_native_guard_and_ledger_round_trip(self):
+        connector_spec = importlib.util.spec_from_file_location('ledger_connector', Path(__file__).parents[1] / 'scripts/connector.py')
+        connector = importlib.util.module_from_spec(connector_spec)
+        connector_spec.loader.exec_module(connector)
+        coord = connector.queue.coordination
+        files = {'issue-work-guard.json': FREE.copy(), 'issue-work-leases.json':
+            {'protocol': 'aw-issue-leases-v1', 'repo': REPO, 'generation': str(uuid.uuid4()), 'leases': []}}
+        def sha(path):
+            return hashlib.sha1(json.dumps(files[path], sort_keys=True).encode()).hexdigest()
+        def call(name, args):
+            path = args['path']
+            if name.endswith('_fetch_file'):
+                return env({'content': enc(files[path]), 'encoding': 'base64', 'sha': sha(path),
+                            'display_url': f'https://github.com/{REPO}/blob/aw-coordination/{path}'})
+            if name.endswith('_update_file'):
+                self.assertEqual(args['sha'], sha(path))
+                files[path] = json.loads(args['content'])
+                return env({'content_sha': sha(path)})
+            self.fail(name)
+        transport = native.NativeTransport(REPO, call, coord)
+        ledger = connector.leases.Ledger(REPO, coord, transport)
+        with coord.shared_guard(REPO, required=True, mode='github', owner=str(uuid.uuid4()), request=transport):
+            ledger.transition(7, 'local-owner', 'claiming')
+            with self.assertRaisesRegex(ValueError, 'persistent worker lease'):
+                ledger.require_unleased(7)
+            ledger.transition(7, 'local-owner', 'coding', previous='claiming')
+            ledger.transition(7, 'local-owner', 'submitted', previous='coding')
+            ledger.release(7, 'local-owner')
+        self.assertEqual(files['issue-work-leases.json']['leases'], [])
+        self.assertEqual(files['issue-work-guard.json']['status'], 'free')
+
     def _real_run_fixture(self, uncertain=False, fail_target_read=False):
         connector_spec = importlib.util.spec_from_file_location('native_run_connector', Path(__file__).parents[1] / 'scripts/connector.py')
         connector = importlib.util.module_from_spec(connector_spec)
@@ -136,6 +171,10 @@ class TransportTests(unittest.TestCase):
             return hashlib.sha1(json.dumps(state['guard'], sort_keys=True).encode()).hexdigest()
         def call(name, args):
             if name.endswith('_fetch_file'):
+                if args['path'] == 'issue-work-leases.json':
+                    return env({'content': enc({'protocol': 'aw-issue-leases-v1', 'repo': REPO,
+                        'generation': str(uuid.uuid4()), 'leases': []}), 'encoding': 'base64', 'sha': 'c' * 40,
+                        'display_url': f'https://github.com/{REPO}/blob/aw-coordination/issue-work-leases.json'})
                 return env({'content': enc(state['guard']), 'encoding': 'base64', 'sha': sha()})
             if name.endswith('_update_file'):
                 self.assertEqual(args['sha'], sha())

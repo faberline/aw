@@ -56,6 +56,13 @@ runtime directory. Never fetch helpers from mutable main during that run.
 Both transports must use the same guard and planner entrypoint. Direct native
 issue writes that bypass those checks are not permitted.
 
+Install `issue-loop/coordination.json` with the pinned six-repository set before
+enabling local planners or workers in those repositories. Shell wrappers and
+direct `plan.py`/`work.py` execution all refuse a missing or invalid config for
+these six repositories. GitHub owner/repository case is canonicalized. Other
+repositories keep the legacy local default. Verify the installed config hash
+with `coordination_entrypoint.py verify-config`; a source patch is not deployment.
+
 Set `GH_REPO` to exactly one of `faberline/core`, `faberline/defer`,
 `faberline/keep`, `faberline/lumen`, `faberline/relay`, or `faberline/tape`.
 For native tools, call `connector.run(repo, ['status'], request)`; for mutations,
@@ -116,8 +123,30 @@ planner writes an issue, it also needs fresh, hosted-readable evidence of that
 issue's lease and holds, checked while it owns the guard. An active or unknown
 lease blocks that issue. A claiming lease can exist while its label is still
 `todo`; a `doing` label check alone is insufficient. Preserve the local lease.
-There is no requirement to stop unrelated workers. The current candidate does
-not yet implement this hosted lease record, so adoption cannot grant readiness.
+There is no requirement to stop unrelated workers.
+
+`github_leases.py` supplies this persistent record on the same coordination
+branch, in `issue-work-leases.json`. Its schema is:
+
+```json
+{"protocol":"aw-issue-leases-v1","repo":"faberline/core","generation":"<new UUID>","leases":[{"issue":7,"owner_nonce":"<64 hex characters>","phase":"coding"}]}
+```
+
+The owner nonce hashes a protocol prefix, repository and stable local worker
+owner. It is an identifier, not a credential or secrecy guarantee. Never upload
+the raw worker owner or AW session files. Ledger transitions use the current
+file SHA while holding the shared guard, then read back the state. The worker
+publishes `claiming` before local acquisition, then `coding`, then `submitted`.
+Only the same owner can release a submitted lease. No runtime creates a missing
+ledger, expires a lease, steals an owner or repairs an uncertain transition.
+
+Both native planner and guarded CLI planner re-read this ledger before each
+issue-target write. Any recorded lease blocks the target. They also refuse
+targets labeled `doing` or `done`, so releasing a coding lease after submission
+does not expose an issue awaiting review or CI to spec or priority changes.
+Unleased backlog remains eligible. Existing local leases must be reconciled
+and copied as opaque records during installation; installing source alone does
+not establish that this deployment has happened.
 
 ## Validation and cutover
 

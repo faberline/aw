@@ -13,6 +13,9 @@ spec = importlib.util.spec_from_file_location('connector_plan', Path(__file__).w
 plan = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(plan)
 queue = plan.queue
+lease_spec = importlib.util.spec_from_file_location('planner_github_leases', Path(__file__).resolve().parents[2] / 'issue-loop/scripts/github_leases.py')
+leases = importlib.util.module_from_spec(lease_spec)
+lease_spec.loader.exec_module(leases)
 
 
 class Client(queue.Client):
@@ -53,12 +56,15 @@ class Client(queue.Client):
             queue.coordination.verify_for(self.repo, required=True)
             if path != f'repos/{self.repo}/issues':
                 number = int(path.split('/issues/', 1)[1].split('/')[0])
+                leases.Ledger(self.repo, queue.coordination, self.request).require_unleased(number)
                 target = self.issue(number)
                 if (not isinstance(target, dict) or type(target.get('number')) is not int
                         or target['number'] != number
                         or target.get('html_url') != f'https://github.com/{self.repo}/issues/{number}'
                         or target.get('state') != 'open' or 'pull_request' in target):
                     raise ValueError('native planner target is not the expected open issue')
+                if not isinstance(target.get('labels'), list) or queue.labels(target) & {'doing', 'done'}:
+                    raise ValueError('native planner target is active or awaiting review')
             # Only a transport that owns this contract may mark at its own
             # final dispatch boundary. Other callbacks remain conservative.
             if getattr(self.request, 'marks_mutations', False) is not True:

@@ -8,12 +8,14 @@ import re
 import subprocess
 
 REPOS = ('core', 'defer', 'keep', 'lumen', 'relay', 'tape')
+EXECUTABLES = frozenset({'issue-plan/scripts/plan.sh'})
 FILES = ('issue-plan/SKILL.md', 'issue-plan/CLOUD.md', 'issue-plan/scripts/plan.py',
          'issue-plan/scripts/plan.sh', 'issue-plan/scripts/bundle.py',
          'issue-plan/scripts/connector.py',
          'issue-plan/scripts/native_transport.py',
          'issue-loop/MILESTONE-QUEUE.md', 'issue-loop/scripts/milestone_queue.py',
-         'issue-loop/scripts/github_guard.py')
+         'issue-loop/scripts/github_guard.py', 'issue-loop/scripts/github_leases.py',
+         'issue-loop/scripts/coordination_entrypoint.py')
 
 
 def build(destination, revision):
@@ -38,6 +40,8 @@ def build(destination, revision):
         path = destination / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
+        if name in EXECUTABLES:
+            path.chmod(0o755)
     (destination / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     prompts = {}
     for repo in REPOS:
@@ -78,6 +82,8 @@ def verify(destination):
         path = destination / name
         if path.is_symlink() or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
             raise ValueError(f'bundle hash mismatch: {name}')
+        if name in EXECUTABLES and not path.stat().st_mode & 0o100:
+            raise ValueError(f'bundle executable permission missing: {name}')
     return manifest
 
 

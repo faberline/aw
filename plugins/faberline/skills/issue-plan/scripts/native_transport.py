@@ -64,6 +64,7 @@ class NativeTransport:
         self.prefix = f'repos/{repo}/'
         self.guard_read = None
         self.issued_held = None
+        self.lease_read_sha = None
 
     def _call(self, name, args):
         # No write is retried, even if callback raises or the result is malformed.
@@ -76,19 +77,25 @@ class NativeTransport:
         sub = parts.path[len(self.prefix):]
         if re.fullmatch(r'milestones(?:/[1-9][0-9]*)?', sub):
             raise Unsupported('native GitHub fetch does not support milestone endpoints')
-        if sub == 'contents/issue-work-guard.json':
+        if sub in ('contents/issue-work-guard.json', 'contents/issue-work-leases.json'):
             if parse_qsl(parts.query, keep_blank_values=True) != [('ref', 'aw-coordination')]:
                 raise Refused('invalid guard ref')
+            filename = sub.removeprefix('contents/')
             d = self._call('fetch_file', {'repository_full_name': self.repo,
-                'path': 'issue-work-guard.json', 'ref': 'aw-coordination', 'encoding': 'base64'})
+                'path': filename, 'ref': 'aw-coordination', 'encoding': 'base64'})
+            if filename == 'issue-work-leases.json' and d.get('display_url') != f'https://github.com/{self.repo}/blob/aw-coordination/{filename}':
+                raise Refused('invalid native lease source identity')
             if d.get('encoding') != 'base64' or not isinstance(d.get('content'), str) or not re.fullmatch(r'[0-9a-f]{40}', str(d.get('sha', ''))):
                 raise Refused('invalid native guard file')
             try:
                 base64.b64decode(''.join(d['content'].split()), validate=True)
             except ValueError as e:
                 raise Refused('invalid native guard content') from e
-            self.guard_read = (d['sha'], self._guard_state(d['content']))
-            return {'type': 'file', 'path': 'issue-work-guard.json', 'encoding': 'base64', 'sha': d['sha'], 'content': d['content']}
+            if filename == 'issue-work-guard.json':
+                self.guard_read = (d['sha'], self._guard_state(d['content']))
+            else:
+                self.lease_read_sha = d['sha']
+            return {'type': 'file', 'path': filename, 'encoding': 'base64', 'sha': d['sha'], 'content': d['content']}
         if not re.fullmatch(r'(?:issues(?:/[1-9][0-9]*(?:/comments|/dependencies/blocked_by)?)?|issues/comments/[1-9][0-9]*|pulls/[1-9][0-9]*)', sub):
             raise Refused('unsupported GET endpoint')
         if not re.fullmatch(r'[A-Za-z0-9_=&%.-]*', parts.query):
@@ -145,6 +152,37 @@ class NativeTransport:
             raise Refused('request outside repository')
         if method == 'GET' and payload is None:
             return self._get(path)
+        if method == 'PUT' and path == self.prefix + 'contents/issue-work-leases.json':
+            if (not isinstance(payload, dict) or set(payload) != {'branch', 'message', 'sha', 'content'}
+                    or payload['branch'] != 'aw-coordination' or payload['message'] != 'aw issue lease transition'
+                    or not isinstance(payload['sha'], str) or not re.fullmatch(r'[0-9a-f]{40}', payload['sha'])
+                    or self.lease_read_sha != payload['sha'] or not isinstance(payload['content'], str)):
+                raise Refused('invalid lease update')
+            try:
+                content = base64.b64decode(payload['content'], validate=True).decode('utf-8')
+                data = json.loads(content, object_pairs_hook=_unique)
+            except (ValueError, UnicodeError) as error:
+                raise Refused('invalid lease content') from error
+            if (not isinstance(data, dict) or set(data) != {'protocol', 'repo', 'generation', 'leases'}
+                    or data['repo'] != self.repo or data['protocol'] != 'aw-issue-leases-v1'
+                    or not isinstance(data['leases'], list)):
+                raise Refused('invalid lease identity')
+            try:
+                uuid.UUID(data['generation'])
+            except (ValueError, TypeError, AttributeError) as error:
+                raise Refused('invalid lease generation') from error
+            seen = set()
+            for lease in data['leases']:
+                if (not isinstance(lease, dict) or set(lease) != {'issue', 'owner_nonce', 'phase'}
+                        or type(lease['issue']) is not int or lease['issue'] < 1 or lease['issue'] in seen
+                        or not isinstance(lease['owner_nonce'], str) or not re.fullmatch(r'[0-9a-f]{64}', lease['owner_nonce'])
+                        or lease['phase'] not in ('claiming', 'coding', 'submitted')):
+                    raise Refused('invalid lease record')
+                seen.add(lease['issue'])
+            self.coordination.mark_mutation_for(self.repo, required=True)
+            self.lease_read_sha = None
+            return self._call('update_file', {'repository_full_name': self.repo, 'path': 'issue-work-leases.json',
+                'branch': 'aw-coordination', 'sha': payload['sha'], 'content': content, 'message': payload['message']})
         guard_path = self.prefix + 'contents/issue-work-guard.json'
         if method == 'PUT' and path == guard_path:
             if not isinstance(payload, dict) or set(payload) != {'branch', 'message', 'sha', 'content'} or payload['branch'] != 'aw-coordination' or payload['message'] != 'aw issue guard transition' or not re.fullmatch(r'[0-9a-f]{40}', str(payload['sha'])) or not isinstance(payload['content'], str):

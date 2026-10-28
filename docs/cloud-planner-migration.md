@@ -3,6 +3,53 @@
 Status: published implementation candidate, [draft PR #90](https://github.com/faberline/aw/pull/90);
 hosted cutover is **not ready**.
 
+## Goal execution: dedicated cloud environment and lease rollout
+
+The human explicitly started the goal to complete transfer and disable the six
+local schedules. Work continues against that goal; the goal is not complete.
+
+A dedicated Codex Cloud environment named `faberline-issue-planners` was prepared
+with AW and the six product repositories. Its setup chat is
+https://chatgpt.com/local/01a1808d-e329-75ef-9ae3-ad2aa36be084 . This is an OpenAI
+durable cloud workspace, not the user's local checkout. It has Python 3.12.14,
+Git and gh 2.46.0 with platform-provided GitHub authorization. Initial milestone
+REST reads were refused by the environment's network policy. A private draft
+adds only `api.github.com`, keeps general internet access off, and adds no secrets.
+Automatic approval review rejected publication as an access/security change.
+The human then explicitly approved publication of this exact private environment,
+seven repositories and GitHub API domain. Publication was started; completion
+and a new-runtime REST read still need verification.
+
+The source candidate now includes a persistent per-issue lease ledger and
+checks in both native and gh planner paths. The controller reran 57 planner,
+81 loop and 84 worker controls, all exit 0 (222 focused controls). The worker
+records claiming/coding/submitted transitions and preserves uncertain outcomes.
+Planner writes reject a lease or a doing/done target, including review work after
+the coding lease is released. These are simulated-provider checks, not deployment.
+
+Local read-only inventory found Lumen #45 and Tape #19 in coding phase. Their
+existing local leases remain untouched. The installed marketplace skills still
+need a verified update and scoped activation. Six legacy Claude skill files
+contain prompts without activation state; supported scheduler evidence is still
+needed. No production schedule has been cut over or disabled during this phase.
+
+The final source integration for this phase passed 58 planner, 99 loop and 85
+worker controls (242 total, exit 0), shell syntax and diff checks. The rollout
+entrypoint now canonicalizes protected repository names, refuses a missing
+config for the six local targets, and also runs from direct Python entrypoints.
+Other repositories retain their existing local behavior. HTTPS, SSH URL and SCP
+origins share one parser. Independent review found the previously omitted
+portable bootstrap and non-executable shell wrapper; both are corrected. A test
+now directly executes the built portable planner outside a Git checkout with a
+read-only provider fixture, rather than merely checking file hashes.
+
+The installation config has protocol `aw-issue-coordination-entrypoint-v1` and
+the exact ordered repositories core, defer, keep, lumen, relay, tape, each under
+`faberline/`. No config or new source has yet been installed into marketplace
+skills, and no remote coordination branch or ledger has been initialized.
+The protected local leases remain unchanged. The approved environment publication
+still shows in progress; do not start another publication or infer readiness.
+
 Scope: Core, Defer, Keep, Lumen, Relay and Tape issue planning. Keep the existing
 two-hour cadence. Do not change product issues or owners as part of validation.
 
