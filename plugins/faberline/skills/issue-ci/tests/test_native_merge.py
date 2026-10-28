@@ -25,6 +25,7 @@ class Provider:
     validate_config = staticmethod(m.review.ci.validate_config)
     validate_adoption = staticmethod(m.review.ci.validate_adoption)
     strict_json_loads = staticmethod(m.review.ci.strict_json_loads)
+    process_head = staticmethod(lambda *args, **kwargs: None)
 
     def __init__(self):
         cfg = qualification.config()
@@ -38,7 +39,7 @@ class Provider:
         cfg["native_auto_merge"] = dict(version=1, enabled=True,
             status_context="claude/verified-merge", status_app_id=15368,
             merge_method="SQUASH", ruleset_id=9,
-            producer=dict(path=".github/workflows/native-merge.yml", id=30,
+            producer=dict(path=".github/workflows/issue-ci.yml", id=30,
                 definition_sha="f" * 40, job="merge"))
         self.document = dict(config=cfg, source_commit=SOURCE)
         self.pull = dict(number=1, state="open", draft=False, changed_files=1, title="Synthetic PR", body="Closes #7\n",
@@ -258,14 +259,14 @@ class NativeMergeTests(unittest.TestCase):
             index = SimpleNamespace(attempts=object(), verify=object(), result=object())
             with patch.object(m.review, "ci", self.p), \
                  patch.object(m.review.action, "trusted_policy", return_value=self.p.load()), \
-                 patch.object(m.review, "producer_identity") as producer, \
+                 patch.object(m, "writer_identity") as producer, \
                  patch.object(m.review, "sibling", return_value=index), \
                  patch.object(m, "writer_contract"), \
                  patch.object(m, "reconcile", return_value=rows) as reconcile, \
                  contextlib.redirect_stdout(io.StringIO()):
                 result = m.main()
-                self.assertEqual(producer.call_args.args[5], self.p.document["config"]["native_auto_merge"]["producer"])
-                self.assertEqual(producer.call_args.args[3:5], (300, False))
+                self.assertEqual(producer.call_args.args[3], 300)
+                self.assertIs(reconcile.call_args.args[-1], self.p.process_head)
                 self.assertEqual(reconcile.call_count, 1)
                 return result
 
@@ -289,12 +290,12 @@ class WriterContractTests(unittest.TestCase):
     def setUp(self):
         self.p=Provider()
         root=Path(__file__).parents[1]
-        self.native=(root/'templates/claude-native-merge.yml.example').read_text().replace('AW_REVIEWED_40_HEX',EVALUATOR)
+        self.native=(root/'templates/claude-native-merge.yml.example').read_text().replace('AW_REVIEWED_40_HEX',EVALUATOR).replace('REVIEWED_EXISTING_TEST_WORKFLOW_NAME','tests')
         self.p.document['config']['native_auto_merge']['producer']['job']='native-auto-merge'
         self.review='name: Claude final review\non:\n  workflow_run:\n    workflows: [tests]\n    types: [completed]\n'
 
     def validate(self):
-        with patch.object(m.review,'blob',side_effect=[self.native,self.review]):
+        with patch.object(m.review,'blob',side_effect=[self.native,self.review,"name: tests\n"]):
             m.writer_contract(self.p,'o/r',self.p.load(),EVALUATOR)
 
     def test_literal_single_writer_with_shared_mutex_is_valid(self):self.validate()
@@ -306,7 +307,7 @@ class WriterContractTests(unittest.TestCase):
                  lambda s:s.replace('@'+EVALUATOR,'@main'),
                  lambda s:s+'\n  extra:\n    runs-on: ubuntu-latest\n    steps: []\n',
                  lambda s:s.replace('    steps:','    env:\n      SECRET: value\n    steps:'),
-                 lambda s:s.replace('workflows: [Claude final review]','workflows: [Untrusted]'))
+                 lambda s:s.replace('workflows: [tests, Claude final review]','workflows: [Untrusted]'))
         original=self.native
         for change in changes:
             self.native=change(original)

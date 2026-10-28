@@ -53,7 +53,7 @@ state; the adapter refuses it.
     "merge_method": "SQUASH",
     "ruleset_id": 1,
     "producer": {
-      "path": ".github/workflows/claude-native-merge.yml",
+      "path": ".github/workflows/issue-ci.yml",
       "id": 1,
       "definition_sha": "REVIEWED_NATIVE_WORKFLOW_BLOB_SHA",
       "job": "native-auto-merge"
@@ -168,3 +168,22 @@ The adapter preserves that namespace. Both blocked spellings fail closed.
 The included findings publisher authenticates failed jobs with valid negative
 receipts. It still rejects a passing receipt from a failed job. The hosted
 control suite also includes the inherited `scripts/security/tests` controls.
+
+## One lossless writer
+
+Install the outcome template as the replacement `.github/workflows/issue-ci.yml`,
+not as a second workflow in the same concurrency group. Policy requires that
+path. The one writer wakes on every configured CI workflow and Claude producer,
+plus issue/PR metadata events. Every surviving run first revokes old approvals,
+then reconciles existing CI handoff for the complete managed queue, then
+reconciles Claude outcomes for the complete open queue. A displaced pending wake
+therefore loses neither kind of work. A CI handoff error holds that PR after
+withdrawal; other PRs continue.
+
+PR-target run metadata may describe a fork's source branch. Writer identity for
+that event instead binds GitHub's base workflow ref and immutable workflow SHA,
+with the reviewed default-branch definition and exact job. It never loads the
+PR workflow or source. Issues and workflow-run events retain the original
+same-repository/default-branch checks. `test_unified_outcome.py` exercises the
+real entrypoint identity for every event and both reconciliations after
+replacement of each kind of pending wake.

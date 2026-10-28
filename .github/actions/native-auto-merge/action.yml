@@ -1,4 +1,4 @@
-name: Claude review outcome and native auto-merge
+name: Unified CI handoff, Claude outcome and native auto-merge
 description: Authenticate the exact current review; return rejected issues to doing or merge qualified passing PRs with native issue closure.
 runs:
   using: composite

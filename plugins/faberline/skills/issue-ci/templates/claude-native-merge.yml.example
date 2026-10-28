@@ -1,9 +1,11 @@
+# Replace the existing .github/workflows/issue-ci.yml with this ONE writer.
+# Every event reconciles both CI handoff and Claude outcomes for the full queue.
 # Install with the pinned action, real producer identity and strict provider
 # ruleset. Qualification holds prohibit merge but permit verified rejection.
-name: Claude review outcome
+name: Issue CI and Claude outcome
 on:
   workflow_run:
-    workflows: [Claude final review]
+    workflows: [REVIEWED_EXISTING_TEST_WORKFLOW_NAME, Claude final review]
     types: [requested, in_progress, completed]
   issues:
     types: [edited, reopened, closed, labeled, unlabeled]

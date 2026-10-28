@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 _spec = importlib.util.spec_from_file_location(
     "aw_native_claude_review", Path(__file__).with_name("claude_review.py"))
@@ -38,7 +39,7 @@ DISABLE = """mutation($input:DisablePullRequestAutoMergeInput!){
 }"""
 EVENTS = ("workflow_run", "issues", "pull_request_target")
 TRIGGERS = {
-    "workflow_run": {"workflows": ["Claude final review"], "types": ["requested", "in_progress", "completed"]},
+    "workflow_run": {"types": ["requested", "in_progress", "completed"]},
     "issues": {"types": ["edited", "reopened", "closed", "labeled", "unlabeled"]},
     "pull_request_target": {"types": ["opened", "reopened", "synchronize", "edited", "ready_for_review", "converted_to_draft"]},
 }
@@ -62,7 +63,7 @@ def policy(document, require_qualification=True):
     need(review.exact(producer, "path id definition_sha job")
          and review.integer(producer["id"]) and review.sha(producer["definition_sha"])
          and isinstance(producer["path"], str)
-         and re.fullmatch(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml", producer["path"])
+         and producer["path"] == ".github/workflows/issue-ci.yml"
          and review.text(producer["job"], 200)
          and producer["path"] not in {w["path"] for w in config["workflows"]}
          and producer["path"] != prior["producer"]["path"]
@@ -89,12 +90,70 @@ def writer_contract(api, repo, document, evaluator):
          and job["steps"] == [{"uses": "faberline/aw/.github/actions/native-auto-merge@" + evaluator}],
          "writer_contract")
     trigger = workflow.get("on")
-    need(trigger == TRIGGERS, "writer_trigger")
     prior = review.policy(document)["producer"]
     source = review.blob(api, repo, prior["path"], document["source_commit"], prior["definition_sha"])
     review.r.literal_uses(source)
     producer = yaml.load(source, Loader=yaml.BaseLoader)
-    need(trigger["workflow_run"]["workflows"] == [producer.get("name")], "writer_review_trigger")
+    names = []
+    for gate in document["config"]["workflows"]:
+        path = gate["path"]
+        raw = review.blob(api, repo, path, document["source_commit"],
+                          review.policy(document)["gates"][path]["definition_sha"])
+        review.r.literal_uses(raw)
+        names.append(yaml.load(raw, Loader=yaml.BaseLoader)["name"])
+    need(producer.get("name") == "Claude final review", "writer_review_trigger")
+    expected = {k: dict(v) for k, v in TRIGGERS.items()}
+    expected["workflow_run"]["workflows"] = names + [producer["name"]]
+    need(trigger == expected, "writer_trigger")
+
+
+def writer_identity(api, repo, document, run_id):
+    """Authenticate PR-target source from GitHub's base workflow context.
+
+    Run metadata may name a fork's head. It never selects source or code here.
+    Other events retain the ordinary default-branch producer checks.
+    """
+    spec = policy(document, require_qualification=False)["producer"]
+    event = os.environ["GITHUB_EVENT_NAME"]
+    if event != "pull_request_target":
+        return review.producer_identity(api, repo, document, run_id, False, spec, EVENTS)
+    meta = api.api(f"repos/{repo}")
+    default = meta["default_branch"]
+    source = os.environ.get("GITHUB_WORKFLOW_SHA")
+    need(review.sha(source) and os.environ.get("GITHUB_WORKFLOW_REF") == f'{repo}/{spec["path"]}@refs/heads/{default}'
+         and os.environ.get("GITHUB_REF") == f"refs/heads/{default}", "writer_base_workflow_context")
+    run = api.api(f"repos/{repo}/actions/runs/{run_id}")
+    need(run.get("id") == run_id and run.get("workflow_id") == spec["id"]
+         and run.get("path") == spec["path"] and run.get("event") == event
+         and review.integer(run.get("run_attempt")), "writer_run_identity")
+    review.blob(api, repo, spec["path"], source, spec["definition_sha"])
+    review.blob(api, repo, spec["path"], document["source_commit"], spec["definition_sha"])
+    jobs = api.pages(f'repos/{repo}/actions/runs/{run_id}/attempts/{run["run_attempt"]}/jobs', "jobs")
+    need(len([j for j in jobs if j.get("name") == spec["job"] and review.integer(j.get("id"))]) == 1,
+         "writer_job_identity")
+
+
+def reconcile_ci(api, repo, document, pulls, process):
+    """The same writer reconciles existing CI and Claude on every event.
+
+    A replaced pending CI or outcome wake therefore loses neither operation.
+    Preserve the existing managed-branch and closing-link selection exactly.
+    """
+    rows = []
+    for pull in sorted(pulls, key=lambda p: p["number"]):
+        head = pull.get("head", {})
+        match = re.fullmatch(r"(?:issue/|agy/issue-)([0-9]+)", head.get("ref", ""))
+        if (not match or (head.get("repo") or {}).get("full_name") != repo
+                or not re.search(rf'(?im)^Closes #{int(match[1])}\s*$', pull.get("body") or "")):
+            continue
+        row = dict(pr=pull["number"], head=head["sha"], state="ci_processed")
+        args = SimpleNamespace(repo=repo, pr=pull["number"], head=head["sha"], apply=True, run_id=None)
+        try:
+            process(args, document["config"], check_event=False)
+        except Exception:
+            row.update(state="ci_held", reason="ci_handoff_refused_or_unknown")
+        rows.append(row)
+    return rows
 
 
 def graphql(api, query, variables):
@@ -322,7 +381,7 @@ def return_doing(api, repo, number, head, load_document, evaluator, run_id, veri
                 decision=receipt["payload"]["result"]["decision"])
 
 
-def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=None):
+def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=None, ci_process=None):
     """Every wake covers the complete queue; one refused PR cannot drop others."""
     document = load_document()
     policy(document, require_qualification=False)
@@ -334,6 +393,12 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
             withdraw_approval(api, repo, pull["number"], pull.get("head", {}).get("sha"))
         except Exception:
             withdrawal_errors.add(pull["number"])
+    ci_errors = set()
+    if ci_process is not None:
+        ci_rows = reconcile_ci(api, repo, document,
+                               [pull for pull in pulls if pull["number"] not in withdrawal_errors], ci_process)
+        ci_errors = {row["pr"] for row in ci_rows if row["state"] == "ci_held"}
+        print("AW_UNIFIED_CI_RECONCILIATION_V1 " + review.r.canonical(ci_rows))
     runs = api.pages(f'repos/{repo}/actions/workflows/{producer["id"]}/runs', "workflow_runs")
     attempts = index(api, repo, document, runs)
     results = []
@@ -341,8 +406,8 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
         number, head = pull["number"], pull.get("head", {}).get("sha")
         row = dict(pr=number, head=head, state="held")
         try:
-            if number in withdrawal_errors:
-                row.update(state="held_after_pending", reason="withdrawal_result_unknown")
+            if number in withdrawal_errors or number in ci_errors:
+                row.update(state="held_after_pending", reason="withdrawal_or_ci_result_unknown")
                 results.append(row)
                 continue
             attempt = attempts.get(number)
@@ -380,7 +445,7 @@ def main():
         ".github/issue-ci-required-gates.json", metadata=True)
     document = load()
     native = policy(document, require_qualification=False)
-    review.producer_identity(api, repo, document, int(current), False, native["producer"], EVENTS)
+    writer_identity(api, repo, document, int(current))
     writer_contract(api, repo, document, evaluator)
     event = api.strict_json_loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
     wake = event.get("workflow_run", {})
@@ -389,11 +454,12 @@ def main():
     need(event.get("repository", {}).get("full_name") == repo
          and event.get("action") in TRIGGERS[event_name]["types"], "merge_wake_identity")
     if event_name == "workflow_run":
-        need(wake.get("workflow_id") == p["id"] and wake.get("path") == p["path"]
-             and wake.get("event") == "workflow_run" and review.integer(wake.get("id")),
-             "merge_wake_identity")
+        identities = {p["path"]: dict(id=p["id"]), **review.policy(document)["gates"]}
+        source = identities.get(wake.get("path"))
+        need(source is not None and wake.get("workflow_id") == source["id"]
+             and review.integer(wake.get("id")), "merge_wake_identity")
     index = review.sibling("native_review_index")
-    results = reconcile(api, repo, load, evaluator, index.attempts, index.verify, index.result)
+    results = reconcile(api, repo, load, evaluator, index.attempts, index.verify, index.result, api.process_head)
     print("AW_NATIVE_MERGE_RECONCILIATION_V1 " + review.r.canonical(dict(
         version=1, repo=repo, producer_run=int(current), results=results)))
     return 2 if any(row["state"] == "held_after_pending" for row in results) else 0
