@@ -50,6 +50,48 @@ skills, and no remote coordination branch or ledger has been initialized.
 The protected local leases remain unchanged. The approved environment publication
 still shows in progress; do not start another publication or infer readiness.
 
+### Continuation evidence and deployment path
+
+At 2026-10-28 04:17 UTC, the same publication was still running. The fresh
+Codex cloud composer also reported no published environments. There was no
+terminal error. The setup chat remained idle after its completed onboarding
+turn; that chat status does not establish publication status.
+
+The source commit `f50add3712d51621c1e23b5eba2e05a08858b4aa` was read back
+from GitHub. PR #90 still targets that commit and remains a draft. The commit
+has zero check runs. The 242 local controls do not establish CI acceptance.
+All six local automation files were read back as active, local, and every two
+hours. They were not changed.
+
+The current [OpenAI schedule guide](https://learn.chatgpt.com/docs/automations)
+supports schedules inside an existing chat. It does not establish that a
+scheduled Codex turn retains a published cloud environment. The
+[dot guide](https://learn.chatgpt.com/docs/dots/tasks-and-memory) describes
+recurring schedules and cloud coding tasks separately. The exposed local
+automation tool and one-shot `codex cloud exec --env` do not prove a hosted
+recurring binding. A saved environment binding and an actual recurring run
+remain required before cutover.
+
+The existing `faberline` marketplace can change its source ref through
+`extraKnownMarketplaces`, while keeping its name and plugin identity. The
+[Claude marketplace reference](https://code.claude.com/docs/en/plugins/marketplace-reference)
+documents this field and a plugin source pinned by full commit SHA. The installed
+catalog still uses `./plugins/faberline`. The candidate catalog now uses
+`git-subdir` with the full `f50add3` commit SHA. The installed Claude CLI accepted
+this manifest with `claude plugin validate` (exit 0). Pointing the existing
+marketplace at this migration branch can preserve its directory and identity
+without merging the candidate into main. Preserve other settings, use supported
+marketplace/plugin updates, then verify the installed source and config hashes.
+Do not remove/re-add the marketplace or silently replace its cache. No installed
+settings or plugins were changed. An inline settings catalog is unsuitable here:
+the local schedules call the marketplace directory directly, and an inline
+catalog has no such source root.
+
+Legacy Claude scheduled-task folders contain only `SKILL.md` prompts. They
+provide no activation state. CLI help provides no scheduler pause control, and
+the native UI did not provide usable automation state during this check. Their
+pause state remains unknown. An old idle session is not a pause receipt.
+
 Scope: Core, Defer, Keep, Lumen, Relay and Tape issue planning. Keep the existing
 two-hour cadence. Do not change product issues or owners as part of validation.
 
