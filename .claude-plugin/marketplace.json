@@ -5,7 +5,13 @@
   "plugins": [
     {
       "name": "faberline",
-      "source": "./plugins/faberline",
+      "source": {
+        "source": "git-subdir",
+        "url": "faberline/aw",
+        "path": "plugins/faberline",
+        "ref": "codex/cloud-issue-planners",
+        "sha": "f50add3712d51621c1e23b5eba2e05a08858b4aa"
+      },
       "description": "Shared faberline skills: commit, rebase, push, pull-request flow, and the plan, work, and review issue loop."
     }
   ]

@@ -16,6 +16,10 @@ _spec = importlib.util.spec_from_file_location('milestone_queue', Path(__file__)
 queue = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(queue)
 
+_lease_spec = importlib.util.spec_from_file_location('github_leases', Path(__file__).resolve().parents[2] / 'issue-loop/scripts/github_leases.py')
+remote_leases = importlib.util.module_from_spec(_lease_spec)
+_lease_spec.loader.exec_module(remote_leases)
+
 
 _state_spec = importlib.util.spec_from_file_location('worktree_state', Path(__file__).resolve().parent / 'worktree_state.py')
 tree_state = importlib.util.module_from_spec(_state_spec)
@@ -29,8 +33,19 @@ _filter_spec = importlib.util.spec_from_file_location('main_filter_safety', Path
 main_filters = importlib.util.module_from_spec(_filter_spec)
 _filter_spec.loader.exec_module(main_filters)
 
+_coordination_spec = importlib.util.spec_from_file_location(
+    'work_coordination_entrypoint',
+    Path(__file__).resolve().parents[2] / 'issue-loop/scripts/coordination_entrypoint.py')
+coordination_entrypoint = importlib.util.module_from_spec(_coordination_spec)
+_coordination_spec.loader.exec_module(coordination_entrypoint)
+
 
 def run(*args):
+    if (args and args[0] == 'gh') or 'push' in args:
+        queue.coordination.verify_for(os.getenv('GH_REPO', ''))
+    if 'push' in args or (args[:3] in (('gh', 'issue', 'comment'),
+                                       ('gh', 'pr', 'create'), ('gh', 'pr', 'comment'))):
+        queue.coordination.mark_mutation_for(os.getenv('GH_REPO', ''))
     return subprocess.check_output(args, text=True).strip()
 
 
@@ -44,6 +59,13 @@ def gh(*args):
 
 def refuse(message):
     raise RuntimeError(message)
+
+
+def validate_worker_origin(remote, repo):
+    identity = coordination_entrypoint.parse_remote(remote)
+    if (identity is None or identity[1] != 'github.com'
+            or identity[0].casefold() != repo.casefold()):
+        refuse('local repository does not match persistent lease repository')
 
 
 def branch_exists(ref):
@@ -204,7 +226,7 @@ def sync_main(checkout, owner, fetched):
         return held(f'Git maintenance refused/uncertain; inspect, no automatic retry: {exc}')
 
 
-def main():
+def local_main():
     command = sys.argv[1] if len(sys.argv) > 1 else ''
     if command not in ('next', 'finish', 'block'):
         refuse('usage: work.sh next [--mine] | finish N summary-file | block N evidence-file')
@@ -221,6 +243,11 @@ def main():
         owner = os.getenv('ISSUE_WORK_OWNER', '')
         if not owner:
             refuse('set ISSUE_WORK_OWNER to a stable unique conversation token')
+        ledger = remote_leases.Ledger(os.getenv('GH_REPO', ''), queue.coordination) if os.getenv('ISSUE_COORDINATION_MODE', 'local') == 'github' else None
+        if ledger:
+            ledger.read()
+            remote = git('remote', 'get-url', 'origin')
+            validate_worker_origin(remote, ledger.repo)
         lease = None
         if lease_path.exists():
             try:
@@ -233,6 +260,11 @@ def main():
                     raise ValueError('invalid lease schema')
             except (ValueError, TypeError):
                 refuse('legacy/invalid issue-work.lock: verify old session ended before manual recovery; preserve its worktree')
+        if ledger and lease:
+            existing = ledger.get(lease['issue'])
+            if (existing is None or existing['owner_nonce'] != remote_leases.nonce(ledger.repo, owner)
+                    or existing['phase'] != lease.get('phase')):
+                refuse('local and persistent lease do not match; preserve state for reconciliation')
         if command == 'next':
             mine = sys.argv[2:] == ['--mine']
             if sys.argv[2:] and not mine:
@@ -283,6 +315,8 @@ def main():
                 snapshot = planned_snapshot(client)
                 if snapshot['selected'] is None:
                     if lease and lease.get('phase') not in ('coding', 'claiming'):
+                        if ledger:
+                            refuse('submitted lease requires explicit reconciliation; preserve state')
                         lease_path.unlink()
                     print('idle: no planned todo work; submitted doing issues wait for CI')
                     return 3
@@ -308,6 +342,14 @@ def main():
                 refuse('PR/branch association changed before claim; preserve worktree')
             if work_identity(client.issue(n)) != work_identity(fresh):
                 refuse('issue changed immediately before claim; no label write')
+            if ledger:
+                existing = ledger.get(n)
+                if lease is None:
+                    if existing is not None:
+                        refuse('persistent lease exists; no takeover or implicit recovery')
+                    ledger.transition(n, owner, 'claiming')
+                elif existing is None or existing['owner_nonce'] != remote_leases.nonce(ledger.repo, owner) or existing['phase'] not in ('claiming', 'coding'):
+                    refuse('persistent lease cannot be resumed')
             temp_lease = common / 'issue-work.lock.new'
             claimed = dict(issue=n, owner=owner, since=now, pid=os.getppid(), host=socket.gethostname(), phase='claiming')
             temp_lease.write_text(json.dumps(claimed))
@@ -317,6 +359,8 @@ def main():
                 confirmed = client.issue(n)
                 if confirmed['state'] != 'open' or queue.labels(confirmed) & queue.STATES != {'doing'}:
                     refuse('claim outcome changed; intent retained for read-before-retry recovery')
+            if ledger and ledger.get(n)['phase'] == 'claiming':
+                ledger.transition(n, owner, 'coding', previous='claiming')
             claimed['phase'] = 'coding'
             temp_lease.write_text(json.dumps(claimed))
             temp_lease.replace(lease_path)
@@ -356,19 +400,37 @@ def main():
             _, pr = branch_of(n)
         else:
             run('gh', 'pr', 'comment', str(pr), '--body-file', str(file))
+        if ledger:
+            ledger.transition(n, owner, 'submitted', previous='coding')
         lease['phase'] = 'submitted'
         temp_lease = common / 'issue-work.lock.new'
         temp_lease.write_text(json.dumps(lease))
         temp_lease.replace(lease_path)
         run('gh', 'issue', 'comment', str(n), '--body', f'Work submitted in #{pr}; waiting for required CI on the current head.')
         tree_state.update(checkout, n, branch, wt, owner, pr=pr, submitted=True)
+        if ledger:
+            ledger.release(n, owner)
         lease_path.unlink()
         print(f'pr={pr}; issue #{n} remains doing; waiting for CI')
     return 0
 
 
+def main():
+    if os.getenv('ISSUE_COORDINATION_MODE', 'local') == 'local':
+        return local_main()
+    repo = os.getenv('GH_REPO', '')
+    with queue.coordination.shared_guard(repo, required=True):
+        return local_main()
+
+
 if __name__ == '__main__':
     try:
+        _entry_spec = importlib.util.spec_from_file_location(
+            'issue_work_coordination_entrypoint',
+            Path(__file__).resolve().parents[2] / 'issue-loop/scripts/coordination_entrypoint.py')
+        _entrypoint = importlib.util.module_from_spec(_entry_spec)
+        _entry_spec.loader.exec_module(_entrypoint)
+        _entrypoint.bootstrap('work', sys.argv[1:])
         sys.exit(main())
     except (RuntimeError, subprocess.CalledProcessError, OSError, ValueError, KeyError) as exc:
         print(f'refused: {exc}', file=sys.stderr)

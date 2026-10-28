@@ -14,6 +14,9 @@ the direction.
 `${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
 Otherwise, use the absolute path of that folder.
 
+For OpenAI hosted runs, read [CLOUD.md](CLOUD.md) first. Use a verified portable
+bundle in the hosted runtime. Do not use a user's computer as a fallback.
+
 ## Runs
 
 Each run does one pass, then ends. This skill never starts a loop or a

@@ -6,9 +6,15 @@ All GitHub lists use explicit pages. Unsupported dependency reads fail closed.
 Only explicit incoming prose dependencies are interpreted; never reverse `blocks`.
 """
 import hashlib
+import importlib.util
 import json
+from pathlib import Path
 import re
 import subprocess
+
+_guard_spec = importlib.util.spec_from_file_location('github_guard', Path(__file__).with_name('github_guard.py'))
+coordination = importlib.util.module_from_spec(_guard_spec)
+_guard_spec.loader.exec_module(coordination)
 
 STATES = {'todo', 'doing', 'done', 'blocked'}
 SPEC_MARK = '<!-- issue-plan:spec -->'
@@ -206,6 +212,8 @@ class Client:
             raise ValueError('invalid repository')
 
     def command(self, *args, payload=None):
+        if payload is not None:
+            coordination.mark_mutation_for(self.repo)
         cmd = ['gh', *args]
         if payload is not None:
             cmd += ['--input', '-']

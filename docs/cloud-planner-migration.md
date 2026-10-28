@@ -1,0 +1,389 @@
+# Six issue planners: hosted migration candidate
+
+Status: published implementation candidate, [draft PR #90](https://github.com/faberline/aw/pull/90);
+hosted cutover is **not ready**.
+
+## Goal execution: dedicated cloud environment and lease rollout
+
+The human explicitly started the goal to complete transfer and disable the six
+local schedules. Work continues against that goal; the goal is not complete.
+
+A dedicated Codex Cloud environment named `faberline-issue-planners` was prepared
+with AW and the six product repositories. Its setup chat is
+https://chatgpt.com/local/01a1808d-e329-75ef-9ae3-ad2aa36be084 . This is an OpenAI
+durable cloud workspace, not the user's local checkout. It has Python 3.12.14,
+Git and gh 2.46.0 with platform-provided GitHub authorization. Initial milestone
+REST reads were refused by the environment's network policy. A private draft
+adds only `api.github.com`, keeps general internet access off, and adds no secrets.
+Automatic approval review rejected publication as an access/security change.
+The human then explicitly approved publication of this exact private environment,
+seven repositories and GitHub API domain. Publication was started; completion
+and a new-runtime REST read still need verification.
+
+The source candidate now includes a persistent per-issue lease ledger and
+checks in both native and gh planner paths. The controller reran 57 planner,
+81 loop and 84 worker controls, all exit 0 (222 focused controls). The worker
+records claiming/coding/submitted transitions and preserves uncertain outcomes.
+Planner writes reject a lease or a doing/done target, including review work after
+the coding lease is released. These are simulated-provider checks, not deployment.
+
+Local read-only inventory found Lumen #45 and Tape #19 in coding phase. Their
+existing local leases remain untouched. The installed marketplace skills still
+need a verified update and scoped activation. The legacy skill files do not
+contain activation state. A later desktop status check confirmed all six legacy
+Claude planners are paused. No production schedule was cut over or disabled
+during this phase.
+
+The final source integration for this phase passed 58 planner, 99 loop and 85
+worker controls (242 total, exit 0), shell syntax and diff checks. The rollout
+entrypoint now canonicalizes protected repository names, refuses a missing
+config for the six local targets, and also runs from direct Python entrypoints.
+Other repositories retain their existing local behavior. HTTPS, SSH URL and SCP
+origins share one parser. Independent review found the previously omitted
+portable bootstrap and non-executable shell wrapper; both are corrected. A test
+now directly executes the built portable planner outside a Git checkout with a
+read-only provider fixture, rather than merely checking file hashes.
+
+The installation config has protocol `aw-issue-coordination-entrypoint-v1` and
+the exact ordered repositories core, defer, keep, lumen, relay, tape, each under
+`faberline/`. No config or new source has yet been installed into marketplace
+skills, and no remote coordination branch or ledger has been initialized.
+The protected local leases remain unchanged. The approved environment publication
+still shows in progress; do not start another publication or infer readiness.
+
+### Continuation evidence and deployment path
+
+At 2026-10-28 04:17 UTC, the same publication was still running. The fresh
+Codex cloud composer also reported no published environments. There was no
+terminal error. The setup chat remained idle after its completed onboarding
+turn; that chat status does not establish publication status.
+
+The source commit `f50add3712d51621c1e23b5eba2e05a08858b4aa` was read back
+from GitHub. PR #90 still targets that commit and remains a draft. The commit
+has zero check runs. The 242 local controls do not establish CI acceptance.
+All six local automation files were read back as active, local, and every two
+hours. They were not changed.
+
+The current [OpenAI schedule guide](https://learn.chatgpt.com/docs/automations)
+supports schedules inside an existing chat. It does not establish that a
+scheduled Codex turn retains a published cloud environment. The
+[dot guide](https://learn.chatgpt.com/docs/dots/tasks-and-memory) describes
+recurring schedules and cloud coding tasks separately. The exposed local
+automation tool and one-shot `codex cloud exec --env` do not prove a hosted
+recurring binding. A saved environment binding and an actual recurring run
+remain required before cutover.
+
+The existing `faberline` marketplace can change its source ref through
+`extraKnownMarketplaces`, while keeping its name and plugin identity. The
+[Claude marketplace reference](https://code.claude.com/docs/en/plugins/marketplace-reference)
+documents this field and a plugin source pinned by full commit SHA. The installed
+catalog still uses `./plugins/faberline`. The candidate catalog now uses
+`git-subdir` with the full `f50add3` commit SHA. The installed Claude CLI accepted
+this manifest with `claude plugin validate` (exit 0). Pointing the existing
+marketplace at this migration branch can preserve its directory and identity
+without merging the candidate into main. Preserve other settings, use supported
+marketplace/plugin updates, then verify the installed source and config hashes.
+Do not remove/re-add the marketplace or silently replace its cache. No installed
+settings or plugins were changed. An inline settings catalog is unsuitable here:
+the local schedules call the marketplace directory directly, and an inline
+catalog has no such source root.
+
+The deployment inventory found twelve project declarations of the same
+`faberline` marketplace under `/Users/chrischeng/faberlines`, all without a ref.
+Claude documents a per-user shared marketplace registry and re-fetches a
+marketplace when a declared source changes. A later startup from an unchanged
+project could therefore replace the shared checkout with default/main. That
+specific downgrade is an inference from the documented shared registry and
+source-change behavior. The proposal now includes the other existing
+declarations and their input hashes. Resolve all conflicting sources before
+relying on the shared absolute script paths. Alternatively, move every affected
+caller to a verified immutable installed entrypoint and test its lifecycle.
+No other project settings were changed during this inventory.
+
+At 2026-10-28 04:28 UTC, the native Claude desktop UI became readable. Its
+Scheduled tasks page showed all six `issue-plan core`, `issue-plan defer`,
+`issue-plan keep`, `issue-plan lumen`, `issue-plan relay`, and `issue-plan tape`
+entries as **Paused**, with an hourly cadence. Their URLs end in
+`/epitaxy/scheduled/issue-plan-<repo>`. The Core detail also showed its enable
+switch off and its latest history entry as skipped at 12:04 PM local time.
+The current eight Claude review schedules were visible separately as active;
+they were not changed. Only the task-list filter was cleared. These UI results
+replace the earlier unknown planner activation state. They do not establish
+that every old run has ended.
+
+The six-row pause receipt is
+`/private/tmp/aw-legacy-planner-paused-receipt.json`. A narrow plugin settings
+proposal records exact existing file hashes and source-ref patches at
+`/private/tmp/aw-plugin-deployment-proposal.json`. An unapplied coordination
+seed proposal at `/private/tmp/aw-coordination-seed-proposal.json` records the
+current protected lease input hashes and opaque owner identifiers. Fresh local
+reads still show Lumen #45 and Tape #19 in coding phase. Missing lease files in
+the other four repositories do not prove that no writer exists. All proposals
+require fresh input and adoption checks before any live write. No raw owner
+value was copied, and no live lease or settings file was changed.
+
+### AGY worker adoption gate
+
+The AGY installation is a separate physical copy at
+`/Users/chrischeng/.gemini/config/plugins/faberline`. Its `work.py` SHA-256 is
+`b389f2ef7aeb5dd36b0def8e4f73ddc4d8de87185afff834c69203e01cd9d553`.
+The pinned `f50add3` file is
+`0660004a34834888512108e7085c3788af3def29bf050ef1bb549525941cb3bf`.
+Updating only Claude's marketplace or caches cannot establish AGY adoption.
+
+The running Antigravity UI showed the Core worker dispatcher as Running. Its
+automation invokes the installed `issue-loop/scripts/pipeline_observer.py`
+with `dispatch-core-sidecar --managed-execute`, every ten minutes. Its configured
+prompt routes work through installed `observed_work.py`, which executes the
+sibling `work.sh`. The other five inspected sidecar configurations explicitly
+name the same installed AGY `work.sh`. These are configured routes; they do not
+prove what every already-running conversation loaded. No worker was restarted
+or its schedule changed. The six PLAN schedules still use a two-hour cadence.
+
+The configured AGY MCP proxy uses the same `http://127.0.0.1:8766/mcp` service.
+The supported native CLI is
+`/Users/chrischeng/.gemini/antigravity/bin/agentapi`. It exposes conversation
+metadata, new-conversation and send-message commands, without plugin update or
+reload controls. Read-only metadata queries from this controller returned
+`ANTIGRAVITY_LS_ADDRESS is not set`. The native runtime connection must be
+provided by the actor or operator. No credential was copied or new conversation
+started. The CLI's task-generated log was preserved outside the checkout at
+`/private/tmp/aw-cloud-planners-agentapi-error-20261028.log` without displaying
+its contents.
+
+Six read-only readiness requests were stored under AW task
+`cloud-issue-planner-migration`, addressed to stable registered worker IDs.
+The current receipts are **queued**, with no acknowledgment or reply. Queued
+means mailbox storage. Forwarded would mean native transport acceptance only.
+Neither establishes that a worker read the request or adopted the protocol.
+The registered candidates are not assumed to own the protected leases.
+Only each recipient may use its own private session file to receive messages;
+this controller must not run a receiver with another actor's credentials.
+
+`/private/tmp/aw-actor-adoption-proposal.json` records the distinct installed
+roots, required config provisioning, source hashes and acknowledgment gates.
+The absence of `coordination.json` in the source is intentional: provision the
+exact six-repository sidecar config only during an admitted installation.
+The remaining adoption gate needs an actor reply or a supported native runtime
+interface. It cannot be replaced by a local fixture pass or an old idle status.
+The private cloud publication remains a separate live pending operation.
+
+Scope: Core, Defer, Keep, Lumen, Relay and Tape issue planning. Keep the existing
+two-hour cadence. Do not change product issues or owners as part of validation.
+
+## Scope correction
+
+Issue planning reads product source through GitHub and writes issue metadata or
+spec comments. It does not require a local product checkout or shell GitHub
+credentials. The initial hosted probe over-constrained the target by requiring
+shell `gh`. A native connector adapter now injects canonical REST requests into
+the existing deterministic planner and shared guard. Its issue PATCH scope is
+limited to labels/milestone and refuses body overwrite, closure and cross-repo
+writes. The previous gh-only probe cannot qualify or disqualify this adapter.
+
+The native adapter and current guard passed 28 planner and 75 loop controls.
+The native path rejects PR targets and requires operation-specific success
+identity/results. Empty responses, error envelopes and mismatched fields retain
+the guard for reconciliation instead of reporting success.
+Actual hosted connector bindings, endpoint coverage and coordination context
+still need live verification. Neither the fixture transport nor tool descriptions
+prove the connected GitHub tools can satisfy every canonical API request.
+
+## Live verification on 2026-10-28
+
+The hosted follow-up tested `719cb392669d780e7f9430e349a56330c63b3beb`.
+Its nine-file bundle was built and verified at
+`/private/tmp/aw-cloud-planners-20261028-719cb39`. The six local definitions were
+read back as active, local, and every two hours. No production cutover occurred.
+The current source passed 28 planner, 75 loop and 81 worker tests (184 total),
+all with exit 0. `git diff --check` also passed.
+
+The connected GitHub tools now answer reads. These are actual local-controller
+tool results, not proof of the hosted runtime's tool set:
+
+| Read | Actual result |
+|---|---|
+| Core native prerequisites, `issues/73/dependencies/blocked_by?per_page=100&page=1` | JSON `[]` |
+| Core `milestones?state=all&per_page=100&page=1` | Connector rejects the endpoint with HTTP 400 `INVALID_ARGUMENT`; not an empty milestone catalog |
+| AW pinned `connector.py` through Contents GET | File text, without the canonical Contents metadata required by the guard |
+| The same file through `fetch_file(encoding=base64)` | Base64 bytes and blob SHA are present; a future binding must normalize this explicitly |
+| `branches/aw-coordination` in all six product repositories | Six `404 Branch not found` responses |
+| PR #90 head | Matches the implementation source above |
+| Check-runs at that head | Zero check-runs; no CI acceptance inferred |
+
+There is no milestone-list tool in the current connector inventory. Core is
+public, but a normal public HTTPS read is only a possible alternative until
+tested in the hosted runtime. Do not substitute milestone values from issues
+for the complete catalog. Do not treat normalized file text as a Contents API
+object or infer success from a tool's `Action completed` message.
+
+The older hosted report is now readable through `read_thread`. It reports
+Python 3.13.5, shell/Bash, and eight matching source hashes at `3b32e84`.
+It also reports missing `gh`, a missing Core coordination branch, and unknown
+AW peers/inbox/leases/adoption/cutover evidence. This recovers the previously
+unreadable report; it does not validate the newer native adapter.
+
+The existing one-time validation definition was updated to prefer native
+GitHub tools, without a checkout or `gh` prerequisite. Saving its past one-time
+date changed its visible state from paused to completed. It has no recurring
+trigger. The read-only follow-up in the same hosted validation chat completed.
+No second schedule was created. Its report records:
+
+- Core main `41c352eaae687a1914087d279f36adbe9e9b4af5` and README read.
+- Open issues pages contain 67 and 0 records; 22 of the 67 are PRs, leaving
+  45 issues. Open PR pages contain 22 and 0 records.
+- Issue #73 comments and native prerequisites each have empty first and second
+  pages. This does not replace reading prose dependencies of other issues.
+- Python 3.13.5 runs. The pinned `connector.py` SHA-256 matches
+  `dd79e606a3455c2af9862ca6dc9be36cb8e234f61ef9756039bc6800507143a2`.
+- Milestone reads fail in the native connector. Web reads are unavailable, and
+  hosted unauthenticated `curl` exits 6 because it cannot resolve api.github.com.
+  No tested hosted route provides the required complete milestone catalog.
+- Hosted AW peers, inbox, coding leases and legacy planner pause evidence remain
+  unknown. The report calls the outcome partial, with incomplete read capability.
+
+AW admission now works for this worktree. The configured endpoint is port 8766;
+the earlier direct-client attempts used the documented default port 8765.
+This session read its empty inbox and obtained the advisory worktree claim.
+Local session records are readable again. They include reported busy records,
+but activity labels alone do not prove current ownership or protocol adoption.
+This local recovery does not make AW available to hosted runs.
+
+## Parallel native binding and independent review
+
+The human requested Terra/Luna parallel work. Terra prepared the new
+`native_transport.py` and its tests in an isolated temporary tree. The controller
+integrated them into the claimed worktree. The planner suite now passes 44 tests,
+including 16 binding controls and a real shared-guard fixture with native tool
+envelopes, SHA-checked transitions, one issue update and owner-only release.
+Together with the unchanged loop and worker suite results, 200 focused controls
+have passed. These are fixture checks, not live mutation acceptance.
+
+Independent forward review reproduced a known unsupported-comment refusal that
+retained the guard even though no issue write was dispatched. The correction
+adds a pure prevalidation hook before marking a write attempted. Follow-up review
+also reproduced retention after the native transport's last target read failed.
+The native transport now owns marking at its final provider dispatch boundary.
+Full-cycle fixtures prove that known capability refusals and failed pre-write
+reads release the guard, while an uncertain provider PATCH remains held after
+exactly one attempt. Generic callbacks keep conservative pre-dispatch marking.
+
+The binding maps native tool envelopes and base64 file metadata explicitly.
+The host still needs a verified synchronous callback bridge. Real issue mutation
+response shapes are unverified. Milestone reads, issue-comment writes and
+cross-repository dependency reads remain explicit refusals. The portable bundle
+file set now also includes this binding; the older nine-file bundle above does
+not contain it.
+
+Luna's independent lease audit confirmed that universal short-guard adoption
+alone is insufficient. `spec` and `prioritize` can currently target any open
+issue, while a worker's coding lease outlives its command. Hosted writes need
+fresh per-issue lease/hold evidence under the guard, including claiming leases
+that still have a `todo` label. That hosted-readable lease protocol remains
+unimplemented. There is no need to stop unrelated workers, expire leases, or
+infer ownership from old activity labels.
+
+The final packaged implementation is
+`5c637de173851a03da8396e29d4d742802215641`, published on the draft PR branch.
+All ten bundle files passed immutable-source comparison and SHA-256 verification
+at `/private/tmp/aw-cloud-planners-20261028-5c637de`. Luna independently rechecked
+the final marking boundary and 44 planner tests, with no remaining defect found
+in that reviewed transport/guard path. This does not resolve the hosted runtime,
+milestone, comment, cross-repo dependency or per-issue lease gaps above.
+
+## Candidate
+
+- Portable issue-plan rules, milestone policy, wrapper, Python helpers and
+  SHA-256 manifest. Bundle construction checks each file against its immutable
+  source commit. Hosted runs must also check against the hashes in their saved
+  prompts; a supplied manifest is not self-authenticating.
+- `plan.sh --cloud status` has no local checkout, Git-directory or local-lock
+  dependency. It remains a read-only, non-atomic snapshot with no write authority.
+- Opt-in GitHub Contents API shared guard on a dedicated `aw-coordination`
+  branch. Expected blob SHA protects acquisition. New generation UUIDs protect
+  against reuse of old free snapshots. No automatic expiry, stealing or retry.
+- Matching local planner/worker adapters retain existing flock and issue leases.
+  Before an external mutation, they verify the shared owner. Pre-write validation
+  refusals release; errors after attempted mutations preserve the lock.
+
+The protocol covers short mutation commands, not the whole coding session.
+When `work next` returns, an issue can remain owned under its existing local
+lease. A free GitHub guard cannot prove that a coding owner is absent.
+
+## Verification on 2026-10-27
+
+| Check | Actual result |
+|---|---|
+| `python3 -m unittest discover -s plugins/faberline/skills/issue-loop/tests -q` | 75 passed, exit 0 |
+| `python3 -m unittest discover -s plugins/faberline/skills/issue-plan/tests -q` | 16 passed, exit 0 |
+| `python3 -m unittest discover -s plugins/faberline/skills/issue-work/tests -q` | 81 passed, exit 0 |
+| Independent forward review | Pre-write lock retention and omitted wrapper corrected; guard follow-up passed; malformed SHA error normalized |
+| Skill Creator `quick_validate.py` | Rejected pre-existing Claude `user-invocable` metadata on both original and candidate; not a passing Codex schema check |
+| Actual hosted runtime, authorized shell `gh`, native dependency API | One read-only hosted probe dispatched; result could not be read, so capabilities remain **unknown** |
+| Live shared-guard acquire/contention/release | **not_run** |
+| Live writer adoption and hosted-readable sessions/inbox/leases/cutover | **not_verified** |
+| Six production hosted task IDs/status/cadence and first natural runs | **not_created / not_run** |
+| Immutable portable bundle | Built and verified 8 files at `3b32e84bfde994ab8fe820e85c5df34550922116` |
+
+The existing main checkout has unrelated README and roadmap WIP. It was not
+changed. The candidate is isolated in `codex/cloud-issue-planners`.
+
+## Earlier transport failures
+
+The initial GitHub connector metadata request failed at its MCP transport endpoint.
+The existing `/opt/homebrew/bin/gh` provided a working fallback for publishing
+the candidate branch and creating draft PR #90. A later read of the candidate's
+check-runs failed with `connect: can't assign requested address`; CI remains
+unknown at that point. No issue write was attempted by either failed read.
+
+The initial published source revision was `3b32e84bfde994ab8fe820e85c5df34550922116`.
+Its portable context remains `/private/tmp/aw-cloud-planners-20261027-3b32e84`.
+Use the final packaged implementation recorded below.
+
+## Hosted probe
+
+A single read-only capability validation was created and manually dispatched:
+
+- Cloud automation ID: `6ae0c76939b08190bf590bf4c500829b`.
+- Run chat: https://chatgpt.com/c/6ae0c77f-9adc-83e8-bf07-b8c941e5fb37
+- Its future trigger was paused after dispatch. The paused state was verified
+  in the Scheduled UI. It is not a production planner or a recurring duplicate.
+- The run record reports a completed turn. The reader returned only a
+  `chatgpt-content-reference`, and the browser showed an unavailable response.
+  A reload failed with `ERR_ADDRESS_INVALID`. No shell, auth, hash, queue or
+  peer result was readable, so none counts as passed.
+- A screenshot was saved to this chat's visualization output directory as
+  `cloud-validation-error-detail.png`.
+
+At that point this was an attempted hosted validation with an unknown result.
+The report has since been recovered, as recorded above. The probe was read-only;
+do not blindly rerun any mutating operation.
+
+The earlier AW proxy had this chat's identity, but only its bootstrap tools were exposed.
+`register_session` refused a duplicate and directed the client to `update_session`.
+The installed direct client could not connect to its loopback AW endpoint. No
+scope update, inbox read or worktree claim was claimed successful then. The new
+admission and direct-client recovery at the configured port are recorded above.
+
+Current native session/inbox/lease and old-planner pause evidence still need a
+hosted-readable source adopted by the live local actors. The shared guard alone
+does not implement that source. Missing evidence continues to block mutations.
+
+## Resume
+
+1. Resolve the hosted milestone-read and native-binding capability gaps above.
+2. Use the published immutable source and verified bundle above. Preserve the
+   source review findings and actual test exits; they do not prove hosted readiness.
+3. Establish hosted-readable peer/owner/lease/cutover context without copying AW
+   session credentials. Deploy coherent shared-guard support to all live writers
+   only after their existing ownership has been reconciled. Preserve all leases.
+4. Initialize dedicated workflow-free coordination branches and run the real
+   hosted acceptance in `issue-plan/CLOUD.md`. A missing capability blocks cutover.
+5. Only after acceptance, prepare the six hosted definitions paused. Pause the
+   corresponding local definitions and verify no run remains in flight. Enable
+   hosted schedules at two-hour intervals, then verify their first natural runs.
+
+The six local definitions were read back as active, local, and every two hours.
+There is no production hosted duplicate, deployment, coordination-branch write,
+product issue write, or cutover. The one-time validation definition is completed
+and has no recurring trigger.

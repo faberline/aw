@@ -13,6 +13,44 @@ spec = importlib.util.spec_from_file_location('milestone_queue', Path(__file__).
 queue = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(queue)
 
+lease_spec = importlib.util.spec_from_file_location('planner_github_leases', Path(__file__).resolve().parents[2] / 'issue-loop/scripts/github_leases.py')
+leases = importlib.util.module_from_spec(lease_spec)
+lease_spec.loader.exec_module(leases)
+
+
+class GuardedClient(queue.Client):
+    """Add persistent worker-lease checks to the guarded gh planner path."""
+    def command(self, *args, payload=None):
+        if payload is not None:
+            if len(args) != 4 or args[:2] != ('api', '--method'):
+                raise ValueError('unsupported planner mutation')
+            method, path = args[2:]
+            prefix = f'repos/{self.repo}/issues'
+            target = re.fullmatch(re.escape(prefix) + r'/([1-9][0-9]*)(/comments)?', path)
+            create = method == 'POST' and path == prefix and isinstance(payload, dict) and set(payload) == {'title', 'body', 'milestone', 'labels'}
+            patch = method == 'PATCH' and target and not target.group(2) and isinstance(payload, dict) and bool(payload) and set(payload) <= {'labels', 'milestone'}
+            comment = method == 'POST' and target and target.group(2) and isinstance(payload, dict) and set(payload) == {'body'}
+            if not (create or patch or comment):
+                raise ValueError('planner mutation outside issue scope')
+            queue.coordination.verify_for(self.repo, required=True)
+            if target:
+                number = int(target.group(1))
+                leases.Ledger(self.repo, queue.coordination).require_unleased(number)
+                issue = self.issue(number)
+                if (not isinstance(issue, dict) or type(issue.get('number')) is not int or issue['number'] != number
+                        or issue.get('html_url') != f'https://github.com/{self.repo}/issues/{number}'
+                        or issue.get('state') != 'open' or 'pull_request' in issue):
+                    raise ValueError('planner target is not the expected open issue')
+                if not isinstance(issue.get('labels'), list) or queue.labels(issue) & {'doing', 'done'}:
+                    raise ValueError('planner target is active or awaiting review')
+        return super().command(*args, payload=payload)
+
+
+def planner_client(repo=None):
+    if os.getenv('ISSUE_COORDINATION_MODE', 'local') == 'github':
+        return GuardedClient(repo=repo)
+    return queue.Client(repo=repo) if repo else queue.Client()
+
 
 def sections(text):
     for name in ('Goal', 'Acceptance', 'Never', 'Gate'):
@@ -39,6 +77,8 @@ def reprioritize(labels, value):
 
 def required_open(client, n):
     issue = client.issue(int(n))
+    if 'pull_request' in issue:
+        raise ValueError('planner mutation requires an issue, not a pull request')
     if issue['state'] != 'open':
         raise ValueError('issue is not open')
     return issue
@@ -182,7 +222,15 @@ def main():
     # Every mutation still enters the original exclusive path below and reads
     # its own current state; status is never an admission/ownership receipt.
     if sys.argv[1:] == ['status']:
-        return execute(queue.Client(), ['status'])
+        return execute(planner_client(), ['status'])
+    if sys.argv[1:2] == ['--cloud']:
+        if len(sys.argv) < 3:
+            raise ValueError('expected --cloud COMMAND')
+        client = planner_client(repo=os.environ['GH_REPO'])
+        if sys.argv[2:] == ['status']:
+            return execute(client, ['status'])
+        with queue.coordination.shared_guard(client.repo, required=True):
+            return execute(client, sys.argv[2:])
     common = Path(subprocess.check_output(['git', '-c', 'core.fsmonitor=false', 'rev-parse', '--git-common-dir'], text=True).strip()).resolve()
     with (common / 'issue-work.guard').open('a') as guard:
         try:
@@ -192,11 +240,19 @@ def main():
             return 3
         if len(sys.argv) < 2:
             raise ValueError('expected plan command')
-        return execute(queue.Client(), sys.argv[1:])
+        client = planner_client()
+        with queue.coordination.shared_guard(client.repo):
+            return execute(client, sys.argv[1:])
 
 
 if __name__ == '__main__':
     try:
+        entry_spec = importlib.util.spec_from_file_location(
+            'issue_plan_coordination_entrypoint',
+            Path(__file__).resolve().parents[2] / 'issue-loop/scripts/coordination_entrypoint.py')
+        entrypoint = importlib.util.module_from_spec(entry_spec)
+        entry_spec.loader.exec_module(entrypoint)
+        entrypoint.bootstrap('plan', sys.argv[1:])
         sys.exit(main())
     except (ValueError, RuntimeError, OSError, KeyError, StopIteration, subprocess.CalledProcessError) as exc:
         print(f'refused: {exc}', file=sys.stderr)

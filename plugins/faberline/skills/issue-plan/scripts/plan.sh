@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
-exec python3 "$(dirname "$0")/plan.py" "$@"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+exec python3 "$SCRIPT_DIR/../../issue-loop/scripts/coordination_entrypoint.py" plan "$@"
