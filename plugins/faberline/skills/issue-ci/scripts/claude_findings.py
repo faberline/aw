@@ -163,7 +163,14 @@ def publish(api, repo, pr, head, load_document, evaluator, run_id, publisher_id,
     g.need(not os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') and not os.environ.get('ANTHROPIC_API_KEY'),
            'findings_oauth_scope_refused')
     document = load_document()
-    receipt = g.verify_result_receipt(api, repo, pr, head, load_document, evaluator, run_id, log_reader, allow_rejected=True)
+    index = g.sibling('native_review_index')
+    tracker = index.Session(api, repo, load_document, evaluator, log_reader)
+    def verify_receipt():
+        try:
+            return tracker.result(api, repo, pr, head, load_document, evaluator, run_id)
+        except index.review.Refused as error:
+            raise g.Refused(str(error)) from None
+    receipt = verify_receipt()
     context, packet = g.collect(api, repo, pr, head, load_document, evaluator,
                                source_plan=receipt['payload']['context']['requirement_plan'])
     g.need(context == receipt['payload']['context'], 'findings_context_changed')
@@ -175,7 +182,7 @@ def publish(api, repo, pr, head, load_document, evaluator, run_id, publisher_id,
     found = reconcile(api, intent)
     if found: return found
     g.need(identity['may_post'], 'findings_prior_attempt_unknown_no_retry')
-    again = g.verify_result_receipt(api, repo, pr, head, load_document, evaluator, run_id, log_reader, allow_rejected=True)
+    again = verify_receipt()
     g.need(again == receipt and load_document() == document, 'findings_review_changed')
     g.need(publication_context(api, repo, document, receipt['payload']['producer'], publisher_id, publisher_attempt)
            == identity, 'findings_publisher_changed')

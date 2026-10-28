@@ -10,6 +10,7 @@ on:
   issues:
     types: [edited, reopened, closed, labeled, unlabeled]
   pull_request_target:
+    branches: [main] # Use the verified default branch before joining concurrency.
     types: [opened, reopened, synchronize, edited, ready_for_review, converted_to_draft]
 permissions:
   actions: read

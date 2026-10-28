@@ -3,6 +3,7 @@ import contextlib
 import copy
 import importlib.util
 import io
+import math
 from pathlib import Path
 import unittest
 
@@ -42,6 +43,9 @@ class History(fixtures.Harness):
         return super().api(path, method, data)
 
     def pages(self, path, key=None):
+        for run_id,run in self.run_map.items():
+            if path == f"repos/o/r/actions/runs/{run_id}/attempts/1/jobs" and run_id not in self.job_map:
+                return []
         for run_id, job in self.job_map.items():
             if path == f"repos/o/r/actions/runs/{run_id}/attempts/1/jobs":
                 return [copy.deepcopy(job)]
@@ -51,7 +55,7 @@ class History(fixtures.Harness):
         return self.logs[job_id]
 
     def indexed(self):
-        return m.attempts(self, "o/r", self.document(), self.history, self.reader)
+        return m.attempts(self, "o/r", self.document(), self.history)
 
     def target_verify(self):
         return m.verify(self, "o/r", 1, fixtures.HEAD, self.document,
@@ -59,6 +63,28 @@ class History(fixtures.Harness):
 
 
 class NativeReviewIndexTests(unittest.TestCase):
+    def test_large_history_is_indexed_once_and_only_latest_log_is_downloaded(self):
+        h=History();h.review_run['run_number']=5000
+        h.history=[dict(h.review_run,id=1000+i,run_number=i+1)for i in range(4000)]+[h.review_run]
+        counters={'api':0,'history_pages':0,'logs':0,'historical_runs':0}
+        original_api,original_pages=h.api,h.pages
+        def api(path,method='GET',data=None):
+            counters['api']+=1
+            if '/actions/runs/' in path and not path.endswith('/200'):counters['historical_runs']+=1
+            return original_api(path,method,data)
+        def pages(path,key=None):
+            if '/workflows/20/runs' in path:counters['history_pages']+=math.ceil(len(h.history)/100)
+            return original_pages(path,key)
+        def reader(repo,job):counters['logs']+=1;return h.reader(repo,job)
+        h.api,h.pages=api,pages
+        tracker=m.Session(h,'o/r',h.document,fixtures.EVALUATOR,reader)
+        for _ in range(5):
+            self.assertEqual(tracker.verify(h,'o/r',1,fixtures.HEAD,h.document,fixtures.EVALUATOR,200),h.receipt)
+        self.assertEqual(counters['history_pages'],41)
+        self.assertEqual(counters['logs'],1)
+        self.assertEqual(counters['historical_runs'],0)
+        self.assertLess(counters['api']+counters['history_pages'],200)
+
     def test_newer_other_pr_does_not_hide_a_current_valid_pass(self):
         h = History(); h.add(2)
         self.assertEqual(set(h.indexed()), {1, 2})
@@ -98,7 +124,8 @@ class NativeReviewIndexTests(unittest.TestCase):
     def test_bad_known_target_record_does_not_poison_another_pr(self):
         h = History(); h.add(2)
         h.logs[301] = "unavailable target record"
-        self.assertIn("_native_index_error", h.indexed()[2])
+        with self.assertRaises(RuntimeError):
+            m.result(h,'o/r',2,fixtures.HEAD,h.document,fixtures.EVALUATOR,300,h.reader)
         self.assertEqual(h.target_verify(), h.receipt)
 
     def test_unassociated_skipped_wake_is_not_passing_review_evidence(self):
@@ -116,7 +143,8 @@ class NativeReviewIndexTests(unittest.TestCase):
 
     def test_known_target_without_review_job_is_held_only_for_that_pr(self):
         h=History();h.add(2,conclusion='cancelled');h.job_map.pop(300)
-        self.assertIn('_native_index_error',h.indexed()[2])
+        with self.assertRaises(RuntimeError):
+            m.result(h,'o/r',2,fixtures.HEAD,h.document,fixtures.EVALUATOR,300,h.reader)
         self.assertEqual(h.target_verify(),h.receipt)
 
     def test_rerun_attempt_is_not_accepted_under_an_older_job_identity(self):

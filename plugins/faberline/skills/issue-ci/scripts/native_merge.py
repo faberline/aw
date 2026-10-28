@@ -49,6 +49,7 @@ def policy(document, require_qualification=True):
     review.policy(document)
     config = document["config"]
     review.ci.validate_adoption(config)
+    handoff_policy(config)
     if require_qualification:
         need(config.get("lifecycle_mode") == "full"
              and config.get("qualification_blockers") == [], "qualification_hold")
@@ -69,6 +70,18 @@ def policy(document, require_qualification=True):
          and producer["path"] != prior["producer"]["path"]
          and producer["id"] != prior["producer"]["id"], "native_producer_policy")
     return p
+
+
+def handoff_policy(config):
+    """Keep old CI journal identities when only review metadata is added."""
+    prior = config.get("ci_handoff_policy", config)
+    need(isinstance(prior, dict) and (prior is config or "ci_handoff_policy" not in prior),
+         "ci_policy_snapshot")
+    review.ci.validate_config(prior)
+    need(all(prior.get(key) == config.get(key) for key in
+             ("workflows", "lifecycle_mode", "qualification_blockers", "qualification")),
+         "ci_policy_semantics_changed")
+    return prior
 
 
 def writer_contract(api, repo, document, evaluator):
@@ -104,6 +117,7 @@ def writer_contract(api, repo, document, evaluator):
     need(producer.get("name") == "Claude final review", "writer_review_trigger")
     expected = {k: dict(v) for k, v in TRIGGERS.items()}
     expected["workflow_run"]["workflows"] = names + [producer["name"]]
+    expected["pull_request_target"]["branches"] = [api.api(f"repos/{repo}")["default_branch"]]
     need(trigger == expected, "writer_trigger")
 
 
@@ -149,7 +163,7 @@ def reconcile_ci(api, repo, document, pulls, process):
         row = dict(pr=pull["number"], head=head["sha"], state="ci_processed")
         args = SimpleNamespace(repo=repo, pr=pull["number"], head=head["sha"], apply=True, run_id=None)
         try:
-            process(args, document["config"], check_event=False)
+            process(args, handoff_policy(document["config"]), check_event=False)
         except Exception:
             row.update(state="ci_held", reason="ci_handoff_refused_or_unknown")
         rows.append(row)
@@ -400,7 +414,7 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
         ci_errors = {row["pr"] for row in ci_rows if row["state"] == "ci_held"}
         print("AW_UNIFIED_CI_RECONCILIATION_V1 " + review.r.canonical(ci_rows))
     runs = api.pages(f'repos/{repo}/actions/workflows/{producer["id"]}/runs', "workflow_runs")
-    attempts = index(api, repo, document, runs)
+    attempts = index(api, repo, document, runs, {pull["number"]:pull.get("head",{}).get("sha") for pull in pulls})
     results = []
     for pull in sorted(pulls, key=lambda p: p["number"]):
         number, head = pull["number"], pull.get("head", {}).get("sha")
@@ -459,7 +473,8 @@ def main():
         need(source is not None and wake.get("workflow_id") == source["id"]
              and review.integer(wake.get("id")), "merge_wake_identity")
     index = review.sibling("native_review_index")
-    results = reconcile(api, repo, load, evaluator, index.attempts, index.verify, index.result, api.process_head)
+    tracker = index.Session(api, repo, load, evaluator)
+    results = reconcile(api, repo, load, evaluator, tracker.attempts, tracker.verify, tracker.result, api.process_head)
     print("AW_NATIVE_MERGE_RECONCILIATION_V1 " + review.r.canonical(dict(
         version=1, repo=repo, producer_run=int(current), results=results)))
     return 2 if any(row["state"] == "held_after_pending" for row in results) else 0

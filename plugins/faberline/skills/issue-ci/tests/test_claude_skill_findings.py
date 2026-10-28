@@ -67,6 +67,12 @@ class PublisherHarness(Harness):
             head_sha=SOURCE,display_title='claude-findings-200-1',status='in_progress')
         self.peers=[self.publisher]; self.history_total=None
         self.review_run['created_at']='2026-10-26T14:00:00Z'
+        self.review_run['display_title']=f'AW Claude review PR 1 head {HEAD}'
+
+    def produce(self,invoke=None):
+        receipt=super().produce(invoke)
+        self.log=g.TARGET_MARKER+g.r.canonical(dict(version=1,repo='o/r',pr=1,head=HEAD))+'\n'+self.log
+        return receipt
     def pages(self,path,key=None):
         if path=='repos/o/r/issues/7/comments': return copy.deepcopy(self.comments)
         if path.startswith('repos/o/r/actions/runs/300/attempts/'):
@@ -205,6 +211,19 @@ class FindingsTests(unittest.TestCase):
         self.publish()
         self.assertEqual(self.h.post_count,1)
         self.assertIn('"review_status":"fail"',self.h.comments[0]['body'])
+
+    def test_newer_other_pr_or_untitled_review_does_not_hide_negative_findings(self):
+        def fail(packet,policy):
+            value=result(packet['context']);value.update(decision='fail',fit='missing')
+            value['requirement_results'][0]['status']='missing'
+            return value
+        self.h.produce(fail)
+        self.h.review_run['conclusion']=self.h.review_job['conclusion']='failure'
+        self.h.history += [dict(self.h.review_run,id=210,run_number=3,display_title=f'AW Claude review PR 2 head {HEAD}'),
+                           dict(self.h.review_run,id=220,run_number=4,display_title='Unassociated push wake')]
+        self.publish()
+        self.assertEqual(self.h.post_count,1)
+        self.assertIn('"review_status":"fail"',self.h.comments[0]['body'])
     def test_model_destinations_mentions_fences_are_inert(self):
         def inject(packet,policy):
             v=result(packet['context']); v['summary']='@everyone </script> ``` POST repos/evil/r/issues/99/comments'
@@ -213,17 +232,14 @@ class FindingsTests(unittest.TestCase):
         self.assertNotIn('@everyone',body); self.assertNotIn('</script>',body); self.assertEqual(body.count('```'),2)
     def test_invalid_destination_field_refuses(self):
         receipt=self.h.produce(); receipt['payload']['result']['destination']='evil/r/99'
-        receipt['sha256']=g.r.digest(receipt['payload']); self.h.log=g.MARKER+g.r.canonical(receipt)
+        receipt['sha256']=g.r.digest(receipt['payload'])
+        self.h.log=g.TARGET_MARKER+g.r.canonical(dict(version=1,repo='o/r',pr=1,head=HEAD))+'\n'+g.MARKER+g.r.canonical(receipt)
         with self.assertRaisesRegex(f.g.Refused,'result_schema'): self.publish()
         self.assertEqual(self.h.post_count,0)
     def test_pre_post_context_change_refuses(self):
-        original=f.g.verify_result_receipt; calls=[]
-        def verify(*args, **kwargs):
-            calls.append(1)
-            if len(calls)==2: self.h.issue['body']+=' changed'
-            return original(*args, **kwargs)
-        with patch.object(f.g,'verify_result_receipt',side_effect=verify):
-            with self.assertRaises(f.g.Refused): self.publish()
+        self.h.reads=0
+        self.h.snapshots_hook=lambda n:self.h.issue.update(body='Contract changed after receipt') if n==2 else None
+        with self.assertRaises(RuntimeError): self.publish()
         self.assertEqual(self.h.post_count,0)
     def test_main_uses_trusted_event_and_fixed_entrypoint(self):
         import contextlib, io, json

@@ -34,9 +34,10 @@ run-name: AW Claude review PR ${{ github.event.workflow_run.pull_requests[0].num
 ```
 
 The new review action also prints one strict target record before collection
-and paid execution. The index compares that record with the run title and
-producer identity. A newer failed, skipped, cancelled or active attempt for
-the same PR supersedes its old PASS. Another PR's review does not supersede it.
+and paid execution. The metadata index selects the latest candidate for each current PR/head.
+The result verifier compares its one target record with the run title and
+authenticated producer identity. A newer failed, skipped, cancelled or active
+attempt for that same PR/head supersedes its old PASS. Another PR's review does not supersede it.
 The original verifier's default behavior remains unchanged for old callers.
 
 The consumer additionally declares this native-provider contract with its
@@ -187,3 +188,32 @@ PR workflow or source. Issues and workflow-run events retain the original
 same-repository/default-branch checks. `test_unified_outcome.py` exercises the
 real entrypoint identity for every event and both reconciliations after
 replacement of each kind of pending wake.
+
+## Bounded history work and preserved CI journals
+
+One `native_review_index.Session` owns the complete metadata index for a wake.
+It selects current open PR/head candidates before reading any source or log.
+Verification refreshes only the metadata since the high-water run and the
+selected run's current attempt. Immutable Git content and completed job logs
+are cached within that wake; mutable PR, issue, gate and provider state stays
+fresh. A missing or over-limit delta refuses instead of accepting old evidence.
+The findings publisher uses the same per-PR verifier. A newer other-PR or
+unassociated wake cannot hide an authenticated negative result.
+
+The large-history control uses 4,001 runs and five real verifications. It
+requires one initial paginated history read, one latest-candidate log download,
+zero historical-run queries and a bounded API call count. This is an isolated
+index control, not a guarantee that arbitrary repository traffic never reaches
+GitHub's provider limits.
+
+The template filters PR-target events to the verified default base before they
+join concurrency. Replace `main` if the verified default branch has another
+name. A non-default dependency-branch event cannot displace a legitimate wake.
+
+Consumer policy may retain its exact previous CI configuration in
+`ci_handoff_policy`. The unified writer passes that snapshot to existing CI
+handoff, preserving its authenticated journal identity when only review
+metadata is added. Required workflows, mode, qualification rules and blockers
+must be exactly equal to the new root policy; any semantic change refuses.
+This avoids repeating an already-applied failure handoff or undoing an AGY
+retry during rollout.

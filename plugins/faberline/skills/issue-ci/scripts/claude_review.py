@@ -765,10 +765,13 @@ def review(api, repo, number, head, load_document, evaluator, run_id, invoke=inv
 
 
 def verify_result_receipt(api, repo, number, head, load_document, evaluator, run_id,
-                          log_reader=r.job_log, latest_selector=None, allow_rejected=False):
+                          log_reader=r.job_log, latest_selector=None, allow_rejected=False,
+                          history_loader=None):
     document = load_document()
     p = policy(document)
-    runs = api.pages(f'repos/{repo}/actions/workflows/{p["producer"]["id"]}/runs', "workflow_runs")
+    load_history = history_loader or (lambda: api.pages(
+        f'repos/{repo}/actions/workflows/{p["producer"]["id"]}/runs', "workflow_runs"))
+    runs = load_history()
     need(bool(runs), "review_missing")
     select = latest_selector or (lambda values: max(values, key=lambda run: (run["run_number"], run["run_attempt"])))
     latest = select(runs)
@@ -792,7 +795,7 @@ def verify_result_receipt(api, repo, number, head, load_document, evaluator, run
         need(run.get("status") == job.get("status") == "completed"
              and run.get("conclusion") in allowed and job.get("conclusion") in allowed,
              "review_not_completed_result")
-    latest_again = api.pages(f'repos/{repo}/actions/workflows/{p["producer"]["id"]}/runs', "workflow_runs")
+    latest_again = load_history()
     need(latest_again and select(latest_again) == latest
          and producer(api, repo, document, run_id, not allow_rejected) == identity, "review_changed_during_verification")
     need(load_document() == document, "policy_changed")

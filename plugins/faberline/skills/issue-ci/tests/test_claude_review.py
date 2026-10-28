@@ -118,6 +118,10 @@ class Harness:
         if path == "repos/o/r/pulls/1": return copy.deepcopy(self.pull)
         if path == "repos/o/r/issues/7": return copy.deepcopy(self.issue)
         if path == "repos/o/r/actions/runs/200": return copy.deepcopy(self.review_run)
+        if path.startswith("repos/o/r/actions/workflows/20/runs?per_page=100&page="):
+            page=int(path.rsplit('=',1)[1])
+            values=sorted(self.history,key=lambda r:r.get('run_number',0),reverse=True)
+            return dict(workflow_runs=copy.deepcopy(values[(page-1)*100:page*100]))
         if path.startswith("repos/o/r/git/trees/"):
             ref = path.split("/git/trees/")[1].split("?")[0]
             tree = [dict(path=name, type="blob", mode="100644", size=len(raw), sha=git_blob(raw))

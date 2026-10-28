@@ -61,7 +61,7 @@ class UnifiedWriterTests(unittest.TestCase):
             with patch.dict(os.environ,env,clear=True),patch.object(m.review,'ci',p), \
                  patch.object(m.review.action,'trusted_policy',return_value=p.load()), \
                  patch.object(m,'writer_contract'), \
-                 patch.object(m.review,'sibling',return_value=SimpleNamespace(attempts=object(),verify=object(),result=object())), \
+                 patch.object(m.review,'sibling',return_value=SimpleNamespace(Session=lambda *args:SimpleNamespace(attempts=object(),verify=object(),result=object()))), \
                  patch.object(m,'reconcile',return_value=[]) as reconcile,contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(m.main(),0)
                 self.assertEqual(reconcile.call_count,1)
@@ -115,6 +115,23 @@ class UnifiedWriterTests(unittest.TestCase):
                 p.verify,ci_process=process)
         self.assertEqual([r['state']for r in rows],['held_after_pending','queued'])
         self.assertEqual(calls,[('ci',1),('ci',2),('outcome',2)])
+
+    def test_nondefault_pr_base_is_filtered_before_joining_writer_concurrency(self):
+        import yaml
+        file=Path(__file__).parents[1]/'templates/claude-native-merge.yml.example'
+        workflow=yaml.load(file.read_text(),Loader=yaml.BaseLoader)
+        self.assertEqual(workflow['on']['pull_request_target']['branches'],['main'])
+        self.assertNotIn('codex/dependency',workflow['on']['pull_request_target']['branches'])
+
+    def test_unchanged_ci_policy_keeps_its_existing_journal_identity(self):
+        p=fixture.Provider();original=copy.deepcopy(p.document['config'])
+        p.document['config']['ci_handoff_policy']=original
+        seen=[]
+        m.reconcile_ci(p,'o/r',p.load(),[p.pull],lambda args,config,check_event:seen.append(config))
+        self.assertEqual(seen,[original])
+        self.assertEqual(m.review.r.digest(seen[0]),m.review.r.digest(original))
+        p.document['config']['workflows'][0]['jobs'].append('unreviewed')
+        with self.assertRaises(RuntimeError):m.handoff_policy(p.document['config'])
 
 
 if __name__=='__main__':unittest.main()

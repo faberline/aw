@@ -257,6 +257,7 @@ class NativeMergeTests(unittest.TestCase):
                 GITHUB_REPOSITORY="o/r", AW_ACTION_REF=EVALUATOR,
                 GITHUB_RUN_ID="300", GITHUB_EVENT_PATH=str(path))
             index = SimpleNamespace(attempts=object(), verify=object(), result=object())
+            index.Session=lambda *args:index
             with patch.object(m.review, "ci", self.p), \
                  patch.object(m.review.action, "trusted_policy", return_value=self.p.load()), \
                  patch.object(m, "writer_identity") as producer, \
@@ -304,6 +305,7 @@ class WriterContractTests(unittest.TestCase):
         changes=(lambda s:s.replace('group: issue-ci-handoff','group: different'),
                  lambda s:s.replace('cancel-in-progress: false','cancel-in-progress: true'),
                  lambda s:s.replace('issues: write','issues: read'),
+                 lambda s:s.replace('branches: [main]','branches: [codex/dependency]'),
                  lambda s:s.replace('@'+EVALUATOR,'@main'),
                  lambda s:s+'\n  extra:\n    runs-on: ubuntu-latest\n    steps: []\n',
                  lambda s:s.replace('    steps:','    env:\n      SECRET: value\n    steps:'),
