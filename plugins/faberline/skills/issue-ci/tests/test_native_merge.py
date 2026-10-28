@@ -41,7 +41,7 @@ class Provider:
             producer=dict(path=".github/workflows/native-merge.yml", id=30,
                 definition_sha="f" * 40, job="merge"))
         self.document = dict(config=cfg, source_commit=SOURCE)
-        self.pull = dict(number=1, state="open", draft=False, changed_files=1,
+        self.pull = dict(number=1, state="open", draft=False, changed_files=1, title="Synthetic PR", body="Closes #7\n",
             head=dict(sha=HEAD, ref="issue/7", repo=dict(full_name="o/r")),
             base=dict(sha=BASE, ref="main", repo=dict(full_name="o/r")))
         self.native = dict(id="PR_1", state="OPEN", isDraft=False,
@@ -54,6 +54,11 @@ class Provider:
         self.ruleset = dict(enforcement="active", target="branch", bypass_actors=[])
         self.receipt = dict(payload=dict(context=dict(repo="o/r", pr=1, head=HEAD,
             base=BASE, base_ref="main")), sha256="a" * 64)
+        self.issue=dict(number=7,state="open",title="Contract",body="Implement the contract.",labels=[])
+        self.receipt["payload"]["context"].update(
+            pr_description_sha256=m.review.r.digest([self.pull["title"],self.pull["body"]]),
+            issue_sha256=m.review.r.digest({k:self.issue[k] for k in ("number","title","body")}))
+        self.statuses = []
         self.writes = []
         self.verifications = 0
         self.verify_hook = None
@@ -79,19 +84,30 @@ class Provider:
             self.snapshot_hook(data)
         return data
 
+    def pages(self, path, key=None):
+        if "/statuses" in path: return copy.deepcopy(self.statuses)
+        raise AssertionError(path)
+
     def api(self, path, method="GET", data=None):
         if path == "graphql":
             query = data["query"]
             if "mutation" not in query:
                 return dict(data=dict(repository=dict(pullRequest=copy.deepcopy(self.native))))
+            if "disablePullRequestAutoMerge" in query:
+                self.writes.append(("disable", copy.deepcopy(data["variables"])))
+                self.native["autoMergeRequest"] = None
+                return dict(data=dict(disablePullRequestAutoMerge=dict(pullRequest=copy.deepcopy(self.native))))
             self.writes.append(("queue", copy.deepcopy(data["variables"])))
             if self.error_on == "queue":
                 raise TimeoutError("synthetic ambiguous queue result")
-            self.native["autoMergeRequest"] = dict(mergeMethod="SQUASH", enabledAt="2026-10-29T00:00:00Z")
+            inputs=data["variables"]["input"]
+            self.native["autoMergeRequest"] = dict(mergeMethod="SQUASH", enabledAt="2026-10-29T00:00:00Z",
+                enabledBy=dict(login="github-actions[bot]"),commitHeadline=inputs["commitHeadline"],commitBody=inputs["commitBody"])
             return dict(data=dict(enablePullRequestAutoMerge=dict(pullRequest=copy.deepcopy(self.native))))
         if method == "POST":
             assert path == "repos/o/r/statuses/" + HEAD
             self.writes.append((data["state"], copy.deepcopy(data)))
+            self.statuses.insert(0, dict(data, id=len(self.statuses)+1, creator=dict(login="github-actions[bot]")))
             if self.error_on == data["state"]:
                 raise TimeoutError("synthetic ambiguous status result")
             if data["state"] == "success" and self.auto_complete:
@@ -99,12 +115,18 @@ class Provider:
             return dict(state=data["state"])
         if path == "repos/o/r": return copy.deepcopy(self.meta)
         if path == "repos/o/r/pulls/1": return copy.deepcopy(self.pull)
+        if path == "repos/o/r/issues/7": return copy.deepcopy(self.issue)
         if path == "repos/o/r/rules/branches/main": return copy.deepcopy(self.rules)
         if path == "repos/o/r/rulesets/9": return copy.deepcopy(self.ruleset)
         raise AssertionError(path)
 
     def run(self):
         return m.enqueue(self, "o/r", 1, HEAD, self.load, EVALUATOR, 200, verify=self.verify)
+
+    def queue_pages(self, path, key=None):
+        if "/pulls?" in path: return [copy.deepcopy(self.pull)]
+        if "/workflows/" in path: return []
+        return self.pages(path, key)
 
 
 class NativeMergeTests(unittest.TestCase):
@@ -120,6 +142,8 @@ class NativeMergeTests(unittest.TestCase):
         self.assertEqual([w[0] for w in self.p.writes], ["pending", "queue", "success"])
         self.assertEqual(self.p.writes[1][1]["input"]["expectedHeadOid"], HEAD)
         self.assertEqual(self.p.writes[1][1]["input"]["mergeMethod"], "SQUASH")
+        self.assertEqual(self.p.writes[1][1]["input"]["commitBody"], "Closes #7")
+        self.assertEqual(self.p.writes[1][1]["input"]["commitHeadline"], "Merge PR #1")
         self.assertEqual(self.p.verifications, 2)
 
     def test_provider_request_is_durable_without_an_immediate_merge_call(self):
@@ -287,3 +311,46 @@ class WriterContractTests(unittest.TestCase):
         for change in changes:
             self.native=change(original)
             with self.subTest(source=self.native),self.assertRaises(RuntimeError):self.validate()
+
+
+class ApprovalWithdrawalTests(unittest.TestCase):
+    def test_closed_blocked_changed_issue_or_extra_closing_reference_never_queues(self):
+        for mutate in (lambda p:p.issue.update(state='closed'),
+                       lambda p:p.issue['labels'].append(dict(name='blocked')),
+                       lambda p:p.issue.update(body='Changed requirement'),
+                       lambda p:p.pull.update(body='Closes #7\nAlso fixes #9\n')):
+            p=Provider();mutate(p)
+            with self.assertRaises(RuntimeError):p.run()
+            self.assertEqual(p.writes,[])
+
+    def test_prior_pass_is_withdrawn_before_stale_receipt_policy_or_missing_review_hold(self):
+        for failure in ('receipt', 'policy', 'missing', 'active'):
+            p=Provider();p.auto_complete=False;p.run();p.writes.clear()
+            original_pages=p.pages
+            p.pages=lambda path,key=None: [copy.deepcopy(p.pull)] if '/pulls?' in path else [] if '/workflows/' in path else original_pages(path,key)
+            if failure=='policy':p.document['config']['qualification_blockers']=['Coverage unresolved']
+            if failure=='receipt':p.verify_hook=lambda n: (_ for _ in ()).throw(m.review.Refused('review_stale'))
+            attempts={} if failure=='missing' else {1:dict(id=200,status='in_progress' if failure=='active' else 'completed',conclusion=None if failure=='active' else 'success')}
+            rows=m.reconcile(p,'o/r',p.load,EVALUATOR,lambda *a:attempts,p.verify)
+            self.assertEqual([w[0] for w in p.writes],['pending','disable'])
+            self.assertIsNone(p.native['autoMergeRequest'])
+            self.assertEqual(p.statuses[0]['state'],'pending')
+            self.assertEqual(rows[0]['state'],'held')
+
+    def test_other_users_unrelated_native_request_is_not_cancelled(self):
+        p=Provider();p.native['autoMergeRequest']=dict(mergeMethod='SQUASH',enabledBy=dict(login='human'))
+        m.withdraw_approval(p,'o/r',1,HEAD)
+        self.assertEqual(p.writes,[])
+
+    def test_unknown_disable_result_does_not_retry_or_restore_success(self):
+        p=Provider();p.auto_complete=False;p.run();p.writes.clear()
+        orig=p.api
+        def api(path,method='GET',data=None):
+            if path=='graphql' and 'disablePullRequestAutoMerge' in data['query']:
+                orig(path,method,data)
+                raise TimeoutError('Response lost after disabling')
+            return orig(path,method,data)
+        p.api=api
+        with self.assertRaises(TimeoutError):m.withdraw_approval(p,'o/r',1,HEAD)
+        self.assertEqual([w[0] for w in p.writes],['pending','disable'])
+        self.assertIsNone(p.native['autoMergeRequest'])

@@ -18,31 +18,39 @@ def attempts(api, repo, document, runs, log_reader=review.r.job_log):
     meta = api.api(f"repos/{repo}")
     latest = {}
     seen = set()
+    invalid_targets = set()
     for run in runs:
         if (run.get("workflow_id") != spec["id"] or run.get("path") != spec["path"]
                 or run.get("event") != "workflow_run"
                 or run.get("head_repository", {}).get("full_name") != repo
                 or run.get("head_branch") != meta["default_branch"]):
             continue
-        source = api.api(f'repos/{repo}/contents/{spec["path"]}?ref={run["head_sha"]}')
-        if source.get("sha") != spec["definition_sha"]:
-            continue
-        review.need(review.integer(run.get("id")) and review.integer(run.get("run_number"))
-                    and review.integer(run.get("run_attempt")), "review_attempt_identity")
-        key = run["id"], run["run_attempt"]
-        review.need(key not in seen, "review_attempt_duplicate")
-        seen.add(key)
         target = TITLE.fullmatch(run.get("display_title", ""))
+        if target is None:
+            continue  # No target means no approval or superseding evidence.
+        if not (review.integer(run.get("id")) and review.integer(run.get("run_number"))
+                and review.integer(run.get("run_attempt"))):
+            invalid_targets.add(int(target[1]))
+            continue
+        key = run["id"], run["run_attempt"]
         candidate = dict(run)
-        if run.get("status") == "completed":
-            identity = review.producer(api, repo, document, run["id"], False)
-            jobs = api.pages(f'repos/{repo}/actions/runs/{run["id"]}/attempts/{run["run_attempt"]}/jobs', "jobs")
-            job = next(j for j in jobs if j["id"] == identity["job_id"])
-            if target is None and job.get("conclusion") == "skipped":
-                # A producer wake with no associated target and no executed
-                # review contributes no approval for any PR.
+        try:
+            source = api.api(f'repos/{repo}/contents/{spec["path"]}?ref={run["head_sha"]}')
+            if source.get("sha") != spec["definition_sha"]:
                 continue
-            review.need(target is not None, "review_target_title_unknown")
+        except Exception:
+            candidate["_native_index_error"] = "review_source_unknown"
+        if key in seen:
+            candidate["_native_index_error"] = "review_attempt_duplicate"
+        seen.add(key)
+        if run.get("status") == "completed":
+            try:
+                identity = review.producer(api, repo, document, run["id"], False)
+                jobs = api.pages(f'repos/{repo}/actions/runs/{run["id"]}/attempts/{run["run_attempt"]}/jobs', "jobs")
+                job = next(j for j in jobs if j["id"] == identity["job_id"])
+            except Exception:
+                candidate["_native_index_error"] = "review_job_identity_unknown"
+                job = {"conclusion": "skipped"}
             number, head = int(target[1]), target[2]
             if job.get("conclusion") == "skipped":
                 # This is not passing review evidence. A later real attempt
@@ -60,9 +68,11 @@ def attempts(api, repo, document, runs, log_reader=review.r.job_log):
         review.need(target is not None, "review_target_title_unknown")
         number = int(target[1])
         previous = latest.get(number)
-        if previous is None or (run["run_number"], run["run_attempt"]) > (
+        if previous is None or (run["run_number"], run["run_attempt"]) >= (
                 previous["run_number"], previous["run_attempt"]):
             latest[number] = candidate
+    for number in invalid_targets:
+        latest[number] = {"_native_index_error": "review_attempt_identity_unknown"}
     return latest
 
 

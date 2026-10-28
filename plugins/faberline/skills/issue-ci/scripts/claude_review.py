@@ -310,6 +310,22 @@ def pull_identity(pull, repo, number, head):
          and sha(pull["base"].get("sha")), "pr_identity")
 
 
+def linked_issue(pull):
+    """Allow one canonical closing reference and no other closing keywords.
+
+    This is deliberately conservative for Markdown/code examples. GitHub also
+    recognizes title and inline references, not just a stand-alone body line.
+    """
+    body = pull.get("body") or ""
+    lines = re.findall(r"(?m)^Closes #([1-9][0-9]*)[ \t\r]*$", body)
+    need(len(lines) == 1, "one_issue_contract_required")
+    rest = re.sub(r"(?m)^Closes #[1-9][0-9]*[ \t\r]*$", "", body)
+    need(not re.search(r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[ \t\r\n]*:?"
+                       r"[ \t\r\n]*(?:#[0-9]+|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+|https?://)",
+                       (pull.get("title") or "") + "\n" + rest), "extra_closing_reference")
+    return int(lines[0])
+
+
 def gate_evidence(api, repo, pull, document):
     """Preserve every existing configured workflow/job, without an all-green guess."""
     p = policy(document)
@@ -370,10 +386,9 @@ def collect(api, repo, number, head, load_document, evaluator, include_sources=F
         names.append(path)
         inventory.append(dict(path=path, previous=previous, status=status, sha=file["sha"]))
     need(len(set(names)) == len(names), "file_inventory_duplicate")
-    links = re.findall(r"(?im)^Closes #([1-9][0-9]*)\s*$", pull.get("body") or "")
-    need(len(links) == 1, "one_issue_contract_required")
-    issue = api.api(f"repos/{repo}/issues/{int(links[0])}")
-    need(issue.get("number") == int(links[0]) and "pull_request" not in issue
+    issue_number = linked_issue(pull)
+    issue = api.api(f"repos/{repo}/issues/{issue_number}")
+    need(issue.get("number") == issue_number and "pull_request" not in issue
          and text(issue.get("body"), 65536) and text(issue.get("title"), 1000)
          and text(issue.get("updated_at"), 100), "issue_contract_missing")
     issue = {key: issue[key] for key in ("number", "title", "body", "updated_at")}
@@ -701,7 +716,7 @@ def producer(api, repo, document, run_id, completed, role="producer"):
     return producer_identity(api, repo, document, run_id, completed, spec)
 
 
-def producer_identity(api, repo, document, run_id, completed, spec):
+def producer_identity(api, repo, document, run_id, completed, spec, events=("workflow_run",)):
     need(exact(spec, "path id definition_sha job") and integer(spec["id"])
          and isinstance(spec["path"], str)
          and re.fullmatch(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml", spec["path"])
@@ -709,7 +724,7 @@ def producer_identity(api, repo, document, run_id, completed, spec):
     meta = api.api(f"repos/{repo}")
     run = api.api(f"repos/{repo}/actions/runs/{run_id}")
     need(integer(run_id) and run.get("id") == run_id and run.get("workflow_id") == spec["id"]
-         and run.get("path") == spec["path"] and run.get("event") == "workflow_run"
+         and run.get("path") == spec["path"] and run.get("event") in events
          and run.get("head_repository", {}).get("full_name") == repo
          and run.get("head_branch") == meta["default_branch"] and sha(run.get("head_sha"))
          and integer(run.get("run_attempt")), "review_producer_identity")

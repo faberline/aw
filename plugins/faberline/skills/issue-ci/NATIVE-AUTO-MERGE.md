@@ -12,7 +12,7 @@ one-off reviews are not receipts from the formal default-branch producer.
 
 ## Required consumer state
 
-The consumer needs a separately reviewed complete qualification contract v1,
+For merge approval, the consumer needs a separately reviewed complete qualification contract v1,
 `lifecycle_mode: full`, no unresolved global qualification blockers, and the
 existing nonempty unit, functional/E2E and performance selection rules. Unknown
 paths, missing evidence and unapproved applicability stay blocked. Changing a
@@ -99,7 +99,7 @@ required `Closes #N` line, because only the default target branch is accepted.
 No issue is closed while a request is merely queued.
 
 A fresh authenticated `fail` or `block` decision returns the linked open issue
-to `agy:doing`. It adds doing before it removes todo or done. Other labels
+to `doing`. It adds doing before it removes todo or done. Other labels
 remain. Each removal rechecks the exact PR, issue contract and latest review.
 Closed or blocked issues, stale heads and missing/invalid review receipts are
 held. An interrupted mixed-label update can finish on a later wake. Existing
@@ -141,10 +141,30 @@ and the active strict rule metadata in the
 
 - Claude PASS plus complete approved qualification: queue native squash merge.
   GitHub closes the explicitly linked issue only after the merge completes.
-- Claude fail or block: return the linked open issue to `agy:doing`.
+- Claude fail or block: return the linked open issue to `doing`.
 - CI pending/failing, missing review, stale inputs or coverage hold: do not merge.
 
 `test_review_lifecycle.py` covers rejection, blocked/closed issues, contract or
 head drift, unrelated labels, interrupted recovery and retained coverage holds.
 The writer contract also verifies the shared mutex, one pinned action step,
 exact permissions and the trusted review trigger.
+
+## Revocation and closing scope
+
+Each outcome wake first withdraws this adapter's old passing head statuses and
+native requests across the complete open queue. It then builds the index and
+verifies fresh eligibility. A refused or unknown review never leaves its old
+approval active. A valid negative review publishes failure before changing labels.
+The workflow also wakes on review start, PR metadata/head changes, and issue
+contract/state/label changes. These are metadata events; no PR source executes.
+
+Only one canonical `Closes #N` body line is allowed. Other closing keyword
+references in the title or body are refused. Native squash input fixes the
+commit headline and body to the PR number and that issue. It never inherits
+closing references from individual commit messages. All six consumers currently
+use bare `todo`, `doing`, `done`, `blocked`, matching the existing CI controller.
+The adapter preserves that namespace. Both blocked spellings fail closed.
+
+The included findings publisher authenticates failed jobs with valid negative
+receipts. It still rejects a passing receipt from a failed job. The hosted
+control suite also includes the inherited `scripts/security/tests` controls.

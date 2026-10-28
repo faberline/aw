@@ -163,7 +163,7 @@ def publish(api, repo, pr, head, load_document, evaluator, run_id, publisher_id,
     g.need(not os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') and not os.environ.get('ANTHROPIC_API_KEY'),
            'findings_oauth_scope_refused')
     document = load_document()
-    receipt = g.verify_result_receipt(api, repo, pr, head, load_document, evaluator, run_id, log_reader)
+    receipt = g.verify_result_receipt(api, repo, pr, head, load_document, evaluator, run_id, log_reader, allow_rejected=True)
     context, packet = g.collect(api, repo, pr, head, load_document, evaluator,
                                source_plan=receipt['payload']['context']['requirement_plan'])
     g.need(context == receipt['payload']['context'], 'findings_context_changed')
@@ -175,7 +175,7 @@ def publish(api, repo, pr, head, load_document, evaluator, run_id, publisher_id,
     found = reconcile(api, intent)
     if found: return found
     g.need(identity['may_post'], 'findings_prior_attempt_unknown_no_retry')
-    again = g.verify_result_receipt(api, repo, pr, head, load_document, evaluator, run_id, log_reader)
+    again = g.verify_result_receipt(api, repo, pr, head, load_document, evaluator, run_id, log_reader, allow_rejected=True)
     g.need(again == receipt and load_document() == document, 'findings_review_changed')
     g.need(publication_context(api, repo, document, receipt['payload']['producer'], publisher_id, publisher_attempt)
            == identity, 'findings_publisher_changed')
@@ -200,10 +200,10 @@ def main():
     event = g.ci.strict_json_loads(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())
     wake = event.get('workflow_run', {})
     g.need(event.get('action') == 'completed' and wake.get('status') == 'completed'
-           and wake.get('conclusion') == 'success' and g.integer(wake.get('id')), 'findings_wake')
+           and wake.get('conclusion') in ('success', 'failure') and g.integer(wake.get('id')), 'findings_wake')
     load_document = lambda: g.action.trusted_policy(g.ci, repo, '.github/issue-ci-required-gates.json', metadata=True)
     document = load_document()
-    identity = g.producer(g.ci, repo, document, wake['id'], True)
+    identity = g.producer(g.ci, repo, document, wake['id'], False)
     g.need(wake.get('workflow_id') == identity['workflow_id'] and wake.get('path') == g.policy(document)['producer']['path']
            and wake.get('run_attempt') == identity['run_attempt'] and wake.get('head_sha') == identity['head']
            and wake.get('head_repository', {}).get('full_name') == repo, 'findings_wake_identity')

@@ -25,6 +25,17 @@ def git_blob(raw):
     return hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
 
 
+class ClosingReferenceTests(unittest.TestCase):
+    def test_only_the_single_canonical_closing_line_is_allowed(self):
+        self.assertEqual(g.linked_issue(dict(title='Repair',body='Details\nCloses #7\n')),7)
+        for extra in ('fixes #9','Resolves #9','inline closes #9','closes owner/repo#9',
+                      'closed https://github.com/o/r/issues/9','fixed: #9','Closes #9'):
+            for place in ('body','title'):
+                pull=dict(title='Repair',body='Closes #7\n')
+                pull[place]+='\n'+extra
+                with self.subTest(extra=extra,place=place),self.assertRaises(RuntimeError):g.linked_issue(pull)
+
+
 def result(context):
     return dict(version=1, repo="o/r", pr=1, head=HEAD, base=BASE, decision="pass", fit="exact",
                 summary="Synthetic diff meets exactly the issue.", contract_uncertainties=[],

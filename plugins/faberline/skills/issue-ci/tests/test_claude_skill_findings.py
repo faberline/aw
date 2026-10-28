@@ -194,6 +194,17 @@ class FindingsTests(unittest.TestCase):
         self.h.produce(block); self.publish(); body=self.h.comments[0]['body']
         self.assertIn('"review_status":"block"',body); self.assertIn('"findings":[]',body)
         self.assertIn('"kind":"insufficient_evidence"',body)
+
+    def test_failed_review_job_still_publishes_authenticated_negative_findings(self):
+        def fail(packet,policy):
+            value=result(packet['context']);value.update(decision='fail',fit='missing')
+            value['requirement_results'][0]['status']='missing'
+            return value
+        self.h.produce(fail)
+        self.h.review_run['conclusion']=self.h.review_job['conclusion']='failure'
+        self.publish()
+        self.assertEqual(self.h.post_count,1)
+        self.assertIn('"review_status":"fail"',self.h.comments[0]['body'])
     def test_model_destinations_mentions_fences_are_inert(self):
         def inject(packet,policy):
             v=result(packet['context']); v['summary']='@everyone </script> ``` POST repos/evil/r/issues/99/comments'
@@ -207,10 +218,10 @@ class FindingsTests(unittest.TestCase):
         self.assertEqual(self.h.post_count,0)
     def test_pre_post_context_change_refuses(self):
         original=f.g.verify_result_receipt; calls=[]
-        def verify(*args):
+        def verify(*args, **kwargs):
             calls.append(1)
             if len(calls)==2: self.h.issue['body']+=' changed'
-            return original(*args)
+            return original(*args, **kwargs)
         with patch.object(f.g,'verify_result_receipt',side_effect=verify):
             with self.assertRaises(f.g.Refused): self.publish()
         self.assertEqual(self.h.post_count,0)

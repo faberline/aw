@@ -1,10 +1,14 @@
-# Install only with the reviewed full qualification policy, pinned action,
-# explicit merge-producer identity, and required native provider ruleset.
+# Install with the pinned action, real producer identity and strict provider
+# ruleset. Qualification holds prohibit merge but permit verified rejection.
 name: Claude review outcome
 on:
   workflow_run:
     workflows: [Claude final review]
-    types: [completed]
+    types: [requested, in_progress, completed]
+  issues:
+    types: [edited, reopened, closed, labeled, unlabeled]
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited, ready_for_review, converted_to_draft]
 permissions:
   actions: read
   contents: read

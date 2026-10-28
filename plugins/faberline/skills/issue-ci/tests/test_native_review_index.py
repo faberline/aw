@@ -91,7 +91,8 @@ class NativeReviewIndexTests(unittest.TestCase):
 
     def test_duplicate_run_inventory_is_not_silently_deduplicated(self):
         h = History(); h.history.append(copy.deepcopy(h.review_run))
-        with self.assertRaises(RuntimeError): h.indexed()
+        self.assertIn('_native_index_error',h.indexed()[1])
+        with self.assertRaises(RuntimeError): h.target_verify()
         self.assertEqual(h.writes, [])
 
     def test_bad_known_target_record_does_not_poison_another_pr(self):
@@ -105,6 +106,18 @@ class NativeReviewIndexTests(unittest.TestCase):
         run["display_title"] = "No associated PR"
         self.assertEqual(set(h.indexed()), {1})
         self.assertEqual(h.target_verify(), h.receipt)
+
+    def test_untitled_active_or_cancelled_wake_does_not_abort_other_prs(self):
+        for status in ('queued','in_progress','completed'):
+            h=History();r=h.add(2,status=status,conclusion='cancelled' if status=='completed' else None)
+            r['display_title']='Unassociated workflow push wake'
+            h.job_map.pop(300)
+            self.assertEqual(h.target_verify(),h.receipt)
+
+    def test_known_target_without_review_job_is_held_only_for_that_pr(self):
+        h=History();h.add(2,conclusion='cancelled');h.job_map.pop(300)
+        self.assertIn('_native_index_error',h.indexed()[2])
+        self.assertEqual(h.target_verify(),h.receipt)
 
     def test_rerun_attempt_is_not_accepted_under_an_older_job_identity(self):
         h = History(); h.review_run["run_attempt"] = 2

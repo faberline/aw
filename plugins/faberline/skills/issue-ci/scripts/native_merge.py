@@ -20,17 +20,28 @@ need = review.need
 QUEUE = """mutation($input:EnablePullRequestAutoMergeInput!){
   enablePullRequestAutoMerge(input:$input){pullRequest{
     id state headRefOid baseRefOid baseRefName
-    autoMergeRequest{mergeMethod enabledAt}
+    autoMergeRequest{mergeMethod enabledAt enabledBy{login} commitHeadline commitBody}
     mergeCommit{oid}
   }}
 }"""
 READ = """query($owner:String!,$name:String!,$number:Int!){
   repository(owner:$owner,name:$name){pullRequest(number:$number){
     id state headRefOid baseRefOid baseRefName isDraft
-    autoMergeRequest{mergeMethod enabledAt}
+    autoMergeRequest{mergeMethod enabledAt enabledBy{login} commitHeadline commitBody}
     mergeCommit{oid}
   }}
 }"""
+DISABLE = """mutation($input:DisablePullRequestAutoMergeInput!){
+  disablePullRequestAutoMerge(input:$input){pullRequest{id state headRefOid
+    autoMergeRequest{mergeMethod enabledBy{login}} mergeCommit{oid}
+  }}
+}"""
+EVENTS = ("workflow_run", "issues", "pull_request_target")
+TRIGGERS = {
+    "workflow_run": {"workflows": ["Claude final review"], "types": ["requested", "in_progress", "completed"]},
+    "issues": {"types": ["edited", "reopened", "closed", "labeled", "unlabeled"]},
+    "pull_request_target": {"types": ["opened", "reopened", "synchronize", "edited", "ready_for_review", "converted_to_draft"]},
+}
 
 
 def policy(document, require_qualification=True):
@@ -78,9 +89,7 @@ def writer_contract(api, repo, document, evaluator):
          and job["steps"] == [{"uses": "faberline/aw/.github/actions/native-auto-merge@" + evaluator}],
          "writer_contract")
     trigger = workflow.get("on")
-    need(isinstance(trigger, dict) and set(trigger) == {"workflow_run"}
-         and set(trigger["workflow_run"]) == {"workflows", "types"}
-         and trigger["workflow_run"]["types"] == ["completed"], "writer_trigger")
+    need(trigger == TRIGGERS, "writer_trigger")
     prior = review.policy(document)["producer"]
     source = review.blob(api, repo, prior["path"], document["source_commit"], prior["definition_sha"])
     review.r.literal_uses(source)
@@ -104,6 +113,36 @@ def provider_pull(api, repo, number):
     return pull
 
 
+def withdraw_approval(api, repo, number, head):
+    """Revoke our prior authorization before attempting any fresh verification.
+
+    A policy/base/issue/index failure must not leave a previous passing head
+    status or our native request behind. Reconciliation calls this for the
+    complete open queue before building its review index. No blind retries.
+    """
+    pull = provider_pull(api, repo, number)
+    need(pull.get("state") == "OPEN" and pull["headRefOid"] == head, "withdraw_target_changed")
+    statuses = api.pages(f"repos/{repo}/commits/{head}/statuses")
+    owned = [s for s in statuses if s.get("context") == "claude/verified-merge"
+             and s.get("creator", {}).get("login") == "github-actions[bot]"]
+    prior = max(owned, key=lambda s: s["id"]) if owned else None
+    request = pull.get("autoMergeRequest")
+    ours = request and (request.get("enabledBy", {}).get("login") == "github-actions[bot]" or prior)
+    if not ours and (prior is None or prior.get("state") != "success"):
+        return
+    api.api(f"repos/{repo}/statuses/{head}", method="POST", data=dict(
+        state="pending", context="claude/verified-merge",
+        description="Previous approval withdrawn; fresh verification required"))
+    again = provider_pull(api, repo, number)
+    need(again.get("state") == "OPEN" and again["headRefOid"] == head, "withdraw_target_changed")
+    if ours and again.get("autoMergeRequest") is not None:
+        result = graphql(api, DISABLE, dict(input=dict(pullRequestId=again["id"])))
+        observed = result.get("disablePullRequestAutoMerge", {}).get("pullRequest")
+        need(isinstance(observed, dict) and observed.get("headRefOid") == head
+             and observed.get("state") == "OPEN" and observed.get("autoMergeRequest") is None,
+             "withdraw_result_unknown")
+
+
 def binding(pull, context):
     need(pull.get("state") == "OPEN" and pull.get("isDraft") is False
          and pull.get("headRefOid") == context["head"]
@@ -111,9 +150,11 @@ def binding(pull, context):
          and pull.get("baseRefName") == context["base_ref"], "provider_pr_changed")
 
 
-def queued_request(pull, p):
+def queued_request(pull, p, headline, body):
     request = pull.get("autoMergeRequest")
-    need(isinstance(request, dict) and request.get("mergeMethod") == p["merge_method"],
+    need(isinstance(request, dict) and request.get("mergeMethod") == p["merge_method"]
+         and request.get("enabledBy", {}).get("login") == "github-actions[bot]"
+         and request.get("commitHeadline") == headline and request.get("commitBody") == body,
          "native_request_missing_or_changed")
 
 
@@ -143,10 +184,20 @@ def qualification(api, repo, number, context, document):
     review.pull_identity(pull, repo, number, context["head"])
     need(pull["base"]["sha"] == context["base"]
          and pull["base"]["ref"] == context["base_ref"], "base_changed")
+    linked = review.linked_issue(pull)
+    need(review.r.digest([pull.get("title"), pull.get("body")]) == context["pr_description_sha256"],
+         "pr_description_changed")
+    issue = api.api(f"repos/{repo}/issues/{linked}")
+    need(issue.get("number") == linked and issue.get("state") == "open" and "pull_request" not in issue
+         and not {label["name"] for label in issue.get("labels", [])} & {"blocked", "agy:blocked"},
+         "issue_not_eligible")
+    need(review.r.digest({k: issue[k] for k in ("number", "title", "body")}) == context["issue_sha256"],
+         "issue_contract_changed")
     scoped = api.qualify_config(repo, pull, document["config"])
     snapshots = api.snapshot(repo, context["head"], scoped)
     state, _, _ = api.evaluate_policy(scoped, snapshots)
     need(state == "done", "qualification_not_ready")
+    return linked
 
 
 def enqueue(api, repo, number, head, load_document, evaluator, review_run,
@@ -169,12 +220,15 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
     context = receipt["payload"]["context"]
     need(context.get("repo") == repo and context.get("pr") == number
          and context.get("head") == head, "review_target")
-    qualification(api, repo, number, context, document)
+    linked = qualification(api, repo, number, context, document)
     base_rules(api, repo, context, p)
     binding(before, context)
+    headline, body = f"Merge PR #{number}", f"Closes #{linked}"
     request = before.get("autoMergeRequest")
     need(request is None or request.get("mergeMethod") == p["merge_method"],
          "existing_merge_method_conflict")
+    if request is not None:
+        queued_request(before, p, headline, body)
     # Block this exact head before creating a native request. A different head
     # has no passing status from this operation and cannot inherit its approval.
     api.api(f"repos/{repo}/statuses/{head}", method="POST", data=dict(
@@ -188,22 +242,23 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
         if current.get("autoMergeRequest") is None:
             result = graphql(api, QUEUE, dict(input=dict(
                 pullRequestId=before["id"], expectedHeadOid=head,
-                mergeMethod=p["merge_method"], clientMutationId=receipt["sha256"])))
+                mergeMethod=p["merge_method"], clientMutationId=receipt["sha256"],
+                commitHeadline=headline, commitBody=body)))
             queued = result.get("enablePullRequestAutoMerge", {}).get("pullRequest")
             need(isinstance(queued, dict) and queued.get("headRefOid") == head,
                  "native_request_response")
-            queued_request(queued, p)
+            queued_request(queued, p, headline, body)
         else:
-            queued_request(current, p)
+            queued_request(current, p, headline, body)
         # Repeat source/CI/issue/producer verification after queueing. Passing
         # status is the final write. An abandoned native request stays blocked.
         fresh = verify(api, repo, number, head, load_document, evaluator, review_run)
         need(fresh == receipt and load_document() == document, "review_or_policy_changed")
-        qualification(api, repo, number, context, document)
+        need(qualification(api, repo, number, context, document) == linked, "linked_issue_changed")
         base_rules(api, repo, context, p)
         final = provider_pull(api, repo, number)
         binding(final, context)
-        queued_request(final, p)
+        queued_request(final, p, headline, body)
         api.api(f"repos/{repo}/statuses/{head}", method="POST", data=dict(
             state="success", context=p["status_context"],
             description="Exact-head Claude PASS and qualified CI verified",
@@ -240,27 +295,29 @@ def return_doing(api, repo, number, head, load_document, evaluator, run_id, veri
         need(fresh == receipt, "review_changed")
         pull = api.api(f"repos/{repo}/pulls/{number}")
         review.pull_identity(pull, repo, number, head)
-        links = re.findall(r"(?im)^Closes #([1-9][0-9]*)\s*$", pull.get("body") or "")
-        need(len(links) == 1, "one_issue_contract_required")
-        issue = api.api(f"repos/{repo}/issues/{int(links[0])}")
-        need(issue.get("number") == int(links[0]) and issue.get("state") == "open"
+        linked = review.linked_issue(pull)
+        issue = api.api(f"repos/{repo}/issues/{linked}")
+        need(issue.get("number") == linked and issue.get("state") == "open"
              and "pull_request" not in issue, "issue_not_open")
         need(review.r.digest({k: issue[k] for k in ("number", "title", "body")})
              == context["issue_sha256"], "issue_contract_changed")
         names = {label["name"] for label in issue.get("labels", [])}
-        need("agy:blocked" not in names, "issue_blocked")
+        need(not names & {"blocked", "agy:blocked"}, "issue_blocked")
         return issue["number"], names
 
     issue, labels = current()
-    if "agy:doing" not in labels:
-        api.api(f"repos/{repo}/issues/{issue}/labels", method="POST", data={"labels": ["agy:doing"]})
-    for name in ("agy:todo", "agy:done"):
+    api.api(f"repos/{repo}/statuses/{head}", method="POST", data=dict(
+        state="failure", context="claude/verified-merge", description="Claude review rejected this exact head",
+        target_url=f"https://github.com/{repo}/actions/runs/{run_id}"))
+    if "doing" not in labels:
+        api.api(f"repos/{repo}/issues/{issue}/labels", method="POST", data={"labels": ["doing"]})
+    for name in ("todo", "done"):
         _, labels = current()
-        need("agy:doing" in labels, "doing_write_unknown")
+        need("doing" in labels, "doing_write_unknown")
         if name in labels:
             api.api(f"repos/{repo}/issues/{issue}/labels/{quote(name, safe='')}", method="DELETE")
     _, labels = current()
-    need(labels & {"agy:todo", "agy:doing", "agy:done"} == {"agy:doing"}, "doing_result_unknown")
+    need(labels & {"todo", "doing", "done"} == {"doing"}, "doing_result_unknown")
     return dict(state="returned_doing", issue=issue, head=head,
                 decision=receipt["payload"]["result"]["decision"])
 
@@ -270,14 +327,24 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
     document = load_document()
     policy(document, require_qualification=False)
     producer = review.policy(document)["producer"]
+    pulls = api.pages(f"repos/{repo}/pulls?state=open&sort=created&direction=asc")
+    withdrawal_errors = set()
+    for pull in pulls:
+        try:
+            withdraw_approval(api, repo, pull["number"], pull.get("head", {}).get("sha"))
+        except Exception:
+            withdrawal_errors.add(pull["number"])
     runs = api.pages(f'repos/{repo}/actions/workflows/{producer["id"]}/runs', "workflow_runs")
     attempts = index(api, repo, document, runs)
-    pulls = api.pages(f"repos/{repo}/pulls?state=open&sort=created&direction=asc")
     results = []
     for pull in sorted(pulls, key=lambda p: p["number"]):
         number, head = pull["number"], pull.get("head", {}).get("sha")
         row = dict(pr=number, head=head, state="held")
         try:
+            if number in withdrawal_errors:
+                row.update(state="held_after_pending", reason="withdrawal_result_unknown")
+                results.append(row)
+                continue
             attempt = attempts.get(number)
             need(attempt is not None, "review_missing")
             need(not attempt.get("_native_index_error"), "review_target_record_unknown")
@@ -303,7 +370,7 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
 def main():
     need(not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"), "model_credential_in_merge")
     need(os.environ.get("GITHUB_ACTIONS") == "true"
-         and os.environ.get("GITHUB_EVENT_NAME") == "workflow_run", "trusted_merge_wake_required")
+         and os.environ.get("GITHUB_EVENT_NAME") in EVENTS, "trusted_merge_wake_required")
     repo, evaluator = os.environ.get("GITHUB_REPOSITORY"), os.environ.get("AW_ACTION_REF")
     current = os.environ.get("GITHUB_RUN_ID", "")
     need(isinstance(repo, str) and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo)
@@ -313,16 +380,18 @@ def main():
         ".github/issue-ci-required-gates.json", metadata=True)
     document = load()
     native = policy(document, require_qualification=False)
-    review.producer_identity(api, repo, document, int(current), False, native["producer"])
+    review.producer_identity(api, repo, document, int(current), False, native["producer"], EVENTS)
     writer_contract(api, repo, document, evaluator)
     event = api.strict_json_loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
     wake = event.get("workflow_run", {})
     p = review.policy(document)["producer"]
-    need(event.get("action") == "completed"
-         and event.get("repository", {}).get("full_name") == repo
-         and wake.get("workflow_id") == p["id"] and wake.get("path") == p["path"]
-         and wake.get("event") == "workflow_run" and review.integer(wake.get("id")),
-         "merge_wake_identity")
+    event_name = os.environ["GITHUB_EVENT_NAME"]
+    need(event.get("repository", {}).get("full_name") == repo
+         and event.get("action") in TRIGGERS[event_name]["types"], "merge_wake_identity")
+    if event_name == "workflow_run":
+        need(wake.get("workflow_id") == p["id"] and wake.get("path") == p["path"]
+             and wake.get("event") == "workflow_run" and review.integer(wake.get("id")),
+             "merge_wake_identity")
     index = review.sibling("native_review_index")
     results = reconcile(api, repo, load, evaluator, index.attempts, index.verify, index.result)
     print("AW_NATIVE_MERGE_RECONCILIATION_V1 " + review.r.canonical(dict(

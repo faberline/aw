@@ -97,7 +97,8 @@ done, release approval or product completion.
 After review, a second complete observation plus fresh producer identity must
 match before emitting one `AW_CLAUDE_REVIEW_V1` envelope in the trusted producer
 job's GitHub log. Fail/block decisions can be valid published review data with
-a successful producer run; only explicit pass is merge eligible. JSON newline
+a completed producer run. Pass completes successfully; fail/block fail the job
+after emitting their receipt. Only a successful explicit pass is merge eligible. JSON newline
 escaping prevents model prose from becoming another log record.
 
 `discover` is a read-only merge preflight: derive the target only from the
@@ -230,8 +231,8 @@ prove that the model obeys it. The earlier protocol fix is retained separately.
 
 `claude_findings.py` is a separate deterministic controller and action. The
 GitHub-only candidate replaces the earlier local-journal implementation (kept
-in commit aaa5963). Neither is live. The controller authenticates a completed
-successful pinned producer's strict result receipt (pass/fail/block), fresh
+in commit aaa5963). Neither is live. The controller authenticates a
+completed pinned producer's strict result receipt (pass/fail/block), fresh
 exact HEAD/base, issue contract and all existing gates. Acceptance remains
 pass-only. Protocol/CLI/missing-receipt failures never become code findings.
 The only destination is the verified unique linked issue. Review status,
