@@ -19,6 +19,21 @@ coordination-file operations. Use `scripts/connector.py` to run the unchanged
 deterministic planner policy with an injected native-tool request adapter.
 Python runs the policy; Bash and `gh` are not required for this transport.
 
+`scripts/native_transport.py` provides a tool-envelope binding. Construct
+`NativeTransport(repo, call_tool, connector.queue.coordination)` and pass it as
+the request callback. The host must provide an actual synchronous `call_tool`
+bridge; this helper does not implement that runtime connection. It maps guard
+reads to `fetch_file(encoding='base64')`, with the exact branch and current SHA.
+It preserves provider errors and checks issue writes with bounded readback.
+It never replays a write after an unknown result.
+
+The currently tested GitHub connector rejects milestone collection and detail
+URLs. The binding refuses these reads explicitly. It also refuses cross-repo
+dependency reads and issue-comment writes, because ordinary-issue support of
+the tool documented for PR Conversation comments is unverified. These are
+capability gaps, not empty data or successful no-ops. This binding therefore
+does not yet support a complete production planner pass.
+
 The adapter accepts `request(method, path, payload)` and returns canonical REST
 JSON. Bind GET to the connector's raw repository fetch capability, with the
 requested page and ref intact. Bind issue POST/PATCH to native issue tools and
@@ -94,6 +109,15 @@ AW remains the current source of peer/session context on local clients. A hosted
 run must not treat missing AW data as proof that a writer is absent. The GitHub
 guard only covers clients that have adopted it. A source patch or free guard
 does not prove that all live actors have adopted the protocol.
+
+A worker's coding lease can outlive its short mutation command. Shared guard
+adoption alone does not protect that issue between commands. Before a hosted
+planner writes an issue, it also needs fresh, hosted-readable evidence of that
+issue's lease and holds, checked while it owns the guard. An active or unknown
+lease blocks that issue. A claiming lease can exist while its label is still
+`todo`; a `doing` label check alone is insufficient. Preserve the local lease.
+There is no requirement to stop unrelated workers. The current candidate does
+not yet implement this hosted lease record, so adoption cannot grant readiness.
 
 ## Validation and cutover
 

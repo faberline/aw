@@ -45,6 +45,11 @@ class Client(queue.Client):
             )
             if not permitted:
                 raise ValueError('connector mutation outside planner issue scope')
+            # A transport can refuse known unsupported requests before a write
+            # is marked attempted. This hook must be pure and perform no I/O.
+            prevalidate = getattr(self.request, 'prevalidate', None)
+            if prevalidate is not None:
+                prevalidate(method, path, payload)
             queue.coordination.verify_for(self.repo, required=True)
             if path != f'repos/{self.repo}/issues':
                 number = int(path.split('/issues/', 1)[1].split('/')[0])

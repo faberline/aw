@@ -24,6 +24,98 @@ Actual hosted connector bindings, endpoint coverage and coordination context
 still need live verification. Neither the fixture transport nor tool descriptions
 prove the connected GitHub tools can satisfy every canonical API request.
 
+## Live verification on 2026-10-28
+
+The implementation source is `719cb392669d780e7f9430e349a56330c63b3beb`.
+The nine-file bundle was built and verified at
+`/private/tmp/aw-cloud-planners-20261028-719cb39`. The six local definitions were
+read back as active, local, and every two hours. No production cutover occurred.
+The current source passed 28 planner, 75 loop and 81 worker tests (184 total),
+all with exit 0. `git diff --check` also passed.
+
+The connected GitHub tools now answer reads. These are actual local-controller
+tool results, not proof of the hosted runtime's tool set:
+
+| Read | Actual result |
+|---|---|
+| Core native prerequisites, `issues/73/dependencies/blocked_by?per_page=100&page=1` | JSON `[]` |
+| Core `milestones?state=all&per_page=100&page=1` | Connector rejects the endpoint with HTTP 400 `INVALID_ARGUMENT`; not an empty milestone catalog |
+| AW pinned `connector.py` through Contents GET | File text, without the canonical Contents metadata required by the guard |
+| The same file through `fetch_file(encoding=base64)` | Base64 bytes and blob SHA are present; a future binding must normalize this explicitly |
+| `branches/aw-coordination` in all six product repositories | Six `404 Branch not found` responses |
+| PR #90 head | Matches the implementation source above |
+| Check-runs at that head | Zero check-runs; no CI acceptance inferred |
+
+There is no milestone-list tool in the current connector inventory. Core is
+public, but a normal public HTTPS read is only a possible alternative until
+tested in the hosted runtime. Do not substitute milestone values from issues
+for the complete catalog. Do not treat normalized file text as a Contents API
+object or infer success from a tool's `Action completed` message.
+
+The older hosted report is now readable through `read_thread`. It reports
+Python 3.13.5, shell/Bash, and eight matching source hashes at `3b32e84`.
+It also reports missing `gh`, a missing Core coordination branch, and unknown
+AW peers/inbox/leases/adoption/cutover evidence. This recovers the previously
+unreadable report; it does not validate the newer native adapter.
+
+The existing one-time validation definition was updated to prefer native
+GitHub tools, without a checkout or `gh` prerequisite. Saving its past one-time
+date changed its visible state from paused to completed. It has no recurring
+trigger. The read-only follow-up in the same hosted validation chat completed.
+No second schedule was created. Its report records:
+
+- Core main `41c352eaae687a1914087d279f36adbe9e9b4af5` and README read.
+- Open issues pages contain 67 and 0 records; 22 of the 67 are PRs, leaving
+  45 issues. Open PR pages contain 22 and 0 records.
+- Issue #73 comments and native prerequisites each have empty first and second
+  pages. This does not replace reading prose dependencies of other issues.
+- Python 3.13.5 runs. The pinned `connector.py` SHA-256 matches
+  `dd79e606a3455c2af9862ca6dc9be36cb8e234f61ef9756039bc6800507143a2`.
+- Milestone reads fail in the native connector. Web reads are unavailable, and
+  hosted unauthenticated `curl` exits 6 because it cannot resolve api.github.com.
+  No tested hosted route provides the required complete milestone catalog.
+- Hosted AW peers, inbox, coding leases and legacy planner pause evidence remain
+  unknown. The report calls the outcome partial, with incomplete read capability.
+
+AW admission now works for this worktree. The configured endpoint is port 8766;
+the earlier direct-client attempts used the documented default port 8765.
+This session read its empty inbox and obtained the advisory worktree claim.
+Local session records are readable again. They include reported busy records,
+but activity labels alone do not prove current ownership or protocol adoption.
+This local recovery does not make AW available to hosted runs.
+
+## Parallel native binding and independent review
+
+The human requested Terra/Luna parallel work. Terra prepared the new
+`native_transport.py` and its tests in an isolated temporary tree. The controller
+integrated them into the claimed worktree. The planner suite now passes 43 tests,
+including 15 binding controls and a real shared-guard fixture with native tool
+envelopes, SHA-checked transitions, one issue update and owner-only release.
+Together with the unchanged loop and worker suite results, 199 focused controls
+have passed. These are fixture checks, not live mutation acceptance.
+
+Independent forward review reproduced a known unsupported-comment refusal that
+retained the guard even though no issue write was dispatched. The correction
+adds a pure prevalidation hook before marking a write attempted. Full-cycle
+fixtures prove that this known refusal releases the guard, while an uncertain
+provider PATCH remains held after exactly one attempt. Generic request callbacks
+retain their conservative pre-dispatch marking behavior.
+
+The binding maps native tool envelopes and base64 file metadata explicitly.
+The host still needs a verified synchronous callback bridge. Real issue mutation
+response shapes are unverified. Milestone reads, issue-comment writes and
+cross-repository dependency reads remain explicit refusals. The portable bundle
+file set now also includes this binding; the older nine-file bundle above does
+not contain it.
+
+Luna's independent lease audit confirmed that universal short-guard adoption
+alone is insufficient. `spec` and `prioritize` can currently target any open
+issue, while a worker's coding lease outlives its command. Hosted writes need
+fresh per-issue lease/hold evidence under the guard, including claiming leases
+that still have a `todo` label. That hosted-readable lease protocol remains
+unimplemented. There is no need to stop unrelated workers, expire leases, or
+infer ownership from old activity labels.
+
 ## Candidate
 
 - Portable issue-plan rules, milestone policy, wrapper, Python helpers and
@@ -61,16 +153,17 @@ lease. A free GitHub guard cannot prove that a coding owner is absent.
 The existing main checkout has unrelated README and roadmap WIP. It was not
 changed. The candidate is isolated in `codex/cloud-issue-planners`.
 
-## Current external blockers
+## Earlier transport failures
 
-The GitHub connector metadata request failed at its MCP transport endpoint.
+The initial GitHub connector metadata request failed at its MCP transport endpoint.
 The existing `/opt/homebrew/bin/gh` provided a working fallback for publishing
 the candidate branch and creating draft PR #90. A later read of the candidate's
 check-runs failed with `connect: can't assign requested address`; CI remains
-unknown. No issue write was attempted by either failed read.
+unknown at that point. No issue write was attempted by either failed read.
 
-The published source revision is `3b32e84bfde994ab8fe820e85c5df34550922116`.
-The portable context is `/private/tmp/aw-cloud-planners-20261027-3b32e84`.
+The initial published source revision was `3b32e84bfde994ab8fe820e85c5df34550922116`.
+Its portable context remains `/private/tmp/aw-cloud-planners-20261027-3b32e84`.
+Use the newer verified source and bundle in the dated section above.
 
 ## Hosted probe
 
@@ -87,14 +180,15 @@ A single read-only capability validation was created and manually dispatched:
 - A screenshot was saved to this chat's visualization output directory as
   `cloud-validation-error-detail.png`.
 
-This is an attempted hosted validation with an unknown result, not evidence of
-either working or absent cloud capabilities. The paused probe can be reused
-after results become readable; do not blindly rerun any mutating operation.
+At that point this was an attempted hosted validation with an unknown result.
+The report has since been recovered, as recorded above. The probe was read-only;
+do not blindly rerun any mutating operation.
 
-The AW proxy has this chat's identity, but only its bootstrap tools are exposed.
+The earlier AW proxy had this chat's identity, but only its bootstrap tools were exposed.
 `register_session` refused a duplicate and directed the client to `update_session`.
 The installed direct client could not connect to its loopback AW endpoint. No
-scope update, inbox read or worktree claim was claimed successful.
+scope update, inbox read or worktree claim was claimed successful then. The new
+admission and direct-client recovery at the configured port are recorded above.
 
 Current native session/inbox/lease and old-planner pause evidence still need a
 hosted-readable source adopted by the live local actors. The shared guard alone
@@ -102,7 +196,7 @@ does not implement that source. Missing evidence continues to block mutations.
 
 ## Resume
 
-1. Read the actual hosted probe result when available and preserve its outputs.
+1. Resolve the hosted milestone-read and native-binding capability gaps above.
 2. Use the published immutable source and verified bundle above. Preserve the
    source review findings and actual test exits; they do not prove hosted readiness.
 3. Establish hosted-readable peer/owner/lease/cutover context without copying AW
@@ -116,4 +210,5 @@ does not implement that source. Missing evidence continues to block mutations.
 
 The six local definitions were read back as active, local, and every two hours.
 There is no production hosted duplicate, deployment, coordination-branch write,
-product issue write, or cutover. The one read-only validation definition is paused.
+product issue write, or cutover. The one-time validation definition is completed
+and has no recurring trigger.

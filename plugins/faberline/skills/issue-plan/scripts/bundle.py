@@ -11,6 +11,7 @@ REPOS = ('core', 'defer', 'keep', 'lumen', 'relay', 'tape')
 FILES = ('issue-plan/SKILL.md', 'issue-plan/CLOUD.md', 'issue-plan/scripts/plan.py',
          'issue-plan/scripts/plan.sh', 'issue-plan/scripts/bundle.py',
          'issue-plan/scripts/connector.py',
+         'issue-plan/scripts/native_transport.py',
          'issue-loop/MILESTONE-QUEUE.md', 'issue-loop/scripts/milestone_queue.py',
          'issue-loop/scripts/github_guard.py')
 
@@ -48,6 +49,7 @@ def build(destination, revision):
             'Follow SKILL.md, CLOUD.md and MILESTONE-QUEUE.md, including the complete discussions, '
             'numeric SemVer frontier, backlog-first queue, existing holds and dependencies. '
             f'Target faberline/{repo}. Prefer the native GitHub connector with connector.run '
+            'and NativeTransport(repo, call_tool, connector.queue.coordination) '
             'and the unchanged deterministic policy; no product checkout or shell gh login is required. '
             'Use the guarded shell adapter only if that runtime already has gh authorization. '
             'Require verified shared-guard adoption by the current local writers. Missing or '
