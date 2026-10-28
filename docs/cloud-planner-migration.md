@@ -26,8 +26,8 @@ prove the connected GitHub tools can satisfy every canonical API request.
 
 ## Live verification on 2026-10-28
 
-The implementation source is `719cb392669d780e7f9430e349a56330c63b3beb`.
-The nine-file bundle was built and verified at
+The hosted follow-up tested `719cb392669d780e7f9430e349a56330c63b3beb`.
+Its nine-file bundle was built and verified at
 `/private/tmp/aw-cloud-planners-20261028-719cb39`. The six local definitions were
 read back as active, local, and every two hours. No production cutover occurred.
 The current source passed 28 planner, 75 loop and 81 worker tests (184 total),
@@ -118,6 +118,14 @@ that still have a `todo` label. That hosted-readable lease protocol remains
 unimplemented. There is no need to stop unrelated workers, expire leases, or
 infer ownership from old activity labels.
 
+The final packaged implementation is
+`5c637de173851a03da8396e29d4d742802215641`, published on the draft PR branch.
+All ten bundle files passed immutable-source comparison and SHA-256 verification
+at `/private/tmp/aw-cloud-planners-20261028-5c637de`. Luna independently rechecked
+the final marking boundary and 44 planner tests, with no remaining defect found
+in that reviewed transport/guard path. This does not resolve the hosted runtime,
+milestone, comment, cross-repo dependency or per-issue lease gaps above.
+
 ## Candidate
 
 - Portable issue-plan rules, milestone policy, wrapper, Python helpers and
@@ -165,7 +173,7 @@ unknown at that point. No issue write was attempted by either failed read.
 
 The initial published source revision was `3b32e84bfde994ab8fe820e85c5df34550922116`.
 Its portable context remains `/private/tmp/aw-cloud-planners-20261027-3b32e84`.
-Use the newer verified source and bundle in the dated section above.
+Use the final packaged implementation recorded below.
 
 ## Hosted probe
 
