@@ -142,9 +142,9 @@ jobs:
       TTL_MINUTES: ${{ inputs.ttl-minutes }}
       GHCR_USER: ${{ github.actor }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: faberline/aw
           ref: ${{ inputs.aw-ref }}
@@ -161,12 +161,12 @@ jobs:
 
       # Values from `terraform -chdir=infra/gke-test output` in faberline/aw.
       - name: Sign in to GCP (Workload Identity Federation)
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
         with:
           workload_identity_provider: projects/406744653021/locations/global/workloadIdentityPools/faberline-github/providers/github-oidc
           service_account: gke-test-${{ github.event.repository.name }}@axiom-502607.iam.gserviceaccount.com
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
         with:
           install_components: gke-gcloud-auth-plugin
 
@@ -183,7 +183,7 @@ jobs:
 
       - name: Upload evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: gke-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}${{ inputs.evidence-suffix && format('-{0}', inputs.evidence-suffix) || '' }}
           path: ${{ env.EVIDENCE_DIR }}
