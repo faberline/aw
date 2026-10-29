@@ -272,6 +272,8 @@ class ReviewProtocolTests(unittest.TestCase):
                 if (role,path) not in existing:
                     rows.append(dict(role=role,path=path,content=(root/path).read_text()))
                     existing.add((role,path))
+            path=m.FRAMEWORK_ROOT+'request_history.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
         m.framework_dependency_closure(rows)
 
     def test_optional_close_observer_is_bound_per_immutable_revision(self):
@@ -315,9 +317,13 @@ class ReviewProtocolTests(unittest.TestCase):
             if ('evaluator',path) not in existing:
                 rows.append(dict(role='evaluator',path=path,content=(root/path).read_text()))
                 existing.add(('evaluator',path))
+        for role in ('candidate','evaluator'):
+            path=m.FRAMEWORK_ROOT+'request_history.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
         m.framework_dependency_closure(rows)
         for omitted in ('plugins/faberline/skills/issue-work/scripts/worker_guard.py',
                         m.FRAMEWORK_ROOT+'guard_ledger.py',
+                        m.FRAMEWORK_ROOT+'request_history.py',
                         'plugins/faberline/skills/issue-loop/scripts/milestone_queue.py'):
             with self.subTest(omitted=omitted),self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
                 m.framework_dependency_closure([r for r in rows if not (r['role']=='candidate' and r['path']==omitted)])
@@ -341,6 +347,19 @@ class ReviewProtocolTests(unittest.TestCase):
         selected={(r['role'],r['path'],r['ref']) for r in rows}
         self.assertTrue(all(('candidate',path,candidate) in selected for path in m.RECOVERY_CANDIDATE_SOURCES))
         self.assertFalse(any(role=='evaluator' and path.endswith('/guarded_admission.py') for role,path,ref in selected))
+
+    def test_request_history_is_bound_only_to_revisions_that_import_it(self):
+        candidate,evaluator='c'*40,'e'*40
+        def blob(api,repo,path,ref):
+            if path.endswith('/native_merge.py') and ref==candidate:
+                return "x=review.sibling('request_history')"
+            return 'pass'
+        with patch.object(m.a.review,'blob',side_effect=blob):
+            rows=m.framework_sources(None,candidate,evaluator)
+        found=[row for row in rows if row['path'].endswith('/request_history.py')]
+        self.assertEqual([(row['role'],row['ref']) for row in found],[('candidate',candidate)])
+        with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+            m.framework_dependency_closure([row for row in rows if row not in found])
 
 
 class PreflightTests(unittest.TestCase):
