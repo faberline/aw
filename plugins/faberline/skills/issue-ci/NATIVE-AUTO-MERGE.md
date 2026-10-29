@@ -147,6 +147,12 @@ unless an authenticated blocking status already exists, and reads it back. It do
 the request or change the issue. An unknown response holds that PR and does not
 stop checks for the rest of the queue. This draft does not prove the status
 write won a race with a merge or replace the required rollout verification.
+A read-only request-history draft can compare full paginated timelines and bind
+one observed squash-enable event to the guard and request fields. It detects a
+later disable or re-enable even in the same second. It does not prove that a
+writer caused the event, that the provider timeline is complete in real time,
+or that the request belongs to that writer. It cannot authorize a merge or
+restore a blocked status. The queued-PR liveness gap remains unresolved.
 The protected policy-adoption draft requires the same guard and a separately
 reviewed grant. It permits bootstrap or an unchanged guard only after rollout
 is verified. The current verifier always holds before paid target review or
