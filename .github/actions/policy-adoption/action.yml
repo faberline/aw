@@ -1,0 +1,23 @@
+name: Publish independently reviewed policy adoption
+description: Authenticate a trusted grant and exact-head CI and Claude review before native auto-merge.
+runs:
+  using: composite
+  steps:
+    - name: Prepare hash-locked metadata parser
+      id: runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        runtime="$(mktemp -d "$RUNNER_TEMP/aw-policy-adoption-python-XXXXXX")"
+        python3 -I -m venv "$runtime"
+        "$runtime/bin/python" -I -m pip --isolated install --disable-pip-version-check --no-input \
+          --no-deps --only-binary=:all: --require-hashes --index-url https://pypi.org/simple \
+          -r "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/readiness-requirements.txt"
+        echo "python=$runtime/bin/python" >> "$GITHUB_OUTPUT"
+    - name: Verify and publish the exact reviewed adoption
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        AW_ACTION_REF: ${{ github.action_ref }}
+        ADOPTION_PYTHON: ${{ steps.runtime.outputs.python }}
+      run: exec "$ADOPTION_PYTHON" -I -B "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/policy_adoption.py"

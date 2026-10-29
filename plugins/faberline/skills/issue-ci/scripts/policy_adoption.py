@@ -1,0 +1,489 @@
+#!/usr/bin/env python3
+"""Separate, exact-head policy adoption; never execute candidate code or artifacts.
+
+A separately reviewed default-branch grant is required for every target. The
+ordinary protected-path qualification remains unchanged. The controller uses
+GitHub metadata and authenticated job logs; no model credential is accepted.
+"""
+import copy
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+from urllib.parse import quote
+
+
+def sibling(name):
+    spec = importlib.util.spec_from_file_location('policy_adoption_' + name, Path(__file__).with_name(name + '.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+native = sibling('native_merge')
+review = native.review
+ci = review.ci
+q = ci.qualification_module()
+r = review.r
+need = review.need
+MARKER = 'AW_POLICY_ADOPTION_REVIEW_V1 '
+GRANTS_REPO = 'faberline/aw'
+GRANTS_PATH = '.github/policy-adoption-grants.json'
+
+
+def valid_path(path):
+    return review.safe_path(path) and not any(ord(c) < 32 or ord(c) == 127 for c in path)
+
+
+def grant_spec(value):
+    """Strict grant data; a candidate cannot supply or extend its own grant."""
+    fields = ('version repo pr issue head base base_ref evaluator policy_blob base_policy_blob '
+              'issue_sha256 pr_sha256 files_sha256 protected_paths ci review publisher')
+    need(isinstance(value,dict), 'grant_schema')
+    payload={k:v for k,v in value.items() if k!='grant_review'}
+    need(review.exact(payload, fields) and type(value['version']) is int and value['version'] == 1, 'grant_schema')
+    if 'grant_review' in value:
+        attestation_spec(value['grant_review'],value['repo'])
+    need(isinstance(value['repo'], str) and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', value['repo'])
+         and review.integer(value['pr']) and review.integer(value['issue'])
+         and review.sha(value['head']) and review.sha(value['base']) and review.sha(value['evaluator'])
+         and review.sha(value['policy_blob']) and review.sha(value['base_policy_blob'])
+         and value['base_ref'] == 'main', 'grant_identity')
+    for name in ('issue_sha256','pr_sha256','files_sha256'):
+        need(isinstance(value[name], str) and re.fullmatch('[0-9a-f]{64}', value[name]), 'grant_digest')
+    paths = value['protected_paths']
+    need(isinstance(paths, list) and paths and all(valid_path(p) for p in paths)
+         and len(set(paths)) == len(paths) and paths == sorted(paths), 'grant_protected_paths')
+    data = value['ci']
+    need(review.exact(data, 'run_id attempt jobs_sha256') and review.integer(data['run_id'])
+         and review.integer(data['attempt']) and isinstance(data['jobs_sha256'], str)
+         and re.fullmatch('[0-9a-f]{64}', data['jobs_sha256']), 'grant_ci')
+    data = value['review']
+    need(review.exact(data, 'workflow_path workflow_id workflow_blob runner_path runner_blob source_commit branch run_id attempt job job_id receipt_sha256')
+         and valid_path(data['workflow_path']) and data['workflow_path'].startswith('.github/workflows/')
+         and data['runner_path']=='plugins/faberline/skills/issue-ci/scripts/policy_adoption_target_review.py'
+         and isinstance(data['branch'],str) and re.fullmatch(r'codex/[A-Za-z0-9._/-]+',data['branch'])
+         and '..' not in data['branch'] and review.integer(data['workflow_id']) and review.integer(data['run_id'])
+         and review.integer(data['attempt']) and review.integer(data['job_id']) and review.text(data['job'], 200)
+         and all(review.sha(data[k]) for k in ('workflow_blob','runner_blob','source_commit'))
+         and isinstance(data['receipt_sha256'], str) and re.fullmatch('[0-9a-f]{64}', data['receipt_sha256']), 'grant_review')
+    data = value['publisher']
+    need(review.exact(data, 'workflow_path workflow_id workflow_blob source_commit branch job')
+         and valid_path(data['workflow_path']) and data['workflow_path'].startswith('.github/workflows/')
+         and review.integer(data['workflow_id']) and review.sha(data['workflow_blob'])
+         and review.sha(data['source_commit']) and isinstance(data['branch'], str)
+         and re.fullmatch(r'codex/[A-Za-z0-9._/-]+',data['branch'])
+         and '..' not in data['branch'] and review.text(data['job'], 200), 'grant_publisher')
+    return value
+
+
+def attestation_spec(value, repo):
+    fields=('repo pr head blob workflow_path workflow_id workflow_blob source_commit branch '
+            'run_id attempt job job_id')
+    need(review.exact(value,fields) and value['repo']==repo
+         and all(review.integer(value[k]) for k in ('pr','workflow_id','run_id','attempt','job_id'))
+         and all(review.sha(value[k]) for k in ('head','blob','workflow_blob','source_commit'))
+         and valid_path(value['workflow_path']) and value['workflow_path'].startswith('.github/workflows/')
+         and isinstance(value['branch'],str) and re.fullmatch(r'codex/[A-Za-z0-9._/-]+',value['branch'])
+         and '..' not in value['branch'] and review.text(value['job'],200), 'grant_attestation_schema')
+    return value
+
+
+def choose_grant(document, repo, evaluator):
+    need(isinstance(document, dict) and set(document) == {'version','grants'}
+         and type(document['version']) is int and document['version'] == 1
+         and isinstance(document['grants'], list), 'grant_document')
+    grants = [grant_spec(value) for value in document['grants']]
+    matches = [g for g in grants if g['repo'] == repo and g['evaluator'] == evaluator and 'grant_review' in g]
+    need(len(matches) == 1, 'grant_missing_or_ambiguous')
+    return matches[0]
+
+
+def file_inventory(pull, files):
+    paths, problems = q.changed_paths(pull, files)
+    need(not problems and isinstance(files, list), 'file_inventory')
+    inventory=[]
+    for file in files:
+        name=file.get('filename'); status=file.get('status'); previous=file.get('previous_filename')
+        need(valid_path(name) and review.sha(file.get('sha'))
+             and status in ('added','removed','modified','renamed'), 'file_metadata')
+        if status == 'renamed':
+            need(valid_path(previous), 'rename_metadata')
+        else:
+            previous=name
+        inventory.append(dict(path=name, previous=previous, status=status, sha=file['sha']))
+    inventory.sort(key=lambda item:item['path'])
+    return paths,inventory
+
+
+def review_result(grant, value, inventory):
+    """Authenticate one bounded structured receipt emitted by the trusted job."""
+    need(isinstance(value, dict) and set(value) == {'version','repo','pr','issue','head','base',
+         'pr_sha256','issue_sha256','files_sha256','ci_jobs_sha256','reviewed_files',
+         'requirements','decision','findings','uncertainties'}, 'review_receipt_schema')
+    need(review.integer(value.get('pr')) and review.integer(value.get('issue')), 'review_receipt_identity')
+    for key in ('repo','pr','issue','head','base','pr_sha256','issue_sha256','files_sha256'):
+        need(value[key] == grant[key], 'review_receipt_identity')
+    need(type(value['version']) is int and value['version'] == 1
+         and value['ci_jobs_sha256'] == grant['ci']['jobs_sha256']
+         and value['decision'] == 'pass' and value['findings'] == [] and value['uncertainties'] == [], 'review_not_pass')
+    names = [item['path'] for item in inventory]
+    need(isinstance(value['reviewed_files'], list) and all(isinstance(x,str) for x in value['reviewed_files'])
+         and len(set(value['reviewed_files'])) == len(names)
+         and sorted(value['reviewed_files']) == sorted(names), 'review_files_incomplete')
+    requirements=value['requirements']
+    need(isinstance(requirements, list) and bool(requirements)
+         and all(review.exact(x,'id status evidence') and review.text(x['id'],200)
+                 and x['status']=='met' and review.text(x['evidence'],4000) for x in requirements)
+         and len({x['id'] for x in requirements}) == len(requirements), 'review_requirements_incomplete')
+    need(r.digest(value) == grant['review']['receipt_sha256'], 'review_receipt_digest')
+    return value
+
+
+def target_workflow(raw, spec, grant):
+    r.literal_uses(raw)
+    import yaml
+    workflow=yaml.load(raw,Loader=yaml.BaseLoader)
+    need(set(workflow)=={'name','on','permissions','jobs'} and workflow['name']=='Reviewed policy target'
+         and workflow['on']=={'push':{'branches':[spec['branch']],'paths':[spec['workflow_path']]}}
+         and workflow['permissions']=={} and set(workflow['jobs'])=={'review','outcome'}
+         and spec['job']=='review', 'target_review_workflow')
+    read_job={'runs-on':'ubuntu-latest','timeout-minutes':'70',
+              'permissions':{'actions':'read','contents':'read','pull-requests':'read','issues':'read'},
+              'steps':[{'uses':'faberline/aw/.github/actions/policy-adoption-target-review@'+grant['evaluator'],
+                        'with':{'target-pr':str(grant['pr']),'target-head':grant['head'],
+                                'claude-token':'${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}}]}
+    outcome_job={'needs':'review','runs-on':'ubuntu-latest','timeout-minutes':'30',
+                 'concurrency':{'group':'issue-ci-handoff','cancel-in-progress':'false'},
+                 'permissions':{'actions':'read','contents':'write','pull-requests':'write',
+                                'statuses':'write','issues':'write'},
+                 'steps':[{'uses':'faberline/aw/.github/actions/policy-adoption-review-outcome@'+grant['evaluator'],
+                           'with':{'target-pr':str(grant['pr']),'target-head':grant['head'],
+                                   'review-run':'${{ github.run_id }}'}}]}
+    need(workflow['jobs']['review']==read_job and workflow['jobs']['outcome']==outcome_job,
+         'target_review_workflow')
+
+
+def review_provenance(api, grant, inventory, log_reader):
+    spec=grant['review'];repo=grant['repo'];ref=spec['source_commit']
+    raw=review.blob(api,repo,spec['workflow_path'],ref,spec['workflow_blob'])
+    review.blob(api,GRANTS_REPO,spec['runner_path'],grant['evaluator'],spec['runner_blob'])
+    target_workflow(raw,spec,grant)
+    run=api.api(f"repos/{repo}/actions/runs/{spec['run_id']}")
+    need(run.get('id')==spec['run_id'] and run.get('workflow_id')==spec['workflow_id']
+         and run.get('path')==spec['workflow_path'] and run.get('head_sha')==ref
+         and run.get('head_branch')==spec['branch'] and run.get('head_repository',{}).get('full_name')==repo
+         and run.get('event')=='push' and run.get('run_attempt')==spec['attempt']
+         and run.get('status')=='completed' and run.get('conclusion')=='success', 'review_run_identity')
+    jobs=api.pages(f"repos/{repo}/actions/runs/{spec['run_id']}/attempts/{spec['attempt']}/jobs",'jobs')
+    matches=[j for j in jobs if j.get('name')==spec['job']]
+    need(len(matches)==1 and matches[0].get('id')==spec['job_id']
+         and matches[0].get('status')=='completed' and matches[0].get('conclusion')=='success', 'review_job_identity')
+    records=r.records(log_reader(repo,spec['job_id']),MARKER)
+    need(len(records)==1, 'review_receipt_missing_or_ambiguous')
+    return review_result(grant,records[0],inventory)
+
+
+def publisher_provenance(api, grant, run_id, event):
+    spec=grant['publisher'];repo=grant['repo'];ref=spec['source_commit']
+    need(review.integer(run_id) and event=='push', 'publisher_event')
+    raw=review.blob(api,repo,spec['workflow_path'],ref,spec['workflow_blob'])
+    # Accept one fixed, serialized data-only action. A grant cannot authorize
+    # candidate checkout, shell steps or a second privileged writer.
+    r.literal_uses(raw)
+    import yaml
+    workflow=yaml.load(raw,Loader=yaml.BaseLoader)
+    need(set(workflow)=={'name','on','permissions','concurrency','jobs'}
+         and workflow['name']=='Reviewed policy adoption'
+         and workflow['on']=={'push':{'branches':[spec['branch']],'paths':[spec['workflow_path']]}}
+         and workflow['permissions']=={}
+         and workflow['concurrency']=={'group':'issue-ci-handoff','cancel-in-progress':'false'}
+         and set(workflow['jobs'])=={spec['job']}, 'publisher_workflow_contract')
+    job=workflow['jobs'][spec['job']]
+    need(job=={'runs-on':'ubuntu-latest','timeout-minutes':'30',
+               'permissions':{'actions':'read','contents':'write','pull-requests':'write',
+                              'statuses':'write','issues':'read'},
+               'steps':[{'uses':'faberline/aw/.github/actions/policy-adoption@'+grant['evaluator']}]},
+         'publisher_workflow_contract')
+    run=api.api(f'repos/{repo}/actions/runs/{run_id}')
+    need(run.get('id')==run_id and run.get('workflow_id')==spec['workflow_id']
+         and run.get('path')==spec['workflow_path'] and run.get('head_sha')==ref
+         and run.get('head_repository',{}).get('full_name')==repo and run.get('event')==event
+         and run.get('head_branch')==spec['branch'] and run.get('status') in ('queued','in_progress')
+         and review.integer(run.get('run_attempt')), 'publisher_run_identity')
+    jobs=api.pages(f"repos/{repo}/actions/runs/{run_id}/attempts/{run['run_attempt']}/jobs",'jobs')
+    matches=[j for j in jobs if j.get('name')==spec['job']]
+    need(len(matches)==1 and review.integer(matches[0].get('id'))
+         and matches[0].get('status')=='in_progress', 'publisher_job_identity')
+
+
+def candidate_policy(api, grant):
+    repo=grant['repo'];head=grant['head'];base=grant['base']
+    path='.github/issue-ci-required-gates.json'
+    candidate=ci.strict_json_loads(review.blob(api,repo,path,head,grant['policy_blob']))
+    prior=ci.strict_json_loads(review.blob(api,repo,path,base,grant['base_policy_blob']))
+    ci.validate_config(candidate);ci.validate_adoption(candidate);ci.validate_config(prior)
+    need(candidate.get('lifecycle_mode')=='full' and candidate.get('qualification_blockers')==[]
+         and candidate.get('qualification',{}).get('version')==2, 'candidate_policy_not_full_v2')
+    native.handoff_policy(candidate)
+    need(review.sha(candidate.get('aw_revision')), 'candidate_controller_identity')
+    native.writer_contract(api,repo,dict(config=candidate,source_commit=head),candidate['aw_revision'])
+    old={w['path']:set(w['jobs']) for w in prior['workflows']}
+    new={w['path']:set(w['jobs']) for w in candidate['workflows']}
+    need(all(path in new and jobs <= new[path] for path,jobs in old.items()), 'candidate_dropped_existing_gate')
+    return candidate
+
+
+def candidate_evidence(api, grant, candidate):
+    repo,head,base=grant['repo'],grant['head'],grant['base']
+    need(len(candidate['workflows']) == 1, 'candidate_workflow_count')
+    for workflow in candidate['workflows']:
+        identity=candidate['qualification']['trusted_workflows'][workflow['path']]
+        review.blob(api,repo,workflow['path'],head,identity['definition_sha'])
+    # This context is used only to authenticate the current run association.
+    # It never clears the ordinary selector's protected-path hold.
+    scoped=copy.deepcopy(candidate)
+    scoped['_qualification_context']=dict(pr=grant['pr'],head=head,base=base,untrusted_workflows=[])
+    snapshots=api.snapshot(repo,head,scoped)
+    summary=api.evaluate_evidence(candidate['workflows'],snapshots)
+    need(not summary['failures'] and not summary['pending'], 'candidate_ci_not_green')
+    rows=[]
+    for workflow in candidate['workflows']:
+        run,jobs=snapshots[workflow['path']]
+        identity=candidate['qualification']['trusted_workflows'][workflow['path']]
+        need(run.get('id')==grant['ci']['run_id'] and run.get('run_attempt')==grant['ci']['attempt']
+             and run.get('workflow_id')==identity['id'] and run.get('path')==workflow['path']
+             and run.get('head_sha')==head and run.get('event')=='pull_request'
+             and run.get('head_repository',{}).get('full_name')==repo
+             and isinstance(run.get('pull_requests'),list) and len(run['pull_requests'])==1
+             and run['pull_requests'][0].get('number')==grant['pr']
+             and run['pull_requests'][0].get('head',{}).get('sha')==head
+             and run['pull_requests'][0].get('base',{}).get('sha')==base, 'candidate_ci_identity')
+        names=[job.get('name') for job in jobs]
+        need(len(names)==len(workflow['jobs']) and len(set(names))==len(names)
+             and set(names)==set(workflow['jobs']), 'candidate_ci_job_inventory')
+        for job in jobs:
+            need(review.integer(job.get('id')) and job.get('status')=='completed'
+                 and job.get('conclusion')=='success', 'candidate_ci_job_not_green')
+            rows.append({key:job[key] for key in ('id','name','status','conclusion')})
+    rows.sort(key=lambda item:item['name'])
+    need(r.digest(rows)==grant['ci']['jobs_sha256'], 'candidate_ci_jobs_changed')
+    return rows
+
+
+def load_grants():
+    """Read only the reviewed AW default branch, never caller or PR data."""
+    return review.action.trusted_policy(ci, GRANTS_REPO, GRANTS_PATH, metadata=True)
+
+
+def evaluate(api, grant, log_reader):
+    repo=grant['repo'];number=grant['pr'];head=grant['head'];base=grant['base']
+    pull=api.api(f'repos/{repo}/pulls/{number}')
+    review.pull_identity(pull,repo,number,head)
+    meta=api.api(f'repos/{repo}')
+    need(pull['base'].get('sha')==base and pull['base'].get('ref')==grant['base_ref']
+         and meta.get('default_branch')==grant['base_ref'], 'target_base_changed')
+    current=api.api(f"repos/{repo}/commits/{quote(grant['base_ref'],safe='')}")
+    need(current.get('sha')==base, 'default_base_changed')
+    issue_number=review.linked_issue(pull)
+    need(issue_number==grant['issue'] and r.digest([pull.get('title'),pull.get('body')])==grant['pr_sha256'], 'pr_contract_changed')
+    issue=api.api(f'repos/{repo}/issues/{issue_number}')
+    need(issue.get('number')==issue_number and issue.get('state')=='open' and 'pull_request' not in issue
+         and r.digest({k:issue.get(k) for k in ('number','title','body')})==grant['issue_sha256'], 'issue_contract_changed')
+    files=api.pages(f'repos/{repo}/pulls/{number}/files')
+    _,inventory=file_inventory(pull,files)
+    need(r.digest(inventory)==grant['files_sha256'], 'pr_files_changed')
+    candidate=candidate_policy(api,grant)
+    plan=q.select(candidate,pull,files,issue)
+    prefix='gate infrastructure change requires reviewed policy update: '
+    protected=sorted(item[len(prefix):] for item in plan['issues'] if item.startswith(prefix))
+    need(protected==grant['protected_paths']
+         and len(plan['issues'])==len(protected), 'unapproved_or_unknown_applicability')
+    need(set(plan['selected'])==set(candidate['qualification']['checks']), 'incomplete_candidate_selection')
+    ci_rows=candidate_evidence(api,grant,candidate)
+    receipt=review_provenance(api,grant,inventory,log_reader)
+    context=dict(repo=repo,pr=number,head=head,base=base,base_ref=grant['base_ref'])
+    p=native.policy(dict(config=candidate,source_commit=head))
+    native.base_rules(api,repo,context,p)
+    provider=native.provider_pull(api,repo,number)
+    native.binding(provider,context)
+    return dict(context=context,issue=issue_number,policy=p,provider=provider,
+                receipt=receipt,ci_jobs=ci_rows)
+
+
+GRANT_MARKER = 'AW_POLICY_ADOPTION_GRANT_REVIEW_V1 '
+
+
+def verify_grant_attestation(api, document, grant, evaluator, log_reader=r.job_log, require_merged=True):
+    """Authenticate an independent review of the exact non-attestation grant.
+
+    The reviewed proposal can precede attaching this receipt. Only the opaque
+    attestation may change afterwards; every authorized grant field must match.
+    """
+    att=attestation_spec(grant.get('grant_review'),grant['repo'])
+    payload={k:v for k,v in grant.items() if k!='grant_review'}
+    grant_spec(payload)
+    pr=api.api(f"repos/{GRANTS_REPO}/pulls/{att['pr']}")
+    need(pr.get('base',{}).get('ref')=='main'
+         and pr.get('head',{}).get('repo',{}).get('full_name')==GRANTS_REPO, 'grant_pr_identity')
+    if require_merged:
+        need(pr.get('merged') is True and review.sha(pr.get('merge_commit_sha')), 'grant_pr_not_merged')
+    else:
+        need(pr.get('state')=='open' and pr.get('merged') is not True
+             and pr.get('head',{}).get('sha')==document['source_commit']
+             and api.api(f'repos/{GRANTS_REPO}/commits/main').get('sha')==pr.get('base',{}).get('sha'),
+             'grant_proposal_not_current')
+    grant_files=api.pages(f"repos/{GRANTS_REPO}/pulls/{att['pr']}/files")
+    _,grant_inventory=file_inventory(pr,grant_files)
+    need(len(grant_inventory)==1 and grant_inventory[0]['path']==GRANTS_PATH
+         and grant_inventory[0]['status']=='modified', 'grant_pr_not_data_only')
+    current_raw=review.blob(api,GRANTS_REPO,GRANTS_PATH,document['source_commit'],grant_inventory[0]['sha'])
+    need(ci.strict_json_loads(current_raw)==document['config'], 'grant_default_source_changed')
+    commits=api.pages(f"repos/{GRANTS_REPO}/pulls/{att['pr']}/commits")
+    need(any(item.get('sha')==att['head'] for item in commits), 'grant_reviewed_head_not_in_pr')
+    if require_merged:
+        comparison=api.api(f"repos/{GRANTS_REPO}/compare/{pr['merge_commit_sha']}...{document['source_commit']}")
+        need(comparison.get('status') in ('identical','ahead'), 'grant_merge_not_in_default_history')
+    proposal=ci.strict_json_loads(review.blob(api,GRANTS_REPO,GRANTS_PATH,att['head'],att['blob']))
+    need(isinstance(proposal,dict) and set(proposal)=={'version','grants'}
+         and type(proposal['version']) is int and proposal['version']==1 and isinstance(proposal['grants'],list),
+         'grant_proposal_schema')
+    matches=[g for g in proposal['grants'] if isinstance(g,dict) and g.get('repo')==grant['repo']
+             and g.get('evaluator')==evaluator]
+    need(len(matches)==1 and {k:v for k,v in matches[0].items() if k!='grant_review'}==payload,
+         'reviewed_grant_differs')
+    # Exact trusted review workflow: one pinned action, read-only token and no
+    # checkout, arbitrary shell, mutable uses or additional steps.
+    raw=review.blob(api,grant['repo'],att['workflow_path'],att['source_commit'],att['workflow_blob'])
+    r.literal_uses(raw)
+    import yaml
+    workflow=yaml.load(raw,Loader=yaml.BaseLoader)
+    need(set(workflow)=={'name','on','permissions','jobs'} and workflow['name']=='Reviewed policy grant'
+         and workflow['on']=={'push':{'branches':[att['branch']],'paths':[att['workflow_path']]}}
+         and workflow['permissions']=={} and set(workflow['jobs'])=={att['job']}, 'grant_review_workflow')
+    job=workflow['jobs'][att['job']]
+    need(job=={'runs-on':'ubuntu-latest','timeout-minutes':'70',
+               'permissions':{'actions':'read','contents':'read','pull-requests':'read','issues':'read'},
+               'steps':[{'uses':'faberline/aw/.github/actions/policy-adoption-grant-review@'+evaluator,
+                         'with':{'grant-pr':str(att['pr']),'grant-head':att['head'],
+                                 'claude-token':'${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}}]},
+         'grant_review_workflow')
+    run=api.api(f"repos/{grant['repo']}/actions/runs/{att['run_id']}")
+    need(run.get('id')==att['run_id'] and run.get('workflow_id')==att['workflow_id']
+         and run.get('path')==att['workflow_path'] and run.get('head_sha')==att['source_commit']
+         and run.get('head_branch')==att['branch'] and run.get('event')=='push'
+         and run.get('head_repository',{}).get('full_name')==grant['repo']
+         and run.get('run_attempt')==att['attempt'] and run.get('status')=='completed'
+         and run.get('conclusion')=='success', 'grant_review_run')
+    jobs=api.pages(f"repos/{grant['repo']}/actions/runs/{att['run_id']}/attempts/{att['attempt']}/jobs",'jobs')
+    matching=[j for j in jobs if j.get('name')==att['job']]
+    need(len(matching)==1 and matching[0].get('id')==att['job_id']
+         and matching[0].get('status')=='completed' and matching[0].get('conclusion')=='success', 'grant_review_job')
+    rows=r.records(log_reader(grant['repo'],att['job_id']),GRANT_MARKER)
+    need(len(rows)==1 and isinstance(rows[0],dict), 'grant_review_receipt')
+    row=rows[0]
+    fields=('version repo target_pr target_head grant_pr grant_head grant_blob grant_digest '
+            'grant_issue grant_pr_sha256 grant_issue_sha256 decision findings uncertainties')
+    need(review.exact(row,fields) and type(row['version']) is int and row['version']==1
+         and row['repo']==grant['repo'] and row['target_pr']==grant['pr'] and row['target_head']==grant['head']
+         and review.integer(row['target_pr']) and review.integer(row['grant_pr']) and review.integer(row['grant_issue'])
+         and row['grant_pr']==att['pr'] and row['grant_head']==att['head'] and row['grant_blob']==att['blob']
+         and row['grant_digest']==r.digest(payload) and row['decision']=='pass'
+         and row['findings']==[] and row['uncertainties']==[], 'grant_review_receipt')
+    grant_issue=review.linked_issue(pr)
+    need(grant_issue==row['grant_issue'] and r.digest([pr.get('title'),pr.get('body')])==row['grant_pr_sha256'],
+         'grant_pr_contract_changed')
+    source_issue=api.api(f'repos/{GRANTS_REPO}/issues/{grant_issue}')
+    need(source_issue.get('number')==grant_issue
+         and source_issue.get('state')==('closed' if require_merged else 'open')
+         and r.digest({k:source_issue.get(k) for k in ('number','title','body')})==row['grant_issue_sha256'],
+         'grant_issue_contract_changed')
+    return row
+
+
+def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_grants, log_reader=r.job_log):
+    """Queue only after separate grant, exact CI and independent review verification."""
+    need(not os.environ.get('CLAUDE_CODE_OAUTH_TOKEN'), 'model_credential_in_publisher')
+    document=grant_loader()
+    need(isinstance(document,dict) and review.sha(document.get('source_commit')), 'untrusted_grant_source')
+    grant=choose_grant(document['config'],grant_document,evaluator)
+    attestation=verify_grant_attestation(api,document,grant,evaluator,log_reader)
+    pub=grant['publisher']
+    need(os.environ.get('GITHUB_REPOSITORY')==grant['repo']
+         and os.environ.get('GITHUB_EVENT_NAME')==event and os.environ.get('GITHUB_RUN_ID')==str(run_id)
+         and os.environ.get('GITHUB_SHA')==pub['source_commit']
+         and os.environ.get('GITHUB_WORKFLOW_SHA')==pub['source_commit']
+         and os.environ.get('GITHUB_REF')=='refs/heads/'+pub['branch'], 'publisher_context')
+    publisher_provenance(api,grant,run_id,event)
+    before=evaluate(api,grant,log_reader)
+    repo,number,head=grant['repo'],grant['pr'],grant['head']
+    context,p=before['context'],before['policy']
+    headline,body=f'Merge PR #{number}',f"Closes #{grant['issue']}"
+    request=before['provider'].get('autoMergeRequest')
+    if request is not None:
+        native.queued_request(before['provider'],p,headline,body)
+    need(grant_loader()==document, 'grant_changed')
+    api.api(f'repos/{repo}/statuses/{head}',method='POST',data=dict(
+        state='pending',context=p['status_context'],description='Rechecking reviewed policy adoption',
+        target_url=f"https://github.com/{repo}/actions/runs/{grant['review']['run_id']}"))
+    try:
+        current=evaluate(api,grant,log_reader)
+        need(current==before and grant_loader()==document
+             and verify_grant_attestation(api,document,grant,evaluator,log_reader)==attestation,
+             'adoption_evidence_changed')
+        publisher_provenance(api,grant,run_id,event)
+        if current['provider'].get('autoMergeRequest') is None:
+            result=native.graphql(api,native.QUEUE,dict(input=dict(
+                pullRequestId=current['provider']['id'],expectedHeadOid=head,
+                mergeMethod=p['merge_method'],clientMutationId=r.digest(grant),
+                commitHeadline=headline,commitBody=body)))
+            queued=result.get('enablePullRequestAutoMerge',{}).get('pullRequest')
+            need(isinstance(queued,dict) and queued.get('headRefOid')==head, 'queue_response')
+            native.queued_request(queued,p,headline,body)
+        else:
+            native.queued_request(current['provider'],p,headline,body)
+        fresh=evaluate(api,grant,log_reader)
+        need(grant_loader()==document and all(fresh[k]==before[k] for k in ('context','issue','policy','receipt','ci_jobs'))
+             and verify_grant_attestation(api,document,grant,evaluator,log_reader)==attestation,
+             'adoption_evidence_changed')
+        publisher_provenance(api,grant,run_id,event)
+        native.queued_request(fresh['provider'],p,headline,body)
+        api.api(f'repos/{repo}/statuses/{head}',method='POST',data=dict(
+            state='success',context=p['status_context'],description='Reviewed policy, current CI and Claude verified',
+            target_url=f"https://github.com/{repo}/actions/runs/{grant['review']['run_id']}"))
+    except Exception:
+        # The pending status blocks an abandoned request; no blind retry.
+        return dict(state='held_after_pending',head=head)
+    after=native.provider_pull(api,repo,number)
+    need(after.get('headRefOid')==head, 'head_changed_after_status')
+    if after.get('state')=='MERGED':
+        merge=after.get('mergeCommit',{}).get('oid')
+        need(review.sha(merge), 'merge_identity_missing')
+        return dict(state='merged',head=head,merge=merge)
+    need(after.get('state')=='OPEN' and after.get('autoMergeRequest',{}).get('mergeMethod')==p['merge_method'],
+         'native_request_unknown')
+    return dict(state='queued',head=head)
+
+
+def main():
+    repo=os.environ.get('GITHUB_REPOSITORY','')
+    evaluator=os.environ.get('AW_ACTION_REF','')
+    run=os.environ.get('GITHUB_RUN_ID','')
+    event=os.environ.get('GITHUB_EVENT_NAME','')
+    need(review.sha(evaluator) and isinstance(repo,str)
+         and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',repo)
+         and re.fullmatch(r'[1-9][0-9]*',run), 'publisher_input')
+    result=enqueue(ci,repo,evaluator,int(run),event)
+    print(r.canonical(result),flush=True)
+    return 0 if result['state'] in ('queued','merged') else 2
+
+
+if __name__=='__main__':
+    import sys
+    try:
+        sys.exit(main())
+    except (RuntimeError,KeyError,TypeError,ValueError,OSError) as error:
+        print('refused: '+str(error),file=sys.stderr)
+        sys.exit(2)

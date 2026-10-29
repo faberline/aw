@@ -3,12 +3,22 @@ on:
   pull_request:
     paths:
       - ".github/actions/native-auto-merge/**"
+      - ".github/actions/policy-adoption/**"
+      - ".github/actions/policy-adoption-target-review/**"
+      - ".github/actions/policy-adoption-grant-review/**"
+      - ".github/actions/policy-adoption-review-outcome/**"
+      - ".github/policy-adoption-grants.json"
       - ".github/workflows/native-auto-merge-controls.yml"
       - "plugins/faberline/skills/issue-ci/**"
   push:
     branches: [codex/claude-native-automerge]
     paths:
       - ".github/actions/native-auto-merge/**"
+      - ".github/actions/policy-adoption/**"
+      - ".github/actions/policy-adoption-target-review/**"
+      - ".github/actions/policy-adoption-grant-review/**"
+      - ".github/actions/policy-adoption-review-outcome/**"
+      - ".github/policy-adoption-grants.json"
       - ".github/workflows/native-auto-merge-controls.yml"
       - "plugins/faberline/skills/issue-ci/**"
 permissions:

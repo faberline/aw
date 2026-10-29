@@ -264,3 +264,45 @@ reason must describe the reviewed issue, not merely assume a gate is absent.
 additional checks add to the path-selected set. Neither an exemption nor a
 candidate inspection removes existing checks. The qualified result binds the
 issue number, exact content hashes, reviewed contract hash, head and base.
+
+### Separately reviewed protected-policy adoption
+
+A protected policy or CI change cannot pass its own ordinary qualification.
+The separate policy-adoption actions support a one-target bootstrap. Publishing
+these actions does not activate a grant. The default grant file starts empty.
+All ordinary protected-path, failure-only and qualification holds stay in place.
+
+1. A fixed target-review workflow runs only the pinned target-review action.
+   It reads PR source and issue text through GitHub metadata. It never checks
+   out or executes PR code. It validates the current base, complete CI jobs,
+   source issue and proposed policy before tool-free Claude runs. Its log
+   receipt binds all file identities and each reviewed issue requirement. A
+   separate serialized outcome job authenticates that receipt. A failed or
+   blocked review returns the issue to `todo`; a pass makes no lifecycle write.
+   A successful workflow job by itself is not a passing review receipt.
+2. A data-only AW PR proposes a grant for one exact target head and base. It
+   names the exact candidate and prior policy blobs, issue and PR hashes,
+   protected paths, all current CI jobs, and the authenticated target review.
+   The fixed grant-review action independently checks this data and its current
+   evidence. Claude receives no tools and no candidate code executes. A passing
+   log receipt binds the grant data before the receipt metadata is appended.
+   Run the same independent review again on the final PR head. It verifies the
+   earlier receipt and reviews the final grant file. Its own receipt remains
+   outside the grant, so the review cannot change the head it reviewed.
+3. After the data-only grant is independently reviewed and merged to AW main,
+   a fixed serialized publisher verifies its ancestry, the grant-review log,
+   the target-review log, GitHub ruleset, candidate policy, original job set,
+   complete current CI, issue and PR identities. It writes pending, queues
+   native squash auto-merge at the exact head, repeats the checks, then writes
+   the required success status. The squash message closes the linked issue.
+   A missing grant, unknown evidence, stale base, changed contract, non-success
+   job or unapproved protected path cannot authorize the status.
+
+The target-review and grant-review workflows have only the pinned actions and
+explicit permissions required by their role. The privileged publisher has no
+model credential, checkout, arbitrary shell or PR artifact input. Its workflow
+shares the `issue-ci-handoff` concurrency group with the existing writer.
+No status, merge request or active grant is created merely by publishing these
+sources. GitHub owns the final merge and enforces its strict base rule. The
+controller cannot make GitHub's issue updates and its final merge atomic, so it
+rechecks issue and source identities immediately before the final status write.
