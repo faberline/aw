@@ -59,7 +59,7 @@ def workflow_contract(api,repo,document,evaluator):
     job=workflow['jobs']['recovery']
     need(job=={'runs-on':'ubuntu-latest','timeout-minutes':'30',
                'permissions':{'actions':'read','contents':'write','issues':'write',
-                              'pull-requests':'read','statuses':'read'},
+                              'pull-requests':'write','statuses':'write'},
                'steps':[{'uses':'faberline/aw/.github/actions/verified-issue-recovery@'+evaluator}]},
          'recovery_workflow_contract')
     return spec
