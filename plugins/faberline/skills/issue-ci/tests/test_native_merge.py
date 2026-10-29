@@ -130,6 +130,59 @@ class Provider:
         return self.pages(path, key)
 
 
+class ActionsProvider(Provider):
+    """Match the exact fields observed with the hosted Actions token."""
+    def __init__(self):
+        super().__init__()
+        self.meta=dict(default_branch='main')
+        self.ruleset=dict(enforcement='active',target='branch')
+        self.graph_repo=dict(nameWithOwner='o/r',autoMergeAllowed=True,squashMergeAllowed=True,
+            defaultBranchRef=dict(name='main',target=dict(oid=BASE)))
+        self.graph_ruleset=dict(databaseId=9,enforcement='ACTIVE',target='BRANCH',
+            bypassActors=dict(totalCount=0,pageInfo=dict(hasNextPage=False)))
+
+    def api(self,path,method='GET',data=None):
+        if path=='graphql' and data['query']==m.PROVIDER_REPOSITORY_POLICY:
+            return dict(data=dict(repository=copy.deepcopy(self.graph_repo)))
+        if path=='graphql' and data['query']==m.PROVIDER_RULESET_POLICY:
+            return dict(data=dict(repository=dict(nameWithOwner='o/r',ruleset=copy.deepcopy(self.graph_ruleset))))
+        return super().api(path,method,data)
+
+
+class ActionsProviderVisibilityTests(unittest.TestCase):
+    def check(self,p):
+        m.base_rules(p,'o/r',dict(base_ref='main',base=BASE),p.document['config']['native_auto_merge'])
+
+    def test_actions_visible_graphql_proves_the_same_strict_policy(self):
+        self.check(ActionsProvider())
+
+    def test_unknown_or_changed_repository_settings_refuse(self):
+        for field,value in [('nameWithOwner','other/repo'),('autoMergeAllowed',False),('autoMergeAllowed',None),
+                            ('squashMergeAllowed',False),('squashMergeAllowed',None),
+                            ('defaultBranchRef',None),('defaultBranchRef',{'name':'main','target':{'oid':'f'*40}})]:
+            p=ActionsProvider();p.graph_repo[field]=value
+            with self.subTest(field=field,value=value),self.assertRaises(RuntimeError):self.check(p)
+        for field,value in [('allow_auto_merge',False),('allow_squash_merge',False),('allow_auto_merge',1)]:
+            p=ActionsProvider();p.meta[field]=value
+            with self.subTest(field=field,value=value),self.assertRaises(RuntimeError):self.check(p)
+
+    def test_unknown_changed_or_nonzero_bypass_refuses(self):
+        for field,value in [('databaseId',10),('databaseId',True),('enforcement','DISABLED'),('target','TAG'),
+                            ('bypassActors',None),('bypassActors',{'totalCount':1,'pageInfo':{'hasNextPage':False}}),
+                            ('bypassActors',{'totalCount':0,'pageInfo':{'hasNextPage':True}}),
+                            ('bypassActors',{'totalCount':False,'pageInfo':{'hasNextPage':False}})]:
+            p=ActionsProvider();p.graph_ruleset[field]=value
+            with self.subTest(field=field,value=value),self.assertRaises(RuntimeError):self.check(p)
+        p=ActionsProvider();p.ruleset['bypass_actors']=[{'actor_id':1}]
+        with self.assertRaises(RuntimeError):self.check(p)
+
+    def test_required_status_and_strict_mode_remain_mandatory(self):
+        p=ActionsProvider();p.rules[0]['parameters']['strict_required_status_checks_policy']=False
+        with self.assertRaises(RuntimeError):self.check(p)
+        p=ActionsProvider();p.rules[0]['parameters']['required_status_checks']=[]
+        with self.assertRaises(RuntimeError):self.check(p)
+
+
 class NativeMergeTests(unittest.TestCase):
     def setUp(self):
         self.env = patch.dict(os.environ, {}, clear=True)

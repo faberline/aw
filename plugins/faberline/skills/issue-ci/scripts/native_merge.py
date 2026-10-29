@@ -32,6 +32,15 @@ READ = """query($owner:String!,$name:String!,$number:Int!){
     mergeCommit{oid}
   }}
 }"""
+PROVIDER_REPOSITORY_POLICY = """query($owner:String!,$name:String!){
+  repository(owner:$owner,name:$name){nameWithOwner autoMergeAllowed squashMergeAllowed
+    defaultBranchRef{name target{oid}}}
+}"""
+PROVIDER_RULESET_POLICY = """query($owner:String!,$name:String!,$id:Int!){
+  repository(owner:$owner,name:$name){nameWithOwner ruleset(databaseId:$id){
+    databaseId enforcement target bypassActors(first:1){totalCount pageInfo{hasNextPage}}
+  }}
+}"""
 DISABLE = """mutation($input:DisablePullRequestAutoMergeInput!){
   disablePullRequestAutoMerge(input:$input){pullRequest{id state headRefOid
     autoMergeRequest{mergeMethod enabledBy{login}} mergeCommit{oid}
@@ -234,8 +243,20 @@ def queued_request(pull, p, headline, body):
 def base_rules(api, repo, context, p):
     meta = api.api(f"repos/{repo}")
     need(meta.get("default_branch") == context["base_ref"]
-         and meta.get("allow_auto_merge") is True
-         and meta.get("allow_squash_merge") is True, "provider_repository_policy")
+         and all(meta.get(key) is None or meta.get(key) is True
+                 for key in ("allow_auto_merge", "allow_squash_merge")),
+         "provider_repository_policy")
+    if meta.get("allow_auto_merge") is not True or meta.get("allow_squash_merge") is not True:
+        owner, name = repo.split("/")
+        result = graphql(api, PROVIDER_REPOSITORY_POLICY, dict(owner=owner, name=name))
+        repository = result.get("repository")
+        need(isinstance(repository, dict) and repository.get("nameWithOwner") == repo
+             and repository.get("autoMergeAllowed") is True and repository.get("squashMergeAllowed") is True
+             and isinstance(repository.get("defaultBranchRef"), dict)
+             and repository["defaultBranchRef"].get("name") == context["base_ref"]
+             and isinstance(repository["defaultBranchRef"].get("target"), dict)
+             and repository["defaultBranchRef"]["target"].get("oid") == context["base"],
+             "provider_repository_policy")
     rules = api.api(f'repos/{repo}/rules/branches/{quote(context["base_ref"], safe="")}')
     need(isinstance(rules, list), "provider_rules_unknown")
     matches = [rule for rule in rules if rule.get("type") == "required_status_checks"
@@ -248,8 +269,24 @@ def base_rules(api, repo, context, p):
          and dict(context=p["status_context"], integration_id=p["status_app_id"]) in checks,
          "required_head_status_missing")
     ruleset = api.api(f'repos/{repo}/rulesets/{p["ruleset_id"]}')
-    need(ruleset.get("enforcement") == "active" and ruleset.get("target") == "branch"
-         and ruleset.get("bypass_actors") == [], "provider_bypass_or_unknown")
+    need(ruleset.get("enforcement") == "active" and ruleset.get("target") == "branch",
+         "provider_bypass_or_unknown")
+    actors = ruleset.get("bypass_actors")
+    if actors is None:
+        owner, name = repo.split("/")
+        result = graphql(api, PROVIDER_RULESET_POLICY, dict(owner=owner, name=name, id=p["ruleset_id"]))
+        repository = result.get("repository")
+        item = repository.get("ruleset") if isinstance(repository, dict) else None
+        bypass = item.get("bypassActors") if isinstance(item, dict) else None
+        need(isinstance(repository, dict) and repository.get("nameWithOwner") == repo
+             and isinstance(item, dict) and type(item.get("databaseId")) is int
+             and item["databaseId"] == p["ruleset_id"] and item.get("enforcement") == "ACTIVE"
+             and item.get("target") == "BRANCH" and isinstance(bypass, dict)
+             and type(bypass.get("totalCount")) is int and bypass["totalCount"] == 0
+             and isinstance(bypass.get("pageInfo"), dict) and bypass["pageInfo"].get("hasNextPage") is False,
+             "provider_bypass_or_unknown")
+    else:
+        need(actors == [], "provider_bypass_or_unknown")
 
 
 def qualification(api, repo, number, context, document):
