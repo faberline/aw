@@ -355,6 +355,15 @@ def dispatch_default_wake(api, repo, results):
     return True
 
 
+def dispatch_recovery_wake(api,repo,document,evaluator,recovery,results):
+    """Wake recovery after a guarded request; its inputs never authorize close."""
+    if not any(row.get('state') in ('queued','merged','already_merged') for row in results):
+        return False
+    recovery.workflow_contract(api,repo,document,evaluator)
+    api.api(f'repos/{repo}/dispatches',method='POST',data=dict(event_type='aw-verified-merge-recover'))
+    return True
+
+
 def enqueue(api, repo, number, head, load_document, evaluator, review_run,
             verify=review.verify_review, prepare_record=None):
     """Native request + required head status form the cross-run write protocol.
@@ -523,14 +532,29 @@ def return_todo(api, repo, number, head, load_document, evaluator, run_id, verif
 
 
 def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=None, ci_process=None,
-              defer_positive=False, prepare_record=None):
+              defer_positive=False, prepare_record=None, guarded=None):
     """Every wake covers the complete queue; one refused PR cannot drop others."""
     document = load_document()
     policy(document, require_qualification=False)
     producer = review.policy(document)["producer"]
     pulls = api.pages(f"repos/{repo}/pulls?state=open&sort=created&direction=asc")
+    admitted = {}
+    if guarded is not None:
+        need(isinstance(pulls,list) and all(isinstance(pull,dict) and review.integer(pull.get('number'))
+             and isinstance(pull.get('head'),dict) and review.sha(pull['head'].get('sha')) for pull in pulls)
+             and len({pull['number'] for pull in pulls})==len(pulls),'guard_queue_unknown')
+        for pull in pulls:
+            number,head=pull.get('number'),pull.get('head',{}).get('sha')
+            try:
+                admitted[number]=guarded.begin(api,repo,document,evaluator,number,head,
+                    lambda line:print(line,flush=True))
+            except Exception:
+                # An unknown claim may have succeeded; never retry it here.
+                continue
     withdrawal_errors = set()
     for pull in pulls:
+        if guarded is not None and pull.get('number') not in admitted:
+            continue
         try:
             withdraw_approval(api, repo, pull["number"], pull.get("head", {}).get("sha"))
         except Exception:
@@ -538,7 +562,8 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
     ci_errors = set()
     if ci_process is not None:
         ci_rows = reconcile_ci(api, repo, document,
-                               [pull for pull in pulls if pull["number"] not in withdrawal_errors], ci_process)
+                               [pull for pull in pulls if pull["number"] not in withdrawal_errors
+                                and (guarded is None or pull["number"] in admitted)], ci_process)
         ci_errors = {row["pr"] for row in ci_rows if row["state"] == "ci_held"}
         print("AW_UNIFIED_CI_RECONCILIATION_V1 " + review.r.canonical(ci_rows))
     runs = api.pages(f'repos/{repo}/actions/workflows/{producer["id"]}/runs', "workflow_runs")
@@ -548,6 +573,10 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
         number, head = pull["number"], pull.get("head", {}).get("sha")
         row = dict(pr=number, head=head, state="held")
         try:
+            if guarded is not None and number not in admitted:
+                row.update(reason='guard_unavailable')
+                results.append(row)
+                continue
             if number in withdrawal_errors or number in ci_errors:
                 row.update(state="held_after_pending", reason="withdrawal_or_ci_result_unknown")
                 results.append(row)
@@ -576,6 +605,24 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
             row["reason"] = code if isinstance(error, review.Refused) and re.fullmatch(
                 r"[a-z0-9_]+", code) else "verification_or_provider_failed"
         results.append(row)
+    if guarded is not None:
+        safe_holds={'review_missing','review_target_record_unknown','latest_review_not_success'}
+        for row in results:
+            claim=admitted.get(row['pr'])
+            if claim is None or row['state'] in ('queued','merged','already_merged','held_after_pending',
+                                                  'default_wake_required'):
+                continue
+            if row['state']=='held' and row.get('reason') not in safe_holds:
+                continue
+            try:
+                result=guarded.settle(api,repo,claim['policy'],claim['intent'])
+                if result.get('state') not in ('released','retained'):
+                    row.update(state='held_after_pending',reason='guard_result_unknown')
+                else:
+                    row['guard']=result['state']
+            except Exception:
+                # The provider could have accepted the release. Do not retry.
+                row.update(state='held_after_pending',reason='guard_result_unknown')
     return results
 
 
@@ -605,13 +652,28 @@ def main():
         source = identities.get(wake.get("path"))
         need(source is not None and wake.get("workflow_id") == source["id"]
              and review.integer(wake.get("id")), "merge_wake_identity")
+    guarded = None
+    if 'issue_guard' in document['config']:
+        # The draft verifier always holds until actor rollout and recovery are
+        # proved. No guarded lifecycle mutation may run before that proof.
+        recovery = review.sibling('recovery_entry')
+        recovery.verify_rollout(api,repo,document)
+        if event_name == 'pull_request_target':
+            api.api(f'repos/{repo}/dispatches',method='POST',data=dict(event_type='aw-verified-merge-reconcile'))
+            print('AW_NATIVE_MERGE_RECONCILIATION_V1 '+review.r.canonical(dict(
+                version=1,repo=repo,producer_run=int(current),results=[dict(state='default_wake_required')])))
+            return 0
+        guarded = review.sibling('guarded_admission')
     index = review.sibling("native_review_index")
     tracker = index.Session(api, repo, load, evaluator)
     results = reconcile(api, repo, load, evaluator, tracker.attempts, tracker.verify, tracker.result, api.process_head,
-                        defer_positive=event_name == 'pull_request_target', prepare_record=prepare_close_record)
+                        defer_positive=event_name == 'pull_request_target', prepare_record=prepare_close_record,
+                        guarded=guarded)
     # PR-target runs may report the candidate head as their run SHA. Wake a
     # default-branch writer, which must revalidate the entire queue.
     dispatch_default_wake(api, repo, results)
+    if guarded is not None:
+        dispatch_recovery_wake(api,repo,document,evaluator,recovery,results)
     print("AW_NATIVE_MERGE_RECONCILIATION_V1 " + review.r.canonical(dict(
         version=1, repo=repo, producer_run=int(current), results=results)))
     return 2 if any(row["state"] == "held_after_pending" for row in results) else 0

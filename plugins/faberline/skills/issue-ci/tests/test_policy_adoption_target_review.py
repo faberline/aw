@@ -266,6 +266,12 @@ class ReviewProtocolTests(unittest.TestCase):
         rows += [dict(role=role,path=path,content=(root/path).read_text()) for role in ('candidate','evaluator')]
         rows += [dict(role='candidate',path=m.FRAMEWORK_ROOT+name,content=(root/m.FRAMEWORK_ROOT/name).read_text())
                  for name in m.EVALUATOR_FRAMEWORK_FILES]
+        existing={(r['role'],r['path']) for r in rows}
+        for role in ('candidate','evaluator'):
+            for path in m.RECOVERY_CANDIDATE_SOURCES:
+                if (role,path) not in existing:
+                    rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+                    existing.add((role,path))
         m.framework_dependency_closure(rows)
 
     def test_optional_close_observer_is_bound_per_immutable_revision(self):
@@ -305,6 +311,10 @@ class ReviewProtocolTests(unittest.TestCase):
             if ('candidate',path) not in existing:
                 rows.append(dict(role='candidate',path=path,content=(root/path).read_text()))
                 existing.add(('candidate',path))
+        for path in m.RECOVERY_CANDIDATE_SOURCES:
+            if ('evaluator',path) not in existing:
+                rows.append(dict(role='evaluator',path=path,content=(root/path).read_text()))
+                existing.add(('evaluator',path))
         m.framework_dependency_closure(rows)
         for omitted in ('plugins/faberline/skills/issue-work/scripts/worker_guard.py',
                         m.FRAMEWORK_ROOT+'guard_ledger.py',
@@ -319,6 +329,18 @@ class ReviewProtocolTests(unittest.TestCase):
         selected={(r['role'],r['path'],r['ref']) for r in rows}
         self.assertTrue(all(('candidate',path,candidate) in selected for path in m.RECOVERY_CANDIDATE_SOURCES))
         self.assertFalse(any(role=='evaluator' and path.endswith('/recovery_entry.py') for role,path,ref in selected))
+
+    def test_native_guard_imports_add_sources_only_at_the_revision_that_uses_them(self):
+        candidate,evaluator='c'*40,'e'*40
+        def blob(api,repo,path,ref):
+            if path.endswith('/native_merge.py') and ref==candidate:
+                return "x=review.sibling('guarded_admission')"
+            return 'pass'
+        with patch.object(m.a.review,'blob',side_effect=blob):
+            rows=m.framework_sources(None,candidate,evaluator)
+        selected={(r['role'],r['path'],r['ref']) for r in rows}
+        self.assertTrue(all(('candidate',path,candidate) in selected for path in m.RECOVERY_CANDIDATE_SOURCES))
+        self.assertFalse(any(role=='evaluator' and path.endswith('/guarded_admission.py') for role,path,ref in selected))
 
 
 class PreflightTests(unittest.TestCase):

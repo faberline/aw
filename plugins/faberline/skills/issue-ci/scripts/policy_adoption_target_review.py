@@ -30,7 +30,7 @@ SHARED_FRAMEWORK_DATA=('plugins/faberline/skills/issue-conformance/SKILL.md',)
 RECOVERY_CANDIDATE_SOURCES=(
     '.github/actions/verified-issue-recovery/action.yml',
     *(FRAMEWORK_ROOT+name for name in (
-        'recovery_entry.py','recovery_runner.py','recovery_scan.py','guarded_close.py','merge_guard.py',
+        'recovery_entry.py','recovery_runner.py','recovery_scan.py','guarded_admission.py','guarded_close.py','merge_guard.py',
         'prepared_status.py','guard_discovery.py','guard_github.py','guard_ledger.py','post_merge_observation.py',
         'readiness-requirements.txt')),
     *(f'plugins/faberline/skills/issue-work/scripts/{name}' for name in (
@@ -150,6 +150,14 @@ def framework_sources(api,candidate_ref,evaluator_ref,include_recovery=False):
         raw=content.encode('utf-8')
         blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
         result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
+    def add_recovery(role,ref):
+        for path in RECOVERY_CANDIDATE_SOURCES:
+            if any(row['role']==role and row['path']==path for row in result):
+                continue
+            content=a.review.blob(api,a.GRANTS_REPO,path,ref)
+            raw=content.encode('utf-8')
+            blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+            result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
     # Older reviewed revisions predate this module. Include it at each ref
     # precisely when that immutable controller statically imports it. The
     # dependency-closure check below still rejects any unlisted dependency.
@@ -185,14 +193,12 @@ def framework_sources(api,candidate_ref,evaluator_ref,include_recovery=False):
                     raw=content.encode('utf-8')
                     blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
                     result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
+        if any(isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute)
+               and node.func.attr=='sibling' and node.args and isinstance(node.args[0],ast.Constant)
+               and node.args[0].value in ('recovery_entry','guarded_admission') for node in ast.walk(tree)):
+            add_recovery(role,ref)
     if include_recovery:
-        for path in RECOVERY_CANDIDATE_SOURCES:
-            if any(row['role']=='candidate' and row['path']==path for row in result):
-                continue
-            content=a.review.blob(api,a.GRANTS_REPO,path,candidate_ref)
-            raw=content.encode('utf-8')
-            blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
-            result.append(dict(role='candidate',repo=a.GRANTS_REPO,ref=candidate_ref,path=path,blob=blob,content=content))
+        add_recovery('candidate',candidate_ref)
     framework_dependency_closure(result)
     return result
 

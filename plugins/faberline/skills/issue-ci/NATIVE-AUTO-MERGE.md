@@ -119,6 +119,13 @@ the exact workflow and action, and its review must include the recovery and
 worker sources. Do not deploy the template while the writer, crash recovery,
 or actor-adoption checks remain incomplete.
 
+The guarded writer draft holds an issue guard while a merge is queued. It
+does not change an issue held by another worker. A PR-target wake only asks
+the default-branch writer to recheck. An unknown write result retains the
+guard. The guarded path is blocked by the same unimplemented rollout proof.
+GitHub cancellation races and recovery after a writer crash still require
+hosted verification before rollout.
+
 The draft writer requires the `aw-verified-merge-reconcile` repository-dispatch
 trigger. A passing PR-target wake asks for a default-branch wake. The latter
 rechecks every candidate before it can publish success. The dispatch payload is
