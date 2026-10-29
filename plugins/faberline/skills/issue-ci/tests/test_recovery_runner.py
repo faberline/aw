@@ -61,6 +61,19 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result[0]['state'],'released');identify.assert_called_once();settle.assert_called_once()
         close.assert_not_called()
 
+    def test_already_closed_prepared_candidate_reauthenticates_before_release(self):
+        candidate=dict(issue=7,pr=9,head='a'*40,owner='b'*56,run=123,attempt=2,
+                       state='closed_prepared_recovery',close_authorized=False)
+        with patch.object(m.worker,'read_policy',return_value={'current':True}), \
+             patch.object(m.scan,'scan',return_value=[candidate]), \
+             patch.object(m.scan,'historical_document',return_value=({'source_commit':'c'*40},'d'*40)), \
+             patch.object(m.close,'release_closed_prepared',return_value=dict(
+                 state='released_after_observed_closed',issue=7,merge='e'*40)) as release, \
+             patch.object(m.close,'reconcile_native') as close:
+            result=m.reconcile(None,'o/r',lambda r,j:'')
+        self.assertEqual(result[0]['state'],'released_after_observed_closed')
+        release.assert_called_once();close.assert_not_called()
+
     def test_adoption_candidate_is_rediscovered_before_guarded_close(self):
         candidate=dict(issue=7,pr=9,head='a'*40,owner='b'*56,run=123,attempt=2,
                        kind='adoption',state='guard_required')

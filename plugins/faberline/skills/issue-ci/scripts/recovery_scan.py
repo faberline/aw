@@ -30,6 +30,7 @@ def inspect_prepared(api,repo,document,current_policy,evaluator,run,attempt,inte
     if value is None:
         return None
     evidence=value['payload']['checkpoint'];checkpoint=evidence['payload']['checkpoint']
+    prepared.per_pr.guard_binding(p,evidence['payload'])
     need(checkpoint['issue']==p['issue'] and checkpoint['repo']==repo
          and checkpoint['pr']==pr and checkpoint['head']==head,'recovery_checkpoint_mismatch')
     old=guard.worker.config(dict(document['config']['issue_guard'],policy_source=document['source_commit']))
@@ -37,11 +38,15 @@ def inspect_prepared(api,repo,document,current_policy,evaluator,run,attempt,inte
     need(all(old[k]==current_policy[k] for k in ('genesis','ruleset_id','runtime')),
          'merge_guard_policy_changed')
     closer.guard_identity(api,repo,current_policy,intent)
-    statuses=api.pages(f'repos/{repo}/commits/{head}/statuses')
-    status=prepared.observe(value,statuses)
     started=observer.source_started_at(api,evidence,require_success=False)
     result=observer.recovery_plan(api,checkpoint,started)
     closer.guard_identity(api,repo,current_policy,intent)
+    if result['state']=='observed_closed':
+        # The issue is already closed. This is only a candidate for releasing
+        # the same guard; it is never authority to close an open issue.
+        return dict(state='closed_prepared_recovery',status='not_required',close_authorized=False)
+    statuses=api.pages(f'repos/{repo}/commits/{head}/statuses')
+    status=prepared.observe(value,statuses)
     return dict(state=result['state'],status=status['state'],close_authorized=False)
 
 
@@ -116,7 +121,7 @@ def scan(api,repo,current_policy,log_reader):
                     row.update(state='admission_recovery',pr=pr,head=item['head'],owner=item['owner'],
                                run=run,attempt=attempt,close_authorized=False)
                 else:
-                    row.update(state=planned['state'],status=planned['status'],pr=pr,head=item['head'],
+                    row.update(state=planned['state'],status=planned['status'],pr=pr,head=item['head'],owner=item['owner'],
                                run=run,attempt=attempt,close_authorized=False)
                 results.append(row)
                 continue

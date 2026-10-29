@@ -135,6 +135,10 @@ That record alone cannot authorize a close. After GitHub acknowledges success,
 the writer records its exact status ID and guard owner for that PR. Recovery
 rechecks that record, the source, the status, and the actual merge. A failed
 writer job does not become a passing CI or review result.
+If the success response is lost and the issue is already closed, the draft can
+authenticate the pre-status record and release only that guard. It reads the
+exact merge and closed issue twice. It never uses that record to close an open
+issue. This does not recover an open issue after an unknown status response.
 
 The draft writer requires the `aw-verified-merge-reconcile` repository-dispatch
 trigger. A passing PR-target wake asks for a default-branch wake. The latter

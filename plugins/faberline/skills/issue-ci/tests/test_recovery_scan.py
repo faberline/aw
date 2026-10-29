@@ -73,6 +73,7 @@ class RecoveryScanTests(unittest.TestCase):
                 assert path=='repos/o/r/commits/'+('d'*40)+'/statuses'
                 return []
         with patch.object(m.prepared,'find_native_prepared',return_value=value), \
+             patch.object(m.prepared.per_pr,'guard_binding'), \
              patch.object(m.prepared,'observe',return_value=dict(state='observed_success')), \
              patch.object(m.closer,'guard_identity') as guard, \
              patch.object(m.observer,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
@@ -80,6 +81,22 @@ class RecoveryScanTests(unittest.TestCase):
             result=m.inspect_prepared(StatusAPI(),'o/r',document,policy,EVALUATOR,123,2,intent,lambda r,j:'')
         self.assertEqual(result,dict(state='guard_required',status='observed_success',close_authorized=False))
         self.assertEqual(guard.call_count,2)
+
+    def test_already_closed_prepared_record_never_requires_status_or_authorizes_close(self):
+        policy=workers.policy(SOURCE);config=dict(policy);del config['policy_source']
+        document=dict(source_commit=SOURCE,config=dict(issue_guard=config))
+        intent=dict(payload=dict(pr=9,head='d'*40,issue=7))
+        checkpoint=dict(repo='o/r',pr=9,head='d'*40,issue=7)
+        value=dict(payload=dict(checkpoint=dict(payload=dict(checkpoint=checkpoint))))
+        with patch.object(m.prepared,'find_native_prepared',return_value=value), \
+             patch.object(m.prepared.per_pr,'guard_binding'), \
+             patch.object(m.prepared,'observe') as status, \
+             patch.object(m.closer,'guard_identity'), \
+             patch.object(m.observer,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
+             patch.object(m.observer,'recovery_plan',return_value=dict(state='observed_closed')):
+            result=m.inspect_prepared(None,'o/r',document,policy,EVALUATOR,123,2,intent,lambda r,j:'')
+        self.assertEqual(result,dict(state='closed_prepared_recovery',status='not_required',close_authorized=False))
+        status.assert_not_called()
 
     def test_missing_success_checkpoint_falls_back_to_observation_only(self):
         items=[dict(issue=7,state='merge_held',run=123,attempt=2,head='d'*40,owner='a'*56)]
@@ -91,7 +108,7 @@ class RecoveryScanTests(unittest.TestCase):
              patch.object(m.closer,'authenticate_checkpoint',side_effect=RuntimeError('merge_guard_source_not_success')), \
              patch.object(m,'inspect_prepared',return_value=dict(state='guard_required',status='observed_success',close_authorized=False)):
             result=m.scan(None,'o/r',{},lambda r,j:'')
-        self.assertEqual(result,[dict(issue=7,state='guard_required',status='observed_success',pr=9,head='d'*40,
+        self.assertEqual(result,[dict(issue=7,state='guard_required',status='observed_success',pr=9,head='d'*40,owner='a'*56,
                                       run=123,attempt=2,close_authorized=False)])
 
     def test_missing_prepared_record_only_proposes_guard_recovery(self):

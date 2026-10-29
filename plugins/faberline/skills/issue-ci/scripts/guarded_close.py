@@ -15,6 +15,7 @@ def sibling(name):
 merge_guard=sibling('merge_guard')
 observation=sibling('post_merge_observation')
 per_pr=sibling('per_pr_checkpoint')
+prepared=sibling('prepared_status')
 worker=merge_guard.worker
 provider=merge_guard.provider
 need=provider.need
@@ -118,6 +119,38 @@ def reconcile_adoption(api,repo,document,current_policy,evaluator,run,attempt,is
     need(all(old[k]==current_policy[k] for k in ('genesis','ruleset_id','runtime')),
          'merge_guard_policy_changed')
     return _complete_authenticated(api,repo,current_policy,verified['intent'],verified['evidence'])
+
+
+def release_closed_prepared(api,repo,document,current_policy,evaluator,run,attempt,pr,head,owner,log_reader):
+    """Release an authenticated guard only when the exact issue is already closed.
+
+    A pre-status record cannot authorize closing an open issue. The merge and
+    the already-closed issue are independently read twice before release.
+    """
+    old=worker.config(dict(document['config']['issue_guard'],policy_source=document['source_commit']))
+    worker.config(current_policy);worker.check_runtime(current_policy)
+    need(all(old[k]==current_policy[k] for k in ('genesis','ruleset_id','runtime')),
+         'merge_guard_policy_changed')
+    intent=merge_guard.authenticate_native_intent(api,repo,document,evaluator,run,attempt,pr,head,log_reader)
+    p=intent['payload']
+    need(p['owner']==owner and p['repo']==repo and p['pr']==pr and p['head']==head,
+         'merge_guard_checkpoint_mismatch')
+    value=prepared.authenticate_native_prepared(api,repo,document,evaluator,run,attempt,pr,head,log_reader)
+    evidence=value['payload']['checkpoint'];record=evidence['payload'];checkpoint=record['checkpoint']
+    per_pr.guard_binding(p,record)
+    need(checkpoint['issue']==p['issue'],'merge_guard_checkpoint_mismatch')
+    require_current_policy(api,repo,current_policy)
+    guard_identity(api,repo,current_policy,intent)
+    first=observation.observe(api,checkpoint)
+    need(first['state']=='observed_closed','merge_issue_not_already_closed')
+    require_current_policy(api,repo,current_policy)
+    guard_identity(api,repo,current_policy,intent)
+    final=observation.observe(api,checkpoint)
+    need(final==first and final['state']=='observed_closed','merge_close_state_changed')
+    require_current_policy(api,repo,current_policy)
+    guard_identity(api,repo,current_policy,intent)
+    release(api,repo,current_policy,intent)
+    return dict(state='released_after_observed_closed',issue=p['issue'],merge=final['merge'])
 
 
 def _complete_authenticated(api,repo,current_policy,intent,evidence):

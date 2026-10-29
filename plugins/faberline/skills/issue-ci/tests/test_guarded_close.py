@@ -126,6 +126,59 @@ class GuardedCloseTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'merge_guard_checkpoint_mismatch'):self.reconcile()
         self.assertEqual(self.patch_count,0)
 
+    def release_prepared(self,observations):
+        checkpoint=observer_fixture.Fixture().checkpoint
+        checkpoint.update(repo='o/r',pr=9,issue=7,head='d'*40)
+        evidence=close.observation.record(checkpoint,123,2,self.source,'e'*40,202,'f'*64)
+        value=close.prepared.build(evidence,55,'a'*32)
+        with patch.object(close.merge_guard,'authenticate_native_intent',return_value=self.intent), \
+             patch.object(close.prepared,'authenticate_native_prepared',return_value=value), \
+             patch.object(close.worker,'read_policy',return_value=self.policy), \
+             patch.object(close.observation,'observe',side_effect=observations):
+            return close.release_closed_prepared(self.api,'o/r',self.document,self.policy,'e'*40,123,2,9,
+                'd'*40,self.intent['payload']['owner'],lambda r,j:'')
+
+    def test_prepared_only_releases_after_two_matching_closed_observations(self):
+        closed=dict(state='observed_closed',merge='f'*40)
+        self.assertEqual(self.release_prepared([closed,closed]),
+                         dict(state='released_after_observed_closed',issue=7,merge='f'*40))
+        self.assertEqual(self.patch_count,0)
+        state=close.provider.read_chain(self.api,'o/r',fixture.GENESIS,fixture.RULE,7)
+        self.assertEqual(state['state']['locks'],{})
+
+    def test_prepared_never_closes_open_issue_or_releases_a_changed_state(self):
+        opened=dict(state='observed_merged',merge='f'*40)
+        closed=dict(state='observed_closed',merge='f'*40)
+        for observations,reason in (([opened],'merge_issue_not_already_closed'),
+                                    ([closed,opened],'merge_close_state_changed')):
+            with self.subTest(reason=reason),self.assertRaisesRegex(RuntimeError,reason):
+                self.release_prepared(observations)
+            self.assertEqual(self.patch_count,0)
+            self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
+
+    def test_prepared_never_releases_another_owner(self):
+        close.release(self.api,'o/r',self.policy,self.intent)
+        other=dict(owner='f'*32,kind='worker',head=None)
+        close.provider.update(self.api,'o/r',fixture.GENESIS,fixture.RULE,7,'claim',other,'e'*32)
+        with self.assertRaisesRegex(RuntimeError,'merge_guard_not_owner'):
+            self.release_prepared([dict(state='observed_closed',merge='f'*40)]*2)
+        self.assertEqual(self.patch_count,0)
+
+    def test_prepared_mismatched_source_cannot_release(self):
+        checkpoint=observer_fixture.Fixture().checkpoint
+        checkpoint.update(repo='o/r',pr=9,issue=7,head='d'*40)
+        evidence=close.observation.record(checkpoint,124,2,self.source,'e'*40,202,'f'*64)
+        value=close.prepared.build(evidence,55,'a'*32)
+        with patch.object(close.merge_guard,'authenticate_native_intent',return_value=self.intent), \
+             patch.object(close.prepared,'authenticate_native_prepared',return_value=value), \
+             patch.object(close.observation,'observe') as observe:
+            with self.assertRaisesRegex(RuntimeError,'per_pr_checkpoint_identity'):
+                close.release_closed_prepared(self.api,'o/r',self.document,self.policy,'e'*40,123,2,9,
+                    'd'*40,self.intent['payload']['owner'],lambda r,j:'')
+        observe.assert_not_called()
+        self.assertEqual(self.patch_count,0)
+        self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
+
     def test_checkpoint_requires_exact_successful_attempt_even_after_rerun(self):
         checkpoint=observer_fixture.Fixture().checkpoint
         record=close.observation.record(checkpoint,123,2,self.source,'e'*40,202,'f'*64)
