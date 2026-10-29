@@ -1,0 +1,36 @@
+name: Apply the authenticated protected-policy review outcome
+description: Return a failed or blocked review to todo without model credentials.
+inputs:
+  target-pr:
+    required: true
+    description: Exact same-repository pull request.
+  target-head:
+    required: true
+    description: Exact pull request head.
+  review-run:
+    required: true
+    description: Current reviewed workflow run.
+runs:
+  using: composite
+  steps:
+    - name: Prepare hash-locked metadata parser
+      id: runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        runtime="$(mktemp -d "$RUNNER_TEMP/aw-review-outcome-python-XXXXXX")"
+        python3 -I -m venv "$runtime"
+        "$runtime/bin/python" -I -m pip --isolated install --disable-pip-version-check --no-input \
+          --no-deps --only-binary=:all: --require-hashes --index-url https://pypi.org/simple \
+          -r "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/readiness-requirements.txt"
+        echo "python=$runtime/bin/python" >> "$GITHUB_OUTPUT"
+    - name: Verify the review and apply only a negative outcome
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        AW_ACTION_REF: ${{ github.action_ref }}
+        INPUT_TARGET_PR: ${{ inputs.target-pr }}
+        INPUT_TARGET_HEAD: ${{ inputs.target-head }}
+        INPUT_REVIEW_RUN: ${{ inputs.review-run }}
+        OUTCOME_PYTHON: ${{ steps.runtime.outputs.python }}
+      run: exec "$OUTCOME_PYTHON" -I -B "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/policy_adoption_review_outcome.py"
