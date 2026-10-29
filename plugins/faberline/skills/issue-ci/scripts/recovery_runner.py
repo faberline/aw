@@ -16,6 +16,7 @@ def sibling(name):
 
 scan=sibling('recovery_scan')
 close=sibling('guarded_close')
+admission=sibling('guarded_admission')
 worker=close.worker
 need=close.need
 
@@ -26,14 +27,19 @@ def reconcile(api,repo,log_reader):
     need(policy is not None,'merge_guard_policy_missing')
     candidates=scan.scan(api,repo,policy,log_reader);results=[]
     for candidate in candidates:
-        if candidate['state'] not in ('guard_required','observed_closed'):
+        if candidate['state'] not in ('guard_required','observed_closed','admission_recovery'):
             results.append(candidate);continue
         row=dict(issue=candidate['issue'],pr=candidate['pr'],head=candidate['head'],state='held')
         try:
             run,attempt=candidate['run'],candidate['attempt']
             document,evaluator=scan.historical_document(api,repo,run,attempt)
-            result=close.reconcile_native(api,repo,document,policy,evaluator,run,attempt,
-                                          candidate['pr'],candidate['head'],log_reader)
+            if candidate['state']=='admission_recovery':
+                intent=scan.guard.identify_native_owner(api,repo,document,evaluator,run,attempt,
+                    candidate['issue'],candidate['head'],candidate['owner'],log_reader)
+                result=admission.cancel_blocked(api,repo,policy,intent)
+            else:
+                result=close.reconcile_native(api,repo,document,policy,evaluator,run,attempt,
+                                              candidate['pr'],candidate['head'],log_reader)
             row.update(result)
         except Exception as error:
             reason=str(error)

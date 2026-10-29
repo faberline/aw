@@ -14,13 +14,28 @@ def sibling(name):
 
 merge_guard=sibling('merge_guard')
 observation=sibling('post_merge_observation')
+per_pr=sibling('per_pr_checkpoint')
 worker=merge_guard.worker
 provider=merge_guard.provider
 need=provider.need
 
 
-def authenticate_checkpoint(api,repo,document,evaluator,run,attempt,pr,head,log_reader):
-    """Bind a success checkpoint to the specific attempt, even after reruns."""
+def authenticate_checkpoint(api,repo,document,evaluator,run,attempt,pr,head,log_reader,intent=None):
+    """Authenticate one candidate even when another PR caused the job to fail."""
+    policy,log=merge_guard.authenticate_native_log(api,repo,document,evaluator,run,attempt,log_reader)
+    candidate=per_pr.find(log,repo,pr,head)
+    if candidate is not None:
+        need(intent is not None,'merge_close_guard_missing')
+        merge_guard.validate(intent,policy)
+        evidence=per_pr.verify_status(api,repo,head,candidate,intent)
+        p=evidence['payload'];c=p['checkpoint']
+        need(p['source_run']==run and p['source_attempt']==attempt
+             and p['source_commit']==document['source_commit'] and p['evaluator']==evaluator
+             and p['adoption_sha256'] is None and p['adoption_source'] is None
+             and c['repo']==repo and c['pr']==pr and c['head']==head,'merge_close_source_mismatch')
+        return evidence
+    # Older records have no per-PR status ID, so they still require a wholly
+    # successful source job. A failed job cannot promote an old checkpoint.
     _,log=merge_guard.authenticate_native_log(api,repo,document,evaluator,run,attempt,log_reader,
                                                require_success=True)
     records=observation.parse_records(log);matches=[]
@@ -84,14 +99,14 @@ def reconcile_native(api,repo,document,current_policy,evaluator,run,attempt,pr,h
     need(all(old[k]==current_policy[k] for k in ('genesis','ruleset_id','runtime')),
          'merge_guard_policy_changed')
     intent=merge_guard.authenticate_native_intent(api,repo,document,evaluator,run,attempt,pr,head,log_reader)
-    evidence=authenticate_checkpoint(api,repo,document,evaluator,run,attempt,pr,head,log_reader)
+    evidence=authenticate_checkpoint(api,repo,document,evaluator,run,attempt,pr,head,log_reader,intent=intent)
     p=intent['payload'];record=evidence['payload'];checkpoint=record['checkpoint']
     need(record['source_attempt']==attempt and record['source_run']==run
          and record['source_commit']==document['source_commit'] and record['evaluator']==evaluator
          and checkpoint['repo']==repo and checkpoint['pr']==pr and checkpoint['head']==head
          and checkpoint['issue']==p['issue'] and p['repo']==repo and p['pr']==pr and p['head']==head,
          'merge_guard_checkpoint_mismatch')
-    started=observation.source_started_at(api,evidence)
+    started=observation.source_started_at(api,evidence,require_success=False)
     planned=observation.recovery_plan(api,checkpoint,started)
     if planned['state'] in ('waiting','not_merged'):
         return dict(state=planned['state'],issue=p['issue'])

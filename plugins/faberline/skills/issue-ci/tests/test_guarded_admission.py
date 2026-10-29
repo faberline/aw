@@ -60,7 +60,7 @@ class AdmissionTests(unittest.TestCase):
             self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
 
     def test_passing_status_or_changed_request_never_releases(self):
-        intent=self.begin();self.statuses=[dict(id=1,context='claude/verified-merge',state='success')]
+        intent=self.begin();self.statuses=[dict(id=1,context='Claude/Verified-Merge',state='success')]
         with self.assertRaisesRegex(RuntimeError,'admission_status_not_blocked'):
             self.settle(intent,[self.provider()])
         self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
@@ -98,6 +98,36 @@ class AdmissionTests(unittest.TestCase):
         intent=self.begin()
         with self.assertRaisesRegex(RuntimeError,'provider unavailable'):
             self.settle(intent,RuntimeError('provider unavailable'))
+        self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
+
+    def test_blocked_owned_request_is_cancelled_then_rechecked_before_release(self):
+        intent=self.begin();self.statuses=[dict(id=1,context='claude/verified-merge',state='pending')]
+        owned=dict(mergeMethod='SQUASH',enabledBy=dict(login='github-actions',__typename='Bot'))
+        with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
+             patch.object(m.native,'provider_pull',side_effect=[self.provider(request=owned),self.provider(),self.provider()]), \
+             patch.object(m.native,'withdraw_approval') as withdraw:
+            result=m.cancel_blocked(self.api,'o/r',self.policy,intent)
+        self.assertEqual(result['state'],'released');withdraw.assert_called_once_with(self.api,'o/r',9,HEAD)
+
+    def test_foreign_request_or_passing_status_is_never_cancelled(self):
+        for request,state in ((dict(enabledBy=dict(login='human',__typename='User')),'pending'),
+                              (dict(enabledBy=dict(login='github-actions',__typename='Bot')),'success')):
+            self.setUp();intent=self.begin();self.statuses=[dict(id=1,context='claude/verified-merge',state=state)]
+            with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
+                 patch.object(m.native,'provider_pull',return_value=self.provider(request=request)), \
+                 patch.object(m.native,'withdraw_approval') as withdraw:
+                result=m.cancel_blocked(self.api,'o/r',self.policy,intent)
+            self.assertEqual(result['state'],'retained');withdraw.assert_not_called()
+            self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
+
+    def test_unknown_cancellation_never_retries_or_releases(self):
+        intent=self.begin();self.statuses=[dict(id=1,context='claude/verified-merge',state='pending')]
+        request=dict(enabledBy=dict(login='github-actions',__typename='Bot'))
+        with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
+             patch.object(m.native,'provider_pull',return_value=self.provider(request=request)), \
+             patch.object(m.native,'withdraw_approval',side_effect=TimeoutError('unknown')) as withdraw:
+            with self.assertRaisesRegex(TimeoutError,'unknown'):m.cancel_blocked(self.api,'o/r',self.policy,intent)
+        withdraw.assert_called_once()
         self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
 
 

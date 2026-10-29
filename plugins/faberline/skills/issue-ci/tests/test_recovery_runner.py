@@ -48,5 +48,18 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result[0]['state'],'held')
         self.assertEqual(result[0]['reason'],'merge_guard_source_not_success')
 
+    def test_abandoned_admission_is_reauthenticated_before_safe_settle(self):
+        candidate=dict(issue=7,pr=9,head='a'*40,owner='b'*56,run=123,attempt=2,state='admission_recovery')
+        intent=dict(payload=dict(pr=9,issue=7,head='a'*40))
+        with patch.object(m.worker,'read_policy',return_value={'current':True}), \
+             patch.object(m.scan,'scan',return_value=[candidate]), \
+             patch.object(m.scan,'historical_document',return_value=({'source_commit':'c'*40},'d'*40)), \
+             patch.object(m.scan.guard,'identify_native_owner',return_value=intent) as identify, \
+             patch.object(m.admission,'cancel_blocked',return_value=dict(state='released',issue=7)) as settle, \
+             patch.object(m.close,'reconcile_native') as close:
+            result=m.reconcile(None,'o/r',lambda r,j:'')
+        self.assertEqual(result[0]['state'],'released');identify.assert_called_once();settle.assert_called_once()
+        close.assert_not_called()
+
 
 if __name__=='__main__':unittest.main()

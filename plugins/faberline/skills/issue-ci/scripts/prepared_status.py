@@ -35,6 +35,29 @@ def build(checkpoint,pending_id,nonce=None):
     return dict(payload=payload,sha256=hashlib.sha256(canonical(payload).encode()).hexdigest())
 
 
+def target_identity(repo,review_run,source_run,source_attempt,nonce):
+    need(isinstance(repo,str) and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',repo)
+         and all(observation.review.integer(x) for x in (review_run,source_run,source_attempt))
+         and isinstance(nonce,str) and re.fullmatch(r'[0-9a-f]{32}',nonce),'prepared_status_shape')
+    return (f'https://github.com/{repo}/actions/runs/{review_run}'
+            f'#aw-status-{source_run}-{source_attempt}-{nonce}')
+
+
+def build_guarded(checkpoint,policy,intent,pending,nonce):
+    """Bind a pre-success record to the acknowledged pending status and guard."""
+    p=guard.validate(intent,policy);r=checkpoint.get('payload',{});c=r.get('checkpoint',{})
+    need(all(p[k]==c.get(k) for k in ('repo','pr','issue','head'))
+         and p['run']==r.get('source_run') and p['attempt']==r.get('source_attempt')
+         and p['policy_source']==r.get('source_commit'),'prepared_status_identity')
+    url=target_identity(c['repo'],r['review_run'],p['run'],p['attempt'],nonce)
+    need(isinstance(pending,dict) and observation.review.integer(pending.get('id'))
+         and pending.get('state')=='pending' and pending.get('context')=='claude/verified-merge'
+         and pending.get('target_url')==url and isinstance(pending.get('creator'),dict)
+         and pending['creator'].get('id')==BOT_ID and pending['creator'].get('type')=='Bot'
+         and pending['creator'].get('login')=='github-actions[bot]','prepared_pending_unknown')
+    return build(checkpoint,pending['id'],nonce)
+
+
 def validate(value):
     need(isinstance(value,dict) and set(value)=={'payload','sha256'} and isinstance(value['payload'],dict),
          'prepared_status_shape')
@@ -51,8 +74,7 @@ def target_for(checkpoint,nonce):
     need(len(entries)==1 and isinstance(nonce,str) and re.fullmatch(r'[0-9a-f]{32}',nonce),
          'prepared_status_shape')
     record=checkpoint['payload'];repo=record['checkpoint']['repo']
-    return (f"https://github.com/{repo}/actions/runs/{record['review_run']}"
-            f"#aw-status-{record['source_run']}-{record['source_attempt']}-{nonce}")
+    return target_identity(repo,record['review_run'],record['source_run'],record['source_attempt'],nonce)
 
 
 def target(value):
@@ -64,7 +86,8 @@ def observe(value,statuses):
     """Check matching pending and newer latest success, without authorizing it."""
     p=validate(value);url=target(value)
     need(isinstance(statuses,list),'prepared_status_unknown')
-    same=[x for x in statuses if isinstance(x,dict) and x.get('context')=='claude/verified-merge']
+    same=[x for x in statuses if isinstance(x,dict) and isinstance(x.get('context'),str)
+          and x['context'].casefold()=='claude/verified-merge']
     need(same and all(type(x.get('id')) is int and 0<x['id']<2**53 for x in same)
          and len({x['id'] for x in same})==len(same),'prepared_status_unknown')
     pending=[x for x in same if x['id']==p['pending_id']]
@@ -78,7 +101,7 @@ def observe(value,statuses):
     return dict(state='observed_success',status_id=latest['id'],target=url,close_authorized=False)
 
 
-def authenticate_native_prepared(api,repo,document,evaluator,run,attempt,pr,head,log_reader):
+def find_native_prepared(api,repo,document,evaluator,run,attempt,pr,head,log_reader):
     """Authenticate one prepared record from the exact completed attempt.
 
     Failure or cancellation may still have left an accepted status. The result
@@ -93,5 +116,11 @@ def authenticate_native_prepared(api,repo,document,evaluator,run,attempt,pr,head
              and c['repo']==repo and r['adoption_sha256'] is None and r['adoption_source'] is None,
              'prepared_status_source')
         if c['pr']==pr and c['head']==head:found.append(value)
-    need(len(found)==1,'prepared_status_missing_or_duplicate')
-    return found[0]
+    need(len(found)<=1,'prepared_status_duplicate')
+    return found[0] if found else None
+
+
+def authenticate_native_prepared(api,repo,document,evaluator,run,attempt,pr,head,log_reader):
+    value=find_native_prepared(api,repo,document,evaluator,run,attempt,pr,head,log_reader)
+    need(value is not None,'prepared_status_missing_or_duplicate')
+    return value

@@ -141,5 +141,64 @@ class GuardedCloseTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'merge_guard_source_not_success'):
                 close.authenticate_checkpoint(self.api,'owner/repo',self.document,'e'*40,123,2,9,'a'*40,None)
 
+    def test_per_pr_status_allows_evidence_when_another_pr_failed_the_job(self):
+        checkpoint=observer_fixture.Fixture().checkpoint
+        checkpoint.update(repo='o/r',head='d'*40)
+        evidence=close.observation.record(checkpoint,123,2,self.source,'e'*40,202,'f'*64)
+        status=dict(id=55,state='success',context='claude/verified-merge',
+                    target_url='https://github.com/o/r/actions/runs/202',
+                    creator=dict(id=41898282,type='Bot',login='github-actions[bot]'))
+        bound=close.per_pr.build(evidence,self.policy,self.intent,status)
+        log=close.per_pr.MARKER+close.per_pr.canonical(bound)+'\n'
+        class Api:
+            def pages(self,path):
+                assert path=='repos/o/r/commits/'+('d'*40)+'/statuses'
+                return [status]
+        with patch.object(close.merge_guard,'authenticate_native_log',return_value=(self.policy,log)) as auth:
+            found=close.authenticate_checkpoint(Api(),'o/r',self.document,'e'*40,123,2,9,'d'*40,None,intent=self.intent)
+            self.assertEqual(found,evidence)
+            self.assertFalse(auth.call_args.kwargs.get('require_success',False))
+            status['state']='failure'
+            with self.assertRaisesRegex(RuntimeError,'per_pr_status_unknown'):
+                close.authenticate_checkpoint(Api(),'o/r',self.document,'e'*40,123,2,9,'d'*40,None,intent=self.intent)
+
+    def test_failed_shared_job_keeps_only_authenticated_per_pr_success(self):
+        checkpoint=observer_fixture.Fixture().checkpoint;checkpoint.update(repo='o/r',head='d'*40)
+        evidence=close.observation.record(checkpoint,123,2,self.source,'e'*40,202,'f'*64)
+        status=dict(id=55,state='success',context='claude/verified-merge',
+                    target_url='https://github.com/o/r/actions/runs/202',
+                    creator=dict(id=41898282,type='Bot',login='github-actions[bot]'))
+        bound=close.per_pr.build(evidence,self.policy,self.intent,status)
+        log=close.per_pr.MARKER+close.per_pr.canonical(bound)+'\n'
+        spec=dict(path='.github/workflows/issue-ci.yml',id=1,definition_sha='f'*40,job='writer')
+        class Native:
+            def policy(self,document,require_qualification=True):return dict(producer=spec)
+            def writer_contract(self,*args):pass
+        class Api:
+            def api(self,path):
+                if path=='repos/o/r':return dict(full_name='o/r',default_branch='main')
+                if path=='repos/o/r/actions/runs/123/attempts/2':
+                    return dict(id=123,run_attempt=2,workflow_id=1,path=spec['path'],event='repository_dispatch',
+                                status='completed',conclusion='failure',head_repository=dict(full_name='o/r'),
+                                head_branch='main',head_sha=self_source)
+                if path==f'repos/o/r/compare/{self_source}...main':
+                    return dict(status='ahead',base_commit=dict(sha=self_source))
+                raise AssertionError(path)
+            def pages(self,path,key=None):
+                if path=='repos/o/r/actions/runs/123/attempts/2/jobs':
+                    return [dict(id=88,name='writer',status='completed',conclusion='failure')]
+                if path=='repos/o/r/commits/'+('d'*40)+'/statuses':return [status]
+                raise AssertionError(path)
+        self_source=self.source;api=Api()
+        with patch.object(close.merge_guard.review,'sibling',return_value=Native()), \
+             patch.object(close.merge_guard.review,'blob'),patch.object(close.merge_guard,'historical_runtime',return_value=True):
+            found=close.authenticate_checkpoint(api,'o/r',self.document,'e'*40,123,2,9,'d'*40,
+                                                lambda repo,job:log,intent=self.intent)
+            self.assertEqual(found,evidence)
+            status['target_url']='https://github.com/o/r/actions/runs/203'
+            with self.assertRaisesRegex(RuntimeError,'per_pr_status_unknown'):
+                close.authenticate_checkpoint(api,'o/r',self.document,'e'*40,123,2,9,'d'*40,
+                                              lambda repo,job:log,intent=self.intent)
+
 
 if __name__=='__main__':unittest.main()

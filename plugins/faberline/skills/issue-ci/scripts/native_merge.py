@@ -6,6 +6,7 @@ until the final fresh verification. No PR checkout, model, or PR artifact runs.
 """
 import os
 import re
+import secrets
 from urllib.parse import quote
 
 import importlib.util
@@ -214,7 +215,8 @@ def withdraw_approval(api, repo, number, head):
     pull = provider_pull(api, repo, number)
     need(pull.get("state") == "OPEN" and pull["headRefOid"] == head, "withdraw_target_changed")
     statuses = api.pages(f"repos/{repo}/commits/{head}/statuses")
-    owned = [s for s in statuses if s.get("context") == "claude/verified-merge"
+    owned = [s for s in statuses if isinstance(s.get("context"),str)
+             and s['context'].casefold() == "claude/verified-merge"
              and s.get("creator", {}).get("login") == "github-actions[bot]"]
     prior = max(owned, key=lambda s: s["id"]) if owned else None
     request = pull.get("autoMergeRequest")
@@ -365,7 +367,7 @@ def dispatch_recovery_wake(api,repo,document,evaluator,recovery,results):
 
 
 def enqueue(api, repo, number, head, load_document, evaluator, review_run,
-            verify=review.verify_review, prepare_record=None):
+            verify=review.verify_review, prepare_record=None, guarded_claim=None):
     """Native request + required head status form the cross-run write protocol.
 
     The caller must be the pinned merge producer in the repository-wide
@@ -373,6 +375,7 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
     Unknown mutation results are observed, never blindly retried here.
     """
     need(not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"), "model_credential_in_merge")
+    need(guarded_claim is None or prepare_record is not None,'guard_record_required')
     document = load_document()
     p = policy(document)
     before = provider_pull(api, repo, number)
@@ -393,12 +396,19 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
          "existing_merge_method_conflict")
     if request is not None:
         queued_request(before, p, headline, body)
+    target=f"https://github.com/{repo}/actions/runs/{review_run}"
+    prepared_module = None
+    nonce = None
+    if guarded_claim is not None:
+        prepared_module=review.sibling('prepared_status')
+        intent=guarded_claim['intent']['payload'];nonce=secrets.token_hex(16)
+        target=prepared_module.target_identity(repo,review_run,intent['run'],intent['attempt'],nonce)
     # Block this exact head before creating a native request. A different head
     # has no passing status from this operation and cannot inherit its approval.
-    api.api(f"repos/{repo}/statuses/{head}", method="POST", data=dict(
+    pending_response=api.api(f"repos/{repo}/statuses/{head}", method="POST", data=dict(
         state="pending", context=p["status_context"],
         description="Rechecking authenticated review and qualified CI",
-        target_url=f"https://github.com/{repo}/actions/runs/{review_run}"))
+        target_url=target))
     try:
         current = provider_pull(api, repo, number)
         binding(current, context)
@@ -425,13 +435,22 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
         queued_request(final, p, headline, body)
         checkpoint = (prepare_record(api, repo, number, head, document, evaluator, review_run, fresh)
                       if prepare_record is not None else None)
-        api.api(f"repos/{repo}/statuses/{head}", method="POST", data=dict(
+        if guarded_claim is not None:
+            prepared=prepared_module.build_guarded(checkpoint,guarded_claim['policy'],guarded_claim['intent'],
+                                                    pending_response,nonce)
+            print(prepared_module.MARKER+review.r.canonical(prepared),flush=True)
+        response = api.api(f"repos/{repo}/statuses/{head}", method="POST", data=dict(
             state="success", context=p["status_context"],
             description="Exact-head Claude PASS and qualified CI verified",
-            target_url=f"https://github.com/{repo}/actions/runs/{review_run}"))
+            target_url=target))
         if checkpoint is not None:
-            observation = review.sibling('post_merge_observation')
-            print(observation.MARKER + review.r.canonical(checkpoint), flush=True)
+            if guarded_claim is None:
+                observation = review.sibling('post_merge_observation')
+                print(observation.MARKER + review.r.canonical(checkpoint), flush=True)
+            else:
+                per_pr = review.sibling('per_pr_checkpoint')
+                bound = per_pr.build(checkpoint,guarded_claim['policy'],guarded_claim['intent'],response,target_url=target)
+                print(per_pr.MARKER + review.r.canonical(bound),flush=True)
     except Exception:
         # A response can be lost after a write. Observe provider state on the
         # next wake; never retry a queue or success write in this attempt.
@@ -598,8 +617,10 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
                      'review_not_pass')
                 row.update(state="default_wake_required")
             else:
+                arguments=dict(verify=verify,prepare_record=prepare_record)
+                if guarded is not None:arguments['guarded_claim']=admitted[number]
                 row.update(enqueue(api, repo, number, head, load_document, evaluator,
-                    attempt["id"], verify=verify, prepare_record=prepare_record))
+                    attempt["id"], **arguments))
         except Exception as error:
             code = str(error)
             row["reason"] = code if isinstance(error, review.Refused) and re.fullmatch(

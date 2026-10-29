@@ -35,7 +35,8 @@ class PreparedStatusTests(unittest.TestCase):
     def test_prepared_record_without_new_success_never_passes(self):
         for statuses in ([self.pending],[],[self.success],
                          [self.pending,dict(self.success,id=9)],
-                         [self.pending,self.success,dict(self.pending,id=12)]):
+                         [self.pending,self.success,dict(self.pending,id=12)],
+                         [self.pending,self.success,dict(self.pending,id=12,context='Claude/Verified-Merge')]):
             with self.subTest(statuses=statuses),self.assertRaises(RuntimeError):
                 m.observe(self.prepared,statuses)
 
@@ -57,8 +58,11 @@ class PreparedStatusTests(unittest.TestCase):
         with patch.object(m.guard,'authenticate_native_log',return_value=({},log)) as auth:
             self.assertEqual(check(),self.prepared)
             self.assertEqual(auth.call_args.args[4:6],(101,2))
-            auth.return_value=({},log+log)
+            auth.return_value=({},'ordinary log without a prepared record\n')
+            self.assertIsNone(m.find_native_prepared(None,'owner/repo',document,'e'*40,101,2,9,'a'*40,None))
             with self.assertRaisesRegex(RuntimeError,'prepared_status_missing_or_duplicate'):check()
+            auth.return_value=({},log+log)
+            with self.assertRaisesRegex(RuntimeError,'prepared_status_duplicate'):check()
             auth.side_effect=RuntimeError('untrusted source')
             with self.assertRaisesRegex(RuntimeError,'untrusted source'):check()
 

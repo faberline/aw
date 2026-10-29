@@ -54,7 +54,9 @@ def settle(api,repo,policy,intent):
     This is a draft. GitHub concurrency and cancellation behavior must be
     verified in hosted tests before this can govern a production writer.
     """
-    p=intent['payload'];close.require_current_policy(api,repo,policy)
+    p=intent['payload']
+    need(all(p[k]==policy[k] for k in ('genesis','ruleset_id','runtime')),'admission_policy_changed')
+    close.require_current_policy(api,repo,policy)
     close.guard_identity(api,repo,policy,intent)
     pull=native.provider_pull(api,repo,p['pr'])
     need(pull.get('headRefOid')==p['head'],'admission_target_changed')
@@ -66,7 +68,8 @@ def settle(api,repo,policy,intent):
     need(native.review.linked_issue(rest)==p['issue'],'admission_issue_changed')
     statuses=api.pages(f"repos/{repo}/commits/{p['head']}/statuses")
     need(isinstance(statuses,list),'admission_status_unknown')
-    matches=[item for item in statuses if isinstance(item,dict) and item.get('context')=='claude/verified-merge']
+    matches=[item for item in statuses if isinstance(item,dict) and isinstance(item.get('context'),str)
+             and item['context'].casefold()=='claude/verified-merge']
     need(all(type(item.get('id')) is int and item['id']>0 for item in matches)
          and len({item['id'] for item in matches})==len(matches),'admission_status_unknown')
     if matches:
@@ -86,3 +89,36 @@ def settle(api,repo,policy,intent):
     close.guard_identity(api,repo,policy,intent)
     close.release(api,repo,policy,intent)
     return dict(state='released',issue=p['issue'])
+
+
+def cancel_blocked(api,repo,policy,intent):
+    """Draft recovery for a blocked owned request; never cancel a foreign one.
+
+    GitHub's cancellation/merge race must be validated before rollout. A lost
+    response is a hold; a later wake observes the provider before proceeding.
+    """
+    p=intent['payload']
+    need(all(p[k]==policy[k] for k in ('genesis','ruleset_id','runtime')),'admission_policy_changed')
+    close.require_current_policy(api,repo,policy);close.guard_identity(api,repo,policy,intent)
+    pull=native.provider_pull(api,repo,p['pr'])
+    need(pull.get('headRefOid')==p['head'],'admission_target_changed')
+    if pull.get('state')=='MERGED':return dict(state='retained',issue=p['issue'])
+    need(pull.get('state')=='OPEN','admission_target_changed')
+    request=pull.get('autoMergeRequest')
+    if request is None:
+        return settle(api,repo,policy,intent)
+    if not native.actions_request(request):
+        return dict(state='retained',issue=p['issue'])
+    statuses=api.pages(f"repos/{repo}/commits/{p['head']}/statuses")
+    need(isinstance(statuses,list),'admission_status_unknown')
+    matches=[item for item in statuses if isinstance(item,dict) and isinstance(item.get('context'),str)
+             and item['context'].casefold()=='claude/verified-merge']
+    need(all(type(item.get('id')) is int and item['id']>0 for item in matches)
+         and len({item['id'] for item in matches})==len(matches),'admission_status_unknown')
+    if matches:
+        latest=max(matches,key=lambda item:item['id'])
+        if latest.get('state')=='success':return dict(state='retained',issue=p['issue'])
+        need(latest.get('state') in ('pending','failure','error'),'admission_status_unknown')
+    close.require_current_policy(api,repo,policy);close.guard_identity(api,repo,policy,intent)
+    native.withdraw_approval(api,repo,p['pr'],p['head'])
+    return settle(api,repo,policy,intent)

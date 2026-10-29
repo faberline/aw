@@ -126,6 +126,12 @@ guard. The guarded path is blocked by the same unimplemented rollout proof.
 GitHub cancellation races and recovery after a writer crash still require
 hosted verification before rollout.
 
+The guarded draft records a unique pending status before it requests success.
+That record alone cannot authorize a close. After GitHub acknowledges success,
+the writer records its exact status ID and guard owner for that PR. Recovery
+rechecks that record, the source, the status, and the actual merge. A failed
+writer job does not become a passing CI or review result.
+
 The draft writer requires the `aw-verified-merge-reconcile` repository-dispatch
 trigger. A passing PR-target wake asks for a default-branch wake. The latter
 rechecks every candidate before it can publish success. The dispatch payload is

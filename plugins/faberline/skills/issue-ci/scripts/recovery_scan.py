@@ -22,7 +22,9 @@ need=guard.need
 def inspect_prepared(api,repo,document,current_policy,evaluator,run,attempt,intent,log_reader):
     """Observe a pre-status record without authorizing a close."""
     p=intent['payload'];pr=p['pr'];head=p['head']
-    value=prepared.authenticate_native_prepared(api,repo,document,evaluator,run,attempt,pr,head,log_reader)
+    value=prepared.find_native_prepared(api,repo,document,evaluator,run,attempt,pr,head,log_reader)
+    if value is None:
+        return None
     evidence=value['payload']['checkpoint'];checkpoint=evidence['payload']['checkpoint']
     need(checkpoint['issue']==p['issue'] and checkpoint['repo']==repo
          and checkpoint['pr']==pr and checkpoint['head']==head,'recovery_checkpoint_mismatch')
@@ -75,18 +77,23 @@ def scan(api,repo,current_policy,log_reader):
                                                item['head'],item['owner'],log_reader)
             pr=intent['payload']['pr']
             try:
-                evidence=closer.authenticate_checkpoint(api,repo,document,evaluator,run,attempt,pr,item['head'],log_reader)
+                evidence=closer.authenticate_checkpoint(api,repo,document,evaluator,run,attempt,pr,item['head'],log_reader,
+                                                        intent=intent)
             except Exception as error:
                 if str(error) not in ('merge_guard_source_not_success','merge_close_record_missing_or_duplicate'):
                     raise
                 planned=inspect_prepared(api,repo,document,current_policy,evaluator,run,attempt,intent,log_reader)
-                row.update(state=planned['state'],status=planned['status'],pr=pr,head=item['head'],
-                           run=run,attempt=attempt,close_authorized=False)
+                if planned is None:
+                    row.update(state='admission_recovery',pr=pr,head=item['head'],owner=item['owner'],
+                               run=run,attempt=attempt,close_authorized=False)
+                else:
+                    row.update(state=planned['state'],status=planned['status'],pr=pr,head=item['head'],
+                               run=run,attempt=attempt,close_authorized=False)
                 results.append(row)
                 continue
             need(evidence['payload']['source_attempt']==attempt
                  and evidence['payload']['checkpoint']['issue']==item['issue'], 'recovery_checkpoint_mismatch')
-            started=observer.source_started_at(api,evidence)
+            started=observer.source_started_at(api,evidence,require_success=False)
             observed=observer.recovery_plan(api,evidence['payload']['checkpoint'],started)
             row.update(state=observed['state'],pr=pr,head=item['head'],run=run,attempt=attempt,close_authorized=False)
         except Exception as error:

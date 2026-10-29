@@ -71,7 +71,7 @@ class RecoveryScanTests(unittest.TestCase):
             def pages(self,path):
                 assert path=='repos/o/r/commits/'+('d'*40)+'/statuses'
                 return []
-        with patch.object(m.prepared,'authenticate_native_prepared',return_value=value), \
+        with patch.object(m.prepared,'find_native_prepared',return_value=value), \
              patch.object(m.prepared,'observe',return_value=dict(state='observed_success')), \
              patch.object(m.closer,'guard_identity') as guard, \
              patch.object(m.observer,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
@@ -90,6 +90,18 @@ class RecoveryScanTests(unittest.TestCase):
              patch.object(m,'inspect_prepared',return_value=dict(state='guard_required',status='observed_success',close_authorized=False)):
             result=m.scan(None,'o/r',{},lambda r,j:'')
         self.assertEqual(result,[dict(issue=7,state='guard_required',status='observed_success',pr=9,head='d'*40,
+                                      run=123,attempt=2,close_authorized=False)])
+
+    def test_missing_prepared_record_only_proposes_guard_recovery(self):
+        items=[dict(issue=7,state='merge_held',run=123,attempt=2,head='d'*40,owner='a'*56)]
+        intent=dict(payload=dict(pr=9,head='d'*40,issue=7))
+        with patch.object(m.discovery,'inspect',return_value=items), \
+             patch.object(m,'historical_document',return_value=(dict(source_commit=SOURCE),EVALUATOR)), \
+             patch.object(m.guard,'identify_native_owner',return_value=intent), \
+             patch.object(m.closer,'authenticate_checkpoint',side_effect=RuntimeError('merge_guard_source_not_success')), \
+             patch.object(m,'inspect_prepared',return_value=None):
+            result=m.scan(None,'o/r',{},lambda r,j:'')
+        self.assertEqual(result,[dict(issue=7,state='admission_recovery',owner='a'*56,pr=9,head='d'*40,
                                       run=123,attempt=2,close_authorized=False)])
 
 
