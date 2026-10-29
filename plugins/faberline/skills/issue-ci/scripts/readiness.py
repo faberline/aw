@@ -44,7 +44,15 @@ def digest(value):
 
 def job_log(repo, job_id):
     # Only GitHub's authenticated job-log endpoint. Never artifacts or PR paths.
-    raw = subprocess.check_output(['gh', 'api', f'repos/{repo}/actions/jobs/{job_id}/logs'])
+    # Newer gh versions refuse ANSI bytes unless explicitly allowed. Capture
+    # them as data, never write the raw response to a terminal. Older versions
+    # do not offer the flag and already return bytes through the pipe.
+    help_text = subprocess.check_output(['gh', 'api', '--help'])
+    command = ['gh', 'api']
+    if b'--allow-escape-sequences' in help_text:
+        command.append('--allow-escape-sequences')
+    command.append(f'repos/{repo}/actions/jobs/{job_id}/logs')
+    raw = subprocess.check_output(command)
     need(len(raw) <= MAX_LOG, 'log_limit', 'refuse oversized evidence log')
     return raw.decode('utf-8', errors='strict')
 
