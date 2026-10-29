@@ -152,6 +152,22 @@ class PaidReviewContractTests(unittest.TestCase):
             self.assertEqual(calls,[])
             self.assertEqual(h.writes,[])
 
+    def test_valid_failure_only_contract_can_review_but_cannot_qualify_merge(self):
+        h,g=self.harness();h.config['lifecycle_mode']='failure-only'
+        receipt=h.produce()
+        self.assertEqual(receipt['payload']['result']['decision'],'pass')
+        scoped=h.qualify_config('o/r',h.pull,h.config,h.files)
+        self.assertEqual(ci.evaluate_policy(scoped,h.snapshot('o/r',g.HEAD,scoped))[0],'pending')
+
+    def test_global_blocker_and_missing_selected_evidence_stop_before_model(self):
+        for change in ('blocker','missing','failed'):
+            h,g=self.harness();calls=[]
+            if change=='blocker':h.config['qualification_blockers']=['Real unresolved gate']
+            if change=='missing':h.gate_job['conclusion']='skipped'
+            if change=='failed':h.gate_job['conclusion']='failure'
+            with self.subTest(change=change),self.assertRaises(RuntimeError):h.produce(lambda *args:calls.append(args))
+            self.assertEqual(calls,[])
+
     def test_issue_or_contract_drift_during_review_rejects_receipt(self):
         for target in ('issue','contract'):
             h,g=self.harness()

@@ -102,6 +102,19 @@ class ReviewLifecycleTests(unittest.TestCase):
         self.assertEqual(rows[0]['state'],'returned_todo')
         self.assertEqual([w[0] for w in p.writes],['failure'])
 
+    def test_failure_only_v2_negative_receipt_still_returns_todo(self):
+        import test_issue_contract_v2 as v2
+        p=Lifecycle();contract=v2.policy()['qualification']
+        contract['contracts']['7']['title_sha256']=v2.digest(p.issue['title'])
+        contract['contracts']['7']['body_sha256']=v2.digest(p.issue['body'])
+        p.document['config'].update(lifecycle_mode='failure-only',qualification_blockers=[],qualification=contract)
+        p.pages=lambda path,key=None:[dict(p.pull)] if '/pulls?' in path else []
+        index=lambda *a:{1:dict(id=200,status='completed',conclusion='success')}
+        rows=m.reconcile(p,'o/r',p.load,native.EVALUATOR,index,p.verify,p.verify)
+        self.assertEqual(rows[0]['state'],'returned_todo')
+        self.assertEqual({x['name'] for x in p.issue['labels']},{'todo','bug'})
+        self.assertEqual([w[0] for w in p.writes],['failure'])
+
     def test_a_green_review_with_a_coverage_hold_cannot_queue_merge(self):
         p=Lifecycle();p.receipt['payload']['result']['decision']='pass'
         p.document['config'].update(lifecycle_mode='failure-only',qualification_blockers=['Unresolved coverage'])

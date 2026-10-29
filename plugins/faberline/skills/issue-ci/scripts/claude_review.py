@@ -403,8 +403,12 @@ def collect(api, repo, number, head, load_document, evaluator, include_sources=F
              and contract.get("title_sha256") == hashlib.sha256(issue["title"].encode()).hexdigest()
              and contract.get("body_sha256") == hashlib.sha256(issue["body"].encode()).hexdigest(),
              "issue_qualification_contract_changed")
-        state, _, _ = api.evaluate_policy(scoped, api.snapshot(repo, head, scoped))
-        need(state == "done", "issue_qualification_not_ready")
+        need(not scoped_context.get("issues") and not scoped_context.get("untrusted_workflows")
+             and not scoped.get("qualification_blockers"), "issue_qualification_not_ready")
+        evidence = api.evaluate_evidence(scoped["workflows"], api.snapshot(repo, head, scoped))
+        need(not evidence["failures"] and not evidence["pending"], "issue_qualification_not_ready")
+        # Failure-only controls lifecycle/merge authority, not a negative review.
+        # It must remain possible to return a rejected issue to todo.
         qualification_v2 = scoped_context
     if source_plan is not None:
         validate_plan(source_plan, issue)
