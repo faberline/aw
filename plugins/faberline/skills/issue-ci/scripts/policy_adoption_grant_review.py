@@ -12,6 +12,13 @@ import tempfile
 spec=importlib.util.spec_from_file_location('grant_review_policy',Path(__file__).with_name('policy_adoption.py'))
 a=importlib.util.module_from_spec(spec);spec.loader.exec_module(a)
 need=a.need
+NONPASS_MARKER='AW_POLICY_ADOPTION_GRANT_NONPASS_V1 '
+
+
+class ReviewNotPassed(RuntimeError):
+    def __init__(self, result):
+        super().__init__('grant_review_not_pass')
+        self.result=result
 
 
 def proposal(api, repo, number, head, evaluator):
@@ -119,9 +126,10 @@ when the exact grant is appropriate with no findings and no uncertainty; otherwi
 def produce(api,repo,number,head,evaluator,invoke_model=invoke):
     before=proposal(api,repo,number,head,evaluator)
     result=invoke_model(before,os.environ.get('CLAUDE_CODE_OAUTH_TOKEN'))
-    need(result['decision']=='pass' and result['findings']==[] and result['uncertainties']==[], 'grant_review_not_pass')
     after=proposal(api,repo,number,head,evaluator)
     need(before==after,'grant_review_inputs_changed')
+    if result['decision']!='pass' or result['findings']!=[] or result['uncertainties']!=[]:
+        raise ReviewNotPassed(result)
     grant=before['grant'];source=before['grant_pr']
     return dict(version=1,repo=repo,target_pr=grant['pr'],target_head=grant['head'],grant_pr=number,
                 grant_head=head,grant_blob=source['blob'],grant_digest=a.r.digest({k:v for k,v in grant.items() if k!='grant_review'}),
@@ -135,7 +143,15 @@ def main():
     repo=os.environ['GITHUB_REPOSITORY'];pr=os.environ.get('INPUT_GRANT_PR','');head=os.environ.get('INPUT_GRANT_HEAD','')
     evaluator=os.environ.get('AW_ACTION_REF','')
     need(bool(re.fullmatch(r'[1-9][0-9]*',pr)) and a.review.sha(head) and a.review.sha(evaluator), 'grant_review_input')
-    result=produce(a.ci,repo,int(pr),head,evaluator)
+    try:
+        result=produce(a.ci,repo,int(pr),head,evaluator)
+    except ReviewNotPassed as error:
+        value=error.result
+        failure=dict(version=1,repo=repo,grant_pr=int(pr),grant_head=head,evaluator=evaluator,
+                     model_decision=value['decision'],summary=value['summary'],
+                     findings=value['findings'],uncertainties=value['uncertainties'])
+        print(NONPASS_MARKER+a.r.canonical(failure),flush=True)
+        raise SystemExit(1)
     print(a.GRANT_MARKER+a.r.canonical(result),flush=True)
 
 
