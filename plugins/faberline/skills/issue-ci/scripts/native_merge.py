@@ -498,7 +498,7 @@ def dispatch_recovery_wake(api,repo,document,evaluator,recovery,results):
 
 
 def enqueue(api, repo, number, head, load_document, evaluator, review_run,
-            verify=review.verify_review, prepare_record=None, guarded_claim=None):
+            verify=review.verify_review, prepare_record=None, guarded_claim=None, before_mutation=None):
     """Native request + required head status form the cross-run write protocol.
 
     The caller must be the pinned merge producer in the repository-wide
@@ -537,6 +537,8 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
         target=prepared_module.target_identity(repo,review_run,intent['run'],intent['attempt'],nonce)
     # Block this exact head before creating a native request. A different head
     # has no passing status from this operation and cannot inherit its approval.
+    if before_mutation is not None:
+        before_mutation()
     pending_response=api.api(f"repos/{repo}/statuses/{head}", method="POST", data=dict(
         state="pending", context=p["status_context"],
         description="Rechecking authenticated review and qualified CI",
@@ -732,9 +734,11 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
     runs = api.pages(f'repos/{repo}/actions/workflows/{producer["id"]}/runs', "workflow_runs")
     attempts = index(api, repo, document, runs, {pull["number"]:pull.get("head",{}).get("sha") for pull in pulls})
     results = []
+    prewrite_holds = set()
     for pull in sorted(pulls, key=lambda p: p["number"]):
         number, head = pull["number"], pull.get("head", {}).get("sha")
         row = dict(pr=number, head=head, state="held")
+        write_started = [False]
         try:
             if guarded is not None and number not in admitted:
                 row.update(reason='guard_block_result_unknown' if number in withdrawal_errors else 'guard_unavailable')
@@ -752,6 +756,9 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
             if result_verify is not None:
                 receipt = result_verify(api, repo, number, head, load_document, evaluator, attempt["id"])
                 if receipt["payload"]["result"]["decision"] in ("fail", "block"):
+                    # return_todo writes status and issue state. A lost response
+                    # must never be mistaken for a pre-write refusal.
+                    write_started[0] = True
                     row.update(return_todo(api, repo, number, head, load_document, evaluator,
                         attempt["id"], result_verify))
                     results.append(row)
@@ -762,28 +769,28 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
                 row.update(state="default_wake_required")
             else:
                 arguments=dict(verify=verify,prepare_record=prepare_record)
-                if guarded is not None:arguments['guarded_claim']=admitted[number]
+                if guarded is not None:
+                    arguments['guarded_claim']=admitted[number]
+                    arguments['before_mutation']=lambda:write_started.__setitem__(0,True)
                 row.update(enqueue(api, repo, number, head, load_document, evaluator,
                     attempt["id"], **arguments))
         except Exception as error:
             code = str(error)
             row["reason"] = code if isinstance(error, review.Refused) and re.fullmatch(
                 r"[a-z0-9_]+", code) else "verification_or_provider_failed"
+            if guarded is not None and isinstance(error,review.Refused) and not write_started[0]:
+                prewrite_holds.add(number)
         results.append(row)
     if guarded is not None:
-        # These refusals occur before enqueue writes a pending status or a
-        # native request. Unknown provider and mutation outcomes stay held.
-        safe_holds={'review_missing','review_target_record_unknown','latest_review_not_success',
-                    'qualification_not_ready','issue_not_eligible'}
         for row in results:
             claim=admitted.get(row['pr'])
             if claim is None or row['state'] in ('queued','merged','already_merged','held_after_pending',
                                                   'default_wake_required'):
                 continue
-            if row['state']=='held' and row.get('reason') not in safe_holds:
+            if row['state']=='held' and row['pr'] not in prewrite_holds:
                 continue
             try:
-                if row['state']=='held' and row.get('reason') in safe_holds:
+                if row['state']=='held' and row['pr'] in prewrite_holds:
                     # Even a never-reviewed PR may have a same-named check
                     # run. Establish the Actions status before releasing an
                     # otherwise unused guard; settle rechecks the status,

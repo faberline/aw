@@ -118,18 +118,58 @@ class GuardedQueueTests(unittest.TestCase):
         self.assertEqual(statuses[0]['state'],'pending')
 
     def test_known_prewrite_qualification_holds_release_across_wakes(self):
-        for reason in ('qualification_not_ready','issue_not_eligible'):
+        for reason in ('qualification_not_ready','issue_not_eligible','required_gates_not_success',
+                       'review_stale','issue_contract_changed','pr_description_changed','base_changed'):
             with self.subTest(reason=reason):
                 self.setUp();self.pulls=[self.pulls[1]]
+                self.pulls[0]['head']['ref']='issue/7';ci_calls=[]
                 attempts={2:dict(id=200,status='completed',conclusion='success')}
                 with patch.object(m,'withdraw_approval'),patch.object(m,'block_unadmitted') as block, \
                      patch.object(m,'enqueue',side_effect=m.review.Refused(reason)):
                     for _ in range(2):
                         rows=m.reconcile(self.api,'o/r',self.api.load,EVALUATOR,lambda *args:attempts,
-                                         self.api.verify,guarded=self.guard)
+                                         self.api.verify,guarded=self.guard,
+                                         ci_process=lambda args,config,check_event:ci_calls.append(args.pr))
                         self.assertEqual(rows[0]['reason'],reason)
                         self.assertEqual(rows[0]['guard'],'released')
                 self.assertEqual(block.call_count,2)
+                self.assertEqual(ci_calls,[2,2])
+
+    def test_unknown_ci_handoff_retains_guard(self):
+        self.pulls=[self.pulls[1]];self.pulls[0]['head']['ref']='issue/7'
+        def unknown(*args,**kwargs):raise TimeoutError('unknown handoff outcome')
+        with patch.object(m,'withdraw_approval'),patch.object(m,'block_unadmitted') as block:
+            rows=m.reconcile(self.api,'o/r',self.api.load,EVALUATOR,lambda *args:{},self.api.verify,
+                             ci_process=unknown,guarded=self.guard)
+        self.assertEqual(rows[0]['reason'],'withdrawal_or_ci_result_unknown')
+        self.assertNotIn(('settle',2),self.calls)
+        block.assert_not_called()
+
+    def test_refusal_after_first_mutation_never_releases_guard(self):
+        self.pulls=[self.pulls[1]]
+        attempts={2:dict(id=200,status='completed',conclusion='success')}
+        def after_mutation(*args,**kwargs):
+            kwargs['before_mutation']()
+            raise m.review.Refused('qualification_not_ready')
+        with patch.object(m,'withdraw_approval'),patch.object(m,'block_unadmitted') as block, \
+             patch.object(m,'enqueue',side_effect=after_mutation):
+            rows=m.reconcile(self.api,'o/r',self.api.load,EVALUATOR,lambda *args:attempts,
+                             self.api.verify,guarded=self.guard)
+        self.assertEqual(rows[0]['reason'],'qualification_not_ready')
+        self.assertNotIn(('settle',2),self.calls)
+        block.assert_not_called()
+
+    def test_failed_todo_write_never_releases_guard(self):
+        self.pulls=[self.pulls[1]]
+        attempts={2:dict(id=200,status='completed',conclusion='failure')}
+        result=lambda *args:dict(payload=dict(result=dict(decision='fail')))
+        with patch.object(m,'withdraw_approval'),patch.object(m,'block_unadmitted') as block, \
+             patch.object(m,'return_todo',side_effect=m.review.Refused('issue_contract_changed')):
+            rows=m.reconcile(self.api,'o/r',self.api.load,EVALUATOR,lambda *args:attempts,
+                             self.api.verify,result_verify=result,guarded=self.guard)
+        self.assertEqual(rows[0]['reason'],'issue_contract_changed')
+        self.assertNotIn(('settle',2),self.calls)
+        block.assert_not_called()
 
     def test_unknown_failure_keeps_guard_and_never_retries_status(self):
         self.pulls=[self.pulls[1]]

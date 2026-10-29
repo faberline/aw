@@ -390,6 +390,26 @@ class DefaultWakeAndCheckpointTests(unittest.TestCase):
         self.assertEqual(rows[0]['state'], 'default_wake_required')
         self.assertEqual(self.p.writes, [])
 
+    def test_write_boundary_marks_before_an_ambiguous_pending_response(self):
+        self.p.error_on='pending';marks=[]
+        def mark():
+            self.assertEqual(self.p.writes,[])
+            marks.append('before')
+        with self.assertRaises(TimeoutError):
+            m.enqueue(self.p,'o/r',1,HEAD,self.p.load,EVALUATOR,200,
+                      verify=self.p.verify,before_mutation=mark)
+        self.assertEqual(marks,['before'])
+        self.assertEqual([item[0] for item in self.p.writes],['pending'])
+
+    def test_prewrite_review_refusal_never_marks_a_write(self):
+        marks=[]
+        def refuse(*args):raise m.review.Refused('review_stale')
+        with self.assertRaisesRegex(m.review.Refused,'review_stale'):
+            m.enqueue(self.p,'o/r',1,HEAD,self.p.load,EVALUATOR,200,
+                      verify=refuse,before_mutation=lambda:marks.append('before'))
+        self.assertEqual(marks,[])
+        self.assertEqual(self.p.writes,[])
+
     def test_one_dispatch_wakes_complete_queue_without_trusting_payload(self):
         calls = []
         class API:
