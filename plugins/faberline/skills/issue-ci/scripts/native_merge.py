@@ -376,6 +376,7 @@ def return_todo(api, repo, number, head, load_document, evaluator, run_id, verif
              == context["issue_sha256"], "issue_contract_changed")
         names = {label["name"] for label in issue.get("labels", [])}
         need(not names & {"blocked", "agy:blocked"}, "issue_blocked")
+        need(bool(names & {"todo", "doing", "done"}), "issue_unmanaged")
         return issue["number"], names
 
     issue, labels = current()
@@ -406,7 +407,8 @@ def return_todo(api, repo, number, head, load_document, evaluator, run_id, verif
             return dict(state="already_returned_todo", issue=issue, head=head,
                         decision=receipt["payload"]["result"]["decision"])
     if journal is None:
-        current()  # History pagination may outlast a contract or head change.
+        _, labels = current()  # History pagination may outlast a lifecycle change.
+        phase = "ready" if "todo" in labels else "pending"
         journal = api.api(f"repos/{repo}/issues/{issue}/comments", method="POST", data={"body": body(phase)})
     comment_path = f"repos/{repo}/issues/comments/{journal['id']}"
     if phase == "pending":

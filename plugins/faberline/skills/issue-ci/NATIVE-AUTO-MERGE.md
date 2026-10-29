@@ -106,7 +106,8 @@ Closed or blocked issues, stale heads and missing/invalid review receipts are
 held. An interrupted mixed-label update can finish on a later wake. Existing
 CI failure-only behavior remains unchanged; the later Claude outcome owns its
 requested return to todo. The writer runs in the same serialized lifecycle
-group as CI. It never writes issue bodies or comments or deletes branches.
+group as CI. It posts and updates one receipt-bound recovery journal comment
+per negative result. It never writes issue bodies or deletes branches.
 
 See the [native merge workflow template](templates/claude-native-merge.yml.example)
 and [review producer template](templates/claude-final-review.yml.example).
@@ -226,3 +227,9 @@ finishes the checkpoint without adding todo again. An applied receipt never
 replays its label writes, so it cannot undo a later agent claim. A new verified
 negative receipt starts its own handoff. Current review, PR head, issue contract
 and blocked/closed checks still apply before every label operation.
+
+When todo already exists, the first durable journal starts at ready. A new
+pending handoff requires an existing managed doing/done label. This keeps the
+old lifecycle label until ready is durable, so an agent cannot claim a sole
+todo during that window. Unmanaged issues remain held instead of guessing a
+lifecycle or creating a pending sole-todo race.

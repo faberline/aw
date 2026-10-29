@@ -26,6 +26,7 @@ class Lifecycle(native.Provider):
         self.comments=[]
         self.after_ready=None
         self.fail_applied=False
+        self.after_post=None
 
     def pages(self,path,key=None):
         if path=='repos/o/r/issues/7/comments':return copy.deepcopy(self.comments)
@@ -36,6 +37,7 @@ class Lifecycle(native.Provider):
         if path=='repos/o/r/issues/7/comments' and method=='POST':
             value=dict(id=len(self.comments)+1,body=data['body'],user=dict(login='github-actions[bot]'))
             self.comments.append(value)
+            if self.after_post:self.after_post()
             return copy.deepcopy(value)
         if path.startswith('repos/o/r/issues/comments/') and method=='PATCH':
             if ':applied -->' in data['body'] and self.fail_applied:raise RuntimeError('interrupted checkpoint')
@@ -182,6 +184,34 @@ class ReviewLifecycleTests(unittest.TestCase):
         p.reject()
         self.assertEqual(p.issue_writes,[('add',['todo']),('remove','doing')])
         self.assertEqual(len(p.comments),2)
+
+
+    def test_existing_todo_intent_starts_ready_before_a_worker_can_claim_it(self):
+        p=Lifecycle();p.issue['labels']=[dict(name='todo'),dict(name='bug')]
+        def stop_after_post():raise RuntimeError('interrupted after intent')
+        p.after_post=stop_after_post
+        with self.assertRaisesRegex(RuntimeError,'interrupted after intent'):p.reject()
+        self.assertIn(':ready -->',p.comments[0]['body'])
+        p.issue['labels']=[dict(name='doing'),dict(name='bug')]
+        p.after_post=None;p.issue_writes.clear()
+        p.reject()
+        self.assertEqual(p.issue_writes,[])
+        self.assertEqual({l['name']for l in p.issue['labels']},{'doing','bug'})
+        self.assertIn(':applied -->',p.comments[0]['body'])
+
+    def test_unmanaged_issue_cannot_enter_unsafe_pending_add_window(self):
+        p=Lifecycle();p.issue['labels']=[dict(name='bug')]
+        with self.assertRaisesRegex(RuntimeError,'issue_unmanaged'):p.reject()
+        self.assertEqual(p.issue_writes,[]);self.assertEqual(p.comments,[])
+
+    def test_lifecycle_drift_during_history_read_refuses_new_intent(self):
+        p=Lifecycle()
+        def history(path,key=None):
+            p.issue['labels']=[dict(name='bug')]
+            return []
+        p.pages=history
+        with self.assertRaisesRegex(RuntimeError,'issue_unmanaged'):p.reject()
+        self.assertEqual(p.issue_writes,[]);self.assertEqual(p.comments,[])
 
 
 
