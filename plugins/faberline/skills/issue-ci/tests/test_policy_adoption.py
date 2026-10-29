@@ -339,13 +339,13 @@ jobs:
                 if '/compare/' in path:return {'status':'diverged' if self.bad=='history' else 'ahead'}
                 if path=='repos/o/r/actions/runs/1000':return dict(id=1000,workflow_id=9,path=att['workflow_path'],
                     head_sha='0'*40,head_branch=att['branch'],event='push',head_repository={'full_name':'o/r'},
-                    run_attempt=1,status='completed',conclusion='failure' if self.bad=='final_failure' else 'success')
+                    run_number=2,run_attempt=1,status='completed',conclusion='failure' if self.bad=='final_failure' else 'success')
                 if path=='repos/o/r/actions/runs/999':return dict(id=999,workflow_id=9,path=att['workflow_path'],
                     head_sha=att['source_commit'],head_branch=att['branch'],event='push',head_repository={'full_name':'o/r'},
-                    run_attempt=1,status='completed',conclusion='success')
+                    run_number=1,run_attempt=1,status='completed',conclusion='success')
                 raise AssertionError(path)
             def pages(self,path,key=None):
-                if '/actions/workflows/9/runs?' in path:return [] if self.bad=='missing_final' else [dict(id=1000,head_sha='0'*40)]
+                if '/actions/workflows/9/runs?' in path:return [] if self.bad=='missing_final' else [dict(id=1000,head_sha='0'*40,run_number=2,run_attempt=1)]
                 if path.endswith('/runs/1000/attempts/1/jobs'):return [dict(name=att['job'],id=1001,status='completed',conclusion='success')]
                 if path.endswith('/pulls/77/files'):return [dict(filename=a.GRANTS_PATH,status='modified',sha=finalblob)]
                 if path.endswith('/pulls/77/commits'):return [{'sha':att['head']}]
@@ -379,6 +379,49 @@ jobs:
                 return line*2 if change=='duplicate' and job==1001 else line
             with self.subTest(change=change),patch.object(a.review,'blob',side_effect=blob),self.assertRaises(RuntimeError):
                 a.verify_grant_attestation(api,doc,g,EVALUATOR,log)
+
+    def test_final_review_order_uses_workflow_run_number_not_opaque_id(self):
+        g=grant();att=g['grant_review'];head='9'*40;finalblob='7'*40;prior={'decision':'pass'}
+        def run(identifier,number,conclusion='success'):
+            return dict(id=identifier,workflow_id=att['workflow_id'],path=att['workflow_path'],
+                head_sha='0'*40,head_branch=att['branch'],event='push',head_repository={'full_name':'o/r'},
+                run_number=number,run_attempt=1,status='completed',conclusion=conclusion)
+        original=run(att['run_id'],1);older=run(5000,2);latest=run(5,3)
+        class Api:
+            def api(self,path):
+                number=int(path.rsplit('/',1)[1])
+                return copy.deepcopy({att['run_id']:original,5000:older,5:latest}[number])
+            def pages(self,path,key=None):
+                if '/actions/workflows/' in path:return [copy.deepcopy(older),copy.deepcopy(latest)]
+                return [dict(name=att['job'],id=6,status='completed',conclusion='success')]
+        expected=dict(prior,grant_head=head,grant_blob=finalblob)
+        log=lambda repo,job:a.GRANT_MARKER+json.dumps(expected)+'\n'
+        with patch.object(a,'grant_review_workflow',return_value={'pr':att['pr'],'head':head}):
+            self.assertEqual(a.verify_final_grant_review(Api(),g,att,EVALUATOR,{'head':{'sha':head}},
+                                                         finalblob,prior,log),expected)
+            latest['conclusion']='failure'
+            with self.assertRaisesRegex(RuntimeError,'final_grant_review_run'):
+                a.verify_final_grant_review(Api(),g,att,EVALUATOR,{'head':{'sha':head}},finalblob,prior,log)
+        latest['head_sha']='1'*40
+        def target(api,grant,att,evaluator,source,expected):
+            return {'pr':att['pr'],'head':'2'*40 if source=='1'*40 else head}
+        with patch.object(a,'grant_review_workflow',side_effect=target):
+            self.assertEqual(a.verify_final_grant_review(Api(),g,att,EVALUATOR,{'head':{'sha':head}},
+                                                         finalblob,prior,log),expected)
+        with patch.object(a,'grant_review_workflow',side_effect=RuntimeError('malformed')):
+            with self.assertRaisesRegex(RuntimeError,'final_grant_workflow_unknown'):
+                a.verify_final_grant_review(Api(),g,att,EVALUATOR,{'head':{'sha':head}},finalblob,prior,log)
+        latest['head_sha']='0'*40;latest['conclusion']='success'
+        class Changed(Api):
+            def __init__(self):self.reads=0
+            def pages(self,path,key=None):
+                if '/actions/workflows/' in path:
+                    self.reads+=1
+                    return [copy.deepcopy(older),copy.deepcopy(latest)]+([run(2,4)] if self.reads>1 else [])
+                return super().pages(path,key)
+        with patch.object(a,'grant_review_workflow',return_value={'pr':att['pr'],'head':head}):
+            with self.assertRaisesRegex(RuntimeError,'final_grant_review_changed'):
+                a.verify_final_grant_review(Changed(),g,att,EVALUATOR,{'head':{'sha':head}},finalblob,prior,log)
 
     def test_final_open_head_can_verify_earlier_attestation_without_authorizing_merge(self):
         g,doc,api,receipt,blob,workflow=self.setup_attestation();api.bad='open'

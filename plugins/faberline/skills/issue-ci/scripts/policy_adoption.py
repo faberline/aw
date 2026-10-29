@@ -438,12 +438,24 @@ def grant_review_workflow(api,grant,att,evaluator,source_commit,grant_head,expec
          and workflow['on']=={'push':{'branches':[att['branch']],'paths':[att['workflow_path']]}}
          and workflow['permissions']=={} and set(workflow['jobs'])=={att['job']}, 'grant_review_workflow')
     job=workflow['jobs'][att['job']]
+    steps=job.get('steps') if isinstance(job,dict) else None
+    need(isinstance(steps,list) and len(steps)==1 and isinstance(steps[0],dict)
+         and isinstance(steps[0].get('with'),dict),'grant_review_workflow')
+    inputs=steps[0]['with']
+    need(review.exact(inputs,'grant-pr grant-head claude-token')
+         and isinstance(inputs['grant-pr'],str) and re.fullmatch(r'[1-9][0-9]*',inputs['grant-pr'])
+         and review.sha(inputs['grant-head']) and inputs['claude-token']=='${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}',
+         'grant_review_workflow')
     need(job=={'runs-on':'ubuntu-latest','timeout-minutes':'70',
                'permissions':{'actions':'read','contents':'read','pull-requests':'read','issues':'read'},
                'steps':[{'uses':'faberline/aw/.github/actions/policy-adoption-grant-review@'+evaluator,
-                         'with':{'grant-pr':str(att['pr']),'grant-head':grant_head,
+                         'with':{'grant-pr':inputs['grant-pr'],'grant-head':inputs['grant-head'],
                                  'claude-token':'${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}}]},
          'grant_review_workflow')
+    target=dict(pr=int(inputs['grant-pr']),head=inputs['grant-head'])
+    if grant_head is not None:
+        need(target==dict(pr=att['pr'],head=grant_head),'grant_review_workflow')
+    return target
 
 
 def verify_final_grant_review(api,grant,att,evaluator,pr,final_blob,prior,log_reader):
@@ -452,22 +464,36 @@ def verify_final_grant_review(api,grant,att,evaluator,pr,final_blob,prior,log_re
     # PR head. A newer failure cannot be hidden by an older passing run.
     head=pr.get('head',{}).get('sha')
     need(review.sha(head) and review.sha(final_blob), 'final_grant_identity')
+    prior_run=api.api(f"repos/{grant['repo']}/actions/runs/{att['run_id']}")
+    need(isinstance(prior_run,dict) and prior_run.get('id')==att['run_id']
+         and prior_run.get('workflow_id')==att['workflow_id']
+         and prior_run.get('path')==att['workflow_path']
+         and prior_run.get('run_attempt')==att['attempt']
+         and review.integer(prior_run.get('run_number')), 'final_grant_runs')
     path=f"repos/{grant['repo']}/actions/workflows/{att['workflow_id']}/runs?branch={quote(att['branch'],safe='')}&event=push"
     runs=api.pages(path,'workflow_runs')
-    need(len(runs)<=500 and all(review.integer(x.get('id')) for x in runs), 'final_grant_runs')
+    need(isinstance(runs,list) and len(runs)<=500
+         and all(isinstance(x,dict) and review.integer(x.get('id')) and review.integer(x.get('run_number'))
+                 and review.integer(x.get('run_attempt')) for x in runs)
+         and len({x['id'] for x in runs})==len(runs)
+         and len({x['run_number'] for x in runs})==len(runs),'final_grant_runs')
     selected=None
-    for item in sorted(runs,key=lambda x:x['id'],reverse=True):
-        if item['id']<=att['run_id'] or not review.sha(item.get('head_sha')):
+    for item in sorted(runs,key=lambda x:(x['run_number'],x['run_attempt']),reverse=True):
+        if item['run_number']<=prior_run['run_number']:
             continue
+        need(review.sha(item.get('head_sha')),'final_grant_runs')
         try:
-            grant_review_workflow(api,grant,att,evaluator,item['head_sha'],head)
+            target=grant_review_workflow(api,grant,att,evaluator,item['head_sha'],None)
         except (RuntimeError,KeyError,TypeError,ValueError):
+            raise review.Refused('final_grant_workflow_unknown') from None
+        if target!=dict(pr=att['pr'],head=head):
             continue
         selected=api.api(f"repos/{grant['repo']}/actions/runs/{item['id']}")
         break
     need(selected is not None, 'final_grant_review_missing')
     need(selected.get('id')==item['id'] and selected.get('workflow_id')==att['workflow_id']
          and selected.get('path')==att['workflow_path'] and selected.get('head_sha')==item['head_sha']
+         and selected.get('run_number')==item['run_number'] and selected.get('run_attempt')==item['run_attempt']
          and selected.get('head_branch')==att['branch'] and selected.get('event')=='push'
          and selected.get('head_repository',{}).get('full_name')==grant['repo']
          and review.integer(selected.get('run_attempt')) and selected.get('status')=='completed'
@@ -479,6 +505,26 @@ def verify_final_grant_review(api,grant,att,evaluator,pr,final_blob,prior,log_re
     rows=r.records(log_reader(grant['repo'],matches[0]['id']),GRANT_MARKER)
     expected=dict(prior,grant_head=head,grant_blob=final_blob)
     need(len(rows)==1 and rows[0]==expected, 'final_grant_review_receipt')
+    fresh=api.pages(path,'workflow_runs')
+    keys=('id','run_number','run_attempt','head_sha')
+    def inventory(items):
+        need(isinstance(items,list) and len(items)<=500
+             and all(isinstance(row,dict) and all(review.integer(row.get(k)) for k in keys[:3])
+                     and review.sha(row.get('head_sha')) for row in items)
+             and len({row['id'] for row in items})==len(items)
+             and len({row['run_number'] for row in items})==len(items),
+             'final_grant_runs')
+        return sorted(tuple(row[k] for k in keys) for row in items)
+    need(inventory(fresh)==inventory(runs),'final_grant_review_changed')
+    latest=api.api(f"repos/{grant['repo']}/actions/runs/{selected['id']}")
+    stable=('id','workflow_id','path','head_sha','head_branch','event','head_repository',
+            'run_number','run_attempt','status','conclusion')
+    need(isinstance(latest,dict) and all(latest.get(k)==selected.get(k) for k in stable),
+         'final_grant_review_changed')
+    prior_again=api.api(f"repos/{grant['repo']}/actions/runs/{att['run_id']}")
+    need(isinstance(prior_again,dict) and all(prior_again.get(k)==prior_run.get(k)
+         for k in ('id','workflow_id','path','run_number','run_attempt','status','conclusion')),
+         'final_grant_review_changed')
     return rows[0]
 
 
