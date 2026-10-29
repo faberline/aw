@@ -1,5 +1,6 @@
 """Protected policy review reads data only and requires every current gate."""
 import copy
+import base64
 import hashlib
 import importlib.util
 import os
@@ -192,6 +193,77 @@ class ReviewProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'supporting_source_missing'):
             m.supporting_sources(None,self.packet(),{BASE:[],HEAD:[]},['src/missing'])
 
+    def test_complete_supporting_rosters_of_41_and_64_are_not_truncated(self):
+        for count in (41,64):
+            paths=[f'src/file-{i}' for i in range(count)]
+            entries=[dict(path=path,type='blob',mode='100644',size=1,sha='a'*40) for path in paths]
+            with self.subTest(count=count),patch.object(m.a.review,'blob',return_value='x'):
+                rows=m.supporting_sources(None,self.packet(),{BASE:entries,HEAD:entries},paths)
+            self.assertEqual(len(rows),2*count)
+            self.assertEqual({row['path'] for row in rows},set(paths))
+        with self.assertRaisesRegex(RuntimeError,'target_supporting_paths'):
+            m.supporting_sources(None,self.packet(),{BASE:[],HEAD:[]},[f'src/file-{i}' for i in range(65)])
+        with self.assertRaisesRegex(RuntimeError,'target_supporting_paths'):
+            m.supporting_sources(None,self.packet(),{BASE:[],HEAD:[]},['../unsafe'])
+
+    def test_pinned_framework_sources_require_exact_valid_git_blobs(self):
+        candidate='c'*40;evaluator='e'*40
+        class API:
+            def __init__(self):self.calls=[];self.bad=False
+            def api(self,path):
+                self.calls.append(path);raw=('# '+path+'\n').encode()
+                blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+                return dict(type='file',encoding='base64',content=base64.b64encode(raw).decode(),
+                            sha='0'*40 if self.bad else blob)
+        api=API();rows=m.framework_sources(api,candidate,evaluator)
+        self.assertEqual(len(rows),len(m.FRAMEWORK_SOURCES))
+        for row in rows:
+            self.assertEqual(row['repo'],'faberline/aw')
+            self.assertEqual(row['ref'],candidate if row['role']=='candidate' else evaluator)
+            raw=row['content'].encode()
+            self.assertEqual(row['blob'],hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest())
+        with self.assertRaisesRegex(RuntimeError,'target_framework_identity'):
+            m.framework_sources(api,'main',evaluator)
+        api.bad=True
+        with self.assertRaisesRegex(RuntimeError,'source_identity'):
+            m.framework_sources(api,candidate,evaluator)
+
+    def test_framework_closure_detects_missing_sibling_at_each_revision(self):
+        def row(role,name,content):
+            return dict(role=role,path=m.FRAMEWORK_ROOT+name,content=content)
+        for role in ('evaluator','candidate'):
+            rows=[row(role,'entry.py',"x=sibling('native_merge')\ny=ci_module('readiness')\nz=Path(__file__).with_name('json_data.py')"),
+                  row(role,'native_merge.py','pass'),row(role,'readiness.py','pass'),row(role,'json_data.py','pass')]
+            m.framework_dependency_closure(rows)
+            for omitted in ('native_merge.py','readiness.py','json_data.py'):
+                with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+                    m.framework_dependency_closure([r for r in rows if not r['path'].endswith('/'+omitted)])
+        with self.assertRaisesRegex(RuntimeError,'target_framework_source_parse'):
+            m.framework_dependency_closure([row('candidate','entry.py','not valid python ???')])
+
+    def test_framework_closure_detects_missing_relative_local_data(self):
+        for role in ('evaluator','candidate'):
+            source=m.FRAMEWORK_ROOT+'claude_review.py'
+            skill='plugins/faberline/skills/issue-conformance/SKILL.md'
+            code="ROOT=Path(__file__).resolve().parents[2]\nraw=(ROOT / 'issue-conformance/SKILL.md').read_bytes()"
+            rows=[dict(role=role,path=source,content=code),dict(role=role,path=skill,content='skill')]
+            m.framework_dependency_closure(rows)
+            with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+                m.framework_dependency_closure(rows[:1])
+            rows[0]['content']="raw=(Path(__file__).resolve().parents[2] / 'issue-conformance/SKILL.md').read_bytes()"
+            m.framework_dependency_closure(rows)
+            with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+                m.framework_dependency_closure(rows[:1])
+            rows[0]['content']="raw=Path(__file__).joinpath(dynamic).read_bytes()"
+            with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_unresolved'):
+                m.framework_dependency_closure(rows)
+
+    def test_framework_roster_covers_current_entrypoint_dependency_closure(self):
+        root=Path(m.__file__).resolve().parents[5]
+        rows=[dict(role=role,path=path,content=(root/path).read_text())
+              for role,path in m.FRAMEWORK_SOURCES]
+        m.framework_dependency_closure(rows)
+
 
 class PreflightTests(unittest.TestCase):
     def fixture(self):
@@ -223,12 +295,16 @@ class PreflightTests(unittest.TestCase):
         patches=[patch.object(m.a.review,'blob',side_effect=blob),patch.object(m.a.native,'handoff_policy'),
                  patch.object(m.a.native,'policy',return_value=policy),patch.object(m.a.native,'writer_contract'),
                  patch.object(m.a.native,'base_rules',return_value=provider_evidence),
-                 patch.object(m.a.native,'provider_pull',return_value=provider),patch.object(m,'source_files',return_value=({},[]))]
+                 patch.object(m.a.native,'provider_pull',return_value=provider),patch.object(m,'source_files',return_value=({},[])),
+                 patch.object(m,'framework_sources',return_value=[dict(ref='c'*40,path='trusted.py',content='source')])]
         from contextlib import ExitStack
         with ExitStack() as stack:
             for patcher in patches:stack.enter_context(patcher)
             packet,_=m.preflight(api,'o/r',8,HEAD);self.assertEqual(packet['ci']['run_id'],111)
             self.assertEqual(packet['verified_provider_policy'],provider_evidence)
+            self.assertEqual(packet['shared_framework_sources'][0]['ref'],'c'*40)
+            with patch.object(m,'framework_sources',return_value=[dict(content='x'*(4*1024*1024))]):
+                with self.assertRaisesRegex(RuntimeError,'target_packet_limit'):m.preflight(api,'o/r',8,HEAD)
             with patch.object(m.a.native,'base_rules',return_value=None):
                 with self.assertRaisesRegex(RuntimeError,'target_provider_evidence'):m.preflight(api,'o/r',8,HEAD)
             with patch.object(m.a.native,'base_rules',side_effect=RuntimeError('provider_refused')):
