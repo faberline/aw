@@ -1,6 +1,8 @@
 """Independent grant review only reads data and blocks without exact evidence."""
 import copy
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -91,6 +93,31 @@ class GrantReviewTests(unittest.TestCase):
         passed=lambda *args:{'decision':'pass','findings':[],'uncertainties':[]}
         with patch.object(m,'proposal',side_effect=[packet,changed]):
             with self.assertRaisesRegex(RuntimeError,'inputs_changed'):m.produce(None,'o/r',77,HEAD,adoption.EVALUATOR,passed)
+        with patch.object(m,'proposal',side_effect=[packet,changed]):
+            with self.assertRaisesRegex(RuntimeError,'inputs_changed'):m.produce(None,'o/r',77,HEAD,adoption.EVALUATOR,failed)
+
+    def test_negative_review_logs_bound_reason_and_never_a_pass_receipt(self):
+        env={'GITHUB_REPOSITORY':'o/r','INPUT_GRANT_PR':'77','INPUT_GRANT_HEAD':HEAD,
+             'AW_ACTION_REF':adoption.EVALUATOR}
+        for decision in ('fail','block'):
+            result={'decision':decision,'summary':'Not approved','findings':['line one\n::warning::not a command'],
+                    'uncertainties':['needs evidence']}
+            output=io.StringIO()
+            with self.subTest(decision=decision),patch.dict(os.environ,env,clear=True),\
+                 patch.object(m,'produce',side_effect=m.ReviewNotPassed(result)),\
+                 contextlib.redirect_stdout(output),self.assertRaises(SystemExit) as raised:
+                m.main()
+            self.assertEqual(raised.exception.code,1)
+            lines=output.getvalue().splitlines()
+            self.assertEqual(len(lines),1)
+            self.assertTrue(lines[0].startswith(m.NONPASS_MARKER))
+            self.assertNotIn(m.a.GRANT_MARKER,output.getvalue())
+            evidence=json.loads(lines[0][len(m.NONPASS_MARKER):])
+            self.assertEqual((evidence['repo'],evidence['grant_pr'],evidence['grant_head'],evidence['evaluator']),
+                             ('o/r',77,HEAD,adoption.EVALUATOR))
+            self.assertEqual(evidence['model_decision'],decision)
+            self.assertEqual(evidence['findings'],result['findings'])
+            self.assertEqual(evidence['uncertainties'],result['uncertainties'])
 
 class FinalGrantHeadTests(unittest.TestCase):
     run_proposal=GrantReviewTests.run_proposal
