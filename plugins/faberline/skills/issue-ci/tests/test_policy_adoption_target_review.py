@@ -71,6 +71,26 @@ class ReviewProtocolTests(unittest.TestCase):
             self.assertEqual(receipt['uncertainties'],[f'Independent review blocked: {expected}.'])
             self.assertNotIn('private secret',str(receipt))
 
+    def test_real_plan_uncertainty_refusal_reports_exact_safe_code(self):
+        packet=self.packet()
+        def model(*args,**kwargs):
+            return dict(requirements=[dict(id='R1',requirement='Do the work',
+                issue_quote='Explicit issue requirement',supporting_paths=[])],uncertainties=['material ambiguity'])
+        with patch.object(m,'preflight',return_value=(packet,{BASE:[],HEAD:[]})):
+            receipt=m.produce(None,'o/r',8,HEAD,'token',model)
+        self.assertEqual(receipt['decision'],'block')
+        self.assertEqual(receipt['uncertainties'],['Independent review blocked: planning/target_plan_uncertain.'])
+
+    def test_real_missing_supporting_source_refusal_reports_exact_safe_code(self):
+        packet=self.packet()
+        def model(*args,**kwargs):
+            return dict(requirements=[dict(id='R1',requirement='Do the work',
+                issue_quote='Explicit issue requirement',supporting_paths=['src/missing'])],uncertainties=[])
+        with patch.object(m,'preflight',return_value=(packet,{BASE:[],HEAD:[]})):
+            receipt=m.produce(None,'o/r',8,HEAD,'token',model)
+        self.assertEqual(receipt['decision'],'block')
+        self.assertEqual(receipt['uncertainties'],['Independent review blocked: supporting_source/target_supporting_source_missing.'])
+
     def test_genuine_negative_review_retains_the_finding(self):
         packet=self.packet()
         def model(data,token,system,schema,**kwargs):
