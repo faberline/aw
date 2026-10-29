@@ -1,6 +1,7 @@
 """The read-only observation is not a merge or issue-close authorization."""
 import copy
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -11,6 +12,47 @@ m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 
 REPO, HEAD, BASE, MERGE = 'owner/repo', 'a' * 40, 'b' * 40, 'c' * 40
+
+
+class RecordedCoreMergeTests(unittest.TestCase):
+    """Replay captured provider data; the issue was closed manually."""
+
+    def setUp(self):
+        path = Path(__file__).parent / 'fixtures/core77-post-merge-observation.json'
+        self.data = json.loads(path.read_text())
+        self.checkpoint = self.data['checkpoint']
+
+    def api(self, path, method='GET', data=None):
+        if method != 'GET':
+            raise AssertionError('recorded observation cannot write')
+        c = self.checkpoint
+        repo, merge = c['repo'], self.data['commit']['sha']
+        values = {f'repos/{repo}': self.data['meta'],
+                  f'repos/{repo}/pulls/{c["pr"]}': self.data['pull'],
+                  f'repos/{repo}/commits/{merge}': self.data['commit'],
+                  f'repos/{repo}/compare/{merge}...main': self.data['compare'],
+                  f'repos/{repo}/issues/{c["issue"]}': self.data['issue']}
+        return copy.deepcopy(values[path])
+
+    def test_real_merged_pr_and_manually_closed_issue_are_observed(self):
+        result = m.observe(self, self.checkpoint)
+        self.assertEqual(result['state'], 'observed_closed')
+        self.assertEqual(result['merge'], '4bc3fdb12a2e0846ed88d70c8a5d9c75696dfa44')
+
+    def test_reopened_or_changed_issue_is_not_accepted_as_the_old_owner(self):
+        self.data['issue']['state'] = 'open'
+        with self.assertRaisesRegex(RuntimeError, 'close_issue_ownership_changed'):
+            m.observe(self, self.checkpoint)
+
+    def test_queued_or_foreign_merge_is_not_an_observed_merge(self):
+        for changed in ({'merged': False, 'state': 'open'},
+                        {'merged_by': {'id': 1, 'type': 'User', 'login': 'other'}}):
+            with self.subTest(changed=changed):
+                before = copy.deepcopy(self.data['pull'])
+                self.data['pull'].update(changed)
+                with self.assertRaisesRegex(RuntimeError, 'close_merge_identity'):
+                    m.observe(self, self.checkpoint)
+                self.data['pull'] = before
 
 
 class Fixture:

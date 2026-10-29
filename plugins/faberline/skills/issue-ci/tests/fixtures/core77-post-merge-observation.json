@@ -1,0 +1,80 @@
+{
+  "note": "Captured after Core PR77 native auto-merge and controller manual closure of issue76. This is read-only evidence, not an auto-close pass.",
+  "meta": {
+    "full_name": "faberline/core",
+    "default_branch": "main"
+  },
+  "pull": {
+    "number": 77,
+    "state": "closed",
+    "merged": true,
+    "merged_at": "2026-10-29T15:35:05Z",
+    "title": "Verify complete unit rosters and gated targets",
+    "body": "Core's unit gate checks whether the execution output is internally complete, but it does not compare those names with the harness's independent discovery list. The feature selector also misses a binary when an optional dependency is enabled through `dependency/feature`.\n\nThis change compares each target's nonempty test roster with discovery before and after execution, including the existing release run for ignored tests. It also models Cargo's optional dependency feature selection, including renamed dependencies and weak feature references. It does not waive zero-test targets or any existing unit, functional/E2E, performance, documentation, Clippy or protected-branch gate.\n\nThe candidate qualification policy binds issue #76 to all existing required unit, functional/E2E and performance checks. This is a protected policy and driver change. It requires the separately reviewed adoption path; the candidate does not approve itself. Auto-merge and issue closure remain contingent on the exact-head full CI, independent review and provider checks. The shared asynchronous issue-close recovery remains unverified under AW #115.\n\nLocal validation: 126 isolated qualification and framework controls passed with no skips. A disposable Cargo fixture reproduced the optional-feature selection gap; a separate synthetic test harness verified debug, release and ignored-test discovery. No product tests ran locally. Full current-head cloud CI is required.\n\nCloses #76\n",
+    "merge_commit_sha": "4bc3fdb12a2e0846ed88d70c8a5d9c75696dfa44",
+    "merged_by": {
+      "id": 41898282,
+      "type": "Bot",
+      "login": "github-actions[bot]"
+    },
+    "head": {
+      "sha": "b9d52079b0cc151699f3f5672c5b9ccb4d6033e3",
+      "repo": {
+        "full_name": "faberline/core"
+      }
+    },
+    "base": {
+      "sha": "1540bbfc91fc4bbbf96091e0c56cedeca1a397ce",
+      "repo": {
+        "full_name": "faberline/core"
+      },
+      "ref": "main"
+    }
+  },
+  "issue": {
+    "number": 76,
+    "state": "closed",
+    "title": "CI: verify complete unit rosters and Cargo feature-gated targets",
+    "body": "## Goal\nCorrect the Core PR qualification framework so its unit roster evidence and feature-gated binary selection reflect the complete Cargo test targets.\n\n## Acceptance\n- Compare every nonempty unit target's executed test names with the libtest discovery roster from the same target and profile, both before and after execution. Missing, duplicate, changed, filtered, failed or empty rosters remain nonqualifying.\n- Preserve the existing ignored-test requirement: execute the complete release target including ignored tests, and verify its discovered and executed names. No ignored unit is accepted without execution.\n- Select a binary when a Cargo `dependency/feature` value enables its optional dependency and that dependency is a required feature of the binary. Respect weak `dependency?/feature`, `dep:` activation, renamed and non-optional dependency behavior.\n- Keep the complete existing unit, functional/E2E, performance, documentation, Clippy and strict protected-branch gates. Preserve exact head and base evidence, issue-specific qualification, independent final Claude review, and separate reviewed approval of protected policy changes.\n- Add isolated framework controls for matching and mismatched rosters, changing discovery, ignored and release tests, feature-gated targets, and ambiguous or missing evidence.\n\n## Never\nDo not change product tests, acceptance contracts, thresholds, other sessions' worktrees or schedules. Do not waive an empty test target or a missing check. Do not claim auto-close is verified without the separate hosted proof.\n\n## Gate\nRun `python3 -m unittest discover -s scripts/pr-gates/tests -q` with Python 3.11 or newer locally. Run the full existing required Core CI online at the exact candidate head and base. Complete independent Claude review and separately reviewed policy adoption before automatic merge. On failed CI or review, return this issue to todo.\n",
+    "updated_at": "2026-10-29T15:36:34Z",
+    "labels": [
+      {
+        "name": "priority:p1"
+      },
+      {
+        "name": "done"
+      }
+    ],
+    "assignees": []
+  },
+  "commit": {
+    "sha": "4bc3fdb12a2e0846ed88d70c8a5d9c75696dfa44",
+    "parents": [
+      {
+        "sha": "1540bbfc91fc4bbbf96091e0c56cedeca1a397ce"
+      }
+    ]
+  },
+  "compare": {
+    "status": "identical",
+    "base_commit": {
+      "sha": "4bc3fdb12a2e0846ed88d70c8a5d9c75696dfa44"
+    }
+  },
+  "checkpoint": {
+    "repo": "faberline/core",
+    "pr": 77,
+    "issue": 76,
+    "head": "b9d52079b0cc151699f3f5672c5b9ccb4d6033e3",
+    "base": "1540bbfc91fc4bbbf96091e0c56cedeca1a397ce",
+    "base_ref": "main",
+    "issue_sha256": "244810489fb2a63383c02471eb41c4921caf12a6f2d285cd6a9c925e79ce965f",
+    "pr_sha256": "6e0fc82bce552f3e86c9ac0cdbcef1082ca269c9dee8833a9c4fb5a8298aaf6a",
+    "issue_updated_at": "2026-10-29T14:26:19Z",
+    "labels": [
+      "doing",
+      "priority:p1"
+    ],
+    "assignees": []
+  }
+}
