@@ -57,6 +57,9 @@ class GuardedQueueTests(unittest.TestCase):
         self.assertEqual(self.calls.count(('block',1)),1)
         self.assertEqual(rows[1]['state'],'queued')
         self.assertNotIn(('settle',1),self.calls)
+        self.assertEqual(rows[2]['state'],'held_after_pending')
+        self.assertEqual(rows[2]['reason'],'guard_result_unknown')
+        self.assertNotIn(('settle',3),self.calls)
 
     def test_unknown_guard_release_holds_the_result(self):
         rows=self.execute({},settle_error=True)
@@ -76,6 +79,38 @@ class GuardedQueueTests(unittest.TestCase):
                              guarded=self.guard)
         self.assertEqual(rows[1]['reason'],'verification_or_provider_failed')
         self.assertNotIn(('settle',2),self.calls)
+
+    def test_never_reviewed_pr_releases_guard_on_two_consecutive_wakes(self):
+        pulls=[self.pulls[1]];statuses=[];writes=[];held=[]
+        old_api=self.api.api
+        def pages(path,key=None):
+            if '/pulls?' in path:return copy.deepcopy(pulls)
+            if '/statuses' in path:return copy.deepcopy(statuses)
+            return []
+        def api(path,method='GET',data=None):
+            if path==f'repos/o/r/statuses/{HEAD}' and method=='POST':
+                writes.append(copy.deepcopy(data))
+                item=dict(id=99,creator=dict(id=41898282,type='Bot',login='github-actions[bot]'),**data)
+                statuses.insert(0,item);return copy.deepcopy(item)
+            return old_api(path,method,data)
+        self.api.pages=pages;self.api.api=api
+        class Guard:
+            def begin(self,api,repo,document,evaluator,number,head,emit):
+                if held:raise RuntimeError('guard held')
+                held.append(number);return dict(policy={},intent={'pr':number})
+            def settle(self,api,repo,policy,intent):
+                if not statuses or statuses[0]['state']!='pending':raise RuntimeError('not blocked')
+                held.clear();return dict(state='released')
+        guard=Guard();provider=dict(state='OPEN',headRefOid=HEAD,autoMergeRequest=None)
+        with patch.object(m,'provider_pull',return_value=provider),patch.object(m,'withdraw_approval'):
+            for _ in range(2):
+                rows=m.reconcile(self.api,'o/r',self.api.load,EVALUATOR,lambda *args:{},self.api.verify,
+                                 guarded=guard)
+                self.assertEqual(rows[0]['reason'],'review_missing')
+                self.assertEqual(rows[0]['guard'],'released')
+                self.assertEqual(held,[])
+        self.assertEqual(len(writes),1)
+        self.assertEqual(statuses[0]['state'],'pending')
 
 
 class BlockUnadmittedTests(unittest.TestCase):

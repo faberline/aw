@@ -780,6 +780,12 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
             if row['state']=='held' and row.get('reason') not in safe_holds:
                 continue
             try:
+                if row['state']=='held' and row.get('reason') in safe_holds:
+                    # Even a never-reviewed PR may have a same-named check
+                    # run. Establish the Actions status before releasing an
+                    # otherwise unused guard; settle rechecks the status,
+                    # exact owner, linked issue, branch rule and request.
+                    block_unadmitted(api,repo,row['pr'],row['head'])
                 result=guarded.settle(api,repo,claim['policy'],claim['intent'])
                 if result.get('state') not in ('released','retained'):
                     row.update(state='held_after_pending',reason='guard_result_unknown')
