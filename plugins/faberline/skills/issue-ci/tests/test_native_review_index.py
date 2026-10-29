@@ -156,6 +156,33 @@ class NativeReviewIndexTests(unittest.TestCase):
         with self.assertRaises(RuntimeError): h.target_verify()
         self.assertEqual(h.writes, [])
 
+    def test_colliding_run_number_cannot_choose_a_review_by_page_order(self):
+        for reverse in (False,True):
+            h=History();other=h.add(1,run_id=300,conclusion='failure')
+            other['run_number']=h.review_run['run_number']
+            if reverse:h.history.reverse()
+            with self.subTest(reverse=reverse):
+                self.assertIn('_native_index_error',h.indexed()[1])
+                with self.assertRaises(RuntimeError):h.target_verify()
+                self.assertEqual(h.writes,[])
+
+    def test_conflicting_run_identity_holds_both_targets(self):
+        h=History();other=h.add(2,run_id=300)
+        other['run_number']=h.review_run['run_number']
+        rows=h.indexed()
+        self.assertIn('_native_index_error',rows[1])
+        self.assertIn('_native_index_error',rows[2])
+        only_one=m.attempts(h,'o/r',h.document(),h.history,{1:fixtures.HEAD})
+        self.assertIn('_native_index_error',only_one[1])
+        self.assertEqual(h.writes,[])
+
+    def test_unknown_title_with_conflicting_run_number_also_holds_target(self):
+        h=History();other=h.add(2,run_id=300)
+        other['display_title']=None
+        other['run_number']=h.review_run['run_number']
+        with self.assertRaises(RuntimeError):h.target_verify()
+        self.assertEqual(h.writes,[])
+
     def test_bad_known_target_record_does_not_poison_another_pr(self):
         h = History(); h.add(2)
         h.logs[301] = "unavailable target record"
