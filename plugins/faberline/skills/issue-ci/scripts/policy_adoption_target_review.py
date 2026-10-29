@@ -6,7 +6,7 @@ import hashlib
 import importlib.util
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import subprocess
 
@@ -26,6 +26,7 @@ COMMON_FRAMEWORK_FILES=(
     'native_merge.py','claude_review.py','handoff.py','qualification.py',
     'readiness.py','readiness_index.py','action.py','native_review_index.py','json_data.py',
 )
+SHARED_FRAMEWORK_DATA=('plugins/faberline/skills/issue-conformance/SKILL.md',)
 EVALUATOR_FRAMEWORK_FILES=(
     'policy_adoption.py','policy_adoption_target_review.py','policy_adoption_grant_review.py',
     'policy_adoption_review_outcome.py','policy_adoption_supply.json',
@@ -35,7 +36,43 @@ FRAMEWORK_SOURCES=tuple(
     for role,names in (('evaluator',COMMON_FRAMEWORK_FILES+EVALUATOR_FRAMEWORK_FILES),
                        ('candidate',COMMON_FRAMEWORK_FILES))
     for name in names
-)
+)+tuple((role,path) for role in ('evaluator','candidate') for path in SHARED_FRAMEWORK_DATA)
+
+
+def local_source_path(node,source,roots):
+    """Resolve only static paths rooted at the immutable source file."""
+    if isinstance(node,ast.Name):
+        return PurePosixPath(source) if node.id=='__file__' else roots.get(node.id)
+    if isinstance(node,ast.Call) and isinstance(node.func,ast.Name) and node.func.id=='Path' and len(node.args)==1:
+        return local_source_path(node.args[0],source,roots)
+    if isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute) and node.func.attr=='resolve' and not node.args:
+        return local_source_path(node.func.value,source,roots)
+    if (isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute)
+            and node.func.attr=='with_name' and len(node.args)==1
+            and isinstance(node.args[0],ast.Constant) and isinstance(node.args[0].value,str)):
+        value=local_source_path(node.func.value,source,roots)
+        name=node.args[0].value
+        need(a.valid_path(name) and '/' not in name,'target_framework_dependency_path')
+        return None if value is None else value.parent/name
+    if isinstance(node,ast.Attribute) and node.attr=='parent':
+        value=local_source_path(node.value,source,roots)
+        return None if value is None else value.parent
+    if (isinstance(node,ast.Subscript) and isinstance(node.value,ast.Attribute)
+            and node.value.attr=='parents' and isinstance(node.slice,ast.Constant)
+            and type(node.slice.value) is int and 0<=node.slice.value<16):
+        value=local_source_path(node.value.value,source,roots)
+        if value is None or node.slice.value>=len(value.parents):
+            return None
+        return value.parents[node.slice.value]
+    if (isinstance(node,ast.BinOp) and isinstance(node.op,ast.Div)
+            and isinstance(node.right,ast.Constant) and isinstance(node.right.value,str)):
+        value=local_source_path(node.left,source,roots)
+        if value is None:
+            return None
+        suffix=node.right.value
+        need(a.valid_path(suffix),'target_framework_dependency_path')
+        return value/suffix
+    return None
 
 
 def framework_dependency_closure(rows):
@@ -50,10 +87,28 @@ def framework_dependency_closure(rows):
                 tree=ast.parse(content,filename=path)
             except (SyntaxError,ValueError,TypeError):
                 raise RuntimeError('target_framework_source_parse') from None
+            roots={}
+            for statement in tree.body:
+                if isinstance(statement,ast.Assign):
+                    value=local_source_path(statement.value,path,roots)
+                    if value is not None:
+                        for target in statement.targets:
+                            if isinstance(target,ast.Name):
+                                roots[target.id]=value
             for node in ast.walk(tree):
-                if not isinstance(node,ast.Call) or not node.args:
+                if not isinstance(node,ast.Call):
                     continue
                 func=node.func
+                if isinstance(func,ast.Attribute) and func.attr in ('read_text','read_bytes'):
+                    dependency=local_source_path(func.value,path,roots)
+                    if dependency is not None:
+                        need(str(dependency) in selected,'target_framework_dependency_missing')
+                    else:
+                        names={n.id for n in ast.walk(func.value) if isinstance(n,ast.Name)}
+                        need(not names.intersection({'__file__',*roots}),
+                             'target_framework_dependency_unresolved')
+                if not node.args:
+                    continue
                 name=func.id if isinstance(func,ast.Name) else func.attr if isinstance(func,ast.Attribute) else None
                 arg=node.args[0]
                 if not isinstance(arg,ast.Constant) or not isinstance(arg.value,str):

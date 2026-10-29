@@ -241,9 +241,26 @@ class ReviewProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'target_framework_source_parse'):
             m.framework_dependency_closure([row('candidate','entry.py','not valid python ???')])
 
+    def test_framework_closure_detects_missing_relative_local_data(self):
+        for role in ('evaluator','candidate'):
+            source=m.FRAMEWORK_ROOT+'claude_review.py'
+            skill='plugins/faberline/skills/issue-conformance/SKILL.md'
+            code="ROOT=Path(__file__).resolve().parents[2]\nraw=(ROOT / 'issue-conformance/SKILL.md').read_bytes()"
+            rows=[dict(role=role,path=source,content=code),dict(role=role,path=skill,content='skill')]
+            m.framework_dependency_closure(rows)
+            with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+                m.framework_dependency_closure(rows[:1])
+            rows[0]['content']="raw=(Path(__file__).resolve().parents[2] / 'issue-conformance/SKILL.md').read_bytes()"
+            m.framework_dependency_closure(rows)
+            with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+                m.framework_dependency_closure(rows[:1])
+            rows[0]['content']="raw=Path(__file__).joinpath(dynamic).read_bytes()"
+            with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_unresolved'):
+                m.framework_dependency_closure(rows)
+
     def test_framework_roster_covers_current_entrypoint_dependency_closure(self):
-        root=Path(m.__file__).parent
-        rows=[dict(role=role,path=path,content=(root/Path(path).name).read_text())
+        root=Path(m.__file__).resolve().parents[5]
+        rows=[dict(role=role,path=path,content=(root/path).read_text())
               for role,path in m.FRAMEWORK_SOURCES]
         m.framework_dependency_closure(rows)
 
