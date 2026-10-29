@@ -44,6 +44,17 @@ def fixture(decision='fail'):
 
 
 class OutcomeTests(unittest.TestCase):
+    def test_unresolved_planning_question_returns_issue_to_todo(self):
+        p,run,receipt,env,blob=fixture('block')
+        receipt['uncertainties']=[]
+        receipt['requirements']=[dict(id='planning-question-'+('a'*64),status='uncertain',evidence='Missing authoritative source')]
+        log=lambda *args:o.a.MARKER+json.dumps(receipt)+'\n'
+        with patch.dict(os.environ,env,clear=True),patch.object(o.a.review,'blob',side_effect=blob):
+            result=o.apply(p,'o/r',1,HEAD,adoption.EVALUATOR,333,log)
+        self.assertEqual(result['state'],'returned_todo')
+        self.assertEqual({x['name'] for x in p.issue['labels']},{'todo','bug'})
+        self.assertEqual([w[0] for w in p.writes],['failure'])
+
     def test_authenticated_fail_or_block_returns_only_issue_to_todo(self):
         for decision in ('fail','block'):
             p,run,receipt,env,blob=fixture(decision);log=lambda *args:o.a.MARKER+json.dumps(receipt)+'\n'

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Review protected policy changes as GitHub source data; no candidate checkout."""
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -152,53 +153,77 @@ def produce(api,repo,number,head,token,invoke=model.invoke_schema):
                  uncertainties=['Independent review did not produce a complete valid decision.'])
     stage='planning'
     try:
-        plan=invoke(initial,token,SYSTEM+'\nPlan every issue requirement and request necessary supporting paths. A source request or missing initial context is not a contract uncertainty. Report only material ambiguity that source cannot resolve. Do not make a verdict.',plan_schema,max_packet=4*1024*1024)
+        available=sorted({entry['path'] for tree in trees.values() for entry in tree
+            if isinstance(entry,dict) and entry.get('type')=='blob'
+            and entry.get('mode') in ('100644','100755') and type(entry.get('size')) is int
+            and 0<=entry['size']<=262144 and a.valid_path(entry.get('path'))})
+        plan_packet=dict(initial,available_source_paths=available)
+        plan=invoke(plan_packet,token,SYSTEM+'\nPlan every issue requirement and request necessary supporting paths. Choose only exact names from available_source_paths. A source request or missing initial context is not a contract uncertainty. Report only material ambiguity that source cannot resolve. Do not make a verdict.',plan_schema,max_packet=4*1024*1024)
         need(a.review.exact(plan,'requirements uncertainties') and isinstance(plan['requirements'],list)
-             and plan['requirements'] and plan['uncertainties']==[], 'target_plan_uncertain')
+             and plan['requirements'] and isinstance(plan['uncertainties'],list)
+             and len(plan['uncertainties'])<=16
+             and all(a.review.text(x,4000) for x in plan['uncertainties'])
+             and len(set(plan['uncertainties']))==len(plan['uncertainties']), 'target_plan_invalid')
         ids=[];paths=[]
         for item in plan['requirements']:
             need(a.review.exact(item,'id requirement issue_quote supporting_paths') and a.review.text(item['id'],200)
                  and a.review.text(item['requirement'],4000) and item['issue_quote'] in lines
                  and isinstance(item['supporting_paths'],list), 'target_plan_invalid')
             ids.append(item['id']);paths.extend(item['supporting_paths'])
-        need(len(set(ids))==len(ids), 'target_plan_duplicate')
+        need(len(set(ids))==len(ids) and all(not name.startswith('planning-question-') for name in ids),
+             'target_plan_duplicate')
+        questions=[dict(id='planning-question-'+hashlib.sha256(value.encode('utf-8')).hexdigest(),question=value)
+                   for value in plan['uncertainties']]
+        question_ids=[item['id'] for item in questions]
+        need(len(set(question_ids))==len(question_ids), 'target_plan_duplicate')
         stage='supporting_source'
         supporting=supporting_sources(api,initial,trees,sorted(set(paths)))
         stage='recheck'
         fresh,_=preflight(api,repo,number,head)
         need(fresh==initial, 'target_changed_during_planning')
-        packet=dict(initial,requirement_plan=plan,supporting_sources=supporting)
+        packet=dict(initial,requirement_plan=plan,planning_questions=questions,supporting_sources=supporting)
         result_schema=obj({'decision':{'type':'string','enum':['pass','fail','block']},'summary':STR,
             'reviewed_files':{'type':'array','items':{'type':'string','enum':names},'uniqueItems':True,
                               'minItems':len(names),'maxItems':len(names)},
             'requirements':{'type':'array','items':obj({'id':{'type':'string','enum':ids},
                 'status':{'type':'string','enum':['met','missing','uncertain']},'evidence':STR})},
+            'planning_questions':{'type':'array','minItems':len(question_ids),'maxItems':len(question_ids),
+                'items':obj({'id':{'type':'string','enum':question_ids or ['no-question']},
+                             'status':{'type':'string','enum':['resolved','unresolved']},'evidence':STR})},
             'findings':STRINGS,'uncertainties':STRINGS})
         stage='final_review'
-        result=invoke(packet,token,SYSTEM+'\nCompare the full issue and all changed files to the plan. Report any omitted requirement or uncertainty.',result_schema,max_packet=4*1024*1024)
-        need(a.review.exact(result,'decision summary reviewed_files requirements findings uncertainties')
+        result=invoke(packet,token,SYSTEM+'\nCompare the full issue and all changed files to the plan. Account for every planning question exactly once. Mark a question resolved only when specific supplied evidence resolves it; otherwise mark it unresolved and block. Report any omitted requirement or uncertainty.',result_schema,max_packet=4*1024*1024)
+        need(a.review.exact(result,'decision summary reviewed_files requirements planning_questions findings uncertainties')
              and result['decision'] in ('pass','fail','block') and a.review.text(result['summary'],4000)
              and isinstance(result['findings'],list) and isinstance(result['uncertainties'],list)
              and all(a.review.text(x,4000) for x in result['findings']+result['uncertainties']), 'target_review_invalid')
-        reviewed=result['reviewed_files'];requirements=result['requirements']
+        reviewed=result['reviewed_files'];requirements=result['requirements'];resolved=result['planning_questions']
         need(isinstance(reviewed,list) and len(reviewed)==len(names) and sorted(reviewed)==sorted(names)
              and isinstance(requirements,list) and len(requirements)==len(ids)
              and all(a.review.exact(x,'id status evidence') and x['status'] in ('met','missing','uncertain')
                      and a.review.text(x['evidence'],4000) for x in requirements)
              and {x['id'] for x in requirements}==set(ids), 'target_review_incomplete')
+        need(isinstance(resolved,list) and len(resolved)==len(question_ids)
+             and all(a.review.exact(x,'id status evidence') and x['status'] in ('resolved','unresolved')
+                     and a.review.text(x['evidence'],4000) for x in resolved)
+             and {x['id'] for x in resolved}==set(question_ids), 'target_question_incomplete')
         if result['decision']=='pass':
             need(result['findings']==[] and result['uncertainties']==[]
-                 and all(x['status']=='met' for x in requirements), 'target_review_false_pass')
+                 and all(x['status']=='met' for x in requirements)
+                 and all(x['status']=='resolved' for x in resolved), 'target_review_false_pass')
         else:
             need(result['findings'] or result['uncertainties']
-                 or any(x['status']!='met' for x in requirements), 'target_review_negative_without_reason')
+                 or any(x['status']!='met' for x in requirements)
+                 or any(x['status']=='unresolved' for x in resolved), 'target_review_negative_without_reason')
         outcome={k:result[k] for k in ('decision','reviewed_files','requirements','findings','uncertainties')}
+        outcome['requirements']=requirements+[dict(id=x['id'],status='met' if x['status']=='resolved' else 'uncertain',
+                                                   evidence=x['evidence']) for x in resolved]
     except (RuntimeError,KeyError,TypeError,ValueError,OSError,subprocess.SubprocessError) as error:
         # Never expose exception text, source bytes, model prose or credentials.
         # Known fixed refusal codes make a block actionable without weakening it.
         allowed={'target_plan_uncertain','target_plan_invalid','target_plan_duplicate',
                  'target_supporting_paths','target_supporting_source_missing','target_supporting_truncated',
-                 'target_changed_during_planning','target_review_invalid','target_review_incomplete',
+                 'target_changed_during_planning','target_review_invalid','target_review_incomplete','target_question_incomplete',
                  'target_review_false_pass','target_review_negative_without_reason',
                  'grant_review_oauth_missing','grant_review_cli_identity','grant_review_packet_limit',
                  'review_schema_limit','grant_review_execution_failed','managed_cli_configuration_unknown',
