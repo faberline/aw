@@ -274,6 +274,10 @@ class ObservationTests(unittest.TestCase):
             with self.subTest(key=key),self.assertRaises(m.review.Refused):
                 m.source_started_at(API(),item)
             run[key]=original
+        run['conclusion']='failure'
+        self.assertEqual(m.source_started_at(API(),item,require_success=False),'2026-10-29T00:00:00Z')
+        run['conclusion']='neutral'
+        with self.assertRaises(m.review.Refused):m.source_started_at(API(),item,require_success=False)
 
     def test_other_open_linked_pr_or_unknown_pagination_refuses(self):
         class Graph:

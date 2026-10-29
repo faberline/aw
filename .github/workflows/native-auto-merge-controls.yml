@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - ".github/actions/native-auto-merge/**"
+      - ".github/actions/verified-issue-recovery/**"
       - ".github/actions/policy-adoption/**"
       - ".github/actions/policy-adoption-target-review/**"
       - ".github/actions/policy-adoption-grant-review/**"
@@ -15,6 +16,7 @@ on:
     branches: [codex/claude-native-automerge]
     paths:
       - ".github/actions/native-auto-merge/**"
+      - ".github/actions/verified-issue-recovery/**"
       - ".github/actions/policy-adoption/**"
       - ".github/actions/policy-adoption-target-review/**"
       - ".github/actions/policy-adoption-grant-review/**"

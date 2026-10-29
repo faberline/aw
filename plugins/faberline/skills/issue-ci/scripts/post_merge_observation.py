@@ -246,9 +246,9 @@ def ownership_history(events, started_at):
     return True
 
 
-def source_started_at(api, evidence):
+def source_started_at(api, evidence, require_success=True):
     """Read the exact completed producer attempt's provider timestamp."""
-    need(review.exact(evidence, 'payload sha256') and isinstance(evidence['payload'], dict),
+    need(type(require_success) is bool and review.exact(evidence, 'payload sha256') and isinstance(evidence['payload'], dict),
          'close_source_time_unknown')
     p = evidence['payload']
     need(isinstance(p.get('checkpoint'), dict) and review.integer(p.get('source_run'))
@@ -257,7 +257,9 @@ def source_started_at(api, evidence):
     repo = checkpoint_shape(p['checkpoint'])['repo']
     run = api.api(f"repos/{repo}/actions/runs/{p['source_run']}/attempts/{p['source_attempt']}")
     need(run.get('id') == p['source_run'] and run.get('run_attempt') == p['source_attempt']
-         and run.get('status') == 'completed' and run.get('conclusion') == 'success'
+         and run.get('status') == 'completed'
+         and (run.get('conclusion') == 'success' if require_success else
+              run.get('conclusion') in ('success', 'failure', 'cancelled', 'timed_out'))
          and run.get('head_sha') == p['source_commit']
          and run.get('repository', {}).get('full_name') == repo
          and run.get('head_repository', {}).get('full_name') == repo,

@@ -1,0 +1,52 @@
+"""The unwired recovery coordinator reauthenticates each candidate."""
+import importlib.util
+from pathlib import Path
+import unittest
+from unittest.mock import patch
+
+SCRIPT=Path(__file__).resolve().parents[1]/'scripts/recovery_runner.py'
+spec=importlib.util.spec_from_file_location('recovery_runner_draft',SCRIPT)
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+
+
+class RunnerTests(unittest.TestCase):
+    def test_refuses_missing_guard_policy_before_scan(self):
+        with patch.object(m.worker,'read_policy',return_value=None),patch.object(m.scan,'scan') as scan:
+            with self.assertRaisesRegex(RuntimeError,'merge_guard_policy_missing'):
+                m.reconcile(None,'o/r',None)
+        scan.assert_not_called()
+
+    def test_candidates_are_reauthenticated_and_one_failure_does_not_stop_others(self):
+        candidates=[dict(issue=1,state='worker_held'),
+                    dict(issue=2,pr=7,head='a'*40,run=21,attempt=1,state='guard_required'),
+                    dict(issue=3,pr=8,head='b'*40,run=22,attempt=2,state='observed_closed')]
+        calls=[]
+        def source(api,repo,run,attempt):
+            calls.append(('source',run,attempt));return dict(source_commit='c'*40),'d'*40
+        def reconcile(api,repo,document,policy,evaluator,run,attempt,pr,head,reader):
+            calls.append(('close',run,attempt,pr,head))
+            if run==21:raise RuntimeError('merge_guard_not_owner')
+            return dict(state='closed',issue=3,merge='e'*40)
+        with patch.object(m.worker,'read_policy',return_value={'current':True}), \
+             patch.object(m.scan,'scan',return_value=candidates), \
+             patch.object(m.scan,'historical_document',side_effect=source), \
+             patch.object(m.close,'reconcile_native',side_effect=reconcile):
+            result=m.reconcile(None,'o/r',lambda r,j:'')
+        self.assertEqual([x['state'] for x in result],['worker_held','held','closed'])
+        self.assertEqual(result[1]['reason'],'merge_guard_not_owner')
+        self.assertEqual(calls,[('source',21,1),('close',21,1,7,'a'*40),
+                                ('source',22,2),('close',22,2,8,'b'*40)])
+
+    def test_prepared_observation_cannot_bypass_successful_checkpoint(self):
+        candidate=dict(issue=7,pr=9,head='a'*40,run=123,attempt=2,
+                       state='guard_required',status='observed_success',close_authorized=False)
+        with patch.object(m.worker,'read_policy',return_value={'current':True}), \
+             patch.object(m.scan,'scan',return_value=[candidate]), \
+             patch.object(m.scan,'historical_document',return_value=({'source_commit':'c'*40},'d'*40)), \
+             patch.object(m.close,'reconcile_native',side_effect=RuntimeError('merge_guard_source_not_success')):
+            result=m.reconcile(None,'o/r',lambda r,j:'')
+        self.assertEqual(result[0]['state'],'held')
+        self.assertEqual(result[0]['reason'],'merge_guard_source_not_success')
+
+
+if __name__=='__main__':unittest.main()

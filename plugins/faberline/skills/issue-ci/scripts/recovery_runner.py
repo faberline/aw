@@ -1,0 +1,42 @@
+"""Draft native recovery coordinator; no workflow or schedule calls this yet.
+
+This requires a fully deployed shared guard that every active worker and
+writer obeys. The current repository does not yet establish that condition.
+It must not be enabled until the adoption and crash-recovery gaps are closed.
+"""
+import importlib.util
+from pathlib import Path
+import re
+
+
+def sibling(name):
+    spec=importlib.util.spec_from_file_location('aw_recovery_runner_'+name,Path(__file__).with_name(name+'.py'))
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+
+
+scan=sibling('recovery_scan')
+close=sibling('guarded_close')
+worker=close.worker
+need=close.need
+
+
+def reconcile(api,repo,log_reader):
+    """Reauthenticate each eligible candidate; one hold never hides another."""
+    policy=worker.read_policy(api,repo)
+    need(policy is not None,'merge_guard_policy_missing')
+    candidates=scan.scan(api,repo,policy,log_reader);results=[]
+    for candidate in candidates:
+        if candidate['state'] not in ('guard_required','observed_closed'):
+            results.append(candidate);continue
+        row=dict(issue=candidate['issue'],pr=candidate['pr'],head=candidate['head'],state='held')
+        try:
+            run,attempt=candidate['run'],candidate['attempt']
+            document,evaluator=scan.historical_document(api,repo,run,attempt)
+            result=close.reconcile_native(api,repo,document,policy,evaluator,run,attempt,
+                                          candidate['pr'],candidate['head'],log_reader)
+            row.update(result)
+        except Exception as error:
+            reason=str(error)
+            row['reason']=reason if re.fullmatch(r'[a-z0-9_]+',reason) else 'recovery_evidence_unknown'
+        results.append(row)
+    return results

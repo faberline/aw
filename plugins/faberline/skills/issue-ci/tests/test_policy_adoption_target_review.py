@@ -294,6 +294,32 @@ class ReviewProtocolTests(unittest.TestCase):
         paths={row['path'] for row in rows if row['role']=='candidate'}
         self.assertTrue(all(m.FRAMEWORK_ROOT+name in paths for name in m.EVALUATOR_FRAMEWORK_FILES))
 
+    def test_recovery_policy_roster_covers_worker_and_recovery_sources(self):
+        root=Path(m.__file__).resolve().parents[5]
+        rows=[dict(role=role,path=path,content=(root/path).read_text()) for role,path in m.FRAMEWORK_SOURCES]
+        observer=m.FRAMEWORK_ROOT+'post_merge_observation.py'
+        rows += [dict(role='evaluator',path=observer,content=(root/observer).read_text())]
+        existing={(r['role'],r['path']) for r in rows}
+        extra=[m.FRAMEWORK_ROOT+name for name in m.EVALUATOR_FRAMEWORK_FILES]+list(m.RECOVERY_CANDIDATE_SOURCES)
+        for path in extra:
+            if ('candidate',path) not in existing:
+                rows.append(dict(role='candidate',path=path,content=(root/path).read_text()))
+                existing.add(('candidate',path))
+        m.framework_dependency_closure(rows)
+        for omitted in ('plugins/faberline/skills/issue-work/scripts/worker_guard.py',
+                        m.FRAMEWORK_ROOT+'guard_ledger.py',
+                        'plugins/faberline/skills/issue-loop/scripts/milestone_queue.py'):
+            with self.subTest(omitted=omitted),self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+                m.framework_dependency_closure([r for r in rows if not (r['role']=='candidate' and r['path']==omitted)])
+
+    def test_recovery_sources_are_requested_at_candidate_revision_only(self):
+        candidate,evaluator='c'*40,'e'*40
+        with patch.object(m.a.review,'blob',return_value='pass'):
+            rows=m.framework_sources(None,candidate,evaluator,include_recovery=True)
+        selected={(r['role'],r['path'],r['ref']) for r in rows}
+        self.assertTrue(all(('candidate',path,candidate) in selected for path in m.RECOVERY_CANDIDATE_SOURCES))
+        self.assertFalse(any(role=='evaluator' and path.endswith('/recovery_entry.py') for role,path,ref in selected))
+
 
 class PreflightTests(unittest.TestCase):
     def fixture(self):

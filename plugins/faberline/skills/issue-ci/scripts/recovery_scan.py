@@ -33,7 +33,7 @@ def inspect_prepared(api,repo,document,current_policy,evaluator,run,attempt,inte
     closer.guard_identity(api,repo,current_policy,intent)
     statuses=api.pages(f'repos/{repo}/commits/{head}/statuses')
     status=prepared.observe(value,statuses)
-    started=observer.source_started_at(api,evidence)
+    started=observer.source_started_at(api,evidence,require_success=False)
     result=observer.recovery_plan(api,checkpoint,started)
     closer.guard_identity(api,repo,current_policy,intent)
     return dict(state=result['state'],status=status['state'],close_authorized=False)
@@ -80,14 +80,15 @@ def scan(api,repo,current_policy,log_reader):
                 if str(error) not in ('merge_guard_source_not_success','merge_close_record_missing_or_duplicate'):
                     raise
                 planned=inspect_prepared(api,repo,document,current_policy,evaluator,run,attempt,intent,log_reader)
-                row.update(state=planned['state'],status=planned['status'],pr=pr,head=item['head'],close_authorized=False)
+                row.update(state=planned['state'],status=planned['status'],pr=pr,head=item['head'],
+                           run=run,attempt=attempt,close_authorized=False)
                 results.append(row)
                 continue
             need(evidence['payload']['source_attempt']==attempt
                  and evidence['payload']['checkpoint']['issue']==item['issue'], 'recovery_checkpoint_mismatch')
             started=observer.source_started_at(api,evidence)
             observed=observer.recovery_plan(api,evidence['payload']['checkpoint'],started)
-            row.update(state=observed['state'],pr=pr,head=item['head'],close_authorized=False)
+            row.update(state=observed['state'],pr=pr,head=item['head'],run=run,attempt=attempt,close_authorized=False)
         except Exception as error:
             reason=str(error)
             if not re.fullmatch(r'[a-z0-9_]+',reason):reason='recovery_evidence_unknown'

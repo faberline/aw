@@ -112,6 +112,13 @@ recovery wake or an issue write. It does not establish a shared ownership lock.
 Do not claim automatic issue closure until those parts and a real hosted merge
 are verified.
 
+The recovery entry and workflow template are drafts. The entry always holds.
+It cannot yet verify that every active worker and writer uses the guard. The
+template does not create a schedule. A recovery policy must bind
+the exact workflow and action, and its review must include the recovery and
+worker sources. Do not deploy the template while the writer, crash recovery,
+or actor-adoption checks remain incomplete.
+
 The draft writer requires the `aw-verified-merge-reconcile` repository-dispatch
 trigger. A passing PR-target wake asks for a default-branch wake. The latter
 rechecks every candidate before it can publish success. The dispatch payload is

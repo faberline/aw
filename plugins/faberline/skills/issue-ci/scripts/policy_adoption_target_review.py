@@ -27,6 +27,16 @@ COMMON_FRAMEWORK_FILES=(
     'readiness.py','readiness_index.py','action.py','native_review_index.py','json_data.py',
 )
 SHARED_FRAMEWORK_DATA=('plugins/faberline/skills/issue-conformance/SKILL.md',)
+RECOVERY_CANDIDATE_SOURCES=(
+    '.github/actions/verified-issue-recovery/action.yml',
+    *(FRAMEWORK_ROOT+name for name in (
+        'recovery_entry.py','recovery_runner.py','recovery_scan.py','guarded_close.py','merge_guard.py',
+        'prepared_status.py','guard_discovery.py','guard_github.py','guard_ledger.py','post_merge_observation.py',
+        'readiness-requirements.txt')),
+    *(f'plugins/faberline/skills/issue-work/scripts/{name}' for name in (
+        'work.py','worker_guard.py','worktree_state.py','index_safety.py','main_filter_safety.py')),
+    'plugins/faberline/skills/issue-loop/scripts/milestone_queue.py',
+)
 EVALUATOR_FRAMEWORK_FILES=(
     'policy_adoption.py','policy_adoption_target_review.py','policy_adoption_grant_review.py',
     'policy_adoption_review_outcome.py','policy_adoption_supply.json',
@@ -99,6 +109,11 @@ def framework_dependency_closure(rows):
                 if not isinstance(node,ast.Call):
                     continue
                 func=node.func
+                if (isinstance(func,ast.Attribute) and func.attr=='spec_from_file_location'
+                        and len(node.args)>=2):
+                    dependency=local_source_path(node.args[1],path,roots)
+                    if dependency is not None:
+                        need(str(dependency) in selected,'target_framework_dependency_missing')
                 if isinstance(func,ast.Attribute) and func.attr in ('read_text','read_bytes'):
                     dependency=local_source_path(func.value,path,roots)
                     if dependency is not None:
@@ -116,15 +131,18 @@ def framework_dependency_closure(rows):
                 if name in ('sibling','ci_module'):
                     dependency=arg.value+'.py'
                 elif name=='with_name' and arg.value.endswith(('.py','.json')):
-                    dependency=arg.value
+                    resolved=local_source_path(node,path,roots)
+                    need(resolved is not None and str(resolved) in selected,'target_framework_dependency_missing')
+                    continue
                 else:
                     continue
                 need(FRAMEWORK_ROOT+dependency in selected,'target_framework_dependency_missing')
 
 
-def framework_sources(api,candidate_ref,evaluator_ref):
+def framework_sources(api,candidate_ref,evaluator_ref,include_recovery=False):
     """Read fixed, immutable shared framework source as data, never execute it."""
-    need(a.review.sha(candidate_ref) and a.review.sha(evaluator_ref),'target_framework_identity')
+    need(a.review.sha(candidate_ref) and a.review.sha(evaluator_ref)
+         and type(include_recovery) is bool,'target_framework_identity')
     refs={'candidate':candidate_ref,'evaluator':evaluator_ref};result=[]
     for role,path in FRAMEWORK_SOURCES:
         ref=refs[role]
@@ -167,6 +185,14 @@ def framework_sources(api,candidate_ref,evaluator_ref):
                     raw=content.encode('utf-8')
                     blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
                     result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
+    if include_recovery:
+        for path in RECOVERY_CANDIDATE_SOURCES:
+            if any(row['role']=='candidate' and row['path']==path for row in result):
+                continue
+            content=a.review.blob(api,a.GRANTS_REPO,path,candidate_ref)
+            raw=content.encode('utf-8')
+            blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+            result.append(dict(role='candidate',repo=a.GRANTS_REPO,ref=candidate_ref,path=path,blob=blob,content=content))
     framework_dependency_closure(result)
     return result
 
@@ -241,7 +267,8 @@ def preflight(api,repo,number,head):
     need(provider_policy==expected_provider, 'target_provider_evidence')
     provider=a.native.provider_pull(api,repo,number);a.native.binding(provider,context)
     trees,contents=source_files(api,repo,pull,inventory)
-    shared=framework_sources(api,candidate['aw_revision'],os.environ.get('AW_ACTION_REF',''))
+    shared=framework_sources(api,candidate['aw_revision'],os.environ.get('AW_ACTION_REF',''),
+                             include_recovery='issue_recovery' in candidate)
     packet=dict(context=context,pr_title=pull.get('title'),pr_body=pull.get('body'),
                 issue={k:issue[k] for k in ('number','title','body')},inventory=inventory,
                 files=contents,ci=ci,ci_jobs=rows,proposed_policy=candidate,

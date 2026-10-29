@@ -89,7 +89,8 @@ class RecoveryScanTests(unittest.TestCase):
              patch.object(m.closer,'authenticate_checkpoint',side_effect=RuntimeError('merge_guard_source_not_success')), \
              patch.object(m,'inspect_prepared',return_value=dict(state='guard_required',status='observed_success',close_authorized=False)):
             result=m.scan(None,'o/r',{},lambda r,j:'')
-        self.assertEqual(result,[dict(issue=7,state='guard_required',status='observed_success',pr=9,head='d'*40,close_authorized=False)])
+        self.assertEqual(result,[dict(issue=7,state='guard_required',status='observed_success',pr=9,head='d'*40,
+                                      run=123,attempt=2,close_authorized=False)])
 
 
 if __name__=='__main__':unittest.main()

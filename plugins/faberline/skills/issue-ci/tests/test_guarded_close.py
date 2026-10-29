@@ -47,6 +47,7 @@ class GuardedCloseTests(unittest.TestCase):
         def observe(api,checkpoint):return dict(state='observed_closed' if self.status=='closed' else 'observed_merged',merge='f'*40)
         with patch.object(close.merge_guard,'authenticate_native_intent',return_value=self.intent), \
              patch.object(close,'authenticate_checkpoint',return_value=self.evidence), \
+             patch.object(close.worker,'read_policy',return_value=self.policy), \
              patch.object(close.observation,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
              patch.object(close.observation,'recovery_plan',side_effect=plan), \
              patch.object(close.observation,'observe',side_effect=observe):
@@ -101,9 +102,21 @@ class GuardedCloseTests(unittest.TestCase):
             return dict(state='guard_required')
         with patch.object(close.merge_guard,'authenticate_native_intent',return_value=self.intent), \
              patch.object(close,'authenticate_checkpoint',return_value=self.evidence), \
+             patch.object(close.worker,'read_policy',return_value=self.policy), \
              patch.object(close.observation,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
              patch.object(close.observation,'recovery_plan',side_effect=changed):
             with self.assertRaisesRegex(RuntimeError,'close_issue_ownership_changed'):
+                close.reconcile_native(self.api,'o/r',self.document,self.policy,'e'*40,123,2,9,'d'*40,lambda r,j:'')
+        self.assertEqual(self.patch_count,0)
+        self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
+
+    def test_changed_policy_refuses_before_close_and_preserves_guard(self):
+        with patch.object(close.merge_guard,'authenticate_native_intent',return_value=self.intent), \
+             patch.object(close,'authenticate_checkpoint',return_value=self.evidence), \
+             patch.object(close.worker,'read_policy',return_value=None), \
+             patch.object(close.observation,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
+             patch.object(close.observation,'recovery_plan',return_value=dict(state='guard_required')):
+            with self.assertRaisesRegex(RuntimeError,'merge_guard_policy_changed'):
                 close.reconcile_native(self.api,'o/r',self.document,self.policy,'e'*40,123,2,9,'d'*40,lambda r,j:'')
         self.assertEqual(self.patch_count,0)
         self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))

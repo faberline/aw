@@ -65,6 +65,12 @@ def release(api,repo,policy,intent):
     need(str(p['issue']) not in result['state']['locks'],'merge_guard_release_unknown')
 
 
+def require_current_policy(api,repo,expected):
+    """Refuse a source or settings change before any guarded write."""
+    current=worker.read_policy(api,repo)
+    need(current==expected,'merge_guard_policy_changed')
+
+
 def reconcile_native(api,repo,document,current_policy,evaluator,run,attempt,pr,head,log_reader):
     """Authenticate source and guard, then close only a verified merged issue.
 
@@ -90,11 +96,13 @@ def reconcile_native(api,repo,document,current_policy,evaluator,run,attempt,pr,h
     if planned['state'] in ('waiting','not_merged'):
         return dict(state=planned['state'],issue=p['issue'])
     if planned['state']=='guard_required':
+        require_current_policy(api,repo,current_policy)
         guard_identity(api,repo,current_policy,intent)
         # Re-run all mutable issue and ownership checks after obtaining the
         # guard, then immediately confirm it still belongs to this intent.
         again=observation.recovery_plan(api,checkpoint,started)
         need(again['state']=='guard_required','merge_close_state_changed')
+        require_current_policy(api,repo,current_policy)
         guard_identity(api,repo,current_policy,intent)
         result=api.api(f"repos/{repo}/issues/{p['issue']}",method='PATCH',
                        data=dict(state='closed',state_reason='completed'))
@@ -104,5 +112,6 @@ def reconcile_native(api,repo,document,current_policy,evaluator,run,attempt,pr,h
         need(planned['state']=='observed_closed','merge_close_state_changed')
     final=observation.observe(api,checkpoint)
     need(final['state']=='observed_closed','merge_close_result_unknown')
+    require_current_policy(api,repo,current_policy)
     release(api,repo,current_policy,intent)
     return dict(state='closed',issue=p['issue'],merge=final['merge'])
