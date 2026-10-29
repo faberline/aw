@@ -188,5 +188,28 @@ class AdmissionTests(unittest.TestCase):
                 withdraw.assert_not_called()
                 self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
 
+    def assert_queued_request_held(self, statuses):
+        intent=self.begin();self.api.pages=lambda path:statuses() if callable(statuses) else statuses
+        request=dict(enabledBy=dict(login='github-actions',__typename='Bot'))
+        with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
+             patch.object(m.native,'provider_pull',return_value=self.provider(request=request)), \
+             patch.object(m.native,'withdraw_approval') as withdraw:
+            self.assertEqual(m.cancel_blocked(self.api,'o/r',self.policy,intent)['state'],'retained')
+        withdraw.assert_not_called()
+        self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
+
+    def test_pending_status_does_not_prove_request_owner(self):
+        self.assert_queued_request_held([status(1,'pending')])
+
+    def test_success_status_does_not_prove_request_owner(self):
+        self.assert_queued_request_held([status(1,'success')])
+
+    def test_missing_status_does_not_prove_request_owner(self):
+        self.assert_queued_request_held([])
+
+    def test_status_service_unavailable_does_not_authorize_cancellation(self):
+        def unavailable():raise RuntimeError('status_unavailable')
+        self.assert_queued_request_held(unavailable)
+
 
 if __name__=='__main__':unittest.main()
