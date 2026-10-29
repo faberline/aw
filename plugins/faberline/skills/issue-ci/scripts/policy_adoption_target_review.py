@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 
 
 def sibling(name):
@@ -174,7 +175,7 @@ def produce(api,repo,number,head,token,invoke=model.invoke_schema):
             need(result['findings'] or result['uncertainties']
                  or any(x['status']!='met' for x in requirements), 'target_review_negative_without_reason')
         outcome={k:result[k] for k in ('decision','reviewed_files','requirements','findings','uncertainties')}
-    except (RuntimeError,KeyError,TypeError,ValueError,OSError):
+    except (RuntimeError,KeyError,TypeError,ValueError,OSError,subprocess.SubprocessError):
         # A model error or incomplete decision is an authenticated block, not a
         # pass. Revalidate the target before exposing any lifecycle outcome.
         pass

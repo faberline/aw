@@ -316,6 +316,60 @@ def evaluate(api, grant, log_reader):
 GRANT_MARKER = 'AW_POLICY_ADOPTION_GRANT_REVIEW_V1 '
 
 
+def grant_review_workflow(api,grant,att,evaluator,source_commit,grant_head,expected_blob=None):
+    # This review workflow cannot execute candidate data or add arbitrary steps.
+    raw=review.blob(api,grant['repo'],att['workflow_path'],source_commit,expected_blob)
+    r.literal_uses(raw)
+    import yaml
+    workflow=yaml.load(raw,Loader=yaml.BaseLoader)
+    need(set(workflow)=={'name','on','permissions','jobs'} and workflow['name']=='Reviewed policy grant'
+         and workflow['on']=={'push':{'branches':[att['branch']],'paths':[att['workflow_path']]}}
+         and workflow['permissions']=={} and set(workflow['jobs'])=={att['job']}, 'grant_review_workflow')
+    job=workflow['jobs'][att['job']]
+    need(job=={'runs-on':'ubuntu-latest','timeout-minutes':'70',
+               'permissions':{'actions':'read','contents':'read','pull-requests':'read','issues':'read'},
+               'steps':[{'uses':'faberline/aw/.github/actions/policy-adoption-grant-review@'+evaluator,
+                         'with':{'grant-pr':str(att['pr']),'grant-head':grant_head,
+                                 'claude-token':'${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}}]},
+         'grant_review_workflow')
+
+
+def verify_final_grant_review(api,grant,att,evaluator,pr,final_blob,prior,log_reader):
+    # The final receipt is external to the grant, avoiding a self-hash cycle.
+    # Choose the newest run of the same trusted workflow that targets the final
+    # PR head. A newer failure cannot be hidden by an older passing run.
+    head=pr.get('head',{}).get('sha')
+    need(review.sha(head) and review.sha(final_blob), 'final_grant_identity')
+    path=f"repos/{grant['repo']}/actions/workflows/{att['workflow_id']}/runs?branch={quote(att['branch'],safe='')}&event=push"
+    runs=api.pages(path,'workflow_runs')
+    need(len(runs)<=500 and all(review.integer(x.get('id')) for x in runs), 'final_grant_runs')
+    selected=None
+    for item in sorted(runs,key=lambda x:x['id'],reverse=True):
+        if item['id']<=att['run_id'] or not review.sha(item.get('head_sha')):
+            continue
+        try:
+            grant_review_workflow(api,grant,att,evaluator,item['head_sha'],head)
+        except (RuntimeError,KeyError,TypeError,ValueError):
+            continue
+        selected=api.api(f"repos/{grant['repo']}/actions/runs/{item['id']}")
+        break
+    need(selected is not None, 'final_grant_review_missing')
+    need(selected.get('id')==item['id'] and selected.get('workflow_id')==att['workflow_id']
+         and selected.get('path')==att['workflow_path'] and selected.get('head_sha')==item['head_sha']
+         and selected.get('head_branch')==att['branch'] and selected.get('event')=='push'
+         and selected.get('head_repository',{}).get('full_name')==grant['repo']
+         and review.integer(selected.get('run_attempt')) and selected.get('status')=='completed'
+         and selected.get('conclusion')=='success', 'final_grant_review_run')
+    jobs=api.pages(f"repos/{grant['repo']}/actions/runs/{selected['id']}/attempts/{selected['run_attempt']}/jobs",'jobs')
+    matches=[j for j in jobs if j.get('name')==att['job']]
+    need(len(jobs)==1 and len(matches)==1 and review.integer(matches[0].get('id'))
+         and matches[0].get('status')=='completed' and matches[0].get('conclusion')=='success', 'final_grant_review_job')
+    rows=r.records(log_reader(grant['repo'],matches[0]['id']),GRANT_MARKER)
+    expected=dict(prior,grant_head=head,grant_blob=final_blob)
+    need(len(rows)==1 and rows[0]==expected, 'final_grant_review_receipt')
+    return rows[0]
+
+
 def verify_grant_attestation(api, document, grant, evaluator, log_reader=r.job_log, require_merged=True):
     """Authenticate an independent review of the exact non-attestation grant.
 
@@ -354,22 +408,7 @@ def verify_grant_attestation(api, document, grant, evaluator, log_reader=r.job_l
              and g.get('evaluator')==evaluator]
     need(len(matches)==1 and {k:v for k,v in matches[0].items() if k!='grant_review'}==payload,
          'reviewed_grant_differs')
-    # Exact trusted review workflow: one pinned action, read-only token and no
-    # checkout, arbitrary shell, mutable uses or additional steps.
-    raw=review.blob(api,grant['repo'],att['workflow_path'],att['source_commit'],att['workflow_blob'])
-    r.literal_uses(raw)
-    import yaml
-    workflow=yaml.load(raw,Loader=yaml.BaseLoader)
-    need(set(workflow)=={'name','on','permissions','jobs'} and workflow['name']=='Reviewed policy grant'
-         and workflow['on']=={'push':{'branches':[att['branch']],'paths':[att['workflow_path']]}}
-         and workflow['permissions']=={} and set(workflow['jobs'])=={att['job']}, 'grant_review_workflow')
-    job=workflow['jobs'][att['job']]
-    need(job=={'runs-on':'ubuntu-latest','timeout-minutes':'70',
-               'permissions':{'actions':'read','contents':'read','pull-requests':'read','issues':'read'},
-               'steps':[{'uses':'faberline/aw/.github/actions/policy-adoption-grant-review@'+evaluator,
-                         'with':{'grant-pr':str(att['pr']),'grant-head':att['head'],
-                                 'claude-token':'${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}}]},
-         'grant_review_workflow')
+    grant_review_workflow(api,grant,att,evaluator,att['source_commit'],att['head'],att['workflow_blob'])
     run=api.api(f"repos/{grant['repo']}/actions/runs/{att['run_id']}")
     need(run.get('id')==att['run_id'] and run.get('workflow_id')==att['workflow_id']
          and run.get('path')==att['workflow_path'] and run.get('head_sha')==att['source_commit']
@@ -400,6 +439,8 @@ def verify_grant_attestation(api, document, grant, evaluator, log_reader=r.job_l
          and source_issue.get('state')==('closed' if require_merged else 'open')
          and r.digest({k:source_issue.get(k) for k in ('number','title','body')})==row['grant_issue_sha256'],
          'grant_issue_contract_changed')
+    if require_merged:
+        verify_final_grant_review(api,grant,att,evaluator,pr,grant_inventory[0]['sha'],row,log_reader)
     return row
 
 

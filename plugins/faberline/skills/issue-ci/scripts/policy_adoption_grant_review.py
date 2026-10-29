@@ -69,6 +69,7 @@ def review_integer(value):
 
 
 def invoke_schema(packet, token, system, schema, execute=subprocess.run, max_packet=1024*1024):
+    a.review.endpoint_policy_preflight({'credential_profile':'personal-claude-max-oauth'})
     need(isinstance(token,str) and bool(token), 'grant_review_oauth_missing')
     supply=a.ci.strict_json_loads(Path(__file__).with_name('policy_adoption_supply.json').read_text())
     binary=Path('/usr/local/bin/claude')
@@ -84,7 +85,7 @@ def invoke_schema(packet, token, system, schema, execute=subprocess.run, max_pac
               '--setting-sources','','--settings','{"disableAllHooks":true}','--disable-slash-commands',
               '--no-chrome','--no-session-persistence','--system-prompt',system]
         result=execute(args,input=encoded,text=True,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
-                       env=env,cwd=directory,timeout=1800,check=False)
+                       env=env,cwd=directory,timeout=900,check=False)
     need(result.returncode==0 and len(result.stdout.encode())<=131072 and token not in result.stdout,
          'grant_review_execution_failed')
     outer=a.ci.strict_json_loads(result.stdout)

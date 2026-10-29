@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import os
+import subprocess
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -49,6 +50,14 @@ class ReviewProtocolTests(unittest.TestCase):
                 result=m.produce(None,'o/r',8,HEAD,'token',model)
                 self.assertEqual(result['decision'],'block')
                 self.assertTrue(result['uncertainties'])
+
+    def test_model_timeout_emits_authenticated_block(self):
+        packet=self.packet()
+        def timeout(*args,**kwargs):raise subprocess.TimeoutExpired('claude',900)
+        with patch.object(m,'preflight',return_value=(packet,{BASE:[],HEAD:[]})):
+            result=m.produce(None,'o/r',8,HEAD,'token',timeout)
+        self.assertEqual(result['decision'],'block')
+        self.assertTrue(result['uncertainties'])
 
     def test_genuine_negative_review_retains_the_finding(self):
         packet=self.packet()

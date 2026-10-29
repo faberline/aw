@@ -74,6 +74,14 @@ class GrantReviewTests(unittest.TestCase):
         self.assertEqual(kwargs['env']['CLAUDE_CODE_OAUTH_TOKEN'],token)
         self.assertEqual(kwargs['cwd'],kwargs['env']['HOME'])
 
+    def test_managed_or_unknown_policy_refuses_before_model(self):
+        for problem in (None,PermissionError('unknown')):
+            called=[]
+            with self.subTest(problem=problem),patch.object(m.a.review.os,'lstat',side_effect=problem),\
+                 self.assertRaises(RuntimeError):
+                m.invoke({'grant':'synthetic'},'token',lambda *args,**kwargs:called.append(True))
+            self.assertEqual(called,[])
+
     def test_failed_review_or_midflight_change_emits_no_pass(self):
         packet={'grant':adoption.grant(),'grant_pr':{'blob':BLOB}}
         failed=lambda *args:{'decision':'fail','findings':['bad'],'uncertainties':[]}

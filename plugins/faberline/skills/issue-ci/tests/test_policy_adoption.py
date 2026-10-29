@@ -225,18 +225,23 @@ jobs:
                 if path=='repos/faberline/aw/commits/main':return {'sha':BASE}
                 if path=='repos/faberline/aw/issues/97':return dict(number=97,title='Grant issue',body='Review the exact grant',state='open' if self.bad=='open' else 'closed')
                 if '/compare/' in path:return {'status':'diverged' if self.bad=='history' else 'ahead'}
+                if path=='repos/o/r/actions/runs/1000':return dict(id=1000,workflow_id=9,path=att['workflow_path'],
+                    head_sha='0'*40,head_branch=att['branch'],event='push',head_repository={'full_name':'o/r'},
+                    run_attempt=1,status='completed',conclusion='failure' if self.bad=='final_failure' else 'success')
                 if path=='repos/o/r/actions/runs/999':return dict(id=999,workflow_id=9,path=att['workflow_path'],
                     head_sha=att['source_commit'],head_branch=att['branch'],event='push',head_repository={'full_name':'o/r'},
                     run_attempt=1,status='completed',conclusion='success')
                 raise AssertionError(path)
             def pages(self,path,key=None):
+                if '/actions/workflows/9/runs?' in path:return [] if self.bad=='missing_final' else [dict(id=1000,head_sha='0'*40)]
+                if path.endswith('/runs/1000/attempts/1/jobs'):return [dict(name=att['job'],id=1001,status='completed',conclusion='success')]
                 if path.endswith('/pulls/77/files'):return [dict(filename=a.GRANTS_PATH,status='modified',sha=finalblob)]
                 if path.endswith('/pulls/77/commits'):return [{'sha':att['head']}]
                 if path.endswith('/attempts/1/jobs'):return [dict(name=att['job'],id=att['job_id'],status='completed',conclusion='success')]
                 raise AssertionError(path)
         api=API()
         def blob(api_,repo,path,ref,expected=None):
-            if repo=='o/r':return workflow
+            if repo=='o/r':return workflow.replace(att['head'],doc['source_commit']) if ref=='0'*40 else workflow
             if ref==doc['source_commit']:return json.dumps(doc['config'])
             if ref==att['head']:return json.dumps(proposal)
             raise AssertionError(ref)
@@ -244,10 +249,24 @@ jobs:
 
     def test_only_current_reviewed_grant_can_authorize(self):
         g,doc,api,receipt,blob,workflow=self.setup_attestation()
-        log=lambda repo,job:a.GRANT_MARKER+json.dumps(receipt)+'\n'
+        final=dict(receipt,grant_head=doc['source_commit'],grant_blob='7'*40)
+        log=lambda repo,job:a.GRANT_MARKER+json.dumps(final if job==1001 else receipt)+'\n'
         with patch.object(a.review,'blob',side_effect=blob):
             result=a.verify_grant_attestation(api,doc,g,EVALUATOR,log)
         self.assertEqual(result,receipt)
+
+    def test_final_review_must_match_final_head_and_blob(self):
+        for change in ('missing_final','final_failure','wrong_blob','wrong_head','duplicate'):
+            g,doc,api,receipt,blob,workflow=self.setup_attestation()
+            if change in ('missing_final','final_failure'):api.bad=change
+            final=dict(receipt,grant_head=doc['source_commit'],grant_blob='7'*40)
+            if change=='wrong_blob':final['grant_blob']='0'*40
+            if change=='wrong_head':final['grant_head']='0'*40
+            def log(repo,job):
+                line=a.GRANT_MARKER+json.dumps(final if job==1001 else receipt)+'\n'
+                return line*2 if change=='duplicate' and job==1001 else line
+            with self.subTest(change=change),patch.object(a.review,'blob',side_effect=blob),self.assertRaises(RuntimeError):
+                a.verify_grant_attestation(api,doc,g,EVALUATOR,log)
 
     def test_final_open_head_can_verify_earlier_attestation_without_authorizing_merge(self):
         g,doc,api,receipt,blob,workflow=self.setup_attestation();api.bad='open'
