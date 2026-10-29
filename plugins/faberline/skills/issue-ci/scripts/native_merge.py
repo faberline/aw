@@ -287,6 +287,11 @@ def base_rules(api, repo, context, p):
              "provider_bypass_or_unknown")
     else:
         need(actors == [], "provider_bypass_or_unknown")
+    return dict(base_ref=context["base_ref"], base=context["base"],
+                auto_merge_allowed=True, squash_merge_allowed=True,
+                ruleset_id=p["ruleset_id"], enforcement="active", target="branch",
+                strict_required_status=True, status_context=p["status_context"],
+                status_app_id=p["status_app_id"], bypass_actor_count=0)
 
 
 def qualification(api, repo, number, context, document):

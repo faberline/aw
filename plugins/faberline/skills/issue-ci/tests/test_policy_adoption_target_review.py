@@ -130,15 +130,25 @@ class PreflightTests(unittest.TestCase):
     def test_stale_issue_or_nonpassing_ci_refuses_before_model(self):
         import json
         cfg,pull,issue,run,jobs,files,provider,api=self.fixture()
+        policy=dict(ruleset_id=9,status_context='claude/verified-merge',status_app_id=15368)
+        provider_evidence=dict(base_ref='main',base=BASE,auto_merge_allowed=True,squash_merge_allowed=True,
+            ruleset_id=9,enforcement='active',target='branch',strict_required_status=True,
+            status_context='claude/verified-merge',status_app_id=15368,bypass_actor_count=0)
         def blob(api_,repo,path,ref,expected=None):
             return json.dumps(cfg) if path=='.github/issue-ci-required-gates.json' else 'trusted workflow'
         patches=[patch.object(m.a.review,'blob',side_effect=blob),patch.object(m.a.native,'handoff_policy'),
-                 patch.object(m.a.native,'policy',return_value={}),patch.object(m.a.native,'writer_contract'),patch.object(m.a.native,'base_rules'),
+                 patch.object(m.a.native,'policy',return_value=policy),patch.object(m.a.native,'writer_contract'),
+                 patch.object(m.a.native,'base_rules',return_value=provider_evidence),
                  patch.object(m.a.native,'provider_pull',return_value=provider),patch.object(m,'source_files',return_value=({},[]))]
         from contextlib import ExitStack
         with ExitStack() as stack:
             for patcher in patches:stack.enter_context(patcher)
             packet,_=m.preflight(api,'o/r',8,HEAD);self.assertEqual(packet['ci']['run_id'],111)
+            self.assertEqual(packet['verified_provider_policy'],provider_evidence)
+            with patch.object(m.a.native,'base_rules',return_value=None):
+                with self.assertRaisesRegex(RuntimeError,'target_provider_evidence'):m.preflight(api,'o/r',8,HEAD)
+            with patch.object(m.a.native,'base_rules',side_effect=RuntimeError('provider_refused')):
+                with self.assertRaisesRegex(RuntimeError,'provider_refused'):m.preflight(api,'o/r',8,HEAD)
             issue['body']='changed'
             with self.assertRaisesRegex(RuntimeError,'target_applicability'):m.preflight(api,'o/r',8,HEAD)
             issue['body']=v2.issue()['body'];jobs[0]['conclusion']='skipped'
