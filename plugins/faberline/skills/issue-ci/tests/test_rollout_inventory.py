@@ -35,6 +35,14 @@ class Api:
 
 
 class RolloutInventoryTests(unittest.TestCase):
+    def test_repository_path_segments_cannot_escape_the_target(self):
+        for value in ('../r', 'o/..', 'o/./x', 'o/r\nother'):
+            with self.subTest(value=value):
+                api = Api()
+                with self.assertRaisesRegex(RuntimeError, 'inventory_repository'):
+                    m.snapshot(api, value)
+                self.assertEqual(api.calls, [])
+
     def test_empty_matching_reads_never_authorize_rollout(self):
         api = Api()
         result = m.observe(api, 'o/r')

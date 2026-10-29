@@ -18,9 +18,14 @@ def need(value, reason):
         raise RuntimeError(reason)
 
 
+def repository(value):
+    return (isinstance(value, str) and bool(REPO.fullmatch(value))
+            and all(part not in ('.', '..') for part in value.split('/')))
+
+
 def snapshot(api, repo):
     """Return every visible nonterminal run, or refuse partial evidence."""
-    need(isinstance(repo, str) and REPO.fullmatch(repo), 'inventory_repository')
+    need(repository(repo), 'inventory_repository')
     rows, ids = [], set()
     for status in STATUSES:
         total = None
@@ -42,8 +47,7 @@ def snapshot(api, repo):
                      and SHA.fullmatch(run['head_sha']) and isinstance(run.get('path'), str)
                      and re.fullmatch(r'\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml', run['path'])
                      and isinstance(run.get('head_repository'), dict)
-                     and isinstance(run['head_repository'].get('full_name'), str)
-                     and REPO.fullmatch(run['head_repository']['full_name']), 'inventory_run_unknown')
+                     and repository(run['head_repository'].get('full_name')), 'inventory_run_unknown')
                 ids.add(run['id'])
                 row = {key: run[key] for key in ('id', 'run_attempt', 'workflow_id', 'status', 'head_sha', 'path')}
                 row['head_repository'] = run['head_repository']['full_name']
