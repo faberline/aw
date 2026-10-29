@@ -85,5 +85,19 @@ class RunnerTests(unittest.TestCase):
             result=m.reconcile(None,'o/r',lambda r,j:'')
         self.assertEqual(result[0]['state'],'closed');close.assert_called_once()
 
+    def test_closed_prepared_adoption_reauthenticates_without_closing(self):
+        candidate=dict(issue=7,pr=9,head='a'*40,owner='b'*56,run=123,attempt=2,
+                       kind='adoption',state='closed_prepared_recovery')
+        adoption=type('Adoption',(),{'discover_source':lambda this,*args:dict(
+            document={'source_commit':'c'*40},evaluator='d'*40,intent={})})()
+        with patch.object(m.worker,'read_policy',return_value={'current':True}), \
+             patch.object(m.scan,'scan',return_value=[candidate]),patch.object(m.scan,'adoption_module',return_value=adoption), \
+             patch.object(m.close,'release_adoption_closed_prepared',return_value=dict(
+                 state='released_after_observed_closed',issue=7,merge='e'*40)) as release, \
+             patch.object(m.close,'reconcile_adoption') as close:
+            result=m.reconcile(None,'o/r',lambda r,j:'')
+        self.assertEqual(result[0]['state'],'released_after_observed_closed')
+        release.assert_called_once();close.assert_not_called()
+
 
 if __name__=='__main__':unittest.main()

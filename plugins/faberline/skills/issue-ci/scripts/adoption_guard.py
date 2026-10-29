@@ -21,6 +21,7 @@ adoption=sibling('policy_adoption')
 guard=sibling('merge_guard')
 recovery=sibling('recovery_entry')
 per_pr=sibling('per_pr_checkpoint')
+prepared=sibling('prepared_status')
 review=adoption.review
 need=review.need
 MARKER='AW_ADOPTION_GUARD_INTENT_V1 '
@@ -149,6 +150,23 @@ def authenticate_checkpoint(api,document,repo,evaluator,run,attempt,issue,head,o
     need(p['source_run']==run and p['source_attempt']==attempt and p['evaluator']==evaluator,
          'adoption_checkpoint_source')
     return dict(evidence=evidence,intent=intent,grant=grant)
+
+
+def find_prepared(api,document,repo,evaluator,run,attempt,issue,head,owner,log_reader):
+    """Authenticate a reviewed publisher's pre-status record, not a close."""
+    grant=grant_from_default(api,document,repo,evaluator)
+    intent=authenticate_intent(api,document,repo,evaluator,run,attempt,issue,head,owner,log_reader)
+    identity=adoption.publisher_provenance(api,grant,run,'push',attempt=attempt,terminal=True)
+    found=[]
+    for value in review.r.records(log_reader(repo,identity['job_id']),prepared.MARKER):
+        payload=prepared.validate(value);evidence=payload['checkpoint'];record=evidence['payload']
+        per_pr.guard_binding(intent['payload'],record,grant,document['source_commit'])
+        need(record['source_run']==run and record['source_attempt']==attempt
+             and record['evaluator']==evaluator,'adoption_checkpoint_source')
+        found.append(value)
+    need(len(found)<=1,'adoption_prepared_duplicate')
+    if not found:return None
+    return dict(evidence=found[0]['payload']['checkpoint'],intent=intent,grant=grant)
 
 
 def discover_source(api,repo,run,attempt,issue,head,owner,log_reader):

@@ -177,6 +177,26 @@ class AdoptionGuardTests(unittest.TestCase):
             status['state']='failure'
             with self.assertRaisesRegex(RuntimeError,'per_pr_status_unknown'):authenticate()
 
+    def test_prepared_record_is_bound_to_reviewed_grant_and_attempt(self):
+        checkpoint=obs_fixture.Fixture().checkpoint;checkpoint.update(repo='o/r',head=HEAD,base=SOURCE)
+        self.grant.update({key:checkpoint[key] for key in ('base_ref','issue_sha256','pr_sha256')})
+        self.grant['review']=dict(run_id=202,receipt_sha256='e'*64)
+        evidence=m.per_pr.observation.record(checkpoint,123,2,PUBLISHER,EVALUATOR,202,'e'*64,
+                                             m.review.r.digest(self.grant),GRANT_SOURCE)
+        record=m.prepared.build(evidence,55,'a'*32)
+        line=m.prepared.MARKER+m.prepared.canonical(record)+'\n'
+        with patch.object(m,'grant_from_default',return_value=self.grant), \
+             patch.object(m,'authenticate_intent',return_value=self.intent), \
+             patch.object(m.adoption,'publisher_provenance',return_value=dict(job_id=88)):
+            def find(log):
+                return m.find_prepared(None,self.document,'o/r',EVALUATOR,123,2,7,HEAD,
+                                       self.intent['payload']['owner'],lambda r,j:log)
+            self.assertEqual(find(line)['evidence'],evidence)
+            self.assertIsNone(find(''))
+            with self.assertRaisesRegex(RuntimeError,'adoption_prepared_duplicate'):find(line+line)
+            self.grant['issue']=8
+            with self.assertRaisesRegex(RuntimeError,'per_pr_checkpoint_identity'):find(line)
+
     def test_untrusted_marker_only_selects_a_grant_for_full_authentication(self):
         self.grant['evaluator']=EVALUATOR
         self.document['config']=dict(version=1,grants=[self.grant])

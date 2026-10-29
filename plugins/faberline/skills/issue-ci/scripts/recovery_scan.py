@@ -97,6 +97,16 @@ def scan(api,repo,current_policy,log_reader):
                                                               item['issue'],item['head'],item['owner'],log_reader)
                 except Exception as error:
                     if str(error)!='adoption_checkpoint_missing':raise
+                    verified=adoption.find_prepared(api,source['document'],repo,source['evaluator'],run,attempt,
+                                                    item['issue'],item['head'],item['owner'],log_reader)
+                    if verified is not None:
+                        evidence=verified['evidence']
+                        started=observer.source_started_at(api,evidence,require_success=False)
+                        observed=observer.recovery_plan(api,evidence['payload']['checkpoint'],started)
+                        if observed['state']=='observed_closed':
+                            row.update(state='closed_prepared_recovery',kind='adoption',pr=source['pr'],head=item['head'],
+                                       owner=item['owner'],run=run,attempt=attempt,close_authorized=False)
+                            results.append(row);continue
                     row.update(state='admission_recovery',kind='adoption',pr=source['pr'],head=item['head'],
                                owner=item['owner'],run=run,attempt=attempt,close_authorized=False)
                     results.append(row);continue

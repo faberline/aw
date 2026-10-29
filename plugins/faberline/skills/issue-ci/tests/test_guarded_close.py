@@ -179,6 +179,23 @@ class GuardedCloseTests(unittest.TestCase):
         self.assertEqual(self.patch_count,0)
         self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
 
+    def test_adoption_prepared_only_releases_an_already_closed_issue(self):
+        adoption=type('Adoption',(),{
+            'find_prepared':lambda this,*args:dict(evidence=self.evidence,intent=self.intent,grant={}),
+            'source_policy':lambda this,*args:(self.policy,{})})()
+        opened=dict(state='observed_merged',merge='f'*40)
+        closed=dict(state='observed_closed',merge='f'*40)
+        with patch.object(close,'sibling',return_value=adoption), \
+             patch.object(close.worker,'read_policy',return_value=self.policy), \
+             patch.object(close.observation,'observe',side_effect=[opened,closed,closed]):
+            def release():
+                return close.release_adoption_closed_prepared(self.api,'o/r',{},self.policy,'e'*40,123,2,7,
+                    'd'*40,self.intent['payload']['owner'],lambda r,j:'')
+            with self.assertRaisesRegex(RuntimeError,'merge_issue_not_already_closed'):release()
+            self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
+            self.assertEqual(release()['state'],'released_after_observed_closed')
+        self.assertEqual(self.patch_count,0)
+
     def test_checkpoint_requires_exact_successful_attempt_even_after_rerun(self):
         checkpoint=observer_fixture.Fixture().checkpoint
         record=close.observation.record(checkpoint,123,2,self.source,'e'*40,202,'f'*64)

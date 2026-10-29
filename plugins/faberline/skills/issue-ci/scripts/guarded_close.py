@@ -139,6 +139,28 @@ def release_closed_prepared(api,repo,document,current_policy,evaluator,run,attem
     evidence=value['payload']['checkpoint'];record=evidence['payload'];checkpoint=record['checkpoint']
     per_pr.guard_binding(p,record)
     need(checkpoint['issue']==p['issue'],'merge_guard_checkpoint_mismatch')
+    return _release_observed_closed(api,repo,current_policy,intent,checkpoint)
+
+
+def release_adoption_closed_prepared(api,repo,document,current_policy,evaluator,run,attempt,issue,head,owner,log_reader):
+    """Release only an already-closed issue's reviewed adoption guard."""
+    adoption=sibling('adoption_guard')
+    verified=adoption.find_prepared(api,document,repo,evaluator,run,attempt,issue,head,owner,log_reader)
+    need(verified is not None,'adoption_prepared_missing')
+    old,_=adoption.source_policy(api,verified['grant'])
+    worker.config(current_policy);worker.check_runtime(current_policy)
+    need(all(old[k]==current_policy[k] for k in ('genesis','ruleset_id','runtime')),
+         'merge_guard_policy_changed')
+    intent=verified['intent'];p=intent['payload'];checkpoint=verified['evidence']['payload']['checkpoint']
+    need(p['owner']==owner and p['repo']==repo and p['issue']==issue and p['head']==head
+         and checkpoint['repo']==repo and checkpoint['issue']==issue and checkpoint['head']==head,
+         'merge_guard_checkpoint_mismatch')
+    return _release_observed_closed(api,repo,current_policy,intent,checkpoint)
+
+
+def _release_observed_closed(api,repo,current_policy,intent,checkpoint):
+    """Release the same owner after two matching closed-issue observations."""
+    p=intent['payload']
     require_current_policy(api,repo,current_policy)
     guard_identity(api,repo,current_policy,intent)
     first=observation.observe(api,checkpoint)
