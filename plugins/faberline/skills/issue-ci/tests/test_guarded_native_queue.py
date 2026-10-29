@@ -129,7 +129,7 @@ class GuardedQueueTests(unittest.TestCase):
                     for _ in range(2):
                         rows=m.reconcile(self.api,'o/r',self.api.load,EVALUATOR,lambda *args:attempts,
                                          self.api.verify,guarded=self.guard,
-                                         ci_process=lambda args,config,check_event:ci_calls.append(args.pr))
+                                         ci_process=lambda args,config,check_event,before_mutation:ci_calls.append(args.pr))
                         self.assertEqual(rows[0]['reason'],reason)
                         self.assertEqual(rows[0]['guard'],'released')
                 self.assertEqual(block.call_count,2)
@@ -141,6 +141,29 @@ class GuardedQueueTests(unittest.TestCase):
         with patch.object(m,'withdraw_approval'),patch.object(m,'block_unadmitted') as block:
             rows=m.reconcile(self.api,'o/r',self.api.load,EVALUATOR,lambda *args:{},self.api.verify,
                              ci_process=unknown,guarded=self.guard)
+        self.assertEqual(rows[0]['reason'],'withdrawal_or_ci_result_unknown')
+        self.assertNotIn(('settle',2),self.calls)
+        block.assert_not_called()
+
+    def test_known_ci_prewrite_refusal_releases_guard_on_two_wakes(self):
+        self.pulls=[self.pulls[1]];self.pulls[0]['head']['ref']='issue/7'
+        def refusal(*args,**kwargs):raise RuntimeError('invalid CI qualification')
+        with patch.object(m,'withdraw_approval'),patch.object(m,'block_unadmitted') as block:
+            for _ in range(2):
+                rows=m.reconcile(self.api,'o/r',self.api.load,EVALUATOR,lambda *args:{},self.api.verify,
+                                 ci_process=refusal,guarded=self.guard)
+                self.assertEqual(rows[0]['reason'],'ci_handoff_refused_prewrite')
+                self.assertEqual(rows[0]['guard'],'released')
+        self.assertEqual(block.call_count,2)
+
+    def test_ci_error_after_possible_write_retains_guard(self):
+        self.pulls=[self.pulls[1]];self.pulls[0]['head']['ref']='issue/7'
+        def refusal(*args,**kwargs):
+            kwargs['before_mutation']()
+            raise RuntimeError('unknown write outcome')
+        with patch.object(m,'withdraw_approval'),patch.object(m,'block_unadmitted') as block:
+            rows=m.reconcile(self.api,'o/r',self.api.load,EVALUATOR,lambda *args:{},self.api.verify,
+                             ci_process=refusal,guarded=self.guard)
         self.assertEqual(rows[0]['reason'],'withdrawal_or_ci_result_unknown')
         self.assertNotIn(('settle',2),self.calls)
         block.assert_not_called()

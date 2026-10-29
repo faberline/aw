@@ -145,6 +145,26 @@ class ApplyTests(unittest.TestCase):
         self.assertIn(('repos/o/r/issues/7/labels/doing', 'DELETE', None), self.writes)
         self.assertFalse(any('/labels/priority' in w[0] for w in self.writes))
 
+    def test_handoff_marks_before_first_provider_write(self):
+        args=ci.argparse.Namespace(repo='o/r',pr=8,head=SHA,apply=True,run_id=None)
+        marks=[]
+        def mark():marks.append(len(self.writes))
+        with patch.object(ci,'api',side_effect=self.api), \
+             patch.object(ci,'pages',side_effect=lambda *a:self.comments), \
+             patch.object(ci,'snapshot',return_value=evidence()),contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ci.process_head(args,dict(workflows=GATES),check_event=False,before_mutation=mark),0)
+        self.assertTrue(self.writes)
+        self.assertEqual(marks[0],0)
+        self.assertEqual(len(marks),len(self.writes))
+
+    def test_handoff_prewrite_refusal_does_not_mark_write(self):
+        args=ci.argparse.Namespace(repo='o/r',pr=8,head='b'*40,apply=True,run_id=None);marks=[]
+        with patch.object(ci,'api',side_effect=self.api):
+            with self.assertRaises(RuntimeError):
+                ci.process_head(args,dict(workflows=GATES),check_event=False,before_mutation=lambda:marks.append(1))
+        self.assertEqual(marks,[])
+        self.assertEqual(self.writes,[])
+
     def test_stale_head_before_and_during_evaluation(self):
         for move_on in (1, 2):
             self.move_on, self.pr_reads = move_on, 0

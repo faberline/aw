@@ -158,7 +158,7 @@ def writer_identity(api, repo, document, run_id):
          "writer_job_identity")
 
 
-def reconcile_ci(api, repo, document, pulls, process):
+def reconcile_ci(api, repo, document, pulls, process, track_write=False):
     """The same writer reconciles existing CI and Claude on every event.
 
     A replaced pending CI or outcome wake therefore loses neither operation.
@@ -173,8 +173,18 @@ def reconcile_ci(api, repo, document, pulls, process):
             continue
         row = dict(pr=pull["number"], head=head["sha"], state="ci_processed")
         args = SimpleNamespace(repo=repo, pr=pull["number"], head=head["sha"], apply=True, run_id=None)
+        write_started=[False]
         try:
-            process(args, handoff_policy(document["config"]), check_event=False)
+            if track_write:
+                process(args, handoff_policy(document["config"]), check_event=False,
+                        before_mutation=lambda:write_started.__setitem__(0,True))
+            else:
+                process(args, handoff_policy(document["config"]), check_event=False)
+        except RuntimeError:
+            if track_write and not write_started[0]:
+                row.update(state="ci_refused_prewrite",reason="ci_handoff_refused_prewrite")
+            else:
+                row.update(state="ci_held",reason="ci_handoff_refused_or_unknown")
         except Exception:
             row.update(state="ci_held", reason="ci_handoff_refused_or_unknown")
         rows.append(row)
@@ -725,11 +735,14 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
         except Exception:
             withdrawal_errors.add(pull["number"])
     ci_errors = set()
+    ci_prewrite_refusals = set()
     if ci_process is not None:
         ci_rows = reconcile_ci(api, repo, document,
                                [pull for pull in pulls if pull["number"] not in withdrawal_errors
-                                and (guarded is None or pull["number"] in admitted)], ci_process)
+                                and (guarded is None or pull["number"] in admitted)], ci_process,
+                               track_write=guarded is not None)
         ci_errors = {row["pr"] for row in ci_rows if row["state"] == "ci_held"}
+        ci_prewrite_refusals = {row["pr"] for row in ci_rows if row["state"] == "ci_refused_prewrite"}
         print("AW_UNIFIED_CI_RECONCILIATION_V1 " + review.r.canonical(ci_rows))
     runs = api.pages(f'repos/{repo}/actions/workflows/{producer["id"]}/runs', "workflow_runs")
     attempts = index(api, repo, document, runs, {pull["number"]:pull.get("head",{}).get("sha") for pull in pulls})
@@ -746,6 +759,11 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
                 continue
             if number in withdrawal_errors or number in ci_errors:
                 row.update(state="held_after_pending", reason="withdrawal_or_ci_result_unknown")
+                results.append(row)
+                continue
+            if number in ci_prewrite_refusals:
+                row.update(reason='ci_handoff_refused_prewrite')
+                prewrite_holds.add(number)
                 results.append(row)
                 continue
             attempt = attempts.get(number)

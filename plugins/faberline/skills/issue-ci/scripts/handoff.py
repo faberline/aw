@@ -199,10 +199,15 @@ def snapshot(repo, sha, config, diagnostics=None):
     return snapshots
 
 
-def process_head(args, config, check_event=True):
+def process_head(args, config, check_event=True, before_mutation=None):
     source_config = config
     root = f'repos/{args.repo}'
     pr_path = f'{root}/pulls/{args.pr}'
+    def write(path, method, data=None):
+        # Call before the provider request: a lost response is still a write.
+        if before_mutation is not None:
+            before_mutation()
+        return api(path, method, data)
     pr = api(pr_path)
     if pr['state'] != 'open' or pr['head']['sha'] != args.head or pr['head']['repo']['full_name'] != args.repo:
         raise RuntimeError('closed, foreign, or stale PR head; no mutation')
@@ -304,7 +309,7 @@ def process_head(args, config, check_event=True):
     labels = fresh_labels()
     if journal is None:
         phase = 'ready' if state in labels else 'pending'
-        journal = api(f'{issue_path}/comments', 'POST', {'body': body(phase)})
+        journal = write(f'{issue_path}/comments', 'POST', {'body': body(phase)})
     comment_path = f'{root}/issues/comments/{journal["id"]}'
     # A pending intent never suppresses a retry after head/snapshot/API failures.
     labels = fresh_labels()
@@ -320,11 +325,11 @@ def process_head(args, config, check_event=True):
         # that read, immediately before adding the target label.
         labels = fresh_labels()
         if state not in labels:
-            api(f'{issue_path}/labels', 'POST', {'labels': [state]})
+            write(f'{issue_path}/labels', 'POST', {'labels': [state]})
         # Durable proof that the desired label was added BEFORE deleting old
         # labels. Workers refuse mixed states, so they cannot claim between
         # the add and this checkpoint, even if the controller crashes.
-        api(comment_path, 'PATCH', {'body': body('ready')})
+        write(comment_path, 'PATCH', {'body': body('ready')})
     labels = fresh_labels()
     if state in labels:
         for old in sorted((labels & {'todo', 'doing', 'done'}) - {state}):
@@ -332,10 +337,10 @@ def process_head(args, config, check_event=True):
             if state not in live:
                 break
             if old in live:
-                api(f'{issue_path}/labels/{old}', 'DELETE')
+                write(f'{issue_path}/labels/{old}', 'DELETE')
     # ready + desired label absent means a later actor already consumed it
     # (e.g. AGY claimed todo -> doing). Never add it again or undo that claim.
-    api(comment_path, 'PATCH', {'body': body('applied')})
+    write(comment_path, 'PATCH', {'body': body('applied')})
     return 0
 
 
