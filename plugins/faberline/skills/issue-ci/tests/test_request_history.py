@@ -3,6 +3,8 @@ import copy
 import importlib.util
 from pathlib import Path
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 HERE=Path(__file__).resolve().parent
 def load(name,path):
@@ -83,6 +85,62 @@ class RequestHistoryTests(unittest.TestCase):
         ack['sha256']=m.hashlib.sha256(m.canonical(ack['payload']).encode()).hexdigest()
         with self.assertRaisesRegex(RuntimeError,'request_ack_unknown'):
             m.find_acknowledgement(m.ACK_MARKER+m.canonical(ack),observed,self.intent,self.policy)
+
+    def test_authenticated_native_inspection_rechecks_guard_and_request_without_authority(self):
+        observed=m.bind(self.before,self.after,self.pull,self.intent,self.policy,BASE)
+        ack=m.acknowledgement(dict(clientMutationId=self.intent['sha256']),observed,self.intent,self.policy)
+        log='\n'.join((m.guard.MARKER+m.canonical(self.intent),m.MARKER+m.canonical(observed),
+                       m.ACK_MARKER+m.canonical(ack)))
+        calls=[]
+        closer=SimpleNamespace(require_current_policy=lambda *args:calls.append('policy'),
+                               guard_identity=lambda *args:calls.append('guard'))
+        native=SimpleNamespace(provider_pull=lambda *args:copy.deepcopy(self.pull))
+        with patch.object(m.guard,'authenticate_native_log',return_value=(self.policy,log)) as source, \
+             patch.object(m.guard.worker,'read_policy',return_value=self.policy), \
+             patch.object(m.guard.review,'sibling',side_effect=lambda name:closer if name=='guarded_close' else native), \
+             patch.object(m,'stable',return_value=self.after):
+            result=m.inspect_native_ack(None,'o/r',{},'e'*40,123,2,9,HEAD,lambda *args:'')
+        source.assert_called_once()
+        self.assertEqual(result['state'],'observed_unchanged')
+        self.assertFalse(result['authorizes_merge'])
+        self.assertEqual(result['acknowledgement_sha256'],ack['sha256'])
+        self.assertEqual(calls.count('guard'),4)
+
+    def test_native_inspection_refuses_unknown_source_and_replaced_request(self):
+        observed=m.bind(self.before,self.after,self.pull,self.intent,self.policy,BASE)
+        ack=m.acknowledgement(dict(clientMutationId=self.intent['sha256']),observed,self.intent,self.policy)
+        log='\n'.join((m.guard.MARKER+m.canonical(self.intent),m.MARKER+m.canonical(observed),
+                       m.ACK_MARKER+m.canonical(ack)))
+        closer=SimpleNamespace(require_current_policy=lambda *args:None,guard_identity=lambda *args:None)
+        changed=copy.deepcopy(self.pull);changed['autoMergeRequest']['commitBody']='Closes #8'
+        native=SimpleNamespace(provider_pull=lambda *args:changed)
+        with patch.object(m.guard,'authenticate_native_log',side_effect=RuntimeError('unknown_source')):
+            with self.assertRaisesRegex(RuntimeError,'unknown_source'):
+                m.inspect_native_ack(None,'o/r',{},'e'*40,123,2,9,HEAD,lambda *args:'')
+        with patch.object(m.guard,'authenticate_native_log',return_value=(self.policy,log)), \
+             patch.object(m.guard.worker,'read_policy',return_value=self.policy), \
+             patch.object(m.guard.review,'sibling',side_effect=lambda name:closer if name=='guarded_close' else native), \
+             patch.object(m,'stable',return_value=self.after):
+            with self.assertRaises(RuntimeError):
+                m.inspect_native_ack(None,'o/r',{},'e'*40,123,2,9,HEAD,lambda *args:'')
+
+    def test_native_inspection_refuses_guard_change_during_observation(self):
+        observed=m.bind(self.before,self.after,self.pull,self.intent,self.policy,BASE)
+        ack=m.acknowledgement(dict(clientMutationId=self.intent['sha256']),observed,self.intent,self.policy)
+        log='\n'.join((m.guard.MARKER+m.canonical(self.intent),m.MARKER+m.canonical(observed),
+                       m.ACK_MARKER+m.canonical(ack)))
+        calls=[]
+        def guard_identity(*args):
+            calls.append(True)
+            if len(calls)==2:raise RuntimeError('guard_changed')
+        closer=SimpleNamespace(require_current_policy=lambda *args:None,guard_identity=guard_identity)
+        native=SimpleNamespace(provider_pull=lambda *args:copy.deepcopy(self.pull))
+        with patch.object(m.guard,'authenticate_native_log',return_value=(self.policy,log)), \
+             patch.object(m.guard.worker,'read_policy',return_value=self.policy), \
+             patch.object(m.guard.review,'sibling',side_effect=lambda name:closer if name=='guarded_close' else native), \
+             patch.object(m,'stable',return_value=self.after):
+            with self.assertRaisesRegex(RuntimeError,'guard_changed'):
+                m.inspect_native_ack(None,'o/r',{},'e'*40,123,2,9,HEAD,lambda *args:'')
 
     def test_same_second_disable_and_reenable_cannot_reuse_identity(self):
         value=m.bind(self.before,self.after,self.pull,self.intent,self.policy,BASE)

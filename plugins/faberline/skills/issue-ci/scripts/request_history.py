@@ -198,7 +198,9 @@ def find_acknowledgement(log,observation,intent,policy):
                         'client_mutation_id','observation_sha256'} and type(row['version']) is int
              and row['version']==1 and isinstance(row['repo'],str)
              and guard.provider.ledger.REPO.fullmatch(row['repo'])
-             and all(type(row[k]) is int and 0<row[k]<2**53 for k in ('pr','issue','run','attempt'))
+             and all(type(row[k]) is int and 0<row[k]<2**53 for k in ('pr','issue'))
+             and type(row['run']) is int and 0<row['run']<2**64
+             and type(row['attempt']) is int and 0<row['attempt']<2**32
              and isinstance(row['head'],str) and guard.provider.ledger.SHA.fullmatch(row['head'])
              and isinstance(row['owner'],str) and len(row['owner'])==56
              and guard.provider.ledger.OWNER.fullmatch(row['owner'])
@@ -211,3 +213,48 @@ def find_acknowledgement(log,observation,intent,policy):
             matches.append(value)
     need(len(matches)<=1,'request_ack_duplicate')
     return matches[0] if matches else None
+
+
+def inspect_native_ack(api,repo,document,evaluator,run,attempt,pr,head,log_reader):
+    """Authenticate source and compare its ACK with a currently held request.
+
+    This read-only inspection still does not establish request authorship or
+    authorize status, merge, cancellation, issue closure, or guard release.
+    A complete stable history is not proof that the provider delivered every
+    event, so an unchanged observation cannot itself be used as a lease.
+    """
+    policy,log=guard.authenticate_native_log(api,repo,document,evaluator,run,attempt,log_reader)
+    intents=[]
+    for value in guard.review.r.records(log,guard.MARKER):
+        p=guard.validate(value,policy)
+        need(p['repo']==repo and p['run']==run and p['attempt']==attempt,'request_ack_source')
+        if p['pr']==pr and p['head']==head:intents.append(value)
+    need(len(intents)==1,'request_ack_source')
+    intent=intents[0];p=intent['payload']
+    observations=[]
+    for value in guard.review.r.records(log,MARKER):
+        need(isinstance(value,dict) and isinstance(value.get('payload'),dict),'request_ack_source')
+        if value['payload'].get('guard_sha256')==intent['sha256']:observations.append(value)
+    need(len(observations)==1,'request_ack_source')
+    observation=observations[0]
+    ack=find_acknowledgement(log,observation,intent,policy)
+    need(ack is not None,'request_ack_missing')
+    current=guard.worker.read_policy(api,repo)
+    need(current is not None,'request_ack_policy')
+    guard.worker.config(current);guard.worker.check_runtime(current)
+    need(all(current[k]==policy[k] for k in ('genesis','ruleset_id','runtime')),'request_ack_policy')
+    closer=guard.review.sibling('guarded_close');native=guard.review.sibling('native_merge')
+    def check():
+        closer.require_current_policy(api,repo,current)
+        closer.guard_identity(api,repo,current,intent)
+        pull=native.provider_pull(api,repo,pr)
+        history=stable(api,repo,pr)
+        base=observation['payload'].get('request',{}).get('base')
+        unchanged(observation,history,pull,intent,policy,base)
+        closer.require_current_policy(api,repo,current)
+        closer.guard_identity(api,repo,current,intent)
+        return pull,history
+    first=check();second=check()
+    need(first==second,'request_history_changed')
+    return dict(repo=repo,pr=pr,head=head,issue=p['issue'],owner=p['owner'],run=run,attempt=attempt,
+                acknowledgement_sha256=ack['sha256'],state='observed_unchanged',authorizes_merge=False)
