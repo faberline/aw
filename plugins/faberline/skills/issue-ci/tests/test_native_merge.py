@@ -103,7 +103,7 @@ class Provider:
                 raise TimeoutError("synthetic ambiguous queue result")
             inputs=data["variables"]["input"]
             self.native["autoMergeRequest"] = dict(mergeMethod="SQUASH", enabledAt="2026-10-29T00:00:00Z",
-                enabledBy=dict(login="github-actions[bot]"),commitHeadline=inputs["commitHeadline"],commitBody=inputs["commitBody"])
+                enabledBy=dict(login="github-actions", __typename="Bot"),commitHeadline=inputs["commitHeadline"],commitBody=inputs["commitBody"])
             return dict(data=dict(enablePullRequestAutoMerge=dict(pullRequest=copy.deepcopy(self.native))))
         if method == "POST":
             assert path == "repos/o/r/statuses/" + HEAD
@@ -211,6 +211,22 @@ class NativeMergeTests(unittest.TestCase):
         self.p.writes.clear()
         self.assertEqual(self.p.run()["state"], "queued")
         self.assertEqual([w[0] for w in self.p.writes], ["pending", "success"])
+
+    def test_graphql_bot_identity_and_request_fields_are_strict(self):
+        valid=dict(mergeMethod='SQUASH',enabledBy={'login':'github-actions','__typename':'Bot'},
+                   commitHeadline='Merge PR #1',commitBody='Closes #7')
+        m.queued_request(dict(autoMergeRequest=valid),dict(merge_method='SQUASH'),'Merge PR #1','Closes #7')
+        for actor in (None,{}, {'login':'github-actions'}, {'login':'github-actions','__typename':'User'},
+                      {'login':'github-actions[bot]','__typename':'Bot'}, {'login':'other','__typename':'Bot'}):
+            request=dict(valid,enabledBy=actor)
+            with self.subTest(actor=actor),self.assertRaises(RuntimeError):
+                m.queued_request(dict(autoMergeRequest=request),dict(merge_method='SQUASH'),'Merge PR #1','Closes #7')
+        for key,value in (('mergeMethod','MERGE'),('commitHeadline','wrong'),('commitBody','Closes #8')):
+            request=dict(valid,**{key:value})
+            with self.subTest(key=key),self.assertRaises(RuntimeError):
+                m.queued_request(dict(autoMergeRequest=request),dict(merge_method='SQUASH'),'Merge PR #1','Closes #7')
+        self.assertIn('enabledBy{login __typename}',m.QUEUE)
+        self.assertIn('enabledBy{login __typename}',m.READ)
 
     def test_merged_provider_result_is_observed_without_another_write(self):
         self.p.run()
@@ -401,6 +417,27 @@ class ApprovalWithdrawalTests(unittest.TestCase):
         p=Provider();p.native['autoMergeRequest']=dict(mergeMethod='SQUASH',enabledBy=dict(login='human'))
         m.withdraw_approval(p,'o/r',1,HEAD)
         self.assertEqual(p.writes,[])
+
+    def test_human_request_not_disabled_when_prior_status_exists(self):
+        p=Provider();p.auto_complete=False;p.run();p.writes.clear()
+        p.native['autoMergeRequest']['enabledBy']={'login':'human','__typename':'User'}
+        m.withdraw_approval(p,'o/r',1,HEAD)
+        self.assertEqual([w[0] for w in p.writes],['pending'])
+        self.assertIsNotNone(p.native['autoMergeRequest'])
+
+    def test_swapped_human_request_is_not_disabled(self):
+        p=Provider();p.auto_complete=False;p.run();p.writes.clear()
+        original=p.api
+        def api(path,method='GET',data=None):
+            result=original(path,method,data)
+            if method=='POST' and path.startswith('repos/o/r/statuses/'):
+                p.native['autoMergeRequest']['enabledBy']={'login':'human','__typename':'User'}
+            return result
+        p.api=api
+        with self.assertRaisesRegex(RuntimeError,'withdraw_request_changed'):
+            m.withdraw_approval(p,'o/r',1,HEAD)
+        self.assertEqual([w[0] for w in p.writes],['pending'])
+        self.assertIsNotNone(p.native['autoMergeRequest'])
 
     def test_unknown_disable_result_does_not_retry_or_restore_success(self):
         p=Provider();p.auto_complete=False;p.run();p.writes.clear()

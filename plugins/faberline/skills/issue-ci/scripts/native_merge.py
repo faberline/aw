@@ -21,14 +21,14 @@ need = review.need
 QUEUE = """mutation($input:EnablePullRequestAutoMergeInput!){
   enablePullRequestAutoMerge(input:$input){pullRequest{
     id state headRefOid baseRefOid baseRefName
-    autoMergeRequest{mergeMethod enabledAt enabledBy{login} commitHeadline commitBody}
+    autoMergeRequest{mergeMethod enabledAt enabledBy{login __typename} commitHeadline commitBody}
     mergeCommit{oid}
   }}
 }"""
 READ = """query($owner:String!,$name:String!,$number:Int!){
   repository(owner:$owner,name:$name){pullRequest(number:$number){
     id state headRefOid baseRefOid baseRefName isDraft
-    autoMergeRequest{mergeMethod enabledAt enabledBy{login} commitHeadline commitBody}
+    autoMergeRequest{mergeMethod enabledAt enabledBy{login __typename} commitHeadline commitBody}
     mergeCommit{oid}
   }}
 }"""
@@ -43,7 +43,7 @@ PROVIDER_RULESET_POLICY = """query($owner:String!,$name:String!,$id:Int!){
 }"""
 DISABLE = """mutation($input:DisablePullRequestAutoMergeInput!){
   disablePullRequestAutoMerge(input:$input){pullRequest{id state headRefOid
-    autoMergeRequest{mergeMethod enabledBy{login}} mergeCommit{oid}
+    autoMergeRequest{mergeMethod enabledBy{login __typename}} mergeCommit{oid}
   }}
 }"""
 EVENTS = ("workflow_run", "issues", "pull_request_target")
@@ -195,6 +195,14 @@ def provider_pull(api, repo, number):
     return pull
 
 
+def actions_request(request):
+    """Authenticate the GitHub GraphQL Actions bot, not a REST creator name."""
+    if not isinstance(request, dict):
+        return False
+    actor = request.get("enabledBy")
+    return isinstance(actor, dict) and actor.get("__typename") == "Bot" and actor.get("login") == "github-actions"
+
+
 def withdraw_approval(api, repo, number, head):
     """Revoke our prior authorization before attempting any fresh verification.
 
@@ -209,7 +217,7 @@ def withdraw_approval(api, repo, number, head):
              and s.get("creator", {}).get("login") == "github-actions[bot]"]
     prior = max(owned, key=lambda s: s["id"]) if owned else None
     request = pull.get("autoMergeRequest")
-    ours = request and (request.get("enabledBy", {}).get("login") == "github-actions[bot]" or prior)
+    ours = actions_request(request)
     if not ours and (prior is None or prior.get("state") != "success"):
         return
     api.api(f"repos/{repo}/statuses/{head}", method="POST", data=dict(
@@ -218,6 +226,7 @@ def withdraw_approval(api, repo, number, head):
     again = provider_pull(api, repo, number)
     need(again.get("state") == "OPEN" and again["headRefOid"] == head, "withdraw_target_changed")
     if ours and again.get("autoMergeRequest") is not None:
+        need(actions_request(again["autoMergeRequest"]), "withdraw_request_changed")
         result = graphql(api, DISABLE, dict(input=dict(pullRequestId=again["id"])))
         observed = result.get("disablePullRequestAutoMerge", {}).get("pullRequest")
         need(isinstance(observed, dict) and observed.get("headRefOid") == head
@@ -235,7 +244,7 @@ def binding(pull, context):
 def queued_request(pull, p, headline, body):
     request = pull.get("autoMergeRequest")
     need(isinstance(request, dict) and request.get("mergeMethod") == p["merge_method"]
-         and request.get("enabledBy", {}).get("login") == "github-actions[bot]"
+         and actions_request(request)
          and request.get("commitHeadline") == headline and request.get("commitBody") == body,
          "native_request_missing_or_changed")
 
