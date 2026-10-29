@@ -98,3 +98,67 @@ class IssueContractTests(unittest.TestCase):
         with patch.object(ci,'api',return_value={'sha':base.BLOB}) as api:
             ci.qualify_config('o/r',base.pr(),base.config(),base.files())
         self.assertTrue(all('/issues/' not in call.args[0] for call in api.call_args_list))
+
+class AdditionalContractBoundaryTests(unittest.TestCase):
+    def test_additional_check_is_unioned_even_for_docs(self):
+        c=policy();c['qualification']['contracts']['7']['additional']=['unit']
+        for decision in c['qualification']['contracts']['7']['applicability'].values():
+            decision.update(status='not_applicable',checks=[],reason='Reviewed issue has no additional requirement')
+        s=scope(cfg=c,changes=base.files('docs/guide.md'))
+        self.assertEqual(set(s['workflows'][0]['jobs']),{'policy','unit'})
+
+    def test_valid_contract_does_not_approve_protected_changes(self):
+        for path in ('.github/workflows/pr.yml','.github/actions/sneaky/action.yml',
+                     '.github/issue-ci-required-gates.json','scripts/ci/selector.py'):
+            c=policy();c['qualification']['rules'].append(dict(paths=['**'],require=['unit','functional','perf'],exempt={}))
+            s=scope(cfg=c,changes=base.files(path))
+            with self.subTest(path=path):
+                self.assertTrue(any('gate infrastructure change' in item for item in s['_qualification_context']['issues']))
+                self.assertEqual(ci.evaluate_policy(s,base.evidence(s))[0],'pending')
+
+class PaidReviewContractTests(unittest.TestCase):
+    def harness(self):
+        import test_claude_review as review
+        h=review.Harness(); cfg=policy(); item=issue()
+        cfg['workflows'][0]['path']=review.WORKFLOW
+        cfg['workflows'][0]['jobs']=['unit']
+        for check in cfg['qualification']['checks'].values():
+            check['workflow']=review.WORKFLOW;check['job']='unit'
+        cfg['qualification']['trusted_workflows']={review.WORKFLOW:{'id':10,'definition_sha':review.git_blob(h.workflow)}}
+        h.config.update(lifecycle_mode='full',qualification_blockers=[],qualification=cfg['qualification'])
+        h.issue.update(state=item['state'],url=item['url'],repository_url=item['repository_url'],labels=[])
+        h.issue['title']=item['title'];h.issue['body']=item['body']
+        h.plan['requirements'][0].update(requirement=item['body'],issue_quote=item['body'])
+        def qualify(repo, pull, config, files):
+            definitions={(review.WORKFLOW,ref):{'sha':review.git_blob(h.workflow)} for ref in (review.HEAD,review.BASE)}
+            return q.scoped_config(config,pull,files,definitions,h.issue)
+        h.qualify_config=qualify
+        h.evaluate_policy=ci.evaluate_policy
+        return h,review
+
+    def test_valid_v2_reaches_review_and_binds_context(self):
+        h,g=self.harness();receipt=h.produce()
+        self.assertEqual(receipt['payload']['result']['decision'],'pass')
+        self.assertEqual(receipt['payload']['context']['qualification_v2']['contract']['issue'],7)
+
+    def test_missing_changed_unknown_and_unresolved_stop_before_model(self):
+        changes=[lambda h:h.issue.update(body='changed'),lambda h:h.issue.update(state='closed'),lambda h:h.issue.update(labels=[{'name':'blocked'}]),
+                 lambda h:h.config['qualification']['contracts'].clear(),
+                 lambda h:h.config['qualification']['contracts']['7']['unresolved'].append('missing source gate'),
+                 lambda h:h.config['qualification']['contracts']['7']['applicability']['unit'].update(status='unknown',checks=[])]
+        for change in changes:
+            h,g=self.harness();change(h);calls=[]
+            with self.subTest(change=change),self.assertRaises(RuntimeError):h.produce(lambda *args:calls.append(args))
+            self.assertEqual(calls,[])
+            self.assertEqual(h.writes,[])
+
+    def test_issue_or_contract_drift_during_review_rejects_receipt(self):
+        for target in ('issue','contract'):
+            h,g=self.harness()
+            def invoke(packet, policy):
+                value=g.result(packet['context']) if hasattr(g,'result') else None
+                if target=='issue':h.issue['body']+=' changed'
+                else:h.config['qualification']['contracts']['7']['unresolved'].append('new gate')
+                return value
+            with self.subTest(target=target),self.assertRaises(RuntimeError):h.produce(invoke)
+            self.assertEqual(h.writes,[])

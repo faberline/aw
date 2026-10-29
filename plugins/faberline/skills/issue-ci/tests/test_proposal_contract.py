@@ -75,3 +75,20 @@ class ProposalTests(unittest.TestCase):
         event,pull,issue,data=fixture();config=v2.policy();config['qualification']['contracts']['7']['unresolved']=['e2e evidence missing']
         raw=json.dumps(config).encode();data.update(size=len(raw),sha=blob(raw),content=base64.b64encode(raw).decode())
         with self.assertRaisesRegex(RuntimeError,'unresolved'):run(event,pull,issue,data)
+
+class EventBoundaryTests(unittest.TestCase):
+    def test_mismatched_event_repository_number_head_or_base_refuse(self):
+        for change in ('repository','number','head','base'):
+            event,pull,issue,data=fixture()
+            if change=='repository':event['repository']['full_name']='x/r'
+            if change=='number':event['number']=9
+            if change=='head':event['pull_request']['head']['sha']='c'*40
+            if change=='base':event['pull_request']['base']['sha']='c'*40
+            with self.subTest(change=change),self.assertRaises(RuntimeError):run(event,pull,issue,data)
+
+    def test_wrong_event_name_is_refused_before_read_or_network(self):
+        import os
+        from unittest.mock import patch
+        with patch.dict(os.environ,{'GITHUB_EVENT_NAME':'push'},clear=True),patch.object(p.ci,'api') as api:
+            with self.assertRaisesRegex(RuntimeError,'pull_request event required'):p.main()
+            api.assert_not_called()
