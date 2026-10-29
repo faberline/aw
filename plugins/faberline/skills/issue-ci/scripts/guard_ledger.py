@@ -1,8 +1,8 @@
 """Pure state transitions for a cooperating issue-ownership ledger.
 
 This module has no network or Git writes. A caller must authenticate the
-ledger ref, protect it against force pushes, and update it with a verified
-non-force fast-forward. It does not serialize legacy or external actors.
+ledger ref, protect it against force pushes and deletion, and update it with a
+verified non-force fast-forward. It does not serialize legacy or external actors.
 """
 import copy
 import hashlib

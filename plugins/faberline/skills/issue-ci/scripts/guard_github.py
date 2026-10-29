@@ -48,6 +48,9 @@ def provider_rules(api,repo,ruleset_id,issue):
     need(isinstance(rules,list) and len([rule for rule in rules if isinstance(rule,dict)
          and rule.get('type')=='non_fast_forward' and rule.get('ruleset_id')==ruleset_id])==1,
          'guard_force_rule_missing')
+    need(len([rule for rule in rules if isinstance(rule,dict)
+         and rule.get('type')=='deletion' and rule.get('ruleset_id')==ruleset_id])==1,
+         'guard_deletion_rule_missing')
     policy=api.api(f'repos/{repo}/rulesets/{ruleset_id}')
     need(isinstance(policy,dict) and type(policy.get('id')) is int and policy['id']==ruleset_id
          and policy.get('enforcement')=='active' and policy.get('target')=='branch',

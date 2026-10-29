@@ -129,6 +129,10 @@ The guarded writer draft holds an issue guard while a merge is queued. It
 does not change an issue held by another worker. A PR-target wake only asks
 the default-branch writer to recheck. An unknown write result retains the
 guard. The guarded path is blocked by the same unimplemented rollout proof.
+The guard ref requires an active ruleset that blocks both force updates and
+deletion, with no bypass actors. This blocks direct deletion and recreation.
+Repository administrators can still rename protected branches. They must not
+rename or reset guard refs; this protection cannot enforce that requirement.
 GitHub cancellation races and recovery after a writer crash still require
 hosted verification before rollout.
 The protected policy-adoption draft requires the same guard and a separately

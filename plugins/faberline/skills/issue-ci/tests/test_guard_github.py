@@ -20,7 +20,7 @@ def owner(char,kind='worker',head=None):
 
 class Provider:
     def __init__(self):
-        self.heads={7:GENESIS,8:GENESIS};self.rule=True;self.bypass=[];self.fail_patch=None;self.fail_create=None;self.writes=[]
+        self.heads={7:GENESIS,8:GENESIS};self.rule=True;self.deletion_rule=True;self.bypass=[];self.fail_patch=None;self.fail_create=None;self.writes=[]
         self.dispatches=[];self.fail_dispatch=False
         self.commits={GENESIS:dict(sha=GENESIS,tree=dict(sha=TREE),parents=[dict(sha=BASE)],
                                    message=g.genesis_message(REPO)),
@@ -59,7 +59,8 @@ class Provider:
                 return dict(data=dict(repository=dict(nameWithOwner=REPO,ruleset=dict(databaseId=RULE,
                     enforcement='ACTIVE',target='BRANCH',bypassActors=dict(totalCount=0,pageInfo=dict(hasNextPage=False))))))
         if unquote(path).startswith(f'repos/{REPO}/rules/branches/{g.BRANCH_PREFIX}'):
-            return [dict(type='non_fast_forward',ruleset_id=RULE)] if self.rule else []
+            return ([dict(type='non_fast_forward',ruleset_id=RULE)] if self.rule else []) + \
+                   ([dict(type='deletion',ruleset_id=RULE)] if self.deletion_rule else [])
         if path==f'repos/{REPO}/rulesets/{RULE}':
             return dict(id=RULE,enforcement='active',target='branch',bypass_actors=self.bypass)
         prefix=f'repos/{REPO}/git/commits/'
@@ -129,6 +130,39 @@ class ProviderTests(unittest.TestCase):
     def test_missing_force_protection_refuses_before_any_write(self):
         self.api.rule=False
         with self.assertRaisesRegex(g.Refused,'guard_force_rule_missing'):
+            self.update(7,'claim',owner('a'),'1')
+        self.assertEqual(self.api.writes,[])
+
+    def test_missing_deletion_protection_never_creates_or_updates_a_guard(self):
+        self.api.deletion_rule=False
+        with self.assertRaisesRegex(g.Refused,'guard_deletion_rule_missing'):
+            self.update(7,'claim',owner('a'),'1')
+        self.api.heads.pop(8)
+        with self.assertRaisesRegex(g.Refused,'guard_deletion_rule_missing'):
+            g.ensure_ref(self.api,REPO,GENESIS,RULE,8)
+        self.assertEqual(self.api.writes,[])
+        self.assertEqual(self.api.head,GENESIS)
+
+    def test_lost_deletion_protection_before_ref_update_preserves_existing_guard(self):
+        original=self.api.api
+        def mutate(path,method='GET',data=None):
+            result=original(path,method,data)
+            if path==f'repos/{REPO}/git/commits' and method=='POST':self.api.deletion_rule=False
+            return result
+        self.api.api=mutate
+        with self.assertRaisesRegex(g.Refused,'guard_deletion_rule_missing'):
+            self.update(7,'claim',owner('a'),'1')
+        self.assertEqual(self.api.writes,['commit'])
+        self.assertEqual(self.api.head,GENESIS)
+
+    def test_deletion_rule_from_a_different_ruleset_cannot_stand_in(self):
+        original=self.api.api
+        def mutate(path,method='GET',data=None):
+            if unquote(path).startswith(f'repos/{REPO}/rules/branches/{g.BRANCH_PREFIX}'):
+                return [dict(type='non_fast_forward',ruleset_id=RULE),dict(type='deletion',ruleset_id=RULE+1)]
+            return original(path,method,data)
+        self.api.api=mutate
+        with self.assertRaisesRegex(g.Refused,'guard_deletion_rule_missing'):
             self.update(7,'claim',owner('a'),'1')
         self.assertEqual(self.api.writes,[])
 
