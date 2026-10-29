@@ -16,6 +16,7 @@ guard=importlib.util.module_from_spec(_spec);_spec.loader.exec_module(guard)
 need=guard.need
 MAX_ITEMS=10000
 TYPES=('AutoSquashEnabledEvent','AutoRebaseEnabledEvent','AutoMergeEnabledEvent','AutoMergeDisabledEvent')
+MARKER='AW_REQUEST_HISTORY_OBSERVATION_V1 '
 QUERY='''query($owner:String!,$name:String!,$number:Int!,$after:String){
   repository(owner:$owner,name:$name){nameWithOwner pullRequest(number:$number){number
     timelineItems(first:100,after:$after){totalCount nodes{__typename
@@ -129,7 +130,8 @@ def bind(before,after,pull,intent,policy,base):
          and event.get('actor_login')=='github-actions' and event.get('created_at')==identity['enabled_at'],
          'request_history_target')
     payload=dict(version=1,guard_sha256=intent['sha256'],repo=p['repo'],pr=p['pr'],issue=p['issue'],
-                 owner=p['owner'],request=identity,events=after['events'])
+                 owner=p['owner'],request=identity,events=after['events'],
+                 previous_events_sha256=hashlib.sha256(canonical(before['events']).encode()).hexdigest())
     return dict(payload=payload,sha256=hashlib.sha256(canonical(payload).encode()).hexdigest(),
                 authorizes_merge=False)
 
@@ -141,11 +143,18 @@ def unchanged(value,current,pull,intent,policy,base):
          and value['sha256']==hashlib.sha256(canonical(value['payload']).encode()).hexdigest(),
          'request_history_record')
     p=guard.validate(intent,policy);record=value['payload']
-    need(set(record)=={'version','guard_sha256','repo','pr','issue','owner','request','events'}
+    need(set(record)=={'version','guard_sha256','repo','pr','issue','owner','request','events',
+                       'previous_events_sha256'}
          and type(record['version']) is int and record['version']==1
          and record['guard_sha256']==intent['sha256']
          and all(record[k]==p[k] for k in ('repo','pr','issue','owner'))
          and isinstance(current,dict) and current==dict(repo=p['repo'],pr=p['pr'],events=record['events'])
          and request_identity(pull,intent,policy,base)==record['request'], 'request_history_changed')
     history_shape(current,p['repo'],p['pr'])
+    events=current['events']
+    need(bool(events) and isinstance(record['previous_events_sha256'],str)
+         and record['previous_events_sha256']==hashlib.sha256(canonical(events[:-1]).encode()).hexdigest()
+         and events[-1]['type']=='AutoSquashEnabledEvent' and events[-1]['actor_type']=='Bot'
+         and events[-1]['actor_login']=='github-actions'
+         and events[-1]['created_at']==record['request']['enabled_at'],'request_history_changed')
     return dict(state='observed_unchanged',authorizes_merge=False)

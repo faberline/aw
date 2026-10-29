@@ -152,7 +152,14 @@ one observed squash-enable event to the guard and request fields. It detects a
 later disable or re-enable even in the same second. It does not prove that a
 writer caused the event, that the provider timeline is complete in real time,
 or that the request belongs to that writer. It cannot authorize a merge or
-restore a blocked status. The queued-PR liveness gap remains unresolved.
+restore a blocked status. The hash of the earlier event prefix checks record
+integrity only; it does not authenticate the writer. The queued-PR liveness gap
+remains unresolved.
+Both guarded publishers now capture this observation around a new request
+before publishing success. Missing or changing timeline data holds the request
+behind pending. An already-existing request is not reused under a new guard.
+These observations remain untrusted until a later verifier authenticates their
+source and provider behavior; no recovery path consumes them yet.
 The protected policy-adoption draft requires the same guard and a separately
 reviewed grant. It permits bootstrap or an unchanged guard only after rollout
 is verified. The current verifier always holds before paid target review or

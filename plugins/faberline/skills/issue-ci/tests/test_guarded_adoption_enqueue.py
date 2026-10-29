@@ -6,6 +6,7 @@ import io
 import os
 from pathlib import Path
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 import test_policy_adoption as fixture
 
@@ -31,6 +32,9 @@ class GuardedAdoptionEnqueueTests(unittest.TestCase):
         self.queued['provider']['autoMergeRequest']=dict(mergeMethod='SQUASH',enabledBy={'login':'github-actions','__typename':'Bot'},
             commitHeadline=f"Merge PR #{self.grant['pr']}",commitBody=f"Closes #{self.grant['issue']}")
         self.response={'enablePullRequestAutoMerge':{'pullRequest':self.queued['provider']}}
+        self.history=SimpleNamespace(stable=lambda *args:dict(repo='o/r',pr=self.grant['pr'],events=[]),
+                                     bind=lambda *args:dict(authorizes_merge=False),
+                                     MARKER='AW_REQUEST_HISTORY_OBSERVATION_V1 ')
         old=self.api.api
         def api(path,method='GET',data=None):
             if method=='POST' and '/statuses/' in path:
@@ -52,7 +56,8 @@ class GuardedAdoptionEnqueueTests(unittest.TestCase):
                 self.assertEqual(self.api.writes,[]);return self.claim
             def recheck(inner,*args):return self.attestation
         original=a.review.sibling
-        def sibling(name):return Guard() if name=='adoption_guard' else original(name)
+        def sibling(name):
+            return Guard() if name=='adoption_guard' else self.history if name=='request_history' else original(name)
         out=io.StringIO()
         with patch.dict(os.environ,self.env,clear=True),patch.object(a,'verify_grant_attestation',return_value=self.attestation), \
              patch.object(a,'publisher_provenance'),patch.object(a,'evaluate',side_effect=a.review.Refused('guarded_adoption_not_ready')), \
@@ -67,6 +72,7 @@ class GuardedAdoptionEnqueueTests(unittest.TestCase):
         self.assertEqual([row[2]['state'] for row in self.api.writes],['pending','success'])
         bound=per_pr.find(out.getvalue(),'o/r',self.grant['pr'],self.grant['head'])
         self.assertIsNotNone(bound)
+        self.assertIn('AW_REQUEST_HISTORY_OBSERVATION_V1 ',out.getvalue())
         self.assertEqual(bound['payload']['evidence']['payload']['adoption_source'],self.document['source_commit'])
 
     def test_guard_rollout_failure_never_writes_status(self):
@@ -76,6 +82,20 @@ class GuardedAdoptionEnqueueTests(unittest.TestCase):
              patch.object(a,'publisher_provenance'),patch.object(a,'evaluate',side_effect=a.review.Refused('guarded_adoption_not_ready')), \
              patch.object(a.review,'sibling',return_value=Guard()):
             with self.assertRaisesRegex(RuntimeError,'recovery_rollout_not_verified'):
+                a.enqueue(self.api,'o/r',fixture.EVALUATOR,333,'push',grant_loader=lambda:self.document,
+                          prepare_record=self.checkpoint)
+        self.assertEqual(self.api.writes,[])
+
+    def test_existing_request_with_unknown_owner_is_not_reused(self):
+        class Guard:
+            def begin(inner,*args):return self.claim
+        self.state['provider']['autoMergeRequest']=copy.deepcopy(self.queued['provider']['autoMergeRequest'])
+        original=a.review.sibling
+        def sibling(name):return Guard() if name=='adoption_guard' else original(name)
+        with patch.dict(os.environ,self.env,clear=True),patch.object(a,'verify_grant_attestation',return_value=self.attestation), \
+             patch.object(a,'publisher_provenance'),patch.object(a,'evaluate',side_effect=a.review.Refused('guarded_adoption_not_ready')), \
+             patch.object(a,'_evaluate_guarded',return_value=self.state),patch.object(a.review,'sibling',side_effect=sibling):
+            with self.assertRaisesRegex(RuntimeError,'guard_request_owner_unknown'):
                 a.enqueue(self.api,'o/r',fixture.EVALUATOR,333,'push',grant_loader=lambda:self.document,
                           prepare_record=self.checkpoint)
         self.assertEqual(self.api.writes,[])
@@ -105,7 +125,8 @@ class GuardedAdoptionEnqueueTests(unittest.TestCase):
                 if inner.calls==3:raise RuntimeError('guard changed')
                 return self.attestation
         guard=Guard();original=a.review.sibling
-        def sibling(name):return guard if name=='adoption_guard' else original(name)
+        def sibling(name):
+            return guard if name=='adoption_guard' else self.history if name=='request_history' else original(name)
         with patch.dict(os.environ,self.env,clear=True),patch.object(a,'verify_grant_attestation',return_value=self.attestation), \
              patch.object(a,'publisher_provenance'),patch.object(a,'evaluate',side_effect=a.review.Refused('guarded_adoption_not_ready')), \
              patch.object(a,'_evaluate_guarded',side_effect=[self.state,self.state,self.queued]), \
@@ -113,7 +134,32 @@ class GuardedAdoptionEnqueueTests(unittest.TestCase):
             result=a.enqueue(self.api,'o/r',fixture.EVALUATOR,333,'push',grant_loader=lambda:self.document,
                              prepare_record=self.checkpoint)
         self.assertEqual(result['state'],'held_after_pending')
+        self.assertEqual(guard.calls,3)
         self.assertEqual([row[2]['state'] for row in self.api.writes],['pending'])
+
+    def test_unknown_request_timeline_never_publishes_success(self):
+        class Guard:
+            def begin(inner,*args):return self.claim
+            def recheck(inner,*args):return self.attestation
+        calls=[]
+        def history_read(*args):
+            calls.append(True)
+            if len(calls)==2:raise RuntimeError('timeline unavailable')
+            return dict(repo='o/r',pr=self.grant['pr'],events=[])
+        self.history.stable=history_read;original=a.review.sibling
+        def sibling(name):
+            return Guard() if name=='adoption_guard' else self.history if name=='request_history' else original(name)
+        out=io.StringIO()
+        with patch.dict(os.environ,self.env,clear=True),patch.object(a,'verify_grant_attestation',return_value=self.attestation), \
+             patch.object(a,'publisher_provenance'),patch.object(a,'evaluate',side_effect=a.review.Refused('guarded_adoption_not_ready')), \
+             patch.object(a,'_evaluate_guarded',side_effect=[self.state,self.state]), \
+             patch.object(a.review,'sibling',side_effect=sibling),patch.object(a.native,'graphql',return_value=self.response), \
+             contextlib.redirect_stdout(out):
+            result=a.enqueue(self.api,'o/r',fixture.EVALUATOR,333,'push',grant_loader=lambda:self.document,
+                             prepare_record=self.checkpoint)
+        self.assertEqual(result['state'],'held_after_pending')
+        self.assertEqual([row[2]['state'] for row in self.api.writes],['pending'])
+        self.assertNotIn('AW_REQUEST_HISTORY_OBSERVATION_V1 ',out.getvalue())
 
 
 if __name__=='__main__':unittest.main()

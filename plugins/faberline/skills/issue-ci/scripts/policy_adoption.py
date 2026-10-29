@@ -670,6 +670,7 @@ def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_gra
     context,p=before['context'],before['policy']
     headline,body=f'Merge PR #{number}',f"Closes #{grant['issue']}"
     request=before['provider'].get('autoMergeRequest')
+    need(guarded is None or request is None,'guard_request_owner_unknown')
     if request is not None:
         native.queued_request(before['provider'],p,headline,body)
     need(grant_loader()==document, 'grant_changed')
@@ -695,6 +696,8 @@ def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_gra
             need(guard_action.recheck(api,document,grant,evaluator,run_id,guarded,log_reader)==attestation,
                  'adoption_guard_review_changed')
         if current['provider'].get('autoMergeRequest') is None:
+            history=review.sibling('request_history') if guarded is not None else None
+            prior_history=history.stable(api,repo,number) if history is not None else None
             result=native.graphql(api,native.QUEUE,dict(input=dict(
                 pullRequestId=current['provider']['id'],expectedHeadOid=head,
                 mergeMethod=p['merge_method'],clientMutationId=r.digest(grant),
@@ -702,7 +705,12 @@ def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_gra
             queued=result.get('enablePullRequestAutoMerge',{}).get('pullRequest')
             need(isinstance(queued,dict) and queued.get('headRefOid')==head, 'queue_response')
             native.queued_request(queued,p,headline,body)
+            if history is not None:
+                observed=history.stable(api,repo,number)
+                record=history.bind(prior_history,observed,queued,guarded['intent'],guarded['policy'],context['base'])
+                print(history.MARKER+r.canonical(record),flush=True)
         else:
+            need(guarded is None,'guard_request_owner_unknown')
             native.queued_request(current['provider'],p,headline,body)
         fresh=_evaluate_guarded(api,grant,log_reader) if guarded is not None else evaluate(api,grant,log_reader)
         need(grant_loader()==document and all(fresh[k]==before[k] for k in ('context','issue','policy','receipt','ci_jobs'))

@@ -112,5 +112,12 @@ class RequestHistoryTests(unittest.TestCase):
             with self.subTest(key=key),self.assertRaisesRegex(RuntimeError,'request_history_unknown'):
                 m.bind(self.before,after,self.pull,self.intent,self.policy,BASE)
 
+    def test_recomputed_record_hash_cannot_hide_changed_preexisting_events(self):
+        value=m.bind(self.before,self.after,self.pull,self.intent,self.policy,BASE)
+        value['payload']['previous_events_sha256']='0'*64
+        value['sha256']=m.hashlib.sha256(m.canonical(value['payload']).encode()).hexdigest()
+        with self.assertRaisesRegex(RuntimeError,'request_history_changed'):
+            m.unchanged(value,self.after,self.pull,self.intent,self.policy,BASE)
+
 
 if __name__=='__main__':unittest.main()

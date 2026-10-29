@@ -5,6 +5,7 @@ import io
 import os
 from pathlib import Path
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 import test_native_merge as fixture
 
@@ -27,7 +28,7 @@ class PerPRNativeTests(unittest.TestCase):
         self.intent=per_pr.guard.build('o/r',1,fixture.HEAD,7,self.policy,300,1,lambda n:next(values))
         self.claim=dict(policy=self.policy,intent=self.intent)
 
-    def run_writer(self,valid_response,valid_pending=True):
+    def run_writer(self,valid_response,valid_pending=True,history_failure=False):
         original=self.p.api
         def api(path,method='GET',data=None):
             result=original(path,method,data)
@@ -36,10 +37,21 @@ class PerPRNativeTests(unittest.TestCase):
                 if data['state']=='pending' and valid_pending or data['state']=='success' and valid_response:
                     return dict(self.p.statuses[0])
             return result
-        self.p.api=api;out=io.StringIO()
-        with patch.dict(os.environ,self.env,clear=True),contextlib.redirect_stdout(out):
+        self.p.api=api;out=io.StringIO();calls=[]
+        def history_read(*args):
+            calls.append([item[0] for item in self.p.writes])
+            if history_failure and len(calls)==2:raise RuntimeError('timeline unknown')
+            return dict(repo='o/r',pr=1,events=[])
+        history=SimpleNamespace(stable=history_read,bind=lambda *args:dict(authorizes_merge=False),
+                                MARKER='AW_REQUEST_HISTORY_OBSERVATION_V1 ')
+        sibling=m.review.sibling
+        def select(name):return history if name=='request_history' else sibling(name)
+        with patch.dict(os.environ,self.env,clear=True),patch.object(m.review,'sibling',side_effect=select), \
+             contextlib.redirect_stdout(out):
             result=m.enqueue(self.p,'o/r',1,fixture.HEAD,self.p.load,fixture.EVALUATOR,200,
                              verify=self.p.verify,prepare_record=m.prepare_close_record,guarded_claim=self.claim)
+        if not history_failure:
+            self.assertEqual(calls,[['pending'],['pending','queue']])
         return result,out.getvalue()
 
     def test_acknowledged_guarded_success_emits_bound_checkpoint(self):
@@ -49,6 +61,7 @@ class PerPRNativeTests(unittest.TestCase):
         self.assertIsNotNone(bound)
         self.assertEqual(per_pr.verify_status(self.p,'o/r',fixture.HEAD,bound,self.intent)['payload']['review_run'],200)
         self.assertIn('AW_PREPARED_STATUS_V1 ',log)
+        self.assertIn('AW_REQUEST_HISTORY_OBSERVATION_V1 ',log)
 
     def test_ambiguous_status_response_cannot_emit_checkpoint(self):
         result,log=self.run_writer(False)
@@ -67,11 +80,26 @@ class PerPRNativeTests(unittest.TestCase):
         self.assertNotIn(prepared.MARKER,log)
         self.assertEqual([entry[0] for entry in self.p.writes],['pending','queue'])
 
+    def test_unknown_request_history_never_publishes_success(self):
+        result,log=self.run_writer(True,history_failure=True)
+        self.assertEqual(result['state'],'held_after_pending')
+        self.assertEqual([entry[0] for entry in self.p.writes],['pending','queue'])
+        self.assertNotIn(per_pr.MARKER,log)
+        self.assertNotIn('AW_REQUEST_HISTORY_OBSERVATION_V1 ',log)
+
     def test_guarded_request_without_checkpoint_provider_never_writes(self):
         with patch.dict(os.environ,self.env,clear=True):
             with self.assertRaisesRegex(RuntimeError,'guard_record_required'):
                 m.enqueue(self.p,'o/r',1,fixture.HEAD,self.p.load,fixture.EVALUATOR,200,
                           verify=self.p.verify,guarded_claim=self.claim)
+        self.assertEqual(self.p.writes,[])
+
+    def test_existing_request_with_unknown_owner_is_never_reused(self):
+        self.p.native['autoMergeRequest']=dict(mergeMethod='SQUASH')
+        with patch.dict(os.environ,self.env,clear=True):
+            with self.assertRaisesRegex(RuntimeError,'guard_request_owner_unknown'):
+                m.enqueue(self.p,'o/r',1,fixture.HEAD,self.p.load,fixture.EVALUATOR,200,
+                          verify=self.p.verify,prepare_record=m.prepare_close_record,guarded_claim=self.claim)
         self.assertEqual(self.p.writes,[])
 
 

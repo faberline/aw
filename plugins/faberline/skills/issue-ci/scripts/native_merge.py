@@ -523,6 +523,7 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
     binding(before, context)
     headline, body = f"Merge PR #{number}", f"Closes #{linked}"
     request = before.get("autoMergeRequest")
+    need(guarded_claim is None or request is None, 'guard_request_owner_unknown')
     need(request is None or request.get("mergeMethod") == p["merge_method"],
          "existing_merge_method_conflict")
     if request is not None:
@@ -545,6 +546,8 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
         binding(current, context)
         need(load_document() == document, "policy_changed")
         if current.get("autoMergeRequest") is None:
+            history=review.sibling('request_history') if guarded_claim is not None else None
+            prior_history=history.stable(api,repo,number) if history is not None else None
             result = graphql(api, QUEUE, dict(input=dict(
                 pullRequestId=before["id"], expectedHeadOid=head,
                 mergeMethod=p["merge_method"], clientMutationId=receipt["sha256"],
@@ -553,7 +556,13 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
             need(isinstance(queued, dict) and queued.get("headRefOid") == head,
                  "native_request_response")
             queued_request(queued, p, headline, body)
+            if history is not None:
+                observed=history.stable(api,repo,number)
+                record=history.bind(prior_history,observed,queued,guarded_claim['intent'],
+                                    guarded_claim['policy'],context['base'])
+                print(history.MARKER+review.r.canonical(record),flush=True)
         else:
+            need(guarded_claim is None,'guard_request_owner_unknown')
             queued_request(current, p, headline, body)
         # Repeat source/CI/issue/producer verification after queueing. Passing
         # status is the final write. An abandoned native request stays blocked.
