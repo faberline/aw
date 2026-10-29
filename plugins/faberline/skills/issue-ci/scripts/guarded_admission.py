@@ -141,6 +141,20 @@ def cancel_blocked(api,repo,policy,intent):
     need(pull.get('state')=='OPEN','admission_target_changed')
     request=pull.get('autoMergeRequest')
     if request is None:
+        # A writer can die after acquiring the guard but before publishing its
+        # first blocking status. Authenticate the original guard and linked
+        # issue before establishing a block. The caller must authenticate the
+        # originating intent; an intent hash alone is not sufficient.
+        rest=api.api(f"repos/{repo}/pulls/{p['pr']}")
+        native.review.pull_identity(rest,repo,p['pr'],p['head'])
+        need(native.review.linked_issue(rest)==p['issue'],'admission_issue_changed')
+        close.require_current_policy(api,repo,policy)
+        close.guard_identity(api,repo,policy,intent)
+        # This only withdraws approval; it does not cancel a request or
+        # authorize merge. A lost write response remains a hold. settle()
+        # rechecks the exact guard, status, protection and absence of a
+        # request before releasing the guard.
+        native.block_unadmitted(api,repo,p['pr'],p['head'])
         return settle(api,repo,policy,intent)
     # All Actions workflows share the same bot identity. That identity does
     # not establish which run requested this merge. Until provenance is bound

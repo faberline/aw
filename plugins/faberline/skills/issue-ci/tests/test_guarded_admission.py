@@ -140,6 +140,55 @@ class AdmissionTests(unittest.TestCase):
             self.settle(intent,[self.provider()])
         self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
 
+    def recovery_api(self, lose_response=False):
+        old=self.api.api
+        def api(path,method='GET',data=None):
+            if path==f'repos/o/r/statuses/{HEAD}' and method=='POST':
+                item=dict(id=99,creator=dict(id=41898282,type='Bot',login='github-actions[bot]'),**data)
+                self.statuses.insert(0,item)
+                if lose_response:raise TimeoutError('lost status response')
+                return copy.deepcopy(item)
+            return old(path,method,data)
+        self.api.api=api
+
+    def test_crash_before_first_status_is_blocked_then_guard_released(self):
+        intent=self.begin();self.recovery_api()
+        with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
+             patch.object(m.native,'provider_pull',return_value=self.provider()), \
+             patch.object(m,'blocking_rule',return_value=dict(rule=1)):
+            result=m.cancel_blocked(self.api,'o/r',self.policy,intent)
+        self.assertEqual(result,dict(state='released',issue=7))
+        self.assertEqual(self.statuses[0]['state'],'pending')
+        state=m.merge_guard.provider.read_chain(self.api,'o/r',fixture.GENESIS,fixture.RULE,7)
+        self.assertEqual(state['state']['locks'],{})
+
+    def test_request_arriving_after_block_keeps_original_guard(self):
+        intent=self.begin();self.recovery_api()
+        queued=self.provider(request=dict(mergeMethod='SQUASH'))
+        with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
+             patch.object(m.native,'provider_pull',side_effect=[self.provider(),self.provider(),self.provider(),queued]):
+            result=m.cancel_blocked(self.api,'o/r',self.policy,intent)
+        self.assertEqual(result,dict(state='retained',issue=7))
+        self.assertEqual(self.statuses[0]['state'],'pending')
+        self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
+
+    def test_lost_block_response_does_not_release_guard(self):
+        intent=self.begin();self.recovery_api(lose_response=True)
+        with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
+             patch.object(m.native,'provider_pull',return_value=self.provider()):
+            with self.assertRaises(TimeoutError):m.cancel_blocked(self.api,'o/r',self.policy,intent)
+        self.assertEqual(self.statuses[0]['state'],'pending')
+        self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
+
+    def test_changed_linked_issue_never_writes_block(self):
+        intent=self.begin();self.recovery_api();self.pull['body']='Closes #8\n'
+        with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
+             patch.object(m.native,'provider_pull',return_value=self.provider()):
+            with self.assertRaisesRegex(RuntimeError,'admission_issue_changed'):
+                m.cancel_blocked(self.api,'o/r',self.policy,intent)
+        self.assertEqual(self.statuses,[])
+        self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
+
     def test_blocking_rule_uses_current_policy_and_github_actions_app(self):
         doc=dict(source_commit=SOURCE,config={});native_policy=dict(status_app_id=15368)
         with patch.object(m.native.review.action,'trusted_policy',return_value=doc), \
