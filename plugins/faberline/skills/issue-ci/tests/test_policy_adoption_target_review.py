@@ -1,5 +1,6 @@
 """Protected policy review reads data only and requires every current gate."""
 import copy
+import hashlib
 import importlib.util
 import os
 import subprocess
@@ -14,6 +15,10 @@ m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 HEAD,BASE=adoption.HEAD,adoption.BASE
 
 
+def question_id(text):
+    return 'planning-question-'+hashlib.sha256(text.encode()).hexdigest()
+
+
 class ReviewProtocolTests(unittest.TestCase):
     def packet(self):
         return dict(context=dict(repo='o/r',pr=8,issue=7,head=HEAD,base=BASE,pr_sha256='1'*64,
@@ -25,7 +30,8 @@ class ReviewProtocolTests(unittest.TestCase):
         if 'requirements' in schema['properties'] and 'decision' not in schema['properties']:
             return dict(requirements=[dict(id='R1',requirement='Do the work',issue_quote='Explicit issue requirement',supporting_paths=[])],uncertainties=[])
         return dict(decision='pass',summary='Reviewed all changed bytes',reviewed_files=['src/x'],
-                    requirements=[dict(id='R1',status='met',evidence='Exact source and CI')],findings=[],uncertainties=[])
+                    requirements=[dict(id='R1',status='met',evidence='Exact source and CI')],
+                    planning_questions=[],findings=[],uncertainties=[])
 
     def test_receipt_binds_every_file_and_requirement_after_rechecks(self):
         packet=self.packet()
@@ -85,15 +91,79 @@ class ReviewProtocolTests(unittest.TestCase):
             self.assertEqual(receipt['uncertainties'],[f'Independent review blocked: {expected}.'])
             self.assertNotIn('private secret',str(receipt))
 
-    def test_real_plan_uncertainty_refusal_reports_exact_safe_code(self):
+    def test_real_malformed_plan_refusal_reports_exact_safe_code(self):
         packet=self.packet()
         def model(*args,**kwargs):
             return dict(requirements=[dict(id='R1',requirement='Do the work',
-                issue_quote='Explicit issue requirement',supporting_paths=[])],uncertainties=['material ambiguity'])
+                issue_quote='Explicit issue requirement',supporting_paths=[])],uncertainties=[None])
         with patch.object(m,'preflight',return_value=(packet,{BASE:[],HEAD:[]})):
             receipt=m.produce(None,'o/r',8,HEAD,'token',model)
         self.assertEqual(receipt['decision'],'block')
-        self.assertEqual(receipt['uncertainties'],['Independent review blocked: planning/target_plan_uncertain.'])
+        self.assertEqual(receipt['uncertainties'],['Independent review blocked: planning/target_plan_invalid.'])
+
+    def test_planning_questions_require_evidence_and_remain_in_receipt(self):
+        packet=self.packet()
+        def model(data,token,system,schema,**kwargs):
+            result=self.model(data,token,system,schema,**kwargs)
+            if 'decision' not in result:
+                result['uncertainties']=['Was the change authorized?']
+            else:
+                self.assertEqual(data['planning_questions'],[dict(id=question_id('Was the change authorized?'),question='Was the change authorized?')])
+                result['planning_questions']=[dict(id=question_id('Was the change authorized?'),status='resolved',evidence='Exact issue extension')]
+            return result
+        with patch.object(m,'preflight',return_value=(packet,{BASE:[],HEAD:[]})):
+            receipt=m.produce(None,'o/r',8,HEAD,'token',model)
+        self.assertEqual(receipt['decision'],'pass')
+        self.assertIn(dict(id=question_id('Was the change authorized?'),status='met',evidence='Exact issue extension'),receipt['requirements'])
+
+    def test_planner_receives_only_available_safe_source_names(self):
+        packet=self.packet();seen=[]
+        trees={BASE:[dict(path='src/old',type='blob',mode='100644',size=10),
+                     dict(path='../unsafe',type='blob',mode='100644',size=10)],
+               HEAD:[dict(path='src/new',type='blob',mode='100644',size=10),
+                     dict(path='src/large',type='blob',mode='100644',size=262145)]}
+        def model(data,token,system,schema,**kwargs):
+            if 'decision' not in schema['properties']:
+                seen.append(data['available_source_paths'])
+            return self.model(data,token,system,schema,**kwargs)
+        with patch.object(m,'preflight',return_value=(packet,trees)):
+            self.assertEqual(m.produce(None,'o/r',8,HEAD,'token',model)['decision'],'pass')
+        self.assertEqual(seen,[['src/new','src/old']])
+
+    def test_unresolved_missing_duplicate_or_malformed_question_cannot_pass(self):
+        for change in ('unresolved','missing','duplicate','wrong-id','empty-evidence'):
+            packet=self.packet()
+            def model(data,token,system,schema,**kwargs):
+                result=self.model(data,token,system,schema,**kwargs)
+                if 'decision' not in result:
+                    result['uncertainties']=['Question A','Question B']
+                else:
+                    rows=[dict(id=question_id('Question A'),status='resolved',evidence='Source A'),
+                          dict(id=question_id('Question B'),status='resolved',evidence='Source B')]
+                    if change=='unresolved':rows[0]['status']='unresolved'
+                    if change=='missing':rows.pop()
+                    if change=='duplicate':rows[1]['id']=rows[0]['id']
+                    if change=='wrong-id':rows[1]['id']='other'
+                    if change=='empty-evidence':rows[0]['evidence']=''
+                    result['planning_questions']=rows
+                return result
+            with self.subTest(change=change),patch.object(m,'preflight',return_value=(packet,{BASE:[],HEAD:[]})):
+                self.assertEqual(m.produce(None,'o/r',8,HEAD,'token',model)['decision'],'block')
+
+    def test_negative_review_preserves_unresolved_question(self):
+        packet=self.packet()
+        def model(data,token,system,schema,**kwargs):
+            result=self.model(data,token,system,schema,**kwargs)
+            if 'decision' not in result:
+                result['uncertainties']=['Missing product criterion']
+            else:
+                result['decision']='block'
+                result['planning_questions']=[dict(id=question_id('Missing product criterion'),status='unresolved',evidence='No authoritative criterion')]
+            return result
+        with patch.object(m,'preflight',return_value=(packet,{BASE:[],HEAD:[]})):
+            receipt=m.produce(None,'o/r',8,HEAD,'token',model)
+        self.assertEqual(receipt['decision'],'block')
+        self.assertIn(dict(id=question_id('Missing product criterion'),status='uncertain',evidence='No authoritative criterion'),receipt['requirements'])
 
     def test_real_missing_supporting_source_refusal_reports_exact_safe_code(self):
         packet=self.packet()
