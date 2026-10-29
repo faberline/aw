@@ -4,6 +4,10 @@ on:
     - cron: '13,43 * * * *'
   repository_dispatch:
     types: [aw-verified-merge-recover]
+  workflow_run:
+    workflows: [Issue CI and Claude outcome]
+    types: [completed]
+    branches: [REPLACE_WITH_DEFAULT_BRANCH]
 permissions: {}
 concurrency:
   group: issue-ci-handoff

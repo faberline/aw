@@ -119,6 +119,12 @@ the exact workflow and action, and its review must include the recovery and
 worker sources. Do not deploy the template while the writer, crash recovery,
 or actor-adoption checks remain incomplete.
 
+The draft recovery workflow can wake when the pinned default-branch writer
+finishes, even if that writer did not dispatch recovery. It checks the writer's
+workflow ID and attempt; the event is a wake only. A queued merge can finish
+later, so this wake does not replace the recurring recovery check. GitHub limits
+workflow-run chains and can delay scheduled jobs. Hosted tests are still needed.
+
 The guarded writer draft holds an issue guard while a merge is queued. It
 does not change an issue held by another worker. A PR-target wake only asks
 the default-branch writer to recheck. An unknown write result retains the

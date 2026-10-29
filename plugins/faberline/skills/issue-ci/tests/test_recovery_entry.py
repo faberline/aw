@@ -27,7 +27,7 @@ class EntryTests(unittest.TestCase):
         self.value=dict(version=1,enabled=True,cron='13,43 * * * *',producer=self.spec)
         self.document=dict(source_commit=SOURCE,config=dict(issue_guard=guard,issue_recovery=self.value))
         self.raw=(HERE.parent/'templates/issue-recovery.yml.example').read_text().replace(
-            'REPLACE_WITH_REVIEWED_FULL_SHA',EVALUATOR)
+            'REPLACE_WITH_REVIEWED_FULL_SHA',EVALUATOR).replace('REPLACE_WITH_DEFAULT_BRANCH','main')
 
     def test_policy_preserves_existing_qualification_and_refuses_unrecognized_guard(self):
         with patch.object(m.native,'policy') as prior:
@@ -39,15 +39,30 @@ class EntryTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):m.policy(bad)
 
     def test_exact_workflow_has_one_pinned_writer_and_shared_mutex(self):
-        with patch.object(m.native,'policy'),patch.object(m.review,'blob',return_value=self.raw):
+        with patch.object(m.native,'policy'),patch.object(m.review,'blob',return_value=self.raw), \
+             patch.object(m,'writer_branch',return_value='main'):
             self.assertEqual(m.workflow_contract(None,'o/r',self.document,EVALUATOR),self.spec)
         for changed in (self.raw.replace('cancel-in-progress: false','cancel-in-progress: true'),
                         self.raw.replace('issues: write','issues: read'),
                         self.raw.replace('13,43 * * * *','* * * * *'),
-                        self.raw.replace(EVALUATOR,'0'*40)):
+                        self.raw.replace(EVALUATOR,'0'*40),
+                        self.raw.replace('branches: [main]','branches: [foreign]')):
             with self.subTest(changed=changed),patch.object(m.native,'policy'), \
-                 patch.object(m.review,'blob',return_value=changed),self.assertRaises(RuntimeError):
+                 patch.object(m.review,'blob',return_value=changed), \
+                 patch.object(m,'writer_branch',return_value='main'),self.assertRaises(RuntimeError):
                 m.workflow_contract(None,'o/r',self.document,EVALUATOR)
+
+    def test_writer_wake_name_is_pinned_to_the_default_source(self):
+        writer=dict(path='.github/workflows/issue-ci.yml',id=30,definition_sha='d'*40,job='writer')
+        class Api:
+            def api(self,path):return dict(full_name='o/r',default_branch='main')
+        with patch.object(m.native,'policy',return_value={'producer':writer}), \
+             patch.object(m.review,'blob',return_value='name: Issue CI and Claude outcome\n'):
+            self.assertEqual(m.writer_branch(Api(),'o/r',self.document),'main')
+        with patch.object(m.native,'policy',return_value={'producer':writer}), \
+             patch.object(m.review,'blob',return_value='name: foreign\n'):
+            with self.assertRaisesRegex(RuntimeError,'recovery_writer_identity'):
+                m.writer_branch(Api(),'o/r',self.document)
 
     def test_event_and_exact_running_attempt_are_verified(self):
         identity=dict(head=SOURCE,run_attempt=2,job_id=100)
@@ -98,6 +113,36 @@ class EntryTests(unittest.TestCase):
                 os.environ['GITHUB_WORKFLOW_SHA']='0'*40
                 with self.assertRaisesRegex(RuntimeError,'recovery_wake_identity'):m.main()
                 runner.assert_not_called()
+
+    def test_completed_writer_wake_is_only_a_trigger_and_checks_live_identity(self):
+        identity=dict(head=SOURCE,run_attempt=2,job_id=100)
+        writer=dict(path='.github/workflows/issue-ci.yml',id=30,definition_sha='d'*40,job='writer')
+        class Api:
+            def __init__(self):
+                self.source=dict(id=70,run_attempt=3,workflow_id=30,path=writer['path'],status='completed',
+                                 head_branch='main',head_repository=dict(full_name='o/r'),event='workflow_run')
+            def api(self,path):
+                if path=='repos/o/r/actions/runs/70':return copy.deepcopy(self.source)
+                if path=='repos/o/r/actions/runs/50/attempts/2':
+                    return dict(id=50,run_attempt=2,status='in_progress',event='workflow_run')
+                raise AssertionError(path)
+            def pages(self,path,key):return [dict(id=100,name='recovery',status='in_progress')]
+        api=Api();payload=dict(action='completed',repository=dict(full_name='o/r'),
+                               workflow_run=dict(id=70,run_attempt=3))
+        with patch.object(m,'policy',return_value=self.value), \
+             patch.object(m,'workflow_contract',return_value=self.spec), \
+             patch.object(m,'writer_branch',return_value='main'), \
+             patch.object(m.native,'policy',return_value={'producer':writer}), \
+             patch.object(m.review,'producer_identity',return_value=identity):
+            self.assertEqual(m.validate_wake(api,'o/r',self.document,EVALUATOR,50,'workflow_run',payload),identity)
+            api.source['conclusion']='failure'
+            self.assertEqual(m.validate_wake(api,'o/r',self.document,EVALUATOR,50,'workflow_run',payload),identity)
+            for mutation in (lambda:api.source.update(workflow_id=99),lambda:api.source.update(status='in_progress'),
+                             lambda:api.source.update(head_branch='foreign'),lambda:api.source.update(run_attempt=4)):
+                saved=copy.deepcopy(api.source);mutation()
+                with self.subTest(source=api.source),self.assertRaisesRegex(RuntimeError,'recovery_wake_identity'):
+                    m.validate_wake(api,'o/r',self.document,EVALUATOR,50,'workflow_run',payload)
+                api.source=saved
 
 
 if __name__=='__main__':unittest.main()

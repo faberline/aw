@@ -19,6 +19,7 @@ runner=sibling('recovery_runner')
 review=native.review
 need=review.need
 DISPATCH='aw-verified-merge-recover'
+WRITER_NAME='Issue CI and Claude outcome'
 
 
 def policy(document):
@@ -46,11 +47,14 @@ def workflow_contract(api,repo,document,evaluator):
     review.r.literal_uses(raw)
     import yaml
     workflow=yaml.load(raw,Loader=yaml.BaseLoader)
+    branch=writer_branch(api,repo,document)
     need(isinstance(workflow,dict) and set(workflow)=={'name','on','permissions','concurrency','jobs'}
          and workflow['name']=='Verified issue recovery' and workflow['permissions']=={}
          and workflow['concurrency']=={'group':'issue-ci-handoff','cancel-in-progress':'false'}
          and workflow['on']=={'schedule':[{'cron':value['cron']}],
-                              'repository_dispatch':{'types':[DISPATCH]}}
+                              'repository_dispatch':{'types':[DISPATCH]},
+                              'workflow_run':{'workflows':[WRITER_NAME],
+                                              'types':['completed'],'branches':[branch]}}
          and set(workflow['jobs'])=={'recovery'},'recovery_workflow_contract')
     job=workflow['jobs']['recovery']
     need(job=={'runs-on':'ubuntu-latest','timeout-minutes':'30',
@@ -61,17 +65,45 @@ def workflow_contract(api,repo,document,evaluator):
     return spec
 
 
+def writer_branch(api,repo,document):
+    """Bind the wake source name to the pinned default-branch writer."""
+    spec=native.policy(document)['producer']
+    raw=review.blob(api,repo,spec['path'],document['source_commit'],spec['definition_sha'])
+    review.r.literal_uses(raw)
+    import yaml
+    writer=yaml.load(raw,Loader=yaml.BaseLoader)
+    meta=api.api(f'repos/{repo}')
+    need(isinstance(writer,dict) and writer.get('name')==WRITER_NAME
+         and meta.get('full_name')==repo and review.text(meta.get('default_branch'),255),
+         'recovery_writer_identity')
+    return meta['default_branch']
+
+
 def validate_wake(api,repo,document,evaluator,run,event,payload):
     """Authenticate the current default-branch workflow, never event inputs."""
     value=policy(document);spec=workflow_contract(api,repo,document,evaluator)
-    need(event in ('schedule','repository_dispatch') and review.integer(run) and isinstance(payload,dict),
+    need(event in ('schedule','repository_dispatch','workflow_run') and review.integer(run) and isinstance(payload,dict),
          'recovery_wake_identity')
     if event=='schedule':
         need(payload.get('schedule')==value['cron'],'recovery_wake_identity')
-    else:
+    elif event=='repository_dispatch':
         need(payload.get('action')==DISPATCH and payload.get('repository',{}).get('full_name')==repo,
              'recovery_wake_identity')
-    identity=review.producer_identity(api,repo,document,run,False,spec,events=('schedule','repository_dispatch'))
+    else:
+        source=payload.get('workflow_run');expected=native.policy(document)['producer']
+        need(payload.get('action')=='completed' and payload.get('repository',{}).get('full_name')==repo
+             and isinstance(source,dict) and review.integer(source.get('id'))
+             and review.integer(source.get('run_attempt')),'recovery_wake_identity')
+        actual=api.api(f"repos/{repo}/actions/runs/{source['id']}")
+        branch=writer_branch(api,repo,document)
+        need(isinstance(actual,dict) and actual.get('id')==source['id']
+             and actual.get('run_attempt')==source['run_attempt']
+             and actual.get('workflow_id')==expected['id'] and actual.get('path')==expected['path']
+             and actual.get('status')=='completed' and actual.get('head_branch')==branch
+             and actual.get('head_repository',{}).get('full_name')==repo
+             and actual.get('event') in ('issues','workflow_run','repository_dispatch'),
+             'recovery_wake_identity')
+    identity=review.producer_identity(api,repo,document,run,False,spec,events=('schedule','repository_dispatch','workflow_run'))
     need(identity['head']==document['source_commit'],'recovery_wake_identity')
     row=api.api(f'repos/{repo}/actions/runs/{run}/attempts/{identity["run_attempt"]}')
     need(row.get('id')==run and row.get('run_attempt')==identity['run_attempt']
