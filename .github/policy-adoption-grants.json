@@ -82,69 +82,6 @@
         "job": "grant-review",
         "job_id": 123344370860
       }
-    },
-    {
-      "version": 1,
-      "repo": "faberline/core",
-      "pr": 77,
-      "issue": 76,
-      "head": "b9d52079b0cc151699f3f5672c5b9ccb4d6033e3",
-      "base": "1540bbfc91fc4bbbf96091e0c56cedeca1a397ce",
-      "base_ref": "main",
-      "evaluator": "8e2e93e5ba8feb30b6668de39139980ea3bb085c",
-      "policy_blob": "8ebb576ddab3d66d27bb542964932d55eea3f553",
-      "base_policy_blob": "8d9d1f42611d6470ff48ac02d99accfba33f6872",
-      "issue_sha256": "244810489fb2a63383c02471eb41c4921caf12a6f2d285cd6a9c925e79ce965f",
-      "pr_sha256": "6e0fc82bce552f3e86c9ac0cdbcef1082ca269c9dee8833a9c4fb5a8298aaf6a",
-      "files_sha256": "1e9ddb076cf94f0c89f00fe412b57a70877aa5ba28fa08fbfb765d923f295370",
-      "protected_paths": [
-        ".github/issue-ci-required-gates.json",
-        "scripts/pr-gates/plan.py",
-        "scripts/pr-gates/tests/test_evidence.py",
-        "scripts/pr-gates/tests/test_plan.py"
-      ],
-      "ci": {
-        "run_id": 40891948018,
-        "attempt": 1,
-        "jobs_sha256": "ea24a0be51927b6920c2fecfad81342da42fc8c54adbb1b2137f41d86725b6ec"
-      },
-      "review": {
-        "workflow_path": ".github/workflows/core-policy-target-review.yml",
-        "workflow_id": 400225137,
-        "workflow_blob": "73c4094f5998e17c1af5542480ea8a60d388d31f",
-        "runner_path": "plugins/faberline/skills/issue-ci/scripts/policy_adoption_target_review.py",
-        "runner_blob": "834caec3ecec0e0551e845827ae0e0489c41c618",
-        "source_commit": "b5380500f0632bd442437989c55de469144cb840",
-        "branch": "codex/core-76-policy-target-review",
-        "run_id": 40899439229,
-        "attempt": 1,
-        "job": "review",
-        "job_id": 123537370306,
-        "receipt_sha256": "87d35fc3985e3826aca04e56c189de5856acaa911614e5f1c6a2700ff806cf1b"
-      },
-      "publisher": {
-        "workflow_path": ".github/workflows/core-policy-publisher.yml",
-        "workflow_id": 400223632,
-        "workflow_blob": "a2a2b01a726c712a57ea99e5afaefcf6f38fb1e0",
-        "source_commit": "c738fc813c474ec2390da407e62db60e549b3430",
-        "branch": "codex/core76-policy-publisher",
-        "job": "adopt"
-      },
-      "grant_review": {
-        "repo": "faberline/core",
-        "pr": 120,
-        "head": "1a281c3d41d9ea1f1c94bab1eed39d63a8dd2837",
-        "blob": "079333d29eb4006f15fa36102c1f707b5b782566",
-        "workflow_path": ".github/workflows/core-policy-grant-review.yml",
-        "workflow_id": 400375074,
-        "workflow_blob": "f4361b800bc9b6f90dda498b8e68402a7a225583",
-        "source_commit": "bb053e13e98fcfa3db138b19a7f474e87b7dca66",
-        "branch": "codex/core77-grant-review",
-        "run_id": 40901628917,
-        "attempt": 1,
-        "job": "grant-review",
-        "job_id": 123545174394
-      }
     }
   ]
 }
