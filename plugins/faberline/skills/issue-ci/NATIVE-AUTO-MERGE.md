@@ -165,6 +165,10 @@ the same complete policy and guard. The status observation is not authority.
 The separately reviewed policy publisher has a draft recovery path as well. It
 reauthenticates the grant, the latest target review, every grant-bound CI job,
 the candidate policy and current branch protection before closure.
+Both paths read the bound pending status and latest success again before and
+after review and CI revalidation. They require the same success status ID. A
+newer status, missing status, or changed status identity keeps the guard and
+leaves the issue open.
 Before publishing success, the writer records a compact digest of two matching
 issue timelines. Recovery refuses any later ownership event, including one in
 the same second. Older records keep the more conservative run-start check.
