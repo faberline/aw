@@ -139,8 +139,9 @@ The guard ref requires an active ruleset that blocks both force updates and
 deletion, with no bypass actors. This blocks direct deletion and recreation.
 Repository administrators can still rename protected branches. They must not
 rename or reset guard refs; this protection cannot enforce that requirement.
-GitHub cancellation races and recovery after a writer crash still require
-hosted verification before rollout.
+A queued request keeps its guard. The shared Actions bot identity cannot prove
+which run created that request. Cancellation and its race with merging remain
+unimplemented. Crash recovery and hosted verification are also required.
 The protected policy-adoption draft requires the same guard and a separately
 reviewed grant. It permits bootstrap or an unchanged guard only after rollout
 is verified. The current verifier always holds before paid target review or
@@ -149,8 +150,10 @@ publisher writes. Guard removal and incompatible changes remain unsupported.
 The guarded draft records a unique pending status before it requests success.
 That record alone cannot authorize a close. After GitHub acknowledges success,
 the writer records its exact status ID and guard owner for that PR. Recovery
-rechecks that record, the source, the status, and the actual merge. A failed
-writer job does not become a passing CI or review result.
+requires that status to remain the newest status for the same context. It
+rechecks that record, the source, the latest review, full CI, and the actual
+merge before closing. A legacy record without a status ID cannot authorize a
+close. A failed writer job does not become a passing CI or review result.
 If the success response is lost and the issue is already closed, the draft can
 authenticate the pre-status record and release only that guard. It reads the
 exact merge and closed issue twice. It never uses that record to close an open

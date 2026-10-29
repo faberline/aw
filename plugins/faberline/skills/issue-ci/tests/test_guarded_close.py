@@ -47,6 +47,7 @@ class GuardedCloseTests(unittest.TestCase):
         def observe(api,checkpoint):return dict(state='observed_closed' if self.status=='closed' else 'observed_merged',merge='f'*40)
         with patch.object(close.merge_guard,'authenticate_native_intent',return_value=self.intent), \
              patch.object(close,'authenticate_checkpoint',return_value=self.evidence), \
+             patch.object(close,'revalidate_native_merged'), \
              patch.object(close.worker,'read_policy',return_value=self.policy), \
              patch.object(close.observation,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
              patch.object(close.observation,'recovery_plan',side_effect=plan), \
@@ -55,7 +56,7 @@ class GuardedCloseTests(unittest.TestCase):
 
     def test_close_requires_guard_and_releases_after_readback(self):
         self.assertEqual(self.reconcile(),dict(state='closed',issue=7,merge='f'*40))
-        self.assertEqual(self.patch_count,1);self.assertEqual(self.plan_calls,2)
+        self.assertEqual(self.patch_count,1);self.assertEqual(self.plan_calls,3)
         state=close.provider.read_chain(self.api,'o/r',fixture.GENESIS,fixture.RULE,7)
         self.assertEqual(state['state']['locks'],{})
         self.assertEqual(self.reconcile()['state'],'closed')
@@ -117,6 +118,29 @@ class GuardedCloseTests(unittest.TestCase):
              patch.object(close.observation,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
              patch.object(close.observation,'recovery_plan',return_value=dict(state='guard_required')):
             with self.assertRaisesRegex(RuntimeError,'merge_guard_policy_changed'):
+                close.reconcile_native(self.api,'o/r',self.document,self.policy,'e'*40,123,2,9,'d'*40,lambda r,j:'')
+        self.assertEqual(self.patch_count,0)
+        self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
+
+    def test_superseded_checkpoint_never_closes_or_releases(self):
+        with patch.object(close.merge_guard,'authenticate_native_intent',return_value=self.intent), \
+             patch.object(close,'authenticate_checkpoint',side_effect=[self.evidence,RuntimeError('per_pr_status_superseded')]), \
+             patch.object(close.worker,'read_policy',return_value=self.policy), \
+             patch.object(close.observation,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
+             patch.object(close.observation,'recovery_plan',return_value=dict(state='guard_required')):
+            with self.assertRaisesRegex(RuntimeError,'per_pr_status_superseded'):
+                close.reconcile_native(self.api,'o/r',self.document,self.policy,'e'*40,123,2,9,'d'*40,lambda r,j:'')
+        self.assertEqual(self.patch_count,0)
+        self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
+
+    def test_changed_ci_after_acknowledged_status_never_closes(self):
+        with patch.object(close.merge_guard,'authenticate_native_intent',return_value=self.intent), \
+             patch.object(close,'authenticate_checkpoint',return_value=self.evidence), \
+             patch.object(close,'revalidate_native_merged',side_effect=RuntimeError('candidate_ci_not_green')), \
+             patch.object(close.worker,'read_policy',return_value=self.policy), \
+             patch.object(close.observation,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
+             patch.object(close.observation,'recovery_plan',return_value=dict(state='guard_required')):
+            with self.assertRaisesRegex(RuntimeError,'candidate_ci_not_green'):
                 close.reconcile_native(self.api,'o/r',self.document,self.policy,'e'*40,123,2,9,'d'*40,lambda r,j:'')
         self.assertEqual(self.patch_count,0)
         self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
@@ -283,25 +307,26 @@ class GuardedCloseTests(unittest.TestCase):
         self.assertEqual(self.patch_count,0)
         self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
 
-    def test_checkpoint_requires_exact_successful_attempt_even_after_rerun(self):
+    def test_legacy_checkpoint_cannot_authorize_closure_without_status_identity(self):
         checkpoint=observer_fixture.Fixture().checkpoint
         record=close.observation.record(checkpoint,123,2,self.source,'e'*40,202,'f'*64)
         log=close.observation.MARKER+close.observation.review.r.canonical(record)+'\n'
         with patch.object(close.merge_guard,'authenticate_native_log',return_value=(self.policy,log)) as auth:
-            found=close.authenticate_checkpoint(self.api,'owner/repo',self.document,'e'*40,123,2,9,'a'*40,None)
-            self.assertEqual(found,record)
-            self.assertTrue(auth.call_args.kwargs['require_success'])
-            auth.return_value=(self.policy,log+log)
-            with self.assertRaises(RuntimeError):
+            with self.assertRaisesRegex(RuntimeError,'merge_close_record_missing_or_duplicate'):
                 close.authenticate_checkpoint(self.api,'owner/repo',self.document,'e'*40,123,2,9,'a'*40,None)
+            auth.assert_called_once()
             auth.side_effect=RuntimeError('merge_guard_source_not_success')
             with self.assertRaisesRegex(RuntimeError,'merge_guard_source_not_success'):
                 close.authenticate_checkpoint(self.api,'owner/repo',self.document,'e'*40,123,2,9,'a'*40,None)
 
     def test_reviewed_adoption_uses_the_same_guarded_close_checks(self):
+        self.evidence['payload']['review_sha256']='f'*64
+        evaluator=type('Evaluator',(),{'evaluate_merged':lambda this,*a:dict(issue=7,receipt={})})()
+        digest=type('Digest',(),{'digest':lambda this,*a:'f'*64})()
+        review=type('Review',(),{'r':digest})()
         adoption=type('Adoption',(),{
             'authenticate_checkpoint':lambda this,*args,**kwargs:dict(evidence=self.evidence,intent=self.intent,grant={}),
-            'source_policy':lambda this,*args:(self.policy,{})})()
+            'source_policy':lambda this,*args:(self.policy,{}),'adoption':evaluator,'review':review})()
         def plan(api,checkpoint,started):return dict(state='guard_required')
         def observe(api,checkpoint):return dict(state='observed_closed' if self.status=='closed' else 'observed_merged',merge='f'*40)
         with patch.object(close,'sibling',return_value=adoption),patch.object(close.worker,'read_policy',return_value=self.policy), \
@@ -311,6 +336,39 @@ class GuardedCloseTests(unittest.TestCase):
             result=close.reconcile_adoption(self.api,'o/r',{},self.policy,'e'*40,123,2,7,'d'*40,
                                              self.intent['payload']['owner'],lambda r,j:'')
         self.assertEqual(result['state'],'closed');self.assertEqual(self.patch_count,1)
+
+    def test_adoption_checkpoint_change_never_closes_or_releases(self):
+        original=dict(evidence=self.evidence,intent=self.intent,grant={});calls=[]
+        def authenticate(*args,**kwargs):
+            calls.append(True)
+            if len(calls)==2:raise RuntimeError('per_pr_status_superseded')
+            return original
+        adoption=type('Adoption',(),{'authenticate_checkpoint':lambda this,*a,**k:authenticate(*a,**k),
+            'source_policy':lambda this,*args:(self.policy,{})})()
+        with patch.object(close,'sibling',return_value=adoption),patch.object(close.worker,'read_policy',return_value=self.policy), \
+             patch.object(close.observation,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
+             patch.object(close.observation,'recovery_plan',return_value=dict(state='guard_required')):
+            with self.assertRaisesRegex(RuntimeError,'per_pr_status_superseded'):
+                close.reconcile_adoption(self.api,'o/r',{},self.policy,'e'*40,123,2,7,'d'*40,
+                                         self.intent['payload']['owner'],lambda r,j:'')
+        self.assertEqual(self.patch_count,0)
+        self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
+
+    def test_adoption_ci_change_after_acknowledged_status_never_closes(self):
+        original=dict(evidence=self.evidence,intent=self.intent,grant={})
+        def evaluate(*args):raise RuntimeError('candidate_ci_not_green')
+        evaluator=type('Evaluator',(),{'evaluate_merged':lambda this,*a:evaluate(*a)})()
+        adoption=type('Adoption',(),{
+            'authenticate_checkpoint':lambda this,*a,**k:original,
+            'source_policy':lambda this,*a:(self.policy,{}),'adoption':evaluator})()
+        with patch.object(close,'sibling',return_value=adoption),patch.object(close.worker,'read_policy',return_value=self.policy), \
+             patch.object(close.observation,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
+             patch.object(close.observation,'recovery_plan',return_value=dict(state='guard_required')):
+            with self.assertRaisesRegex(RuntimeError,'candidate_ci_not_green'):
+                close.reconcile_adoption(self.api,'o/r',{},self.policy,'e'*40,123,2,7,'d'*40,
+                                         self.intent['payload']['owner'],lambda r,j:'')
+        self.assertEqual(self.patch_count,0)
+        self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
 
     def test_per_pr_status_allows_evidence_when_another_pr_failed_the_job(self):
         checkpoint=observer_fixture.Fixture().checkpoint

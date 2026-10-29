@@ -91,12 +91,17 @@ def find(log,repo,pr,head):
 
 
 def verify_status(api,repo,head,value,intent,grant=None,grant_source=None):
-    """Read the exact provider status after authenticating the source record."""
+    """Require the exact acknowledged status to remain the newest context."""
     p=value['payload'];i=intent['payload'];e=p['evidence']['payload']
     need(all(p[k]==i[k] for k in ('owner','claim_op','release_op')),'per_pr_checkpoint_identity')
     guard_binding(i,e,grant,grant_source)
     statuses=api.pages(f'repos/{repo}/commits/{head}/statuses')
-    need(isinstance(statuses,list),'per_pr_status_unknown')
+    need(isinstance(statuses,list) and all(isinstance(item,dict)
+         and isinstance(item.get('context'),str) for item in statuses),'per_pr_status_unknown')
+    matching=[item for item in statuses if item['context'].casefold()=='claude/verified-merge']
+    need(bool(matching) and all(type(item.get('id')) is int and 0<item['id']<2**53
+         for item in matching) and len({item['id'] for item in matching})==len(matching),
+         'per_pr_status_unknown')
     found=[item for item in statuses if isinstance(item,dict) and type(item.get('id')) is int
            and item['id']==p['status_id']]
     target=p['target_url']
@@ -105,4 +110,7 @@ def verify_status(api,repo,head,value,intent,grant=None,grant_source=None):
          and isinstance(found[0].get('creator'),dict) and found[0]['creator'].get('id')==BOT_ID
          and found[0]['creator'].get('type')=='Bot'
          and found[0]['creator'].get('login')=='github-actions[bot]','per_pr_status_unknown')
+    # GitHub returns newest first. A later pending, failure, or other actor's
+    # success can withdraw or supersede this particular authorization.
+    need(matching[0]['id']==p['status_id'],'per_pr_status_superseded')
     return p['evidence']

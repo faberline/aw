@@ -36,20 +36,10 @@ def authenticate_checkpoint(api,repo,document,evaluator,run,attempt,pr,head,log_
              and p['adoption_sha256'] is None and p['adoption_source'] is None
              and c['repo']==repo and c['pr']==pr and c['head']==head,'merge_close_source_mismatch')
         return evidence
-    # Older records have no per-PR status ID, so they still require a wholly
-    # successful source job. A failed job cannot promote an old checkpoint.
-    _,log=merge_guard.authenticate_native_log(api,repo,document,evaluator,run,attempt,log_reader,
-                                               require_success=True)
-    records=observation.parse_records(log);matches=[]
-    for evidence in records:
-        p=evidence['payload'];c=p['checkpoint']
-        need(p['source_run']==run and p['source_attempt']==attempt
-             and p['source_commit']==document['source_commit'] and p['evaluator']==evaluator
-             and p['adoption_sha256'] is None and p['adoption_source'] is None
-             and c['repo']==repo,'merge_close_source_mismatch')
-        if c['pr']==pr and c['head']==head:matches.append(evidence)
-    need(len(matches)==1,'merge_close_record_missing_or_duplicate')
-    return matches[0]
+    # A legacy record has no status ID. Even a successful source job cannot
+    # prove its status remains the latest one for this PR. Let recovery look
+    # for a bound prepared record, otherwise keep the guard and hold.
+    raise provider.Refused('merge_close_record_missing_or_duplicate')
 
 
 def guard_identity(api,repo,policy,intent):
@@ -108,7 +98,31 @@ def reconcile_native(api,repo,document,current_policy,evaluator,run,attempt,pr,h
          and checkpoint['repo']==repo and checkpoint['pr']==pr and checkpoint['head']==head
          and checkpoint['issue']==p['issue'] and p['repo']==repo and p['pr']==pr and p['head']==head,
          'merge_guard_checkpoint_mismatch')
-    return _complete_authenticated(api,repo,current_policy,intent,evidence)
+    def revalidate():
+        # The acknowledged status can be superseded while the recovery wake
+        # is observing issue ownership. Re-read it under the same guard.
+        fresh=authenticate_checkpoint(api,repo,document,evaluator,run,attempt,pr,head,log_reader,intent=intent)
+        need(fresh==evidence,'merge_close_evidence_changed')
+        revalidate_native_merged(api,repo,document,evaluator,pr,head,record,p['issue'],log_reader)
+    return _complete_authenticated(api,repo,current_policy,intent,evidence,revalidate=revalidate)
+
+
+def revalidate_native_merged(api,repo,document,evaluator,pr,head,record,issue,log_reader):
+    """Recheck the current review and complete qualified CI after merging."""
+    checkpoint=record['checkpoint']
+    current=merge_guard.review.action.trusted_policy(api,repo,'.github/issue-ci-required-gates.json',metadata=True)
+    need(current['config']==document['config'],'merge_recovery_policy_changed')
+    index=sibling('native_review_index').Session(api,repo,lambda:document,evaluator,log_reader)
+    receipt=index.verify_merged(api,repo,pr,head,lambda:document,evaluator,record['review_run'])
+    context=receipt['payload']['context']
+    need(receipt['sha256']==record['review_sha256']
+         and context['repo']==repo and context['pr']==pr and context['head']==head
+         and context['base']==checkpoint['base'] and context['base_ref']==checkpoint['base_ref']
+         and context['issue_sha256']==checkpoint['issue_sha256']
+         and context['pr_description_sha256']==checkpoint['pr_sha256'],
+         'merge_recovery_review_changed')
+    need(native.qualification_merged(api,repo,pr,context,document)==issue,
+         'merge_recovery_qualification_changed')
 
 
 def reconcile_native_prepared(api,repo,document,current_policy,evaluator,run,attempt,pr,head,owner,log_reader):
@@ -130,20 +144,8 @@ def reconcile_native_prepared(api,repo,document,current_policy,evaluator,run,att
     evidence=value['payload']['checkpoint'];record=evidence['payload'];checkpoint=record['checkpoint']
     per_pr.guard_binding(p,record)
     need(checkpoint['issue']==p['issue'],'merge_guard_checkpoint_mismatch')
-    index=sibling('native_review_index').Session(api,repo,lambda:document,evaluator,log_reader)
     def revalidate():
-        current=merge_guard.review.action.trusted_policy(api,repo,'.github/issue-ci-required-gates.json',metadata=True)
-        need(current['config']==document['config'],'merge_recovery_policy_changed')
-        receipt=index.verify_merged(api,repo,pr,head,lambda:document,evaluator,record['review_run'])
-        context=receipt['payload']['context']
-        need(receipt['sha256']==record['review_sha256']
-             and context['repo']==repo and context['pr']==pr and context['head']==head
-             and context['base']==checkpoint['base'] and context['base_ref']==checkpoint['base_ref']
-             and context['issue_sha256']==checkpoint['issue_sha256']
-             and context['pr_description_sha256']==checkpoint['pr_sha256'],
-             'merge_recovery_review_changed')
-        need(native.qualification_merged(api,repo,pr,context,document)==p['issue'],
-             'merge_recovery_qualification_changed')
+        revalidate_native_merged(api,repo,document,evaluator,pr,head,record,p['issue'],log_reader)
     revalidate()
     return _complete_authenticated(api,repo,current_policy,intent,evidence,revalidate=revalidate)
 
@@ -156,7 +158,13 @@ def reconcile_adoption(api,repo,document,current_policy,evaluator,run,attempt,is
     worker.config(current_policy);worker.check_runtime(current_policy)
     need(all(old[k]==current_policy[k] for k in ('genesis','ruleset_id','runtime')),
          'merge_guard_policy_changed')
-    return _complete_authenticated(api,repo,current_policy,verified['intent'],verified['evidence'])
+    def revalidate():
+        fresh=adoption.authenticate_checkpoint(api,document,repo,evaluator,run,attempt,issue,head,owner,log_reader)
+        need(fresh==verified,'adoption_guard_evidence_changed')
+        result=adoption.adoption.evaluate_merged(api,verified['grant'],log_reader)
+        need(result['issue']==issue and adoption.review.r.digest(result['receipt'])==verified['evidence']['payload']['review_sha256'],
+             'merge_recovery_review_changed')
+    return _complete_authenticated(api,repo,current_policy,verified['intent'],verified['evidence'],revalidate=revalidate)
 
 
 def reconcile_adoption_prepared(api,repo,document,current_policy,evaluator,run,attempt,issue,head,owner,log_reader):

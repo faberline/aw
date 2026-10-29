@@ -54,6 +54,29 @@ class PerPRTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'per_pr_checkpoint_identity'):
             m.verify_status(Api([self.status]),'o/r','a'*40,value,other)
 
+    def test_newer_matching_status_never_authorizes_old_success(self):
+        value=m.build(self.evidence,self.policy,self.intent,self.status)
+        class Api:
+            def __init__(self,statuses):self.statuses=statuses
+            def pages(self,path):return self.statuses
+        for state in ('pending','failure','success'):
+            with self.subTest(state=state):
+                newer=dict(self.status,id=1,state=state)
+                with self.assertRaisesRegex(RuntimeError,'per_pr_status_superseded'):
+                    m.verify_status(Api([newer,self.status]),'o/r','a'*40,value,self.intent)
+        unrelated=dict(self.status,id=1,context='unrelated',state='failure')
+        self.assertEqual(m.verify_status(Api([unrelated,self.status]),'o/r','a'*40,value,self.intent),self.evidence)
+
+    def test_unknown_status_list_cannot_authorize_issue_closure(self):
+        value=m.build(self.evidence,self.policy,self.intent,self.status)
+        class Api:
+            def __init__(self,statuses):self.statuses=statuses
+            def pages(self,path):return self.statuses
+        for statuses in ([None,self.status],[{},self.status],[dict(self.status,id=True),self.status],
+                         [dict(self.status,id=1),dict(self.status,id=1),self.status]):
+            with self.subTest(statuses=statuses),self.assertRaisesRegex(RuntimeError,'per_pr_status_unknown'):
+                m.verify_status(Api(statuses),'o/r','a'*40,value,self.intent)
+
     def test_reviewed_adoption_binds_distinct_publisher_and_policy_sources(self):
         checkpoint=copy.deepcopy(self.evidence['payload']['checkpoint']);checkpoint['base']=self.source
         grant={key:checkpoint[key] for key in ('repo','pr','issue','head','base','base_ref','issue_sha256','pr_sha256')}
