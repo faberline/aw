@@ -44,9 +44,6 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(m.workflow_contract(None,'o/r',self.document,EVALUATOR),self.spec)
         for changed in (self.raw.replace('cancel-in-progress: false','cancel-in-progress: true'),
                         self.raw.replace('issues: write','issues: read'),
-                        self.raw.replace('pull-requests: write','pull-requests: read'),
-                        self.raw.replace('statuses: write','statuses: read'),
-                        self.raw.replace('actions: read','actions: write'),
                         self.raw.replace('13,43 * * * *','* * * * *'),
                         self.raw.replace(EVALUATOR,'0'*40),
                         self.raw.replace('branches: [main]','branches: [foreign]')):

@@ -127,10 +127,10 @@ def settle(api,repo,policy,intent):
 
 
 def cancel_blocked(api,repo,policy,intent):
-    """Draft recovery for a blocked owned request; never cancel a foreign one.
+    """Retain any request until its specific owner is proven.
 
-    GitHub's cancellation/merge race must be validated before rollout. A lost
-    response is a hold; a later wake observes the provider before proceeding.
+    A shared Actions bot identity alone cannot identify the originating run.
+    Cancellation and its race with merging remain unimplemented.
     """
     p=intent['payload']
     need(all(p[k]==policy[k] for k in ('genesis','ruleset_id','runtime')),'admission_policy_changed')
@@ -142,29 +142,7 @@ def cancel_blocked(api,repo,policy,intent):
     request=pull.get('autoMergeRequest')
     if request is None:
         return settle(api,repo,policy,intent)
-    if not native.actions_request(request):
-        return dict(state='retained',issue=p['issue'])
-    statuses=api.pages(f"repos/{repo}/commits/{p['head']}/statuses")
-    matches=matching_statuses(statuses)
-    # No status does not establish that the required check is blocked.
-    # Do not cancel a potentially mergeable request on that assumption.
-    need(bool(matches),'admission_status_missing')
-    latest=matches[0]  # GitHub returns statuses newest first.
-    if latest.get('state')=='success':return dict(state='retained',issue=p['issue'])
-    need(latest.get('state') in ('pending','failure','error'),'admission_status_unknown')
-    rest=api.api(f"repos/{repo}/pulls/{p['pr']}")
-    native.review.pull_identity(rest,repo,p['pr'],p['head'])
-    need(native.review.linked_issue(rest)==p['issue'],'admission_issue_changed')
-    rule=blocking_rule(api,repo,policy,rest)
-    close.require_current_policy(api,repo,policy);close.guard_identity(api,repo,policy,intent)
-    current=native.provider_pull(api,repo,p['pr'])
-    need(current.get('state')=='OPEN' and current.get('headRefOid')==p['head']
-         and current.get('autoMergeRequest')==request,'admission_target_changed')
-    rest_final=api.api(f"repos/{repo}/pulls/{p['pr']}")
-    native.review.pull_identity(rest_final,repo,p['pr'],p['head'])
-    need(native.review.linked_issue(rest_final)==p['issue'],'admission_issue_changed')
-    need(api.pages(f"repos/{repo}/commits/{p['head']}/statuses")==statuses,'admission_status_changed')
-    need(blocking_rule(api,repo,policy,rest_final)==rule,'admission_rule_changed')
-    close.require_current_policy(api,repo,policy);close.guard_identity(api,repo,policy,intent)
-    native.withdraw_approval(api,repo,p['pr'],p['head'])
-    return settle(api,repo,policy,intent)
+    # All Actions workflows share the same bot identity. That identity does
+    # not establish which run requested this merge. Until provenance is bound
+    # to the guard, retain it rather than cancel another actor's request.
+    return dict(state='retained',issue=p['issue'])

@@ -103,7 +103,7 @@ class AdmissionTests(unittest.TestCase):
         self.statuses=[status(2,'pending'),old]
         self.assertEqual(self.settle(intent,[self.provider(),self.provider()])['state'],'released')
 
-    def test_missing_or_spoofed_creator_never_releases_or_cancels(self):
+    def test_missing_or_spoofed_creator_never_releases(self):
         creators=(None,{},dict(id=42,type='Bot',login='github-actions[bot]'),
                   dict(id=41898282,type='User',login='github-actions[bot]'),
                   dict(id=41898282,type='Bot',login='another-bot'))
@@ -113,13 +113,6 @@ class AdmissionTests(unittest.TestCase):
                 self.statuses=[item]
                 with self.assertRaisesRegex(RuntimeError,'admission_status_origin_unknown'):
                     self.settle(intent,[self.provider()])
-                owned=dict(mergeMethod='SQUASH',enabledBy=dict(login='github-actions',__typename='Bot'))
-                with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
-                     patch.object(m.native,'provider_pull',return_value=self.provider(request=owned)), \
-                     patch.object(m.native,'withdraw_approval') as withdraw:
-                    with self.assertRaisesRegex(RuntimeError,'admission_status_origin_unknown'):
-                        m.cancel_blocked(self.api,'o/r',self.policy,intent)
-                withdraw.assert_not_called()
                 self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
 
     def test_changed_status_between_reads_holds(self):
@@ -183,68 +176,15 @@ class AdmissionTests(unittest.TestCase):
             self.settle(intent,RuntimeError('provider unavailable'))
         self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
 
-    def test_blocked_owned_request_is_cancelled_then_rechecked_before_release(self):
-        intent=self.begin();self.statuses=[status(1,'pending')]
-        owned=dict(mergeMethod='SQUASH',enabledBy=dict(login='github-actions',__typename='Bot'))
-        with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
-             patch.object(m.native,'provider_pull',side_effect=[self.provider(request=owned),self.provider(request=owned),self.provider(),self.provider()]), \
-             patch.object(m,'blocking_rule',return_value=dict(rule=1)), \
-             patch.object(m.native,'withdraw_approval') as withdraw:
-            result=m.cancel_blocked(self.api,'o/r',self.policy,intent)
-        self.assertEqual(result['state'],'released');withdraw.assert_called_once_with(self.api,'o/r',9,HEAD)
-
-    def test_foreign_request_or_passing_status_is_never_cancelled(self):
-        for request,state in ((dict(enabledBy=dict(login='human',__typename='User')),'pending'),
-                              (dict(enabledBy=dict(login='github-actions',__typename='Bot')),'success')):
-            self.setUp();intent=self.begin();self.statuses=[status(1,state)]
-            with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
-                 patch.object(m.native,'provider_pull',return_value=self.provider(request=request)), \
-                 patch.object(m.native,'withdraw_approval') as withdraw:
-                result=m.cancel_blocked(self.api,'o/r',self.policy,intent)
-            self.assertEqual(result['state'],'retained');withdraw.assert_not_called()
-            self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
-
-    def test_unknown_cancellation_never_retries_or_releases(self):
-        intent=self.begin();self.statuses=[status(1,'pending')]
-        request=dict(enabledBy=dict(login='github-actions',__typename='Bot'))
-        with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
-             patch.object(m.native,'provider_pull',return_value=self.provider(request=request)), \
-             patch.object(m,'blocking_rule',return_value=dict(rule=1)), \
-             patch.object(m.native,'withdraw_approval',side_effect=TimeoutError('unknown')) as withdraw:
-            with self.assertRaisesRegex(TimeoutError,'unknown'):m.cancel_blocked(self.api,'o/r',self.policy,intent)
-        withdraw.assert_called_once()
-        self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
-
-    def test_cancellation_refuses_missing_status_or_changed_rule(self):
-        request=dict(enabledBy=dict(login='github-actions',__typename='Bot'))
-        for statuses,rules,reason in (([],None,'admission_status_missing'),
-                                      ([status(1,'pending')],[dict(rule=1),dict(rule=2)],'admission_rule_changed')):
-            with self.subTest(reason=reason):
-                self.setUp();intent=self.begin();self.statuses=statuses
+    def test_queued_request_is_never_cancelled_without_run_ownership_proof(self):
+        for actor in ('github-actions','human'):
+            with self.subTest(actor=actor):
+                self.setUp();intent=self.begin();self.statuses=[status(1,'pending')]
+                request=dict(enabledBy=dict(login=actor,__typename='Bot' if actor=='github-actions' else 'User'))
                 with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
                      patch.object(m.native,'provider_pull',return_value=self.provider(request=request)), \
-                     patch.object(m,'blocking_rule',side_effect=rules), \
                      patch.object(m.native,'withdraw_approval') as withdraw:
-                    with self.assertRaisesRegex(RuntimeError,reason):
-                        m.cancel_blocked(self.api,'o/r',self.policy,intent)
-                withdraw.assert_not_called()
-                self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
-
-    def test_cancellation_refuses_status_or_request_change(self):
-        request=dict(enabledBy=dict(login='github-actions',__typename='Bot'))
-        for change in ('status','request'):
-            with self.subTest(change=change):
-                self.setUp();intent=self.begin();self.statuses=[status(1,'pending')]
-                pulls=[self.provider(request=request),self.provider(request=request if change=='status' else None)]
-                if change=='status':
-                    calls=iter([[status(1,'pending')],[status(2,'success')]])
-                    self.api.pages=lambda path:next(calls)
-                with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
-                     patch.object(m.native,'provider_pull',side_effect=pulls), \
-                     patch.object(m,'blocking_rule',return_value=dict(rule=1)), \
-                     patch.object(m.native,'withdraw_approval') as withdraw:
-                    with self.assertRaisesRegex(RuntimeError,'admission_status_changed' if change=='status' else 'admission_target_changed'):
-                        m.cancel_blocked(self.api,'o/r',self.policy,intent)
+                    self.assertEqual(m.cancel_blocked(self.api,'o/r',self.policy,intent)['state'],'retained')
                 withdraw.assert_not_called()
                 self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
 
