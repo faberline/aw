@@ -548,6 +548,25 @@ class ApprovalWithdrawalTests(unittest.TestCase):
             self.assertEqual([item[0] for item in p.writes],['pending'])
             self.assertIsNone(p.native['autoMergeRequest'])
 
+    def test_cutover_holds_if_target_changes_after_pending(self):
+        for change in ('request','base'):
+            p=Provider()
+            p.document['config']['issue_guard_cutover']=dict(version=1,phase='drain',nonce='a'*32)
+            pages,api=p.pages,p.api
+            def inventory(path,key=None):
+                if '/pulls?state=open' in path:return [copy.deepcopy(p.pull)]
+                return pages(path,key)
+            def write(path,method='GET',data=None):
+                result=api(path,method,data)
+                if method=='POST' and path.endswith('/statuses/'+HEAD):
+                    if change=='base':p.native['baseRefOid']='f'*40
+                    else:p.native['autoMergeRequest']=dict(enabledBy=dict(login='person',__typename='User'))
+                return result
+            with self.subTest(change=change),patch.object(p,'pages',side_effect=inventory),patch.object(p,'api',side_effect=write):
+                rows=m.drain_queue(p,'o/r',p.load,p.load())
+            self.assertEqual(rows[0]['state'],'held')
+            self.assertEqual([item[0] for item in p.writes],['pending'])
+
     def test_withdraw_uses_provider_order_not_numeric_status_id(self):
         p=Provider()
         p.statuses=[dict(id=2,context='claude/verified-merge',state='success',creator=dict(login='github-actions[bot]')),
