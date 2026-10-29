@@ -17,13 +17,23 @@ An authenticated negative Claude result returns the linked issue to todo.
 A qualified native merge closes the linked issue through GitHub closing
 keywords. No queued or rejected PR closes an issue.
 
-The optional [PR qualification v1 contract](QUALIFICATION.md) adds trusted
+The [PR qualification contract](QUALIFICATION.md) adds trusted
 per-path applicability and evidence provenance to the existing full-mode
 controller. The pinned `.github/actions/issue-ci` distribution reads only
 default-branch consumer policy; consumers need reviewed mapping plus immutable
 references, not their own evaluator copies. This does not activate any live
 consumer or clear existing blockers. Defer #42 is the separately reviewed pilot;
 aw #73 is handled directly and never dispatched to an aw AGY schedule.
+
+Qualification v2 also binds one canonical linked issue to reviewed hashes of
+its title and body. Each issue contract must decide unit, functional/E2E and
+performance applicability. Required issue checks add to path checks. Missing,
+changed, blocked, unknown or unresolved issue requirements stop qualification
+before paid review. A not-applicable issue decision never removes a path check.
+The read-only `issue-contract` action may inspect an exact-head candidate
+contract in ordinary PR CI. Its result is only data inspection. It cannot
+approve a policy, remove a protected-change hold, or qualify a PR. The actual
+controller still reads the separately reviewed default-branch policy.
 
 AGY owns only `todo -> doing`. Finish opens/updates the same PR and leaves
 `doing`. CI alone writes `done` after ALL configured workflow/job gates pass
