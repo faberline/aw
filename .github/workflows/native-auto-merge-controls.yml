@@ -12,6 +12,8 @@ on:
       - ".github/workflows/native-auto-merge-controls.yml"
       - "plugins/faberline/skills/issue-ci/**"
       - "plugins/faberline/skills/issue-work/**"
+      - "plugins/faberline/skills/issue-loop/**"
+      - "scripts/security/tests/**"
   push:
     branches: [codex/claude-native-automerge]
     paths:
@@ -25,6 +27,8 @@ on:
       - ".github/workflows/native-auto-merge-controls.yml"
       - "plugins/faberline/skills/issue-ci/**"
       - "plugins/faberline/skills/issue-work/**"
+      - "plugins/faberline/skills/issue-loop/**"
+      - "scripts/security/tests/**"
 permissions:
   contents: read
 concurrency:
@@ -53,4 +57,4 @@ jobs:
         env:
           CONTROL_PYTHON: ${{ runner.temp }}/native-merge-controls/bin/python
         run: |
-          "$CONTROL_PYTHON" -c 'import sys,unittest; s=unittest.TestSuite([unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-ci/tests"), unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-work/tests"), unittest.defaultTestLoader.discover("scripts/security/tests", top_level_dir="scripts/security/tests")]); n=s.countTestCases(); r=unittest.TextTestRunner(verbosity=2).run(s); sys.exit(0 if n > 0 and r.wasSuccessful() and not r.skipped else 1)'
+          "$CONTROL_PYTHON" -c 'import sys,unittest; s=unittest.TestSuite([unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-ci/tests"), unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-work/tests"), unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-loop/tests"), unittest.defaultTestLoader.discover("scripts/security/tests", top_level_dir="scripts/security/tests")]); n=s.countTestCases(); r=unittest.TextTestRunner(verbosity=2).run(s); sys.exit(0 if n > 0 and r.wasSuccessful() and not r.skipped else 1)'
