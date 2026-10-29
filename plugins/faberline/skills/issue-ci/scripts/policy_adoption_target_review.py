@@ -18,6 +18,28 @@ def sibling(name):
 a=sibling('policy_adoption')
 model=sibling('policy_adoption_grant_review')
 need=a.need
+MAX_SUPPORTING_PATHS=64
+FRAMEWORK_SOURCES=(
+    ('evaluator','plugins/faberline/skills/issue-ci/scripts/policy_adoption.py'),
+    ('evaluator','plugins/faberline/skills/issue-ci/scripts/policy_adoption_target_review.py'),
+    ('evaluator','plugins/faberline/skills/issue-ci/scripts/policy_adoption_grant_review.py'),
+    ('evaluator','plugins/faberline/skills/issue-ci/scripts/policy_adoption_review_outcome.py'),
+    ('candidate','plugins/faberline/skills/issue-ci/scripts/native_merge.py'),
+    ('candidate','plugins/faberline/skills/issue-ci/scripts/qualification.py'),
+)
+
+
+def framework_sources(api,candidate_ref,evaluator_ref):
+    """Read fixed, immutable shared framework source as data, never execute it."""
+    need(a.review.sha(candidate_ref) and a.review.sha(evaluator_ref),'target_framework_identity')
+    refs={'candidate':candidate_ref,'evaluator':evaluator_ref};result=[]
+    for role,path in FRAMEWORK_SOURCES:
+        ref=refs[role]
+        content=a.review.blob(api,a.GRANTS_REPO,path,ref)
+        raw=content.encode('utf-8')
+        blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+        result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
+    return result
 
 
 def source_files(api,repo,pull,inventory):
@@ -90,17 +112,19 @@ def preflight(api,repo,number,head):
     need(provider_policy==expected_provider, 'target_provider_evidence')
     provider=a.native.provider_pull(api,repo,number);a.native.binding(provider,context)
     trees,contents=source_files(api,repo,pull,inventory)
+    shared=framework_sources(api,candidate['aw_revision'],os.environ.get('AW_ACTION_REF',''))
     packet=dict(context=context,pr_title=pull.get('title'),pr_body=pull.get('body'),
                 issue={k:issue[k] for k in ('number','title','body')},inventory=inventory,
                 files=contents,ci=ci,ci_jobs=rows,proposed_policy=candidate,
                 verified_provider_policy=provider_policy,
+                shared_framework_sources=shared,
                 protected_paths=[x[len(prefix):] for x in plan['issues']])
     need(len(a.r.canonical(packet).encode())<=4*1024*1024,'target_packet_limit')
     return packet,trees
 
 
 def supporting_sources(api,packet,trees,paths):
-    need(isinstance(paths,list) and len(paths)<=32 and len(set(paths))==len(paths)
+    need(isinstance(paths,list) and len(paths)<=MAX_SUPPORTING_PATHS and len(set(paths))==len(paths)
          and all(a.valid_path(path) for path in paths), 'target_supporting_paths')
     need(all(any(any(entry.get('path')==path for entry in trees[ref])
                  for ref in (packet['context']['base'],packet['context']['head'])) for path in paths),
@@ -158,7 +182,7 @@ def produce(api,repo,number,head,token,invoke=model.invoke_schema):
             and entry.get('mode') in ('100644','100755') and type(entry.get('size')) is int
             and 0<=entry['size']<=262144 and a.valid_path(entry.get('path'))})
         plan_packet=dict(initial,available_source_paths=available)
-        plan=invoke(plan_packet,token,SYSTEM+'\nPlan every issue requirement and request necessary supporting paths. Choose only exact names from available_source_paths. A source request or missing initial context is not a contract uncertainty. Report only material ambiguity that source cannot resolve. Do not make a verdict.',plan_schema,max_packet=4*1024*1024)
+        plan=invoke(plan_packet,token,SYSTEM+'\nPlan every issue requirement and request necessary supporting paths. Choose at most 64 distinct exact names from available_source_paths. The pinned shared framework source is already supplied separately. A source request or missing initial context is not a contract uncertainty. Report only material ambiguity that source cannot resolve. Do not make a verdict.',plan_schema,max_packet=4*1024*1024)
         need(a.review.exact(plan,'requirements uncertainties') and isinstance(plan['requirements'],list)
              and plan['requirements'] and isinstance(plan['uncertainties'],list)
              and len(plan['uncertainties'])<=16
