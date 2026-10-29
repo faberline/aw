@@ -652,6 +652,10 @@ class CandidatePolicyTests(unittest.TestCase):
 
     def test_only_internal_guard_proof_permits_bootstrap_or_unchanged_policy(self):
         guard=dict(enabled=True,version=1)
+        marker=dict(version=1,phase='drain',nonce='a'*32)
+        for new,old in ((dict(issue_guard_cutover=marker),{}),({},dict(issue_guard_cutover=marker))):
+            with self.assertRaisesRegex(RuntimeError,'guarded_cutover_not_ready'):
+                a.guarded_adoption_eligible(new,old,a._GUARDED_POLICY_PROOF)
         for proof in (None,True,'verified',{}):
             with self.subTest(proof=proof),self.assertRaisesRegex(RuntimeError,'guarded_adoption_not_ready'):
                 a.guarded_adoption_eligible(dict(issue_guard=guard),{},proof)

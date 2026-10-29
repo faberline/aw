@@ -332,6 +332,8 @@ def main():
             guard_api = worker_guard.Api(client)
             guard_policy = worker_guard.read_policy(guard_api, client.repo)
             guard_intent = None
+            if worker_guard.draining(guard_policy):
+                refuse('guard cutover is draining; no new issue claim is allowed')
             if guard_policy is None:
                 if lease and lease.get('guard_intent') is not None:
                     refuse('guard policy disappeared; preserve the existing issue guard')
@@ -390,11 +392,11 @@ def main():
         guard_policy=worker_guard.read_policy(guard_api,client.repo)
         guard_intent=lease.get('guard_intent')
         if guard_intent is None:
-            if guard_policy is not None:
+            if guard_policy is not None and not worker_guard.draining(guard_policy):
                 refuse('existing work predates the shared guard; preserve its lease and worktree')
             worker_guard.require_no_legacy_guard(guard_api,client.repo,n)
         else:
-            if guard_policy is None:
+            if guard_policy is None or worker_guard.draining(guard_policy):
                 refuse('guard policy disappeared; preserve the existing issue guard')
             if lease.get('phase')!='guard_release':
                 worker_guard.require_owned(guard_api,client.repo,guard_policy,guard_intent,guard_policy['policy_source'])

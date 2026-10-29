@@ -240,6 +240,60 @@ def withdraw_approval(api, repo, number, head):
              "withdraw_result_unknown")
 
 
+def drain_marker(config):
+    if 'issue_guard_cutover' not in config:
+        return None
+    marker=config['issue_guard_cutover']
+    need('issue_guard' not in config and review.exact(marker,'version phase nonce')
+         and type(marker['version']) is int and marker['version']==1
+         and marker['phase']=='drain' and isinstance(marker['nonce'],str)
+         and re.fullmatch(r'[0-9a-f]{32}',marker['nonce']), 'cutover_marker_invalid')
+    return marker
+
+
+def drain_queue(api,repo,load_document,document):
+    """Withdraw prior native requests during cutover; this is not rollout proof."""
+    marker=drain_marker(document['config'])
+    need(marker is not None,'cutover_marker_missing')
+    path=f'repos/{repo}/pulls?state=open&sort=created&direction=asc'
+    def inventory():
+        pulls=api.pages(path)
+        need(isinstance(pulls,list) and all(isinstance(p,dict) and review.integer(p.get('number'))
+             and isinstance(p.get('head'),dict) and review.sha(p['head'].get('sha'))
+             and isinstance(p.get('base'),dict) and review.sha(p['base'].get('sha'))
+             for p in pulls) and len({p['number'] for p in pulls})==len(pulls),
+             'cutover_queue_unknown')
+        return {p['number']:(p['head']['sha'],p['base']['sha']) for p in pulls}
+    original=inventory()
+    results=[]
+    for number,(head,base) in sorted(original.items()):
+        row=dict(pr=number,head=head,state='held')
+        try:
+            need(load_document()==document,'cutover_policy_changed')
+            before=provider_pull(api,repo,number)
+            need(before.get('state')=='OPEN' and before.get('headRefOid')==head
+                 and before.get('baseRefOid')==base,'cutover_target_changed')
+            withdraw_approval(api,repo,number,head)
+            after=provider_pull(api,repo,number)
+            need(after.get('state')=='OPEN' and after.get('headRefOid')==head
+                 and after.get('baseRefOid')==base and after.get('autoMergeRequest') is None,
+                 'cutover_request_present_or_changed')
+            statuses=api.pages(f'repos/{repo}/commits/{head}/statuses')
+            need(isinstance(statuses,list) and all(isinstance(s,dict) for s in statuses),
+                 'cutover_status_unknown')
+            matching=[s for s in statuses if isinstance(s.get('context'),str)
+                      and s['context'].casefold()=='claude/verified-merge']
+            need(bool(matching) and matching[0].get('state') in ('pending','failure','error')
+                 and matching[0].get('creator',{}).get('login')=='github-actions[bot]',
+                 'cutover_status_unknown')
+            row['state']='withdrawn'
+        except Exception:
+            row['reason']='cutover_withdrawal_unverified'
+        results.append(row)
+    need(load_document()==document and inventory()==original,'cutover_snapshot_changed')
+    return results
+
+
 def binding(pull, context):
     need(pull.get("state") == "OPEN" and pull.get("isDraft") is False
          and pull.get("headRefOid") == context["head"]
@@ -688,6 +742,11 @@ def main():
         source = identities.get(wake.get("path"))
         need(source is not None and wake.get("workflow_id") == source["id"]
              and review.integer(wake.get("id")), "merge_wake_identity")
+    if drain_marker(document['config']) is not None:
+        results=drain_queue(api,repo,load,document)
+        print('AW_NATIVE_MERGE_CUTOVER_V1 '+review.r.canonical(dict(
+            version=1,repo=repo,producer_run=int(current),results=results)))
+        return 2 if any(row['state']=='held' for row in results) else 0
     guarded = None
     if 'issue_guard' in document['config']:
         # The draft verifier always holds until actor rollout and recovery are

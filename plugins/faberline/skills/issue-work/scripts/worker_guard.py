@@ -121,6 +121,14 @@ def read_policy(api,repo):
     need(isinstance(current,dict) and current.get('sha')==source and isinstance(fresh_meta,dict)
          and fresh_meta.get('full_name')==repo and fresh_meta.get('default_branch')==meta['default_branch'],
          'worker_guard_default_changed')
+    if 'issue_guard_cutover' in document:
+        marker=document['issue_guard_cutover']
+        need('issue_guard' not in document and isinstance(marker,dict)
+             and set(marker)=={'version','phase','nonce'} and type(marker['version']) is int
+             and marker['version']==1 and marker['phase']=='drain'
+             and isinstance(marker['nonce'],str) and re.fullmatch(r'[0-9a-f]{32}',marker['nonce']),
+             'worker_guard_cutover')
+        return dict(cutover=marker,policy_source=source)
     if 'issue_guard' not in document:
         return None
     guard=document['issue_guard']
@@ -128,6 +136,10 @@ def read_policy(api,repo):
     policy=config(dict(guard,policy_source=source))
     check_runtime(policy)
     return policy
+
+
+def draining(value):
+    return isinstance(value,dict) and 'cutover' in value
 
 
 def check_runtime(policy):

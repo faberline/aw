@@ -469,6 +469,68 @@ class WriterContractTests(unittest.TestCase):
 
 
 class ApprovalWithdrawalTests(unittest.TestCase):
+    def test_cutover_withdraws_owned_request_and_never_enables_merge(self):
+        p=Provider()
+        p.document['config']['issue_guard_cutover']=dict(version=1,phase='drain',nonce='a'*32)
+        p.native['autoMergeRequest']=dict(enabledBy=dict(login='github-actions',__typename='Bot'))
+        p.statuses=[dict(id=1,context='claude/verified-merge',state='success',creator=dict(login='github-actions[bot]'))]
+        pages=p.pages
+        def inventory(path,key=None):
+            if '/pulls?state=open' in path:return [copy.deepcopy(p.pull)]
+            return pages(path,key)
+        with patch.object(p,'pages',side_effect=inventory):
+            result=m.drain_queue(p,'o/r',p.load,p.load())
+        self.assertEqual(result,[dict(pr=1,head=HEAD,state='withdrawn')])
+        self.assertEqual([item[0] for item in p.writes],['pending','disable'])
+
+    def test_cutover_holds_foreign_request_unknown_status_and_changed_inventory(self):
+        for case in ('foreign','unknown','inventory'):
+            p=Provider()
+            p.document['config']['issue_guard_cutover']=dict(version=1,phase='drain',nonce='a'*32)
+            if case=='foreign':
+                p.native['autoMergeRequest']=dict(enabledBy=dict(login='person',__typename='User'))
+                p.statuses=[dict(id=1,context='claude/verified-merge',state='pending',creator=dict(login='github-actions[bot]'))]
+            pages=p.pages
+            calls=[]
+            def inventory(path,key=None):
+                if '/pulls?state=open' in path:
+                    calls.append(1)
+                    return [] if case=='inventory' and len(calls)>1 else [copy.deepcopy(p.pull)]
+                return pages(path,key)
+            with self.subTest(case=case),patch.object(p,'pages',side_effect=inventory):
+                if case=='inventory':
+                    with self.assertRaisesRegex(RuntimeError,'cutover_snapshot_changed'):
+                        m.drain_queue(p,'o/r',p.load,p.load())
+                else:
+                    result=m.drain_queue(p,'o/r',p.load,p.load())
+                    self.assertEqual(result[0]['state'],'held')
+                self.assertFalse(any(item[0] in ('disable','queue','success') for item in p.writes))
+
+    def test_malformed_cutover_never_authorizes_drain(self):
+        marker=dict(version=1,phase='drain',nonce='a'*32)
+        for bad in (None,dict(marker,version=True),dict(marker,phase='active'),dict(marker,nonce='x'*32),dict(marker,extra=1)):
+            with self.subTest(marker=bad),self.assertRaises(RuntimeError):
+                m.drain_marker(dict(issue_guard_cutover=bad))
+        with self.assertRaises(RuntimeError):
+            m.drain_marker(dict(issue_guard_cutover=marker,issue_guard={}))
+
+    def test_cutover_continues_after_one_pr_fails(self):
+        p=Provider()
+        p.document['config']['issue_guard_cutover']=dict(version=1,phase='drain',nonce='a'*32)
+        first=copy.deepcopy(p.pull);second=copy.deepcopy(first);second['number']=2
+        p.statuses=[dict(id=1,context='claude/verified-merge',state='pending',creator=dict(login='github-actions[bot]'))]
+        pages=p.pages
+        def inventory(path,key=None):
+            if '/pulls?state=open' in path:return [first,second]
+            return pages(path,key)
+        def withdrawal(api,repo,number,head):
+            if number==1:raise RuntimeError('unavailable')
+        with patch.object(p,'pages',side_effect=inventory),patch.object(m,'provider_pull',return_value=p.native),\
+             patch.object(m,'withdraw_approval',side_effect=withdrawal) as withdraw:
+            rows=m.drain_queue(p,'o/r',p.load,p.load())
+        self.assertEqual([r['state'] for r in rows],['held','withdrawn'])
+        self.assertEqual(withdraw.call_count,2)
+
     def test_withdraw_uses_provider_order_not_numeric_status_id(self):
         p=Provider()
         p.statuses=[dict(id=2,context='claude/verified-merge',state='success',creator=dict(login='github-actions[bot]')),

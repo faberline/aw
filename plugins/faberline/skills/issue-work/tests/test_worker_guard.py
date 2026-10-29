@@ -126,6 +126,15 @@ class WorkerGuardTests(unittest.TestCase):
         raw=json.dumps(dict(issue_guard=value)).encode()
         self.assertEqual(w.read_policy(SourceAPI(raw),REPO),policy())
         self.assertIsNone(w.read_policy(SourceAPI(b'{"workflows": []}'),REPO))
+        marker=dict(version=1,phase='drain',nonce='a'*32)
+        self.assertEqual(w.read_policy(SourceAPI(json.dumps(dict(issue_guard_cutover=marker)).encode()),REPO),
+                         dict(cutover=marker,policy_source=SOURCE))
+        for bad in (None,dict(marker,version=True),dict(marker,phase='active'),dict(marker,nonce='x'*32),
+                    dict(marker,extra=True)):
+            with self.subTest(marker=bad),self.assertRaises(w.provider.Refused):
+                w.read_policy(SourceAPI(json.dumps(dict(issue_guard_cutover=bad)).encode()),REPO)
+        with self.assertRaises(w.provider.Refused):
+            w.read_policy(SourceAPI(json.dumps(dict(issue_guard=value,issue_guard_cutover=marker)).encode()),REPO)
         absent=SourceAPI(raw);absent.missing=True
         self.assertIsNone(w.read_policy(absent,REPO))
         for change in ('head','blob','runtime','duplicate','truncated'):

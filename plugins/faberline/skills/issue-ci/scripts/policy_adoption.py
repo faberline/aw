@@ -244,6 +244,10 @@ _GUARDED_POLICY_PROOF=object()
 def guarded_adoption_eligible(candidate,prior,proof=None):
     """Hold guard transitions unless the trusted publisher verified rollout."""
     need(isinstance(candidate,dict) and isinstance(prior,dict),'guarded_adoption_not_ready')
+    # The drain marker cannot itself prove that all writers were upgraded or
+    # that old work has ended. No adoption path authorizes this transition yet.
+    need('issue_guard_cutover' not in candidate and 'issue_guard_cutover' not in prior,
+         'guarded_cutover_not_ready')
     if 'issue_guard' not in candidate and 'issue_guard' not in prior:
         return
     need(proof is _GUARDED_POLICY_PROOF and isinstance(candidate.get('issue_guard'),dict)
