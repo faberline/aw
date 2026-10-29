@@ -146,10 +146,25 @@ def cancel_blocked(api,repo,policy,intent):
         return dict(state='retained',issue=p['issue'])
     statuses=api.pages(f"repos/{repo}/commits/{p['head']}/statuses")
     matches=matching_statuses(statuses)
-    if matches:
-        latest=matches[0]  # GitHub returns statuses newest first.
-        if latest.get('state')=='success':return dict(state='retained',issue=p['issue'])
-        need(latest.get('state') in ('pending','failure','error'),'admission_status_unknown')
+    # No status does not establish that the required check is blocked.
+    # Do not cancel a potentially mergeable request on that assumption.
+    need(bool(matches),'admission_status_missing')
+    latest=matches[0]  # GitHub returns statuses newest first.
+    if latest.get('state')=='success':return dict(state='retained',issue=p['issue'])
+    need(latest.get('state') in ('pending','failure','error'),'admission_status_unknown')
+    rest=api.api(f"repos/{repo}/pulls/{p['pr']}")
+    native.review.pull_identity(rest,repo,p['pr'],p['head'])
+    need(native.review.linked_issue(rest)==p['issue'],'admission_issue_changed')
+    rule=blocking_rule(api,repo,policy,rest)
+    close.require_current_policy(api,repo,policy);close.guard_identity(api,repo,policy,intent)
+    current=native.provider_pull(api,repo,p['pr'])
+    need(current.get('state')=='OPEN' and current.get('headRefOid')==p['head']
+         and current.get('autoMergeRequest')==request,'admission_target_changed')
+    rest_final=api.api(f"repos/{repo}/pulls/{p['pr']}")
+    native.review.pull_identity(rest_final,repo,p['pr'],p['head'])
+    need(native.review.linked_issue(rest_final)==p['issue'],'admission_issue_changed')
+    need(api.pages(f"repos/{repo}/commits/{p['head']}/statuses")==statuses,'admission_status_changed')
+    need(blocking_rule(api,repo,policy,rest_final)==rule,'admission_rule_changed')
     close.require_current_policy(api,repo,policy);close.guard_identity(api,repo,policy,intent)
     native.withdraw_approval(api,repo,p['pr'],p['head'])
     return settle(api,repo,policy,intent)
