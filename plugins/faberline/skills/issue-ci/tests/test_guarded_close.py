@@ -141,6 +141,20 @@ class GuardedCloseTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'merge_guard_source_not_success'):
                 close.authenticate_checkpoint(self.api,'owner/repo',self.document,'e'*40,123,2,9,'a'*40,None)
 
+    def test_reviewed_adoption_uses_the_same_guarded_close_checks(self):
+        adoption=type('Adoption',(),{
+            'authenticate_checkpoint':lambda this,*args,**kwargs:dict(evidence=self.evidence,intent=self.intent,grant={}),
+            'source_policy':lambda this,*args:(self.policy,{})})()
+        def plan(api,checkpoint,started):return dict(state='guard_required')
+        def observe(api,checkpoint):return dict(state='observed_closed' if self.status=='closed' else 'observed_merged',merge='f'*40)
+        with patch.object(close,'sibling',return_value=adoption),patch.object(close.worker,'read_policy',return_value=self.policy), \
+             patch.object(close.observation,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
+             patch.object(close.observation,'recovery_plan',side_effect=plan), \
+             patch.object(close.observation,'observe',side_effect=observe):
+            result=close.reconcile_adoption(self.api,'o/r',{},self.policy,'e'*40,123,2,7,'d'*40,
+                                             self.intent['payload']['owner'],lambda r,j:'')
+        self.assertEqual(result['state'],'closed');self.assertEqual(self.patch_count,1)
+
     def test_per_pr_status_allows_evidence_when_another_pr_failed_the_job(self):
         checkpoint=observer_fixture.Fixture().checkpoint
         checkpoint.update(repo='o/r',head='d'*40)

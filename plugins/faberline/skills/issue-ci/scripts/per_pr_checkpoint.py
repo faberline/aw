@@ -22,7 +22,28 @@ BOT_ID=41898282
 def canonical(value):return json.dumps(value,sort_keys=True,separators=(',', ':'),ensure_ascii=True)
 
 
-def build(evidence,policy,intent,status,target_url=None):
+def guard_binding(p,record,grant=None,grant_source=None):
+    """Bind either a native writer or a separately reviewed publisher."""
+    c=record['checkpoint']
+    need(all(p[key]==c[key] for key in ('repo','pr','issue','head'))
+         and p['run']==record['source_run'] and p['attempt']==record['source_attempt'],
+         'per_pr_checkpoint_identity')
+    if grant is None:
+        need(grant_source is None and record['adoption_source'] is None
+             and record['adoption_sha256'] is None and p['policy_source']==record['source_commit'],
+             'per_pr_checkpoint_identity')
+    else:
+        need(isinstance(grant,dict) and review.sha(grant_source)
+             and record['adoption_source']==grant_source and record['adoption_sha256']==review.r.digest(grant)
+             and p['policy_source']==grant.get('base') and record['source_commit']==grant.get('publisher',{}).get('source_commit')
+             and record['review_run']==grant.get('review',{}).get('run_id')
+             and record['review_sha256']==grant.get('review',{}).get('receipt_sha256')
+             and all(c[key]==grant.get(key) for key in ('repo','pr','issue','head','base','base_ref','issue_sha256','pr_sha256')),
+             'per_pr_checkpoint_identity')
+    return True
+
+
+def build(evidence,policy,intent,status,target_url=None,grant=None,grant_source=None):
     """Bind one acknowledged success response to one exact guarded PR."""
     records=observation.parse_records(observation.MARKER+canonical(evidence))
     need(len(records)==1,'per_pr_checkpoint_shape')
@@ -32,10 +53,8 @@ def build(evidence,policy,intent,status,target_url=None):
     need(isinstance(target,str) and (target==base or re.fullmatch(
         re.escape(base)+rf"#aw-status-{record['source_run']}-{record['source_attempt']}-[0-9a-f]{{32}}",target)),
         'per_pr_checkpoint_identity')
-    need(all(p[key]==c[key] for key in ('repo','pr','issue','head'))
-         and p['run']==record['source_run'] and p['attempt']==record['source_attempt']
-         and p['policy_source']==record['source_commit']
-         and isinstance(status,dict) and review.integer(status.get('id'))
+    guard_binding(p,record,grant,grant_source)
+    need(isinstance(status,dict) and review.integer(status.get('id'))
          and status.get('state')=='success' and status.get('context')=='claude/verified-merge'
          and status.get('target_url')==target and isinstance(status.get('creator'),dict)
          and status['creator'].get('id')==BOT_ID and status['creator'].get('type')=='Bot'
@@ -71,13 +90,11 @@ def find(log,repo,pr,head):
     return result[0] if result else None
 
 
-def verify_status(api,repo,head,value,intent):
+def verify_status(api,repo,head,value,intent,grant=None,grant_source=None):
     """Read the exact provider status after authenticating the source record."""
     p=value['payload'];i=intent['payload'];e=p['evidence']['payload']
-    need(all(p[k]==i[k] for k in ('owner','claim_op','release_op'))
-         and all(i[k]==e['checkpoint'][k] for k in ('repo','pr','issue','head'))
-         and i['run']==e['source_run'] and i['attempt']==e['source_attempt']
-         and i['policy_source']==e['source_commit'],'per_pr_checkpoint_identity')
+    need(all(p[k]==i[k] for k in ('owner','claim_op','release_op')),'per_pr_checkpoint_identity')
+    guard_binding(i,e,grant,grant_source)
     statuses=api.pages(f'repos/{repo}/commits/{head}/statuses')
     need(isinstance(statuses,list),'per_pr_status_unknown')
     found=[item for item in statuses if isinstance(item,dict) and type(item.get('id')) is int

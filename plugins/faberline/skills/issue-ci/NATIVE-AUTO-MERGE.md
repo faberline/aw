@@ -125,9 +125,10 @@ the default-branch writer to recheck. An unknown write result retains the
 guard. The guarded path is blocked by the same unimplemented rollout proof.
 GitHub cancellation races and recovery after a writer crash still require
 hosted verification before rollout.
-The protected policy-adoption path currently refuses adding, changing, or
-removing `issue_guard`. Its publisher does not yet use the shared guard. The
-target preflight holds before paid review for the same reason.
+The protected policy-adoption draft requires the same guard and a separately
+reviewed grant. It permits bootstrap or an unchanged guard only after rollout
+is verified. The current verifier always holds before paid target review or
+publisher writes. Guard removal and incompatible changes remain unsupported.
 
 The guarded draft records a unique pending status before it requests success.
 That record alone cannot authorize a close. After GitHub acknowledges success,

@@ -106,6 +106,26 @@ def reconcile_native(api,repo,document,current_policy,evaluator,run,attempt,pr,h
          and checkpoint['repo']==repo and checkpoint['pr']==pr and checkpoint['head']==head
          and checkpoint['issue']==p['issue'] and p['repo']==repo and p['pr']==pr and p['head']==head,
          'merge_guard_checkpoint_mismatch')
+    return _complete_authenticated(api,repo,current_policy,intent,evidence)
+
+
+def reconcile_adoption(api,repo,document,current_policy,evaluator,run,attempt,issue,head,owner,log_reader):
+    """Use a separately reviewed publisher's authenticated guard and status."""
+    adoption=sibling('adoption_guard')
+    verified=adoption.authenticate_checkpoint(api,document,repo,evaluator,run,attempt,issue,head,owner,log_reader)
+    old,_=adoption.source_policy(api,verified['grant'])
+    worker.config(current_policy);worker.check_runtime(current_policy)
+    need(all(old[k]==current_policy[k] for k in ('genesis','ruleset_id','runtime')),
+         'merge_guard_policy_changed')
+    return _complete_authenticated(api,repo,current_policy,verified['intent'],verified['evidence'])
+
+
+def _complete_authenticated(api,repo,current_policy,intent,evidence):
+    """Finish only after a trusted caller authenticates the source evidence."""
+    p=intent['payload'];record=evidence['payload'];checkpoint=record['checkpoint']
+    need(record['source_attempt']==p['attempt'] and record['source_run']==p['run']
+         and checkpoint['repo']==repo and checkpoint['pr']==p['pr'] and checkpoint['head']==p['head']
+         and checkpoint['issue']==p['issue'] and p['repo']==repo,'merge_guard_checkpoint_mismatch')
     started=observation.source_started_at(api,evidence,require_success=False)
     planned=observation.recovery_plan(api,checkpoint,started)
     if planned['state'] in ('waiting','not_merged'):

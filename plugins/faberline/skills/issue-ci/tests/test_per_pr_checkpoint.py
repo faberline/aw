@@ -10,6 +10,7 @@ def load(name,path):
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
 
 m=load('per_pr_checkpoint_draft',HERE.parent/'scripts/per_pr_checkpoint.py')
+prepared=load('per_pr_checkpoint_prepared',HERE.parent/'scripts/prepared_status.py')
 obs_fixture=load('per_pr_observation_fixture',HERE/'test_post_merge_observation.py')
 workers=load('per_pr_worker_fixture',HERE.parents[1]/'issue-work/tests/test_worker_guard.py')
 
@@ -52,6 +53,27 @@ class PerPRTests(unittest.TestCase):
         other=copy.deepcopy(self.intent);other['payload']['owner']='f'*56
         with self.assertRaisesRegex(RuntimeError,'per_pr_checkpoint_identity'):
             m.verify_status(Api([self.status]),'o/r','a'*40,value,other)
+
+    def test_reviewed_adoption_binds_distinct_publisher_and_policy_sources(self):
+        checkpoint=copy.deepcopy(self.evidence['payload']['checkpoint']);checkpoint['base']=self.source
+        grant={key:checkpoint[key] for key in ('repo','pr','issue','head','base','base_ref','issue_sha256','pr_sha256')}
+        grant.update(publisher=dict(source_commit='b'*40),review=dict(run_id=202,receipt_sha256='f'*64))
+        grant_source='c'*40
+        evidence=m.observation.record(checkpoint,123,2,'b'*40,'e'*40,202,'f'*64,m.review.r.digest(grant),grant_source)
+        value=m.build(evidence,self.policy,self.intent,self.status,grant=grant,grant_source=grant_source)
+        nonce='1'*32;pending=dict(self.status,id=54,state='pending',
+            target_url=prepared.target_identity('o/r',202,123,2,nonce))
+        early=prepared.build_guarded(evidence,self.policy,self.intent,pending,nonce,grant=grant,grant_source=grant_source)
+        self.assertEqual(early['payload']['pending_id'],54)
+        class Api:
+            def pages(self,path):return [self_status]
+        self_status=self.status
+        self.assertEqual(m.verify_status(Api(),'o/r','a'*40,value,self.intent,grant=grant,grant_source=grant_source),evidence)
+        with self.assertRaisesRegex(RuntimeError,'per_pr_checkpoint_identity'):
+            m.verify_status(Api(),'o/r','a'*40,value,self.intent)
+        changed=copy.deepcopy(grant);changed['base']='0'*40
+        with self.assertRaisesRegex(RuntimeError,'per_pr_checkpoint_identity'):
+            m.verify_status(Api(),'o/r','a'*40,value,self.intent,grant=changed,grant_source=grant_source)
 
 
 if __name__=='__main__':unittest.main()

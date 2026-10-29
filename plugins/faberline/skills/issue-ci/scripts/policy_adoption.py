@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 from urllib.parse import quote
 
 
@@ -237,20 +238,26 @@ def publisher_provenance(api, grant, run_id, event, completed=False, attempt=Non
     return dict(run_id=run_id,run_attempt=run['run_attempt'],job_id=matches[0]['id'],source_commit=ref)
 
 
-def guarded_adoption_eligible(candidate,prior):
-    """Hold all guard transitions until the publisher uses the shared guard."""
-    need(isinstance(candidate,dict) and isinstance(prior,dict)
-         and 'issue_guard' not in candidate and 'issue_guard' not in prior,
+_GUARDED_POLICY_PROOF=object()
+
+
+def guarded_adoption_eligible(candidate,prior,proof=None):
+    """Hold guard transitions unless the trusted publisher verified rollout."""
+    need(isinstance(candidate,dict) and isinstance(prior,dict),'guarded_adoption_not_ready')
+    if 'issue_guard' not in candidate and 'issue_guard' not in prior:
+        return
+    need(proof is _GUARDED_POLICY_PROOF and isinstance(candidate.get('issue_guard'),dict)
+         and ('issue_guard' not in prior or prior['issue_guard']==candidate['issue_guard']),
          'guarded_adoption_not_ready')
 
 
-def candidate_policy(api, grant):
+def candidate_policy(api, grant, proof=None):
     repo=grant['repo'];head=grant['head'];base=grant['base']
     path='.github/issue-ci-required-gates.json'
     candidate=ci.strict_json_loads(review.blob(api,repo,path,head,grant['policy_blob']))
     prior=ci.strict_json_loads(review.blob(api,repo,path,base,grant['base_policy_blob']))
     ci.validate_config(candidate);ci.validate_adoption(candidate);ci.validate_config(prior)
-    guarded_adoption_eligible(candidate,prior)
+    guarded_adoption_eligible(candidate,prior,proof)
     need(candidate.get('lifecycle_mode')=='full' and candidate.get('qualification_blockers')==[]
          and candidate.get('qualification',{}).get('version')==2, 'candidate_policy_not_full_v2')
     native.handoff_policy(candidate)
@@ -304,7 +311,7 @@ def load_grants():
     return review.action.trusted_policy(ci, GRANTS_REPO, GRANTS_PATH, metadata=True)
 
 
-def evaluate(api, grant, log_reader):
+def evaluate(api, grant, log_reader, proof=None):
     repo=grant['repo'];number=grant['pr'];head=grant['head'];base=grant['base']
     pull=api.api(f'repos/{repo}/pulls/{number}')
     review.pull_identity(pull,repo,number,head)
@@ -321,7 +328,7 @@ def evaluate(api, grant, log_reader):
     files=api.pages(f'repos/{repo}/pulls/{number}/files')
     _,inventory=file_inventory(pull,files)
     need(r.digest(inventory)==grant['files_sha256'], 'pr_files_changed')
-    candidate=candidate_policy(api,grant)
+    candidate=candidate_policy(api,grant,proof)
     plan=q.select(candidate,pull,files,issue)
     prefix='gate infrastructure change requires reviewed policy update: '
     protected=sorted(item[len(prefix):] for item in plan['issues'] if item.startswith(prefix))
@@ -337,6 +344,11 @@ def evaluate(api, grant, log_reader):
     native.binding(provider,context)
     return dict(context=context,issue=issue_number,policy=p,provider=provider,
                 receipt=receipt,ci_jobs=ci_rows)
+
+
+def _evaluate_guarded(api,grant,log_reader):
+    """Internal path for a publisher that already authenticated its guard."""
+    return evaluate(api,grant,log_reader,proof=_GUARDED_POLICY_PROOF)
 
 
 GRANT_MARKER = 'AW_POLICY_ADOPTION_GRANT_REVIEW_V1 '
@@ -491,6 +503,18 @@ def prepare_adoption_close_record(api, document, grant, evaluator, run_id, recei
         grant['review']['run_id'],grant['review']['receipt_sha256'],r.digest(grant),document['source_commit'])
 
 
+def dispatch_adoption_recovery(api,repo):
+    """Wake the currently deployed recovery workflow, if one is configured."""
+    document=review.action.trusted_policy(api,repo,'.github/issue-ci-required-gates.json',metadata=True)
+    if 'issue_guard' not in document['config']:
+        # A bootstrap merge cannot dispatch a workflow not yet on main.
+        return False
+    recovery=review.sibling('recovery_entry')
+    recovery.workflow_contract(api,repo,document,document['config']['aw_revision'])
+    api.api(f'repos/{repo}/dispatches',method='POST',data=dict(event_type='aw-verified-merge-recover'))
+    return True
+
+
 def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_grants, log_reader=r.job_log,
             prepare_record=None):
     """Queue only after separate grant, exact CI and independent review verification."""
@@ -506,7 +530,16 @@ def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_gra
          and os.environ.get('GITHUB_WORKFLOW_SHA')==pub['source_commit']
          and os.environ.get('GITHUB_REF')=='refs/heads/'+pub['branch'], 'publisher_context')
     publisher_provenance(api,grant,run_id,event)
-    before=evaluate(api,grant,log_reader)
+    guarded=None;guard_action=None
+    try:
+        before=evaluate(api,grant,log_reader)
+    except review.Refused as error:
+        if str(error)!='guarded_adoption_not_ready':raise
+        guard_action=review.sibling('adoption_guard')
+        # This draft still fails before any mutation until rollout is proved.
+        guarded=guard_action.begin(api,document,grant,evaluator,run_id,log_reader,
+                                   lambda line:print(line,flush=True))
+        before=_evaluate_guarded(api,grant,log_reader)
     repo,number,head=grant['repo'],grant['pr'],grant['head']
     context,p=before['context'],before['policy']
     headline,body=f'Merge PR #{number}',f"Closes #{grant['issue']}"
@@ -514,15 +547,27 @@ def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_gra
     if request is not None:
         native.queued_request(before['provider'],p,headline,body)
     need(grant_loader()==document, 'grant_changed')
-    api.api(f'repos/{repo}/statuses/{head}',method='POST',data=dict(
+    target=f"https://github.com/{repo}/actions/runs/{grant['review']['run_id']}"
+    prepared_module=None;nonce=None
+    if guarded is not None:
+        need(prepare_record is not None,'guard_record_required')
+        need(guard_action.recheck(api,document,grant,evaluator,run_id,guarded,log_reader)==attestation,
+             'adoption_guard_review_changed')
+        prepared_module=review.sibling('prepared_status');nonce=secrets.token_hex(16)
+        intent=guarded['intent']['payload']
+        target=prepared_module.target_identity(repo,grant['review']['run_id'],intent['run'],intent['attempt'],nonce)
+    pending=api.api(f'repos/{repo}/statuses/{head}',method='POST',data=dict(
         state='pending',context=p['status_context'],description='Rechecking reviewed policy adoption',
-        target_url=f"https://github.com/{repo}/actions/runs/{grant['review']['run_id']}"))
+        target_url=target))
     try:
-        current=evaluate(api,grant,log_reader)
+        current=_evaluate_guarded(api,grant,log_reader) if guarded is not None else evaluate(api,grant,log_reader)
         need(current==before and grant_loader()==document
              and verify_grant_attestation(api,document,grant,evaluator,log_reader)==attestation,
              'adoption_evidence_changed')
         publisher_provenance(api,grant,run_id,event)
+        if guarded is not None:
+            need(guard_action.recheck(api,document,grant,evaluator,run_id,guarded,log_reader)==attestation,
+                 'adoption_guard_review_changed')
         if current['provider'].get('autoMergeRequest') is None:
             result=native.graphql(api,native.QUEUE,dict(input=dict(
                 pullRequestId=current['provider']['id'],expectedHeadOid=head,
@@ -533,7 +578,7 @@ def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_gra
             native.queued_request(queued,p,headline,body)
         else:
             native.queued_request(current['provider'],p,headline,body)
-        fresh=evaluate(api,grant,log_reader)
+        fresh=_evaluate_guarded(api,grant,log_reader) if guarded is not None else evaluate(api,grant,log_reader)
         need(grant_loader()==document and all(fresh[k]==before[k] for k in ('context','issue','policy','receipt','ci_jobs'))
              and verify_grant_attestation(api,document,grant,evaluator,log_reader)==attestation,
              'adoption_evidence_changed')
@@ -541,12 +586,25 @@ def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_gra
         native.queued_request(fresh['provider'],p,headline,body)
         checkpoint=(prepare_record(api,document,grant,evaluator,run_id,fresh['receipt'])
                     if prepare_record is not None else None)
-        api.api(f'repos/{repo}/statuses/{head}',method='POST',data=dict(
+        if guarded is not None:
+            need(guard_action.recheck(api,document,grant,evaluator,run_id,guarded,log_reader)==attestation,
+                 'adoption_guard_review_changed')
+            prepared=prepared_module.build_guarded(checkpoint,guarded['policy'],guarded['intent'],pending,nonce,
+                                                    grant=grant,grant_source=document['source_commit'])
+            print(prepared_module.MARKER+r.canonical(prepared),flush=True)
+        response=api.api(f'repos/{repo}/statuses/{head}',method='POST',data=dict(
             state='success',context=p['status_context'],description='Reviewed policy, current CI and Claude verified',
-            target_url=f"https://github.com/{repo}/actions/runs/{grant['review']['run_id']}"))
+            target_url=target))
         if checkpoint is not None:
-            observation=review.sibling('post_merge_observation')
-            print(observation.MARKER+r.canonical(checkpoint),flush=True)
+            if guarded is None:
+                observation=review.sibling('post_merge_observation')
+                print(observation.MARKER+r.canonical(checkpoint),flush=True)
+            else:
+                per_pr=review.sibling('per_pr_checkpoint')
+                bound=per_pr.build(checkpoint,guarded['policy'],guarded['intent'],response,target_url=target,
+                                   grant=grant,grant_source=document['source_commit'])
+                print(per_pr.MARKER+r.canonical(bound),flush=True)
+                dispatch_adoption_recovery(api,repo)
     except Exception:
         # The pending status blocks an abandoned request; no blind retry.
         return dict(state='held_after_pending',head=head)

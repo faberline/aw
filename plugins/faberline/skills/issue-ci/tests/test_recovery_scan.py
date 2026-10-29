@@ -51,6 +51,7 @@ class RecoveryScanTests(unittest.TestCase):
             return dict(source_commit=SOURCE),EVALUATOR
         evidence=dict(payload=dict(source_attempt=1,checkpoint=dict(issue=3)))
         with patch.object(m.discovery,'inspect',return_value=items), \
+             patch.object(m,'source_event',return_value='workflow_run'), \
              patch.object(m,'historical_document',side_effect=source), \
              patch.object(m.guard,'identify_native_owner',return_value=dict(payload=dict(pr=9))), \
              patch.object(m.closer,'authenticate_checkpoint',return_value=evidence), \
@@ -84,6 +85,7 @@ class RecoveryScanTests(unittest.TestCase):
         items=[dict(issue=7,state='merge_held',run=123,attempt=2,head='d'*40,owner='a'*56)]
         intent=dict(payload=dict(pr=9,head='d'*40,issue=7))
         with patch.object(m.discovery,'inspect',return_value=items), \
+             patch.object(m,'source_event',return_value='workflow_run'), \
              patch.object(m,'historical_document',return_value=(dict(source_commit=SOURCE),EVALUATOR)), \
              patch.object(m.guard,'identify_native_owner',return_value=intent), \
              patch.object(m.closer,'authenticate_checkpoint',side_effect=RuntimeError('merge_guard_source_not_success')), \
@@ -96,6 +98,7 @@ class RecoveryScanTests(unittest.TestCase):
         items=[dict(issue=7,state='merge_held',run=123,attempt=2,head='d'*40,owner='a'*56)]
         intent=dict(payload=dict(pr=9,head='d'*40,issue=7))
         with patch.object(m.discovery,'inspect',return_value=items), \
+             patch.object(m,'source_event',return_value='workflow_run'), \
              patch.object(m,'historical_document',return_value=(dict(source_commit=SOURCE),EVALUATOR)), \
              patch.object(m.guard,'identify_native_owner',return_value=intent), \
              patch.object(m.closer,'authenticate_checkpoint',side_effect=RuntimeError('merge_guard_source_not_success')), \
@@ -103,6 +106,20 @@ class RecoveryScanTests(unittest.TestCase):
             result=m.scan(None,'o/r',{},lambda r,j:'')
         self.assertEqual(result,[dict(issue=7,state='admission_recovery',owner='a'*56,pr=9,head='d'*40,
                                       run=123,attempt=2,close_authorized=False)])
+
+    def test_reviewed_adoption_source_is_checked_without_authorizing_close(self):
+        items=[dict(issue=7,state='merge_held',run=123,attempt=2,head='d'*40,owner='a'*56)]
+        evidence=dict(payload=dict(checkpoint=dict(issue=7)))
+        class Adoption:
+            def discover_source(self,*args):return dict(document={},evaluator=EVALUATOR,pr=9)
+            def authenticate_checkpoint(self,*args):return dict(evidence=evidence)
+        with patch.object(m.discovery,'inspect',return_value=items), \
+             patch.object(m,'source_event',return_value='push'),patch.object(m,'adoption_module',return_value=Adoption()), \
+             patch.object(m.observer,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
+             patch.object(m.observer,'recovery_plan',return_value=dict(state='guard_required')):
+            result=m.scan(None,'o/r',{},lambda r,j:'')
+        self.assertEqual(result,[dict(issue=7,state='guard_required',kind='adoption',owner='a'*56,pr=9,
+                                      head='d'*40,run=123,attempt=2,close_authorized=False)])
 
 
 if __name__=='__main__':unittest.main()

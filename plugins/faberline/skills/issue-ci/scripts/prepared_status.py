@@ -15,6 +15,8 @@ _spec=importlib.util.spec_from_file_location('aw_prepared_observation',Path(__fi
 observation=importlib.util.module_from_spec(_spec);_spec.loader.exec_module(observation)
 _guard_spec=importlib.util.spec_from_file_location('aw_prepared_merge_guard',Path(__file__).with_name('merge_guard.py'))
 guard=importlib.util.module_from_spec(_guard_spec);_guard_spec.loader.exec_module(guard)
+_per_spec=importlib.util.spec_from_file_location('aw_prepared_per_pr',Path(__file__).with_name('per_pr_checkpoint.py'))
+per_pr=importlib.util.module_from_spec(_per_spec);_per_spec.loader.exec_module(per_pr)
 need=observation.need
 MARKER='AW_PREPARED_STATUS_V1 '
 BOT_ID=41898282
@@ -43,12 +45,10 @@ def target_identity(repo,review_run,source_run,source_attempt,nonce):
             f'#aw-status-{source_run}-{source_attempt}-{nonce}')
 
 
-def build_guarded(checkpoint,policy,intent,pending,nonce):
+def build_guarded(checkpoint,policy,intent,pending,nonce,grant=None,grant_source=None):
     """Bind a pre-success record to the acknowledged pending status and guard."""
     p=guard.validate(intent,policy);r=checkpoint.get('payload',{});c=r.get('checkpoint',{})
-    need(all(p[k]==c.get(k) for k in ('repo','pr','issue','head'))
-         and p['run']==r.get('source_run') and p['attempt']==r.get('source_attempt')
-         and p['policy_source']==r.get('source_commit'),'prepared_status_identity')
+    per_pr.guard_binding(p,r,grant,grant_source)
     url=target_identity(c['repo'],r['review_run'],p['run'],p['attempt'],nonce)
     need(isinstance(pending,dict) and observation.review.integer(pending.get('id'))
          and pending.get('state')=='pending' and pending.get('context')=='claude/verified-merge'

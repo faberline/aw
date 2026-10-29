@@ -32,6 +32,16 @@ def reconcile(api,repo,log_reader):
         row=dict(issue=candidate['issue'],pr=candidate['pr'],head=candidate['head'],state='held')
         try:
             run,attempt=candidate['run'],candidate['attempt']
+            if candidate.get('kind')=='adoption':
+                adoption=scan.adoption_module()
+                source=adoption.discover_source(api,repo,run,attempt,candidate['issue'],candidate['head'],
+                                                candidate['owner'],log_reader)
+                if candidate['state']=='admission_recovery':
+                    result=admission.cancel_blocked(api,repo,policy,source['intent'])
+                else:
+                    result=close.reconcile_adoption(api,repo,source['document'],policy,source['evaluator'],run,attempt,
+                                                    candidate['issue'],candidate['head'],candidate['owner'],log_reader)
+                row.update(result);results.append(row);continue
             document,evaluator=scan.historical_document(api,repo,run,attempt)
             if candidate['state']=='admission_recovery':
                 intent=scan.guard.identify_native_owner(api,repo,document,evaluator,run,attempt,

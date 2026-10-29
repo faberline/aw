@@ -35,6 +35,7 @@ RECOVERY_CANDIDATE_SOURCES=(
         'readiness-requirements.txt')),
     *(f'plugins/faberline/skills/issue-work/scripts/{name}' for name in (
         'work.py','worker_guard.py','worktree_state.py','index_safety.py','main_filter_safety.py')),
+    'plugins/faberline/skills/issue-work/SKILL.md',
     'plugins/faberline/skills/issue-loop/scripts/milestone_queue.py',
 )
 EVALUATOR_FRAMEWORK_FILES=(
@@ -241,7 +242,16 @@ def preflight(api,repo,number,head):
     candidate=a.ci.strict_json_loads(raw)
     prior=a.ci.strict_json_loads(a.review.blob(api,repo,path,base))
     a.ci.validate_config(candidate);a.ci.validate_adoption(candidate);a.ci.validate_config(prior)
-    a.guarded_adoption_eligible(candidate,prior)
+    if 'issue_guard' in candidate or 'issue_guard' in prior:
+        recovery=sibling('recovery_entry')
+        proposed=dict(config=candidate,source_commit=head)
+        # The current verifier always holds. Once implemented, it must prove
+        # actor rollout before review or guard-policy adoption can proceed.
+        recovery.verify_rollout(api,repo,proposed)
+        a.guarded_adoption_eligible(candidate,prior,a._GUARDED_POLICY_PROOF)
+        recovery.workflow_contract(api,repo,proposed,candidate.get('aw_revision'))
+    else:
+        a.guarded_adoption_eligible(candidate,prior)
     need(candidate.get('lifecycle_mode')=='full' and candidate.get('qualification_blockers')==[]
          and candidate.get('qualification',{}).get('version')==2, 'target_policy_not_full_v2')
     a.native.handoff_policy(candidate)

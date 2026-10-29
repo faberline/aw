@@ -19,6 +19,10 @@ review=guard.review
 need=guard.need
 
 
+def adoption_module():
+    return sibling('adoption_guard')
+
+
 def inspect_prepared(api,repo,document,current_policy,evaluator,run,attempt,intent,log_reader):
     """Observe a pre-status record without authorizing a close."""
     p=intent['payload'];pr=p['pr'];head=p['head']
@@ -63,6 +67,14 @@ def historical_document(api,repo,run,attempt):
     return dict(config=config,source_commit=source),config['aw_revision']
 
 
+def source_event(api,repo,run,attempt):
+    row=api.api(f'repos/{repo}/actions/runs/{run}/attempts/{attempt}')
+    need(isinstance(row,dict) and row.get('id')==run and row.get('run_attempt')==attempt
+         and row.get('status')=='completed' and row.get('event') in
+             ('issues','workflow_run','repository_dispatch','push'),'recovery_source')
+    return row['event']
+
+
 def scan(api,repo,current_policy,log_reader):
     """Inspect all guards, retaining failures and never mutating an issue."""
     items=discovery.inspect(api,repo,current_policy);results=[]
@@ -72,6 +84,23 @@ def scan(api,repo,current_policy,log_reader):
         row=dict(issue=item['issue'],state='held')
         try:
             run,attempt=item['run'],item['attempt']
+            if source_event(api,repo,run,attempt)=='push':
+                adoption=adoption_module()
+                source=adoption.discover_source(api,repo,run,attempt,item['issue'],item['head'],item['owner'],log_reader)
+                try:
+                    verified=adoption.authenticate_checkpoint(api,source['document'],repo,source['evaluator'],run,attempt,
+                                                              item['issue'],item['head'],item['owner'],log_reader)
+                except Exception as error:
+                    if str(error)!='adoption_checkpoint_missing':raise
+                    row.update(state='admission_recovery',kind='adoption',pr=source['pr'],head=item['head'],
+                               owner=item['owner'],run=run,attempt=attempt,close_authorized=False)
+                    results.append(row);continue
+                evidence=verified['evidence']
+                started=observer.source_started_at(api,evidence,require_success=False)
+                observed=observer.recovery_plan(api,evidence['payload']['checkpoint'],started)
+                row.update(state=observed['state'],kind='adoption',pr=source['pr'],head=item['head'],owner=item['owner'],
+                           run=run,attempt=attempt,close_authorized=False)
+                results.append(row);continue
             document,evaluator=historical_document(api,repo,run,attempt)
             intent=guard.identify_native_owner(api,repo,document,evaluator,run,attempt,item['issue'],
                                                item['head'],item['owner'],log_reader)

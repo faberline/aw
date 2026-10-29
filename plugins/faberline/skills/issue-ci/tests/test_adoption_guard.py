@@ -15,6 +15,7 @@ def load(name,path):
 m=load('adoption_guard_draft',HERE.parent/'scripts/adoption_guard.py')
 workers=load('adoption_guard_worker',HERE.parents[1]/'issue-work/tests/test_worker_guard.py')
 provider=load('adoption_guard_provider',HERE/'test_guard_github.py')
+obs_fixture=load('adoption_guard_observation',HERE/'test_post_merge_observation.py')
 SOURCE='d'*40;HEAD='a'*40;EVALUATOR='e'*40;GRANT_SOURCE='f'*40;PUBLISHER='b'*40
 
 
@@ -99,11 +100,24 @@ class AdoptionGuardTests(unittest.TestCase):
              patch.object(m.adoption,'publisher_provenance',return_value=dict(run_attempt=2)), \
              patch.object(m,'source_policy',return_value=(self.policy,self.candidate)), \
              patch.object(m.guard.worker,'check_runtime'),patch.object(m.recovery,'verify_rollout'), \
-             patch.object(m.adoption,'evaluate',return_value={'stable':True}):
+             patch.object(m.adoption,'_evaluate_guarded',return_value={'stable':True}):
             result=m.begin(api,self.document,self.grant,EVALUATOR,123,lambda r,j:'',emit,lambda n:next(values))
         self.assertTrue(output[0].startswith(m.MARKER));self.assertTrue(output[1].startswith(m.guard.MARKER))
         state=m.guard.provider.read_chain(api,'o/r',provider.GENESIS,provider.RULE,7)
         self.assertEqual(state['state']['locks']['7']['owner'],result['intent']['payload']['owner'])
+
+    def test_recheck_requires_the_same_current_guard_owner(self):
+        api=provider.Provider();m.guard.acquire(api,self.policy,self.intent,lambda line:None)
+        claim=dict(policy=self.policy,intent=self.intent)
+        with patch.object(m,'grant_from_default',return_value=self.grant), \
+             patch.object(m.adoption,'verify_grant_attestation',return_value={'review':'pass'}), \
+             patch.object(m.adoption,'publisher_provenance',return_value=dict(run_attempt=2)), \
+             patch.object(m,'source_policy',return_value=(self.policy,self.candidate)), \
+             patch.object(m.guard.worker,'check_runtime'):
+            self.assertEqual(m.recheck(api,self.document,self.grant,EVALUATOR,123,claim,lambda r,j:''),{'review':'pass'})
+            changed=copy.deepcopy(claim);changed['intent']['payload']['owner']='f'*56
+            with self.assertRaises(RuntimeError):
+                m.recheck(api,self.document,self.grant,EVALUATOR,123,changed,lambda r,j:'')
 
     def test_caller_cannot_replace_the_default_branch_grant(self):
         env=dict(GITHUB_ACTIONS='true',GITHUB_REPOSITORY='o/r',GITHUB_EVENT_NAME='push',GITHUB_RUN_ID='123',
@@ -126,11 +140,64 @@ class AdoptionGuardTests(unittest.TestCase):
              patch.object(m.adoption,'publisher_provenance',return_value=dict(run_attempt=2)), \
              patch.object(m,'source_policy',return_value=(self.policy,self.candidate)), \
              patch.object(m.guard.worker,'check_runtime'),patch.object(m.recovery,'verify_rollout'), \
-             patch.object(m.adoption,'evaluate',side_effect=[{'version':1},{'version':2}]):
+             patch.object(m.adoption,'_evaluate_guarded',side_effect=[{'version':1},{'version':2}]):
             with self.assertRaisesRegex(RuntimeError,'adoption_guard_evidence_changed'):
                 m.begin(api,self.document,self.grant,EVALUATOR,123,lambda r,j:'',lambda line:None,lambda n:next(values))
         state=m.guard.provider.read_chain(api,'o/r',provider.GENESIS,provider.RULE,7)
         self.assertEqual(state['state']['locks']['7']['kind'],'merge')
+
+    def test_checkpoint_requires_both_reviewed_grant_and_exact_status(self):
+        checkpoint=obs_fixture.Fixture().checkpoint;checkpoint.update(repo='o/r',head=HEAD,base=SOURCE)
+        self.grant.update({key:checkpoint[key] for key in ('base_ref','issue_sha256','pr_sha256')})
+        self.grant['review']=dict(run_id=202,receipt_sha256='e'*64)
+        evidence=m.per_pr.observation.record(checkpoint,123,2,PUBLISHER,EVALUATOR,202,'e'*64,
+                                             m.review.r.digest(self.grant),GRANT_SOURCE)
+        status=dict(id=55,state='success',context='claude/verified-merge',
+                    target_url='https://github.com/o/r/actions/runs/202',
+                    creator=dict(id=41898282,type='Bot',login='github-actions[bot]'))
+        bound=m.per_pr.build(evidence,self.policy,self.intent,status,grant=self.grant,grant_source=GRANT_SOURCE)
+        record=m.record(self.document,self.grant,self.intent)
+        log=m.MARKER+m.canonical(record)+'\n'+m.per_pr.MARKER+m.per_pr.canonical(bound)+'\n'
+        class Api:
+            def api(self,path):
+                if path=='repos/faberline/aw':return dict(full_name='faberline/aw',default_branch='main')
+                if path==f'repos/faberline/aw/compare/{GRANT_SOURCE}...main':
+                    return dict(status='ahead',base_commit=dict(sha=GRANT_SOURCE))
+                raise AssertionError(path)
+            def pages(self,path):return [status]
+        def authenticate():
+            return m.authenticate_checkpoint(Api(),self.document,'o/r',EVALUATOR,123,2,7,HEAD,
+                                             self.intent['payload']['owner'],lambda repo,job:log)
+        with patch.object(m.adoption,'choose_grant',return_value=self.grant), \
+             patch.object(m.adoption,'verify_grant_attestation'), \
+             patch.object(m.adoption,'publisher_provenance',return_value=dict(job_id=88)), \
+             patch.object(m,'source_policy',return_value=(self.policy,self.candidate)), \
+             patch.object(m.guard,'historical_runtime'):
+            self.assertEqual(authenticate()['evidence'],evidence)
+            status['state']='failure'
+            with self.assertRaisesRegex(RuntimeError,'per_pr_status_unknown'):authenticate()
+
+    def test_untrusted_marker_only_selects_a_grant_for_full_authentication(self):
+        self.grant['evaluator']=EVALUATOR
+        self.document['config']=dict(version=1,grants=[self.grant])
+        value=m.record(self.document,self.grant,self.intent);log=m.MARKER+m.canonical(value)+'\n'
+        class Api:
+            def api(self,path):
+                assert path=='repos/o/r/actions/runs/123/attempts/2'
+                return dict(id=123,run_attempt=2,status='completed',event='push',head_repository=dict(full_name='o/r'))
+            def pages(self,path,key):
+                assert path=='repos/o/r/actions/runs/123/attempts/2/jobs' and key=='jobs'
+                return [dict(id=88,status='completed')]
+        with patch.object(m.review,'blob',return_value=json.dumps(self.document['config'])), \
+             patch.object(m,'authenticate_intent',return_value=self.intent) as authenticate:
+            found=m.discover_source(Api(),'o/r',123,2,7,HEAD,self.intent['payload']['owner'],lambda r,j:log)
+            self.assertEqual(found['pr'],9);self.assertEqual(found['evaluator'],EVALUATOR)
+            authenticate.assert_called_once()
+            authenticate.side_effect=RuntimeError('untrusted publisher')
+            with self.assertRaisesRegex(RuntimeError,'untrusted publisher'):
+                m.discover_source(Api(),'o/r',123,2,7,HEAD,self.intent['payload']['owner'],lambda r,j:log)
+            with self.assertRaisesRegex(RuntimeError,'adoption_guard_source'):
+                m.discover_source(Api(),'o/r',123,2,7,HEAD,self.intent['payload']['owner'],lambda r,j:log+log)
 
 
 if __name__=='__main__':unittest.main()

@@ -61,5 +61,16 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result[0]['state'],'released');identify.assert_called_once();settle.assert_called_once()
         close.assert_not_called()
 
+    def test_adoption_candidate_is_rediscovered_before_guarded_close(self):
+        candidate=dict(issue=7,pr=9,head='a'*40,owner='b'*56,run=123,attempt=2,
+                       kind='adoption',state='guard_required')
+        adoption=type('Adoption',(),{'discover_source':lambda this,*args:dict(
+            document={'source_commit':'c'*40},evaluator='d'*40,intent={})})()
+        with patch.object(m.worker,'read_policy',return_value={'current':True}), \
+             patch.object(m.scan,'scan',return_value=[candidate]),patch.object(m.scan,'adoption_module',return_value=adoption), \
+             patch.object(m.close,'reconcile_adoption',return_value=dict(state='closed',issue=7,merge='e'*40)) as close:
+            result=m.reconcile(None,'o/r',lambda r,j:'')
+        self.assertEqual(result[0]['state'],'closed');close.assert_called_once()
+
 
 if __name__=='__main__':unittest.main()

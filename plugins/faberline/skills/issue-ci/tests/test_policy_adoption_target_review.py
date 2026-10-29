@@ -382,8 +382,13 @@ class PreflightTests(unittest.TestCase):
             self.assertEqual(packet['verified_provider_policy'],provider_evidence)
             self.assertEqual(packet['shared_framework_sources'][0]['ref'],'c'*40)
             cfg['issue_guard']={'enabled':True}
-            with self.assertRaisesRegex(RuntimeError,'guarded_adoption_not_ready'):
+            with self.assertRaisesRegex(RuntimeError,'recovery_rollout_not_verified'):
                 m.preflight(api,'o/r',8,HEAD)
+            recovery=type('Recovery',(),{'verify_rollout':lambda this,*args:None,
+                                        'workflow_contract':lambda this,*args:None})()
+            with patch.object(m,'sibling',return_value=recovery):
+                accepted,_=m.preflight(api,'o/r',8,HEAD)
+                self.assertEqual(accepted['ci']['run_id'],111)
             del cfg['issue_guard']
             with patch.object(m,'framework_sources',return_value=[dict(content='x'*(4*1024*1024))]):
                 with self.assertRaisesRegex(RuntimeError,'target_packet_limit'):m.preflight(api,'o/r',8,HEAD)
