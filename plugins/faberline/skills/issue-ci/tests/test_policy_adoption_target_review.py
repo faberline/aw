@@ -35,6 +35,20 @@ class ReviewProtocolTests(unittest.TestCase):
         self.assertEqual(receipt['decision'],'pass');self.assertEqual(receipt['reviewed_files'],['src/x'])
         self.assertEqual(receipt['ci_jobs_sha256'],'4'*64)
 
+    def test_both_model_stages_explain_the_required_separate_grant(self):
+        packet=self.packet();prompts=[]
+        def model(data,token,system,schema,**kwargs):
+            prompts.append(system)
+            return self.model(data,token,system,schema,**kwargs)
+        with patch.object(m,'preflight',return_value=(packet,{BASE:[],HEAD:[]})):
+            self.assertEqual(m.produce(None,'o/r',8,HEAD,'token',model)['decision'],'pass')
+        self.assertEqual(len(prompts),2)
+        for prompt in prompts:
+            self.assertIn('preliminary target review',prompt)
+            self.assertIn('mandatory prerequisite for the later merge',prompt)
+            self.assertIn('never treat this preliminary pass as merge approval',prompt)
+            self.assertIn('Unknown product-issue acceptance must remain held',prompt)
+
     def test_failed_partial_or_drift_never_emits_passing_receipt(self):
         for change in ('plan','review','files','requirements','drift'):
             packet=self.packet();changed=copy.deepcopy(packet);changed['context']['base']='0'*40
