@@ -151,10 +151,14 @@ class ActionsProvider(Provider):
 
 class ActionsProviderVisibilityTests(unittest.TestCase):
     def check(self,p):
-        m.base_rules(p,'o/r',dict(base_ref='main',base=BASE),p.document['config']['native_auto_merge'])
+        return m.base_rules(p,'o/r',dict(base_ref='main',base=BASE),p.document['config']['native_auto_merge'])
 
     def test_actions_visible_graphql_proves_the_same_strict_policy(self):
-        self.check(ActionsProvider())
+        evidence=self.check(ActionsProvider())
+        self.assertEqual(evidence,dict(base_ref='main',base=BASE,auto_merge_allowed=True,
+            squash_merge_allowed=True,ruleset_id=9,enforcement='active',target='branch',
+            strict_required_status=True,status_context='claude/verified-merge',status_app_id=15368,
+            bypass_actor_count=0))
 
     def test_unknown_or_changed_repository_settings_refuse(self):
         for field,value in [('nameWithOwner','other/repo'),('autoMergeAllowed',False),('autoMergeAllowed',None),

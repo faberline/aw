@@ -60,6 +60,17 @@ class OutcomeTests(unittest.TestCase):
         self.assertEqual(result['state'],'pass_waiting_for_separate_grant')
         self.assertEqual(p.writes,[]);self.assertEqual(p.issue_writes,[])
 
+    def test_passing_target_cannot_queue_or_publish_without_a_grant(self):
+        p,run,receipt,env,blob=fixture('pass');log=lambda *args:o.a.MARKER+json.dumps(receipt)+'\n'
+        empty=dict(config=dict(version=1,grants=[]),source_commit='9'*40)
+        with patch.dict(os.environ,env,clear=True),patch.object(o.a.review,'blob',side_effect=blob):
+            result=o.apply(p,'o/r',1,HEAD,adoption.EVALUATOR,333,log)
+            self.assertEqual(result['state'],'pass_waiting_for_separate_grant')
+            with self.assertRaisesRegex(RuntimeError,'grant_missing_or_ambiguous'):
+                o.a.enqueue(p,'o/r',adoption.EVALUATOR,333,'push',grant_loader=lambda:empty)
+        self.assertEqual(p.writes,[])
+        self.assertEqual(p.issue_writes,[])
+
     def test_queued_run_with_live_outcome_job_remains_actionable(self):
         p,run,receipt,env,blob=fixture('fail');run['status']='queued'
         log=lambda *args:o.a.MARKER+json.dumps(receipt)+'\n'
