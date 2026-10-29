@@ -220,7 +220,23 @@ class GuardedCloseTests(unittest.TestCase):
             self.assertEqual(release()['state'],'released_after_observed_closed')
         self.assertEqual(self.patch_count,0)
 
-    def recover_prepared(self,fail_at=None,policy_changed=False):
+    def status_pages(self,value,change_at=None):
+        url=close.prepared.target(value)
+        creator=dict(id=close.prepared.BOT_ID,type='Bot',login='github-actions[bot]')
+        statuses=[dict(id=56,state='success',context='claude/verified-merge',target_url=url,creator=creator),
+                  dict(id=55,state='pending',context='claude/verified-merge',target_url=url,creator=creator)]
+        calls=[]
+        def pages(path):
+            self.assertEqual(path,'repos/o/r/commits/'+('d'*40)+'/statuses')
+            calls.append(True)
+            result=copy.deepcopy(statuses)
+            if len(calls)==change_at:
+                result.insert(0,dict(id=57,state='failure',context='claude/verified-merge',
+                                     target_url=url,creator=creator))
+            return result
+        return pages
+
+    def recover_prepared(self,fail_at=None,policy_changed=False,status_change_at=None):
         checkpoint=observer_fixture.Fixture().checkpoint
         checkpoint.update(repo='o/r',pr=9,issue=7,head='d'*40)
         evidence=close.observation.record(checkpoint,123,2,self.source,'e'*40,202,'f'*64)
@@ -242,6 +258,7 @@ class GuardedCloseTests(unittest.TestCase):
         current=dict(config={} if policy_changed else self.document['config'])
         with patch.object(close.merge_guard,'authenticate_native_intent',return_value=self.intent), \
              patch.object(close.prepared,'authenticate_native_prepared',return_value=value), \
+             patch.object(self.api,'pages',side_effect=self.status_pages(value,status_change_at),create=True), \
              patch.object(close,'sibling',return_value=native_index), \
              patch.object(close.merge_guard.review.action,'trusted_policy',return_value=current), \
              patch.object(close.native,'qualification_merged',return_value=7), \
@@ -267,11 +284,21 @@ class GuardedCloseTests(unittest.TestCase):
             self.assertEqual(self.patch_count,0)
             self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
 
-    def recover_adoption_prepared(self,fail_at=None):
+    def test_lost_status_never_closes_if_success_is_superseded(self):
+        for read in (2,3,4,5):
+            with self.subTest(status_read=read),self.assertRaisesRegex(RuntimeError,'prepared_success_unknown'):
+                self.recover_prepared(status_change_at=read)
+            self.assertEqual(self.patch_count,0)
+            self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
+
+    def recover_adoption_prepared(self,fail_at=None,status_change_at=None):
         receipt={'decision':'pass'}
-        evidence=copy.deepcopy(self.evidence)
-        evidence['payload']['review_sha256']=close.observation.review.r.digest(receipt)
-        verified=dict(evidence=evidence,intent=self.intent,grant={})
+        checkpoint=observer_fixture.Fixture().checkpoint
+        checkpoint.update(repo='o/r',pr=9,issue=7,head='d'*40)
+        evidence=close.observation.record(checkpoint,123,2,self.source,'e'*40,202,
+                                          close.observation.review.r.digest(receipt))
+        value=close.prepared.build(evidence,55,'a'*32)
+        verified=dict(evidence=evidence,intent=self.intent,grant={},prepared=value)
         calls=[]
         class Policy:
             def evaluate_merged(self,*args):
@@ -288,6 +315,7 @@ class GuardedCloseTests(unittest.TestCase):
         def observe(api,checkpoint):
             return dict(state='observed_closed' if self.status=='closed' else 'observed_merged',merge='f'*40)
         with patch.object(close,'sibling',return_value=Adoption()), \
+             patch.object(self.api,'pages',side_effect=self.status_pages(value,status_change_at),create=True), \
              patch.object(close.worker,'read_policy',return_value=self.policy), \
              patch.object(close.observation,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
              patch.object(close.observation,'recovery_plan',side_effect=plan), \
@@ -306,6 +334,13 @@ class GuardedCloseTests(unittest.TestCase):
             self.recover_adoption_prepared(fail_at=2)
         self.assertEqual(self.patch_count,0)
         self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
+
+    def test_lost_adoption_status_never_closes_if_success_is_superseded(self):
+        for read in (2,3,4,5):
+            with self.subTest(status_read=read),self.assertRaisesRegex(RuntimeError,'prepared_success_unknown'):
+                self.recover_adoption_prepared(status_change_at=read)
+            self.assertEqual(self.patch_count,0)
+            self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
 
     def test_legacy_checkpoint_cannot_authorize_closure_without_status_identity(self):
         checkpoint=observer_fixture.Fixture().checkpoint

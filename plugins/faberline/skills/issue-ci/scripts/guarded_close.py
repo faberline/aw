@@ -144,8 +144,15 @@ def reconcile_native_prepared(api,repo,document,current_policy,evaluator,run,att
     evidence=value['payload']['checkpoint'];record=evidence['payload'];checkpoint=record['checkpoint']
     per_pr.guard_binding(p,record)
     need(checkpoint['issue']==p['issue'],'merge_guard_checkpoint_mismatch')
+    def status():
+        return prepared.observe(value,api.pages(f'repos/{repo}/commits/{head}/statuses'))
+    baseline=status()
     def revalidate():
+        fresh=prepared.authenticate_native_prepared(api,repo,document,evaluator,run,attempt,pr,head,log_reader)
+        need(fresh==value,'prepared_status_changed')
+        need(status()==baseline,'prepared_status_changed')
         revalidate_native_merged(api,repo,document,evaluator,pr,head,record,p['issue'],log_reader)
+        need(status()==baseline,'prepared_status_changed')
     revalidate()
     return _complete_authenticated(api,repo,current_policy,intent,evidence,revalidate=revalidate)
 
@@ -180,12 +187,17 @@ def reconcile_adoption_prepared(api,repo,document,current_policy,evaluator,run,a
     need(p['owner']==owner and p['repo']==repo and p['issue']==issue and p['head']==head
          and record['checkpoint']['repo']==repo and record['checkpoint']['issue']==issue
          and record['checkpoint']['head']==head,'merge_guard_checkpoint_mismatch')
+    def status():
+        return prepared.observe(verified['prepared'],api.pages(f'repos/{repo}/commits/{head}/statuses'))
+    baseline=status()
     def revalidate():
         fresh=adoption.find_prepared(api,document,repo,evaluator,run,attempt,issue,head,owner,log_reader)
         need(fresh==verified,'adoption_guard_evidence_changed')
+        need(status()==baseline,'prepared_status_changed')
         result=adoption.adoption.evaluate_merged(api,verified['grant'],log_reader)
         need(result['issue']==issue and adoption.review.r.digest(result['receipt'])==record['review_sha256'],
              'merge_recovery_review_changed')
+        need(status()==baseline,'prepared_status_changed')
     revalidate()
     return _complete_authenticated(api,repo,current_policy,intent,verified['evidence'],revalidate=revalidate)
 
