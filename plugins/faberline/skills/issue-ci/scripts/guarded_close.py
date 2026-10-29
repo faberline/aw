@@ -159,6 +159,29 @@ def reconcile_adoption(api,repo,document,current_policy,evaluator,run,attempt,is
     return _complete_authenticated(api,repo,current_policy,verified['intent'],verified['evidence'])
 
 
+def reconcile_adoption_prepared(api,repo,document,current_policy,evaluator,run,attempt,issue,head,owner,log_reader):
+    """Revalidate the independent grant, target review and full CI after merge."""
+    adoption=sibling('adoption_guard')
+    verified=adoption.find_prepared(api,document,repo,evaluator,run,attempt,issue,head,owner,log_reader)
+    need(verified is not None,'adoption_prepared_missing')
+    old,_=adoption.source_policy(api,verified['grant'])
+    worker.config(current_policy);worker.check_runtime(current_policy)
+    need(all(old[k]==current_policy[k] for k in ('genesis','ruleset_id','runtime')),
+         'merge_guard_policy_changed')
+    intent=verified['intent'];record=verified['evidence']['payload'];p=intent['payload']
+    need(p['owner']==owner and p['repo']==repo and p['issue']==issue and p['head']==head
+         and record['checkpoint']['repo']==repo and record['checkpoint']['issue']==issue
+         and record['checkpoint']['head']==head,'merge_guard_checkpoint_mismatch')
+    def revalidate():
+        fresh=adoption.find_prepared(api,document,repo,evaluator,run,attempt,issue,head,owner,log_reader)
+        need(fresh==verified,'adoption_guard_evidence_changed')
+        result=adoption.adoption.evaluate_merged(api,verified['grant'],log_reader)
+        need(result['issue']==issue and adoption.review.r.digest(result['receipt'])==record['review_sha256'],
+             'merge_recovery_review_changed')
+    revalidate()
+    return _complete_authenticated(api,repo,current_policy,intent,verified['evidence'],revalidate=revalidate)
+
+
 def release_closed_prepared(api,repo,document,current_policy,evaluator,run,attempt,pr,head,owner,log_reader):
     """Release an authenticated guard only when the exact issue is already closed.
 

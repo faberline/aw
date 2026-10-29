@@ -270,6 +270,15 @@ def candidate_policy(api, grant, proof=None):
 
 
 def candidate_evidence(api, grant, candidate):
+    return _candidate_evidence(api,grant,candidate,False)
+
+
+def candidate_merged_evidence(api, grant, candidate):
+    """Recheck the exact grant-bound jobs after merge; never authorize a write."""
+    return _candidate_evidence(api,grant,candidate,True)
+
+
+def _candidate_evidence(api, grant, candidate, merged):
     repo,head,base=grant['repo'],grant['head'],grant['base']
     need(len(candidate['workflows']) == 1, 'candidate_workflow_count')
     for workflow in candidate['workflows']:
@@ -289,11 +298,11 @@ def candidate_evidence(api, grant, candidate):
         need(run.get('id')==grant['ci']['run_id'] and run.get('run_attempt')==grant['ci']['attempt']
              and run.get('workflow_id')==identity['id'] and run.get('path')==workflow['path']
              and run.get('head_sha')==head and run.get('event')=='pull_request'
-             and run.get('head_repository',{}).get('full_name')==repo
-             and isinstance(run.get('pull_requests'),list) and len(run['pull_requests'])==1
-             and run['pull_requests'][0].get('number')==grant['pr']
-             and run['pull_requests'][0].get('head',{}).get('sha')==head
-             and run['pull_requests'][0].get('base',{}).get('sha')==base, 'candidate_ci_identity')
+             and run.get('head_repository',{}).get('full_name')==repo, 'candidate_ci_identity')
+        links=run.get('pull_requests')
+        associated=(isinstance(links,list) and len(links)==1 and links[0].get('number')==grant['pr']
+                    and links[0].get('head',{}).get('sha')==head and links[0].get('base',{}).get('sha')==base)
+        need(associated or (merged and links==[]),'candidate_ci_identity')
         names=[job.get('name') for job in jobs]
         need(len(names)==len(workflow['jobs']) and len(set(names))==len(names)
              and set(names)==set(workflow['jobs']), 'candidate_ci_job_inventory')
@@ -349,6 +358,71 @@ def evaluate(api, grant, log_reader, proof=None):
 def _evaluate_guarded(api,grant,log_reader):
     """Internal path for a publisher that already authenticated its guard."""
     return evaluate(api,grant,log_reader,proof=_GUARDED_POLICY_PROOF)
+
+
+def latest_target_review(api,grant):
+    """Reject a later review attempt for the same pinned review workflow."""
+    spec=grant['review'];repo=grant['repo']
+    original=api.api(f"repos/{repo}/actions/runs/{spec['run_id']}")
+    need(original.get('id')==spec['run_id'] and review.integer(original.get('run_number'))
+         and original.get('run_attempt')==spec['attempt'],'review_superseded')
+    rows=api.pages(f"repos/{repo}/actions/workflows/{spec['workflow_id']}/runs",'workflow_runs')
+    need(isinstance(rows,list),'review_superseded')
+    seen=[]
+    for row in rows:
+        if (row.get('workflow_id')!=spec['workflow_id'] or row.get('path')!=spec['workflow_path']
+                or row.get('event')!='push' or row.get('head_branch')!=spec['branch']
+                or row.get('head_repository',{}).get('full_name')!=repo):continue
+        need(review.integer(row.get('id')) and review.integer(row.get('run_number'))
+             and review.integer(row.get('run_attempt')),'review_superseded')
+        seen.append(row)
+    need(len({row['id'] for row in seen})==len(seen)
+         and len({row['run_number'] for row in seen})==len(seen)
+         and sum(row['id']==spec['run_id'] and row['run_attempt']==spec['attempt']
+                 and row['run_number']==original['run_number'] for row in seen)==1
+         and all((row['run_number'],row['run_attempt']) <= (original['run_number'],spec['attempt'])
+                 for row in seen),'review_superseded')
+
+
+def evaluate_merged(api, grant, log_reader):
+    """Revalidate the reviewed adoption after merge, without writing anything.
+
+    The caller must first authenticate the grant and the publisher's intent.
+    Exact merge ancestry and issue ownership are checked by the recovery flow.
+    """
+    repo,number,head,base=grant['repo'],grant['pr'],grant['head'],grant['base']
+    pull=api.api(f'repos/{repo}/pulls/{number}')
+    review.merged_pull_identity(pull,repo,number,head)
+    meta=api.api(f'repos/{repo}')
+    need(pull['base'].get('sha')==base and pull['base'].get('ref')==grant['base_ref']
+         and meta.get('default_branch')==grant['base_ref'],'target_base_changed')
+    issue_number=review.linked_issue(pull)
+    need(issue_number==grant['issue'] and r.digest([pull.get('title'),pull.get('body')])==grant['pr_sha256'],
+         'pr_contract_changed')
+    issue=api.api(f'repos/{repo}/issues/{issue_number}')
+    need(issue.get('number')==issue_number and issue.get('state')=='open' and 'pull_request' not in issue
+         and r.digest({k:issue.get(k) for k in ('number','title','body')})==grant['issue_sha256'],
+         'issue_contract_changed')
+    files=api.pages(f'repos/{repo}/pulls/{number}/files')
+    _,inventory=file_inventory(pull,files)
+    need(r.digest(inventory)==grant['files_sha256'],'pr_files_changed')
+    candidate=candidate_policy(api,grant,proof=_GUARDED_POLICY_PROOF)
+    current=review.action.trusted_policy(api,repo,'.github/issue-ci-required-gates.json',metadata=True)
+    need(current['config']==candidate,'merge_recovery_policy_changed')
+    plan=q.select(candidate,pull,files,issue)
+    prefix='gate infrastructure change requires reviewed policy update: '
+    protected=sorted(item[len(prefix):] for item in plan['issues'] if item.startswith(prefix))
+    need(protected==grant['protected_paths'] and len(plan['issues'])==len(protected)
+         and set(plan['selected'])==set(candidate['qualification']['checks']),
+         'unapproved_or_unknown_applicability')
+    ci_rows=candidate_merged_evidence(api,grant,candidate)
+    receipt=review_provenance(api,grant,inventory,log_reader)
+    latest_target_review(api,grant)
+    current_commit=api.api(f"repos/{repo}/commits/{quote(grant['base_ref'],safe='')}")
+    need(review.sha(current_commit.get('sha')),'default_base_changed')
+    policy=native.policy(dict(config=candidate,source_commit=head))
+    native.base_rules(api,repo,dict(base_ref=grant['base_ref'],base=current_commit['sha']),policy)
+    return dict(issue=issue_number,receipt=receipt,ci_jobs=ci_rows)
 
 
 GRANT_MARKER = 'AW_POLICY_ADOPTION_GRANT_REVIEW_V1 '

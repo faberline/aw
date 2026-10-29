@@ -27,7 +27,7 @@ def reconcile(api,repo,log_reader):
     need(policy is not None,'merge_guard_policy_missing')
     candidates=scan.scan(api,repo,policy,log_reader);results=[]
     for candidate in candidates:
-        if candidate['state'] not in ('guard_required','observed_closed','admission_recovery','closed_prepared_recovery','prepared_revalidation'):
+        if candidate['state'] not in ('guard_required','observed_closed','admission_recovery','closed_prepared_recovery','prepared_revalidation','adoption_prepared_revalidation'):
             results.append(candidate);continue
         row=dict(issue=candidate['issue'],pr=candidate['pr'],head=candidate['head'],state='held')
         try:
@@ -36,7 +36,10 @@ def reconcile(api,repo,log_reader):
                 adoption=scan.adoption_module()
                 source=adoption.discover_source(api,repo,run,attempt,candidate['issue'],candidate['head'],
                                                 candidate['owner'],log_reader)
-                if candidate['state']=='closed_prepared_recovery':
+                if candidate['state']=='adoption_prepared_revalidation':
+                    result=close.reconcile_adoption_prepared(api,repo,source['document'],policy,source['evaluator'],
+                        run,attempt,candidate['issue'],candidate['head'],candidate['owner'],log_reader)
+                elif candidate['state']=='closed_prepared_recovery':
                     result=close.release_adoption_closed_prepared(api,repo,source['document'],policy,source['evaluator'],
                         run,attempt,candidate['issue'],candidate['head'],candidate['owner'],log_reader)
                 elif candidate['state']=='admission_recovery':

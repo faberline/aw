@@ -166,7 +166,7 @@ def find_prepared(api,document,repo,evaluator,run,attempt,issue,head,owner,log_r
         found.append(value)
     need(len(found)<=1,'adoption_prepared_duplicate')
     if not found:return None
-    return dict(evidence=found[0]['payload']['checkpoint'],intent=intent,grant=grant)
+    return dict(evidence=found[0]['payload']['checkpoint'],intent=intent,grant=grant,prepared=found[0])
 
 
 def discover_source(api,repo,run,attempt,issue,head,owner,log_reader):

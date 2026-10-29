@@ -110,5 +110,16 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result[0]['state'],'released_after_observed_closed')
         release.assert_called_once();close.assert_not_called()
 
+    def test_prepared_adoption_uses_independent_revalidation_path(self):
+        candidate=dict(issue=7,pr=9,head='a'*40,owner='b'*56,run=123,attempt=2,
+                       kind='adoption',state='adoption_prepared_revalidation')
+        adoption=type('Adoption',(),{'discover_source':lambda this,*args:dict(
+            document={'source_commit':'c'*40},evaluator='d'*40,intent={})})()
+        with patch.object(m.worker,'read_policy',return_value={'current':True}), \
+             patch.object(m.scan,'scan',return_value=[candidate]),patch.object(m.scan,'adoption_module',return_value=adoption), \
+             patch.object(m.close,'reconcile_adoption_prepared',return_value=dict(state='closed',issue=7)) as recover:
+            result=m.reconcile(None,'o/r',lambda r,j:'')
+        self.assertEqual(result[0]['state'],'closed');recover.assert_called_once()
+
 
 if __name__=='__main__':unittest.main()

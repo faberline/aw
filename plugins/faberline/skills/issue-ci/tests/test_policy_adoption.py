@@ -146,6 +146,19 @@ class EvidenceTests(unittest.TestCase):
                 if change=='failed':bad.jobs[0]['conclusion']='failure'
                 with self.subTest(change=change),self.assertRaises(RuntimeError):a.candidate_evidence(bad,g,cfg)
 
+    def test_merged_evidence_requires_the_exact_grant_bound_run_and_jobs(self):
+        g,cfg,run,jobs=ci_data();run['pull_requests']=[];api=self.API(run,jobs)
+        with patch.object(a.review,'blob',return_value='trusted'):
+            with self.assertRaisesRegex(RuntimeError,'candidate_ci_identity'):a.candidate_evidence(api,g,cfg)
+            self.assertEqual(len(a.candidate_merged_evidence(api,g,cfg)),4)
+            for mutate in (lambda x:x.run.update(run_attempt=2),
+                           lambda x:x.jobs[0].update(id=999),
+                           lambda x:x.jobs[0].update(conclusion='failure'),
+                           lambda x:x.run.update(pull_requests=[dict(number=999)])):
+                bad=self.API(copy.deepcopy(run),copy.deepcopy(jobs));mutate(bad)
+                with self.subTest(mutate=mutate),self.assertRaises(RuntimeError):
+                    a.candidate_merged_evidence(bad,g,cfg)
+
     def test_untrusted_or_nonterminal_publisher_cannot_authorize(self):
         g=grant();p=g['publisher'];workflow='''name: Reviewed policy adoption
 on:
@@ -425,6 +438,51 @@ class ExactTargetTests(unittest.TestCase):
                 if change=='unknown':cfg['qualification']['contracts']['7']['unresolved']=['missing gate']
                 with self.subTest(change=change),self.assertRaises(RuntimeError):a.evaluate(api,g,lambda *args:'')
                 api.current=old_api;issue.clear();issue.update(old_issue);files[:]=old_file;g['protected_paths']=old_paths;cfg.clear();cfg.update(old_cfg)
+
+    def test_merged_target_rechecks_policy_ci_review_and_selection(self):
+        g,pull,issue,cfg,files,provider,policy,api=self.setup_target()
+        pull.update(state='closed',merged=True,merged_at='2026-01-02T00:00:00Z',merge_commit_sha='f'*40)
+        pull['head']['repo']={'full_name':'o/r'};pull['base']['repo']={'full_name':'o/r'}
+        with patch.object(a,'candidate_policy',return_value=cfg), \
+             patch.object(a,'candidate_merged_evidence',return_value=['green']) as ci, \
+             patch.object(a,'review_provenance',return_value={'decision':'pass'}) as review, \
+             patch.object(a,'latest_target_review') as latest, \
+             patch.object(a.review.action,'trusted_policy',return_value={'config':cfg}), \
+             patch.object(a.native,'policy',return_value=policy),patch.object(a.native,'base_rules') as rules:
+            value=a.evaluate_merged(api,g,lambda *args:'')
+            self.assertEqual(value['issue'],7);ci.assert_called_once();review.assert_called_once()
+            latest.assert_called_once();rules.assert_called_once()
+            issue['body']='changed'
+            with self.assertRaisesRegex(RuntimeError,'issue_contract_changed'):a.evaluate_merged(api,g,lambda *args:'')
+
+    def test_merged_target_refuses_a_different_current_policy(self):
+        g,pull,issue,cfg,files,provider,policy,api=self.setup_target()
+        pull.update(state='closed',merged=True,merged_at='2026-01-02T00:00:00Z',merge_commit_sha='f'*40)
+        pull['head']['repo']={'full_name':'o/r'};pull['base']['repo']={'full_name':'o/r'}
+        with patch.object(a,'candidate_policy',return_value=cfg), \
+             patch.object(a.review.action,'trusted_policy',return_value={'config':{}}), \
+             patch.object(a,'candidate_merged_evidence') as ci:
+            with self.assertRaisesRegex(RuntimeError,'merge_recovery_policy_changed'):
+                a.evaluate_merged(api,g,lambda *args:'')
+            ci.assert_not_called()
+
+
+class TargetReviewFreshnessTests(unittest.TestCase):
+    def test_later_or_ambiguous_attempt_is_held(self):
+        g=grant();spec=g['review']
+        row=dict(id=spec['run_id'],workflow_id=spec['workflow_id'],path=spec['workflow_path'],
+                 event='push',head_branch=spec['branch'],head_repository={'full_name':g['repo']},
+                 run_number=4,run_attempt=spec['attempt'])
+        class Api:
+            def __init__(self):self.rows=[row]
+            def api(self,path):return copy.deepcopy(row)
+            def pages(self,path,key):return copy.deepcopy(self.rows)
+        api=Api();a.latest_target_review(api,g)
+        for rows in ([row,row],[],[row,dict(row,id=row['id']+1,run_number=5)],
+                     [dict(row,run_attempt=row['run_attempt']+1)]):
+            api.rows=rows
+            with self.subTest(rows=rows),self.assertRaisesRegex(RuntimeError,'review_superseded'):
+                a.latest_target_review(api,g)
 
 class TargetReviewProvenanceTests(unittest.TestCase):
     def fixture(self):

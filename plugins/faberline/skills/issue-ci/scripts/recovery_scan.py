@@ -108,6 +108,13 @@ def scan(api,repo,current_policy,log_reader):
                             row.update(state='closed_prepared_recovery',kind='adoption',pr=source['pr'],head=item['head'],
                                        owner=item['owner'],run=run,attempt=attempt,close_authorized=False)
                             results.append(row);continue
+                        if observed['state']=='guard_required':
+                            statuses=api.pages(f"repos/{repo}/commits/{item['head']}/statuses")
+                            status=prepared.observe(verified['prepared'],statuses)
+                            row.update(state='adoption_prepared_revalidation',kind='adoption',pr=source['pr'],
+                                       head=item['head'],owner=item['owner'],run=run,attempt=attempt,
+                                       status=status['state'],close_authorized=False)
+                            results.append(row);continue
                     row.update(state='admission_recovery',kind='adoption',pr=source['pr'],head=item['head'],
                                owner=item['owner'],run=run,attempt=attempt,close_authorized=False)
                     results.append(row);continue

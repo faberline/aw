@@ -153,5 +153,23 @@ class RecoveryScanTests(unittest.TestCase):
         self.assertEqual(result,[dict(issue=7,state='closed_prepared_recovery',kind='adoption',owner='a'*56,pr=9,
                                       head='d'*40,run=123,attempt=2,close_authorized=False)])
 
+    def test_open_prepared_adoption_is_only_a_revalidation_candidate(self):
+        items=[dict(issue=7,state='merge_held',run=123,attempt=2,head='d'*40,owner='a'*56)]
+        evidence=dict(payload=dict(checkpoint=dict(issue=7)))
+        class Adoption:
+            def discover_source(self,*args):return dict(document={},evaluator=EVALUATOR,pr=9)
+            def authenticate_checkpoint(self,*args):raise RuntimeError('adoption_checkpoint_missing')
+            def find_prepared(self,*args):return dict(evidence=evidence,prepared={})
+        class Api:
+            def pages(self,path):return []
+        with patch.object(m.discovery,'inspect',return_value=items), \
+             patch.object(m,'source_event',return_value='push'),patch.object(m,'adoption_module',return_value=Adoption()), \
+             patch.object(m.observer,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
+             patch.object(m.observer,'recovery_plan',return_value=dict(state='guard_required')), \
+             patch.object(m.prepared,'observe',return_value=dict(state='observed_success')):
+            result=m.scan(Api(),'o/r',{},lambda r,j:'')
+        self.assertEqual(result,[dict(issue=7,state='adoption_prepared_revalidation',kind='adoption',owner='a'*56,
+                                      pr=9,head='d'*40,run=123,attempt=2,status='observed_success',close_authorized=False)])
+
 
 if __name__=='__main__':unittest.main()

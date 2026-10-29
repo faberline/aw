@@ -243,6 +243,46 @@ class GuardedCloseTests(unittest.TestCase):
             self.assertEqual(self.patch_count,0)
             self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
 
+    def recover_adoption_prepared(self,fail_at=None):
+        receipt={'decision':'pass'}
+        evidence=copy.deepcopy(self.evidence)
+        evidence['payload']['review_sha256']=close.observation.review.r.digest(receipt)
+        verified=dict(evidence=evidence,intent=self.intent,grant={})
+        calls=[]
+        class Policy:
+            def evaluate_merged(self,*args):
+                calls.append(True)
+                if len(calls)==fail_at:raise RuntimeError('candidate_ci_not_green')
+                return dict(issue=7,receipt=receipt)
+        class Adoption:
+            adoption=Policy();review=close.observation.review
+            def find_prepared(self,*args):return verified
+            def source_policy(self,*args):return self_policy,{}
+        self_policy=self.policy
+        def plan(api,checkpoint,started):
+            return dict(state='observed_closed' if self.status=='closed' else 'guard_required')
+        def observe(api,checkpoint):
+            return dict(state='observed_closed' if self.status=='closed' else 'observed_merged',merge='f'*40)
+        with patch.object(close,'sibling',return_value=Adoption()), \
+             patch.object(close.worker,'read_policy',return_value=self.policy), \
+             patch.object(close.observation,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
+             patch.object(close.observation,'recovery_plan',side_effect=plan), \
+             patch.object(close.observation,'observe',side_effect=observe):
+            result=close.reconcile_adoption_prepared(self.api,'o/r',self.document,self.policy,'e'*40,123,2,7,
+                'd'*40,self.intent['payload']['owner'],lambda r,j:'')
+        return result,calls
+
+    def test_lost_adoption_status_revalidates_grant_review_and_ci_twice(self):
+        result,calls=self.recover_adoption_prepared()
+        self.assertEqual(result['state'],'closed');self.assertEqual(len(calls),2)
+        self.assertEqual(self.patch_count,1)
+
+    def test_lost_adoption_status_keeps_issue_open_when_ci_changes(self):
+        with self.assertRaisesRegex(RuntimeError,'candidate_ci_not_green'):
+            self.recover_adoption_prepared(fail_at=2)
+        self.assertEqual(self.patch_count,0)
+        self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
+
     def test_checkpoint_requires_exact_successful_attempt_even_after_rerun(self):
         checkpoint=observer_fixture.Fixture().checkpoint
         record=close.observation.record(checkpoint,123,2,self.source,'e'*40,202,'f'*64)
