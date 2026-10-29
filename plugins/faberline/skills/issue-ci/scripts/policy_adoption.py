@@ -186,10 +186,11 @@ def review_provenance(api, grant, inventory, log_reader):
     return review_result(grant,records[0],inventory)
 
 
-def publisher_provenance(api, grant, run_id, event, completed=False, attempt=None):
+def publisher_provenance(api, grant, run_id, event, completed=False, attempt=None, terminal=False):
     spec=grant['publisher'];repo=grant['repo'];ref=spec['source_commit']
-    need(review.integer(run_id) and event=='push'
-         and (attempt is None or completed and review.integer(attempt)), 'publisher_event')
+    need(review.integer(run_id) and event=='push' and type(completed) is bool and type(terminal) is bool
+         and not (completed and terminal)
+         and (attempt is None or (completed or terminal) and review.integer(attempt)), 'publisher_event')
     raw=review.blob(api,repo,spec['workflow_path'],ref,spec['workflow_blob'])
     # Accept one fixed, serialized data-only action. A grant cannot authorize
     # candidate checkout, shell steps or a second privileged writer.
@@ -218,6 +219,9 @@ def publisher_provenance(api, grant, run_id, event, completed=False, attempt=Non
          and (attempt is None or run['run_attempt']==attempt), 'publisher_run_identity')
     if completed:
         need(run.get('status')=='completed' and run.get('conclusion')=='success', 'publisher_run_identity')
+    elif terminal:
+        need(run.get('status')=='completed' and run.get('conclusion') in ('success','failure','cancelled','timed_out'),
+             'publisher_run_identity')
     else:
         need(run.get('status') in ('queued','in_progress'), 'publisher_run_identity')
     jobs=api.pages(f"repos/{repo}/actions/runs/{run_id}/attempts/{run['run_attempt']}/jobs",'jobs')
@@ -226,6 +230,8 @@ def publisher_provenance(api, grant, run_id, event, completed=False, attempt=Non
     if completed:
         need(matches[0].get('status')=='completed' and matches[0].get('conclusion')=='success',
              'publisher_job_identity')
+    elif terminal:
+        need(matches[0].get('status')=='completed', 'publisher_job_identity')
     else:
         need(matches[0].get('status')=='in_progress', 'publisher_job_identity')
     return dict(run_id=run_id,run_attempt=run['run_attempt'],job_id=matches[0]['id'],source_commit=ref)

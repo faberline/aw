@@ -1,0 +1,136 @@
+"""Draft adoption guard tests use synthetic data and never write to GitHub."""
+import copy
+import importlib.util
+import json
+import os
+from pathlib import Path
+import unittest
+from unittest.mock import patch
+
+HERE=Path(__file__).resolve().parent
+def load(name,path):
+    spec=importlib.util.spec_from_file_location(name,path)
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+
+m=load('adoption_guard_draft',HERE.parent/'scripts/adoption_guard.py')
+workers=load('adoption_guard_worker',HERE.parents[1]/'issue-work/tests/test_worker_guard.py')
+provider=load('adoption_guard_provider',HERE/'test_guard_github.py')
+SOURCE='d'*40;HEAD='a'*40;EVALUATOR='e'*40;GRANT_SOURCE='f'*40;PUBLISHER='b'*40
+
+
+class AdoptionGuardTests(unittest.TestCase):
+    def setUp(self):
+        self.policy=workers.policy(SOURCE);raw=dict(self.policy);del raw['policy_source']
+        self.candidate=dict(issue_guard=raw);self.prior={}
+        self.grant=dict(repo='o/r',pr=9,issue=7,head=HEAD,base=SOURCE,base_ref='main',
+                        policy_blob='1'*40,base_policy_blob='2'*40,
+                        publisher=dict(source_commit=PUBLISHER,branch='codex/adopt'))
+        self.document=dict(source_commit=GRANT_SOURCE,config={})
+        values=iter(['a'*32,'b'*32,'c'*32])
+        self.intent=m.guard.build('o/r',9,HEAD,7,self.policy,123,2,lambda n:next(values))
+
+    def blob(self,api,repo,path,ref,expected=None):
+        assert repo=='o/r' and path=='.github/issue-ci-required-gates.json'
+        assert expected==('1'*40 if ref==HEAD else '2'*40)
+        return json.dumps(self.candidate if ref==HEAD else self.prior)
+
+    def test_bootstrap_or_unchanged_policy_only_and_exact_base(self):
+        class Api:
+            def api(self,path):
+                if path=='repos/o/r':return dict(full_name='o/r',default_branch='main')
+                if path=='repos/o/r/commits/main':return dict(sha=SOURCE)
+                raise AssertionError(path)
+        with patch.object(m.review,'blob',side_effect=self.blob):
+            self.assertEqual(m.source_policy(Api(),self.grant,True)[0],self.policy)
+            self.prior['issue_guard']=copy.deepcopy(self.candidate['issue_guard'])
+            self.assertEqual(m.source_policy(Api(),self.grant,True)[0],self.policy)
+            self.prior['issue_guard']['ruleset_id']=99
+            with self.assertRaisesRegex(RuntimeError,'adoption_guard_policy'):m.source_policy(Api(),self.grant)
+            self.prior['issue_guard']=None
+            with self.assertRaisesRegex(RuntimeError,'adoption_guard_policy'):m.source_policy(Api(),self.grant)
+
+    def test_missing_rollout_proof_holds_before_guard_write(self):
+        env=dict(GITHUB_ACTIONS='true',GITHUB_REPOSITORY='o/r',GITHUB_EVENT_NAME='push',GITHUB_RUN_ID='123',
+                 GITHUB_SHA=PUBLISHER,GITHUB_WORKFLOW_SHA=PUBLISHER,GITHUB_REF='refs/heads/codex/adopt',
+                 AW_ACTION_REF=EVALUATOR,GITHUB_RUN_ATTEMPT='2')
+        output=[]
+        with patch.dict(os.environ,env,clear=True),patch.object(m.adoption,'verify_grant_attestation',return_value={}), \
+             patch.object(m,'grant_from_default',return_value=self.grant), \
+             patch.object(m.adoption,'publisher_provenance',return_value=dict(run_attempt=2)), \
+             patch.object(m,'source_policy',return_value=(self.policy,self.candidate)), \
+             patch.object(m.guard.worker,'check_runtime'),patch.object(m.guard,'acquire') as acquire:
+            with self.assertRaisesRegex(RuntimeError,'recovery_rollout_not_verified'):
+                m.begin(None,self.document,self.grant,EVALUATOR,123,lambda r,j:'',output.append)
+        acquire.assert_not_called();self.assertEqual(output,[])
+
+    def test_terminal_publisher_identifies_only_exact_reviewed_intent(self):
+        value=m.record(self.document,self.grant,self.intent);line=m.MARKER+m.canonical(value)+'\n'
+        class Api:
+            def api(self,path):
+                if path=='repos/faberline/aw':return dict(full_name='faberline/aw',default_branch='main')
+                if path==f'repos/faberline/aw/compare/{GRANT_SOURCE}...main':
+                    return dict(status='ahead',base_commit=dict(sha=GRANT_SOURCE))
+                raise AssertionError(path)
+        def authenticate(log):
+            return m.authenticate_intent(Api(),self.document,'o/r',EVALUATOR,123,2,7,HEAD,
+                                         self.intent['payload']['owner'],lambda r,j:log)
+        with patch.object(m.adoption,'choose_grant',return_value=self.grant), \
+             patch.object(m.adoption,'verify_grant_attestation'), \
+             patch.object(m.adoption,'publisher_provenance',return_value=dict(job_id=88)) as publisher, \
+             patch.object(m,'source_policy',return_value=(self.policy,self.candidate)), \
+             patch.object(m.guard,'historical_runtime'):
+            self.assertEqual(authenticate(line),self.intent)
+            self.assertTrue(publisher.call_args.kwargs['terminal'])
+            self.assertEqual(publisher.call_args.kwargs['attempt'],2)
+            with self.assertRaisesRegex(RuntimeError,'adoption_guard_missing_or_duplicate'):authenticate(line+line)
+            bad=copy.deepcopy(value);bad['payload']['grant_sha256']='0'*64
+            with self.assertRaisesRegex(RuntimeError,'adoption_guard_record'):
+                authenticate(m.MARKER+m.canonical(bad)+'\n')
+
+    def test_verified_publisher_records_intent_before_shared_guard_write(self):
+        env=dict(GITHUB_ACTIONS='true',GITHUB_REPOSITORY='o/r',GITHUB_EVENT_NAME='push',GITHUB_RUN_ID='123',
+                 GITHUB_SHA=PUBLISHER,GITHUB_WORKFLOW_SHA=PUBLISHER,GITHUB_REF='refs/heads/codex/adopt',
+                 AW_ACTION_REF=EVALUATOR,GITHUB_RUN_ATTEMPT='2')
+        api=provider.Provider();output=[];values=iter(['a'*32,'b'*32,'c'*32])
+        def emit(line):
+            self.assertEqual(api.writes,[]);output.append(line)
+        with patch.dict(os.environ,env,clear=True),patch.object(m.adoption,'verify_grant_attestation',return_value={}), \
+             patch.object(m,'grant_from_default',return_value=self.grant), \
+             patch.object(m.adoption,'publisher_provenance',return_value=dict(run_attempt=2)), \
+             patch.object(m,'source_policy',return_value=(self.policy,self.candidate)), \
+             patch.object(m.guard.worker,'check_runtime'),patch.object(m.recovery,'verify_rollout'), \
+             patch.object(m.adoption,'evaluate',return_value={'stable':True}):
+            result=m.begin(api,self.document,self.grant,EVALUATOR,123,lambda r,j:'',emit,lambda n:next(values))
+        self.assertTrue(output[0].startswith(m.MARKER));self.assertTrue(output[1].startswith(m.guard.MARKER))
+        state=m.guard.provider.read_chain(api,'o/r',provider.GENESIS,provider.RULE,7)
+        self.assertEqual(state['state']['locks']['7']['owner'],result['intent']['payload']['owner'])
+
+    def test_caller_cannot_replace_the_default_branch_grant(self):
+        env=dict(GITHUB_ACTIONS='true',GITHUB_REPOSITORY='o/r',GITHUB_EVENT_NAME='push',GITHUB_RUN_ID='123',
+                 GITHUB_SHA=PUBLISHER,GITHUB_WORKFLOW_SHA=PUBLISHER,GITHUB_REF='refs/heads/codex/adopt',
+                 AW_ACTION_REF=EVALUATOR,GITHUB_RUN_ATTEMPT='2')
+        foreign=copy.deepcopy(self.grant);foreign['pr']=10
+        with patch.dict(os.environ,env,clear=True),patch.object(m,'grant_from_default',return_value=foreign), \
+             patch.object(m.adoption,'verify_grant_attestation') as verify,patch.object(m.guard,'acquire') as acquire:
+            with self.assertRaisesRegex(RuntimeError,'adoption_guard_source'):
+                m.begin(None,self.document,self.grant,EVALUATOR,123,lambda r,j:'',lambda line:None)
+        verify.assert_not_called();acquire.assert_not_called()
+
+    def test_drift_after_claim_keeps_the_guard_for_recovery(self):
+        env=dict(GITHUB_ACTIONS='true',GITHUB_REPOSITORY='o/r',GITHUB_EVENT_NAME='push',GITHUB_RUN_ID='123',
+                 GITHUB_SHA=PUBLISHER,GITHUB_WORKFLOW_SHA=PUBLISHER,GITHUB_REF='refs/heads/codex/adopt',
+                 AW_ACTION_REF=EVALUATOR,GITHUB_RUN_ATTEMPT='2')
+        api=provider.Provider();values=iter(['a'*32,'b'*32,'c'*32])
+        with patch.dict(os.environ,env,clear=True),patch.object(m.adoption,'verify_grant_attestation',return_value={}), \
+             patch.object(m,'grant_from_default',return_value=self.grant), \
+             patch.object(m.adoption,'publisher_provenance',return_value=dict(run_attempt=2)), \
+             patch.object(m,'source_policy',return_value=(self.policy,self.candidate)), \
+             patch.object(m.guard.worker,'check_runtime'),patch.object(m.recovery,'verify_rollout'), \
+             patch.object(m.adoption,'evaluate',side_effect=[{'version':1},{'version':2}]):
+            with self.assertRaisesRegex(RuntimeError,'adoption_guard_evidence_changed'):
+                m.begin(api,self.document,self.grant,EVALUATOR,123,lambda r,j:'',lambda line:None,lambda n:next(values))
+        state=m.guard.provider.read_chain(api,'o/r',provider.GENESIS,provider.RULE,7)
+        self.assertEqual(state['state']['locks']['7']['kind'],'merge')
+
+
+if __name__=='__main__':unittest.main()

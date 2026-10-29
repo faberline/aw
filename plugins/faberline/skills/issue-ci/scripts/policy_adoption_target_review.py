@@ -30,8 +30,8 @@ SHARED_FRAMEWORK_DATA=('plugins/faberline/skills/issue-conformance/SKILL.md',)
 RECOVERY_CANDIDATE_SOURCES=(
     '.github/actions/verified-issue-recovery/action.yml',
     *(FRAMEWORK_ROOT+name for name in (
-        'recovery_entry.py','recovery_runner.py','recovery_scan.py','guarded_admission.py','guarded_close.py','merge_guard.py',
-        'prepared_status.py','per_pr_checkpoint.py','guard_discovery.py','guard_github.py','guard_ledger.py','post_merge_observation.py',
+        'recovery_entry.py','recovery_runner.py','recovery_scan.py','adoption_guard.py','guarded_admission.py','guarded_close.py','merge_guard.py',
+        'prepared_status.py','per_pr_checkpoint.py','guard_discovery.py','guard_github.py','guard_ledger.py','post_merge_observation.py','policy_adoption.py',
         'readiness-requirements.txt')),
     *(f'plugins/faberline/skills/issue-work/scripts/{name}' for name in (
         'work.py','worker_guard.py','worktree_state.py','index_safety.py','main_filter_safety.py')),

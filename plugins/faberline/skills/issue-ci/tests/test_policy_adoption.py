@@ -197,6 +197,15 @@ jobs:
             class FailedJobAPI(API):
                 def pages(self,path,key):return [{'id':334,'name':'adopt','status':'completed','conclusion':'failure'}]
             with self.assertRaises(RuntimeError):a.publisher_provenance(FailedJobAPI(),g,333,'push',completed=True)
+            run['conclusion']='failure'
+            terminal=a.publisher_provenance(FailedJobAPI(),g,333,'push',attempt=1,terminal=True)
+            self.assertEqual(terminal['run_attempt'],1)
+            with self.assertRaises(RuntimeError):
+                a.publisher_provenance(FailedJobAPI(),g,333,'push',completed=True,terminal=True)
+            run['status']='in_progress'
+            with self.assertRaises(RuntimeError):
+                a.publisher_provenance(FailedJobAPI(),g,333,'push',attempt=1,terminal=True)
+            run.update(status='completed',conclusion='success')
             with self.assertRaises(RuntimeError):a.publisher_provenance(CompletedAPI(),g,333,'push')
         with patch.object(a.review,'blob',return_value=workflow.replace('issues: read','issues: write')):
             with self.assertRaises(RuntimeError):a.publisher_provenance(API(),g,333,'push')
