@@ -215,10 +215,13 @@ def withdraw_approval(api, repo, number, head):
     pull = provider_pull(api, repo, number)
     need(pull.get("state") == "OPEN" and pull["headRefOid"] == head, "withdraw_target_changed")
     statuses = api.pages(f"repos/{repo}/commits/{head}/statuses")
+    need(isinstance(statuses,list) and all(isinstance(item,dict) for item in statuses),"withdraw_status_unknown")
     owned = [s for s in statuses if isinstance(s.get("context"),str)
              and s['context'].casefold() == "claude/verified-merge"
              and s.get("creator", {}).get("login") == "github-actions[bot]"]
-    prior = max(owned, key=lambda s: s["id"]) if owned else None
+    need(all(review.integer(item.get('id')) for item in owned)
+         and len({item['id'] for item in owned})==len(owned),"withdraw_status_unknown")
+    prior = owned[0] if owned else None  # GitHub returns statuses newest first.
     request = pull.get("autoMergeRequest")
     ours = actions_request(request)
     if not ours and (prior is None or prior.get("state") != "success"):

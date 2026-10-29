@@ -73,7 +73,7 @@ def settle(api,repo,policy,intent):
     need(all(type(item.get('id')) is int and item['id']>0 for item in matches)
          and len({item['id'] for item in matches})==len(matches),'admission_status_unknown')
     if matches:
-        latest=max(matches,key=lambda item:item['id'])
+        latest=matches[0]  # GitHub returns statuses newest first.
         need(latest.get('state') in ('pending','failure','error'),'admission_status_not_blocked')
     close.require_current_policy(api,repo,policy)
     close.guard_identity(api,repo,policy,intent)
@@ -116,7 +116,7 @@ def cancel_blocked(api,repo,policy,intent):
     need(all(type(item.get('id')) is int and item['id']>0 for item in matches)
          and len({item['id'] for item in matches})==len(matches),'admission_status_unknown')
     if matches:
-        latest=max(matches,key=lambda item:item['id'])
+        latest=matches[0]  # GitHub returns statuses newest first.
         if latest.get('state')=='success':return dict(state='retained',issue=p['issue'])
         need(latest.get('state') in ('pending','failure','error'),'admission_status_unknown')
     close.require_current_policy(api,repo,policy);close.guard_identity(api,repo,policy,intent)

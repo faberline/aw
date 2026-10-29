@@ -69,6 +69,20 @@ class AdmissionTests(unittest.TestCase):
             self.settle(intent,[self.provider(),self.provider(request={'mergeMethod':'SQUASH'})])
         self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
 
+    def test_newest_success_keeps_guard_even_when_its_id_is_smaller(self):
+        intent=self.begin()
+        self.statuses=[dict(id=1,context='claude/verified-merge',state='success'),
+                       dict(id=99,context='claude/verified-merge',state='pending')]
+        with self.assertRaisesRegex(RuntimeError,'admission_status_not_blocked'):
+            self.settle(intent,[self.provider()])
+        self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
+        owned=dict(mergeMethod='SQUASH',enabledBy=dict(login='github-actions',__typename='Bot'))
+        with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
+             patch.object(m.native,'provider_pull',return_value=self.provider(request=owned)), \
+             patch.object(m.native,'withdraw_approval') as withdraw:
+            result=m.cancel_blocked(self.api,'o/r',self.policy,intent)
+        self.assertEqual(result['state'],'retained');withdraw.assert_not_called()
+
     def test_changed_status_between_reads_holds(self):
         intent=self.begin();calls=[]
         def pages(path):

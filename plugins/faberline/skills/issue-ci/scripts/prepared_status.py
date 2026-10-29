@@ -94,10 +94,11 @@ def observe(value,statuses):
     def mine(item,state):
         return (item.get('state')==state and item.get('target_url')==url
                 and isinstance(item.get('creator'),dict) and item['creator'].get('id')==BOT_ID
-                and item['creator'].get('login')=='github-actions[bot]')
+                and item['creator'].get('login')=='github-actions[bot]' and item['creator'].get('type')=='Bot')
     need(len(pending)==1 and mine(pending[0],'pending'),'prepared_pending_unknown')
-    latest=max(same,key=lambda item:item['id'])
-    need(latest['id']>p['pending_id'] and mine(latest,'success'),'prepared_success_unknown')
+    # GitHub returns statuses newest first. IDs are opaque, not timestamps.
+    latest=same[0]
+    need(latest['id']!=p['pending_id'] and mine(latest,'success'),'prepared_success_unknown')
     return dict(state='observed_success',status_id=latest['id'],target=url,close_authorized=False)
 
 

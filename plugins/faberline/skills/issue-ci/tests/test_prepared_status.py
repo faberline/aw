@@ -22,7 +22,7 @@ class PreparedStatusTests(unittest.TestCase):
         self.url=m.target(self.prepared)
         def status(identifier,state):
             return dict(id=identifier,state=state,context='claude/verified-merge',target_url=self.url,
-                        creator=dict(id=m.BOT_ID,login='github-actions[bot]'))
+                        creator=dict(id=m.BOT_ID,type='Bot',login='github-actions[bot]'))
         self.pending=status(10,'pending');self.success=status(11,'success')
 
     def test_matching_success_is_observation_only(self):
@@ -35,20 +35,28 @@ class PreparedStatusTests(unittest.TestCase):
     def test_prepared_record_without_new_success_never_passes(self):
         for statuses in ([self.pending],[],[self.success],
                          [self.pending,dict(self.success,id=9)],
-                         [self.pending,self.success,dict(self.pending,id=12)],
-                         [self.pending,self.success,dict(self.pending,id=12,context='Claude/Verified-Merge')]):
+                         [dict(self.pending,id=12),self.success,self.pending],
+                         [dict(self.pending,id=12,context='Claude/Verified-Merge'),self.success,self.pending]):
             with self.subTest(statuses=statuses),self.assertRaises(RuntimeError):
                 m.observe(self.prepared,statuses)
 
     def test_foreign_stale_tampered_or_ambiguous_evidence_holds(self):
         for change in (lambda s:s.update(target_url=s['target_url']+'x'),
                        lambda s:s['creator'].update(id=1),
+                       lambda s:s['creator'].update(type='User'),
                        lambda s:s.update(state='failure')):
             bad=copy.deepcopy(self.success);change(bad)
-            with self.assertRaises(RuntimeError):m.observe(self.prepared,[self.pending,bad])
+            with self.assertRaises(RuntimeError):m.observe(self.prepared,[bad,self.pending])
         with self.assertRaises(RuntimeError):m.observe(self.prepared,[self.pending,self.success,self.success])
         bad=copy.deepcopy(self.prepared);bad['payload']['pending_id']=9
         with self.assertRaises(RuntimeError):m.observe(bad,[self.pending,self.success])
+
+    def test_provider_order_not_numeric_id_decides_which_status_is_latest(self):
+        new_success=dict(self.success,id=9)
+        self.assertEqual(m.observe(self.prepared,[new_success,self.pending])['status_id'],9)
+        old_success=dict(self.success,id=99)
+        with self.assertRaisesRegex(RuntimeError,'prepared_success_unknown'):
+            m.observe(self.prepared,[self.pending,old_success])
 
     def test_completed_attempt_provenance_is_required_but_not_close_authority(self):
         source='d'*40;document=dict(source_commit=source)

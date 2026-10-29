@@ -469,6 +469,13 @@ class WriterContractTests(unittest.TestCase):
 
 
 class ApprovalWithdrawalTests(unittest.TestCase):
+    def test_withdraw_uses_provider_order_not_numeric_status_id(self):
+        p=Provider()
+        p.statuses=[dict(id=2,context='claude/verified-merge',state='success',creator=dict(login='github-actions[bot]')),
+                    dict(id=99,context='claude/verified-merge',state='pending',creator=dict(login='github-actions[bot]'))]
+        m.withdraw_approval(p,'o/r',1,HEAD)
+        self.assertEqual([w[0] for w in p.writes],['pending'])
+
     def test_closed_blocked_changed_issue_or_extra_closing_reference_never_queues(self):
         for mutate in (lambda p:p.issue.update(state='closed'),
                        lambda p:p.issue['labels'].append(dict(name='blocked')),
