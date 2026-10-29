@@ -66,6 +66,21 @@
         "source_commit": "2f409f020a5bbafcac63a5c155f0957311b90123",
         "branch": "codex/core-policy-publisher",
         "job": "adopt"
+      },
+      "grant_review": {
+        "repo": "faberline/core",
+        "pr": 110,
+        "head": "0450bb6826b6a0b5018571643894a416a0df8ff4",
+        "blob": "ceef0c04b1d888cdf3378f17584a302c0e45c3af",
+        "workflow_path": ".github/workflows/core-policy-grant-review.yml",
+        "workflow_id": 400375074,
+        "workflow_blob": "4bfbea526e726dbf20d969e7db588e399980b574",
+        "source_commit": "2fe929645704980d5be07a8c022abbec55a085e5",
+        "branch": "codex/core-policy-grant-review",
+        "run_id": 40843221625,
+        "attempt": 1,
+        "job": "grant-review",
+        "job_id": 123344370860
       }
     }
   ]
