@@ -126,6 +126,17 @@ def settle(api,repo,policy,intent):
     return dict(state='released',issue=p['issue'])
 
 
+def block_held(api,repo,policy,intent):
+    """Block a held PR only while its exact guard and policy remain current."""
+    p=intent['payload']
+    need(all(p[k]==policy[k] for k in ('genesis','ruleset_id','runtime')),'admission_policy_changed')
+    close.require_current_policy(api,repo,policy)
+    close.guard_identity(api,repo,policy,intent)
+    native.block_unadmitted(api,repo,p['pr'],p['head'])
+    close.require_current_policy(api,repo,policy)
+    close.guard_identity(api,repo,policy,intent)
+
+
 def cancel_blocked(api,repo,policy,intent):
     """Retain any request until its specific owner is proven.
 
@@ -154,7 +165,7 @@ def cancel_blocked(api,repo,policy,intent):
         # authorize merge. A lost write response remains a hold. settle()
         # rechecks the exact guard, status, protection and absence of a
         # request before releasing the guard.
-        native.block_unadmitted(api,repo,p['pr'],p['head'])
+        block_held(api,repo,policy,intent)
         return settle(api,repo,policy,intent)
     # All Actions workflows share the same bot identity. That identity does
     # not establish which run requested this merge. Until provenance is bound

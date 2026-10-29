@@ -771,7 +771,10 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
                 r"[a-z0-9_]+", code) else "verification_or_provider_failed"
         results.append(row)
     if guarded is not None:
-        safe_holds={'review_missing','review_target_record_unknown','latest_review_not_success'}
+        # These refusals occur before enqueue writes a pending status or a
+        # native request. Unknown provider and mutation outcomes stay held.
+        safe_holds={'review_missing','review_target_record_unknown','latest_review_not_success',
+                    'qualification_not_ready','issue_not_eligible'}
         for row in results:
             claim=admitted.get(row['pr'])
             if claim is None or row['state'] in ('queued','merged','already_merged','held_after_pending',
@@ -785,7 +788,7 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
                     # run. Establish the Actions status before releasing an
                     # otherwise unused guard; settle rechecks the status,
                     # exact owner, linked issue, branch rule and request.
-                    block_unadmitted(api,repo,row['pr'],row['head'])
+                    guarded.block_held(api,repo,claim['policy'],claim['intent'])
                 result=guarded.settle(api,repo,claim['policy'],claim['intent'])
                 if result.get('state') not in ('released','retained'):
                     row.update(state='held_after_pending',reason='guard_result_unknown')

@@ -189,6 +189,22 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(self.statuses,[])
         self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
 
+    def test_block_held_refuses_after_original_guard_is_released(self):
+        intent=self.begin();m.close.release(self.api,'o/r',self.policy,intent)
+        with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
+             patch.object(m.native,'block_unadmitted') as block:
+            with self.assertRaisesRegex(RuntimeError,'merge_guard_not_owner'):
+                m.block_held(self.api,'o/r',self.policy,intent)
+        block.assert_not_called()
+
+    def test_block_held_refuses_if_guard_changes_after_write(self):
+        intent=self.begin()
+        def block(*args):m.close.release(self.api,'o/r',self.policy,intent)
+        with patch.object(m.close.worker,'read_policy',return_value=self.policy), \
+             patch.object(m.native,'block_unadmitted',side_effect=block):
+            with self.assertRaisesRegex(RuntimeError,'merge_guard_not_owner'):
+                m.block_held(self.api,'o/r',self.policy,intent)
+
     def test_blocking_rule_uses_current_policy_and_github_actions_app(self):
         doc=dict(source_commit=SOURCE,config={});native_policy=dict(status_app_id=15368)
         with patch.object(m.native.review.action,'trusted_policy',return_value=doc), \

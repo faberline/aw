@@ -23,6 +23,8 @@ class GuardedQueueTests(unittest.TestCase):
                 self.outer.calls.append(('settle',intent['pr']))
                 if self.settle_error:raise TimeoutError('unknown')
                 return dict(state='released')
+            def block_held(self,api,repo,policy,intent):
+                m.block_unadmitted(api,repo,intent['pr'],HEAD)
         self.guard=Guard(self)
 
     def execute(self,attempts,settle_error=False,block_error=False):
@@ -101,6 +103,9 @@ class GuardedQueueTests(unittest.TestCase):
             def settle(self,api,repo,policy,intent):
                 if not statuses or statuses[0]['state']!='pending':raise RuntimeError('not blocked')
                 held.clear();return dict(state='released')
+            def block_held(self,api,repo,policy,intent):
+                if held!=[intent['pr']]:raise RuntimeError('guard changed')
+                m.block_unadmitted(api,repo,intent['pr'],HEAD)
         guard=Guard();provider=dict(state='OPEN',headRefOid=HEAD,autoMergeRequest=None)
         with patch.object(m,'provider_pull',return_value=provider),patch.object(m,'withdraw_approval'):
             for _ in range(2):
@@ -111,6 +116,31 @@ class GuardedQueueTests(unittest.TestCase):
                 self.assertEqual(held,[])
         self.assertEqual(len(writes),1)
         self.assertEqual(statuses[0]['state'],'pending')
+
+    def test_known_prewrite_qualification_holds_release_across_wakes(self):
+        for reason in ('qualification_not_ready','issue_not_eligible'):
+            with self.subTest(reason=reason):
+                self.setUp();self.pulls=[self.pulls[1]]
+                attempts={2:dict(id=200,status='completed',conclusion='success')}
+                with patch.object(m,'withdraw_approval'),patch.object(m,'block_unadmitted') as block, \
+                     patch.object(m,'enqueue',side_effect=m.review.Refused(reason)):
+                    for _ in range(2):
+                        rows=m.reconcile(self.api,'o/r',self.api.load,EVALUATOR,lambda *args:attempts,
+                                         self.api.verify,guarded=self.guard)
+                        self.assertEqual(rows[0]['reason'],reason)
+                        self.assertEqual(rows[0]['guard'],'released')
+                self.assertEqual(block.call_count,2)
+
+    def test_unknown_failure_keeps_guard_and_never_retries_status(self):
+        self.pulls=[self.pulls[1]]
+        attempts={2:dict(id=200,status='completed',conclusion='success')}
+        with patch.object(m,'withdraw_approval'),patch.object(m,'block_unadmitted') as block, \
+             patch.object(m,'enqueue',side_effect=TimeoutError('unknown provider outcome')):
+            rows=m.reconcile(self.api,'o/r',self.api.load,EVALUATOR,lambda *args:attempts,
+                             self.api.verify,guarded=self.guard)
+        self.assertEqual(rows[0]['reason'],'verification_or_provider_failed')
+        self.assertNotIn(('settle',2),self.calls)
+        block.assert_not_called()
 
 
 class BlockUnadmittedTests(unittest.TestCase):
