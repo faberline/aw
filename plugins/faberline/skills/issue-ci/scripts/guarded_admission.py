@@ -19,6 +19,41 @@ close=sibling('guarded_close')
 native=sibling('native_merge')
 worker=merge_guard.worker
 need=merge_guard.need
+STATUS_CREATOR_ID=41898282
+STATUS_APP_ID=15368
+
+
+def matching_statuses(statuses):
+    """Refuse ambiguous status origins before treating a merge as blocked.
+
+    The protected rule is bound to GitHub Actions. A same-named status from
+    another actor cannot prove that the protected Actions status is pending.
+    """
+    need(isinstance(statuses,list) and all(isinstance(item,dict)
+         and isinstance(item.get('context'),str) for item in statuses), 'admission_status_unknown')
+    matches=[item for item in statuses if item['context'].casefold()=='claude/verified-merge']
+    need(all(type(item.get('id')) is int and item['id']>0 for item in matches)
+         and len({item['id'] for item in matches})==len(matches), 'admission_status_unknown')
+    if matches:
+        creator=matches[0].get('creator')  # GitHub returns the newest status first.
+        need(isinstance(creator,dict) and type(creator.get('id')) is int
+             and creator['id']==STATUS_CREATOR_ID and creator.get('type')=='Bot'
+             and creator.get('login')=='github-actions[bot]', 'admission_status_origin_unknown')
+    return matches
+
+
+def blocking_rule(api,repo,policy,pull):
+    """Authenticate the current strict Actions-bound branch protection."""
+    document=native.review.action.trusted_policy(api,repo,'.github/issue-ci-required-gates.json',metadata=True)
+    need(isinstance(document,dict) and document.get('source_commit')==policy['policy_source'],
+         'admission_policy_changed')
+    native_policy=native.policy(document,require_qualification=False)
+    need(native_policy.get('status_app_id')==STATUS_APP_ID,'admission_status_app_unknown')
+    base=pull.get('base') if isinstance(pull,dict) else None
+    need(isinstance(base,dict) and native.review.text(base.get('ref'),255)
+         and native.review.sha(base.get('sha')),'admission_target_changed')
+    context=dict(base_ref=base['ref'],base=base['sha'])
+    return native.base_rules(api,repo,context,native_policy)
 
 
 def begin(api,repo,document,evaluator,number,head,emit,random_bytes=None):
@@ -67,14 +102,11 @@ def settle(api,repo,policy,intent):
     native.review.pull_identity(rest,repo,p['pr'],p['head'])
     need(native.review.linked_issue(rest)==p['issue'],'admission_issue_changed')
     statuses=api.pages(f"repos/{repo}/commits/{p['head']}/statuses")
-    need(isinstance(statuses,list),'admission_status_unknown')
-    matches=[item for item in statuses if isinstance(item,dict) and isinstance(item.get('context'),str)
-             and item['context'].casefold()=='claude/verified-merge']
-    need(all(type(item.get('id')) is int and item['id']>0 for item in matches)
-         and len({item['id'] for item in matches})==len(matches),'admission_status_unknown')
+    matches=matching_statuses(statuses)
     if matches:
         latest=matches[0]  # GitHub returns statuses newest first.
         need(latest.get('state') in ('pending','failure','error'),'admission_status_not_blocked')
+    rule=blocking_rule(api,repo,policy,rest)
     close.require_current_policy(api,repo,policy)
     close.guard_identity(api,repo,policy,intent)
     final=native.provider_pull(api,repo,p['pr'])
@@ -85,6 +117,7 @@ def settle(api,repo,policy,intent):
     need(native.review.linked_issue(rest_final)==p['issue'],'admission_issue_changed')
     again=api.pages(f"repos/{repo}/commits/{p['head']}/statuses")
     need(again==statuses,'admission_status_changed')
+    need(blocking_rule(api,repo,policy,rest_final)==rule,'admission_rule_changed')
     close.require_current_policy(api,repo,policy)
     close.guard_identity(api,repo,policy,intent)
     close.release(api,repo,policy,intent)
@@ -110,11 +143,7 @@ def cancel_blocked(api,repo,policy,intent):
     if not native.actions_request(request):
         return dict(state='retained',issue=p['issue'])
     statuses=api.pages(f"repos/{repo}/commits/{p['head']}/statuses")
-    need(isinstance(statuses,list),'admission_status_unknown')
-    matches=[item for item in statuses if isinstance(item,dict) and isinstance(item.get('context'),str)
-             and item['context'].casefold()=='claude/verified-merge']
-    need(all(type(item.get('id')) is int and item['id']>0 for item in matches)
-         and len({item['id'] for item in matches})==len(matches),'admission_status_unknown')
+    matches=matching_statuses(statuses)
     if matches:
         latest=matches[0]  # GitHub returns statuses newest first.
         if latest.get('state')=='success':return dict(state='retained',issue=p['issue'])
