@@ -141,6 +141,12 @@ class AdmissionTests(unittest.TestCase):
             self.settle(intent,[self.provider(),self.provider()],[dict(rule=1),dict(rule=2)])
         self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
 
+    def test_absent_commit_status_does_not_prove_a_check_run_is_blocked(self):
+        intent=self.begin();self.statuses=[]
+        with self.assertRaisesRegex(RuntimeError,'admission_status_missing'):
+            self.settle(intent,[self.provider()])
+        self.assertTrue(m.close.guard_identity(self.api,'o/r',self.policy,intent))
+
     def test_blocking_rule_uses_current_policy_and_github_actions_app(self):
         doc=dict(source_commit=SOURCE,config={});native_policy=dict(status_app_id=15368)
         with patch.object(m.native.review.action,'trusted_policy',return_value=doc), \

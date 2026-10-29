@@ -130,9 +130,11 @@ does not change an issue held by another worker. A PR-target wake only asks
 the default-branch writer to recheck. An unknown write result retains the
 guard. The guarded path is blocked by the same unimplemented rollout proof.
 Before releasing a guard for an open PR, it verifies that the newest matching
-status belongs to the GitHub Actions bot and is blocked, or that no matching
-status exists. It also reads the current strict, no-bypass branch rule twice.
-An unknown status origin, changed rule or passing status keeps the guard.
+commit status belongs to the GitHub Actions bot and is blocked. It also reads
+the current strict, no-bypass branch rule twice. A missing status, unknown
+origin, changed rule or passing status keeps the guard. A missing commit status
+cannot prove that a same-named check run is blocked. Recovery for an interrupted
+admission before the first status still needs a durable, safe pending write.
 The guard ref requires an active ruleset that blocks both force updates and
 deletion, with no bypass actors. This blocks direct deletion and recreation.
 Repository administrators can still rename protected branches. They must not

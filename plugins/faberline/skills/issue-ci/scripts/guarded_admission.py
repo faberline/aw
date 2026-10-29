@@ -103,9 +103,11 @@ def settle(api,repo,policy,intent):
     need(native.review.linked_issue(rest)==p['issue'],'admission_issue_changed')
     statuses=api.pages(f"repos/{repo}/commits/{p['head']}/statuses")
     matches=matching_statuses(statuses)
-    if matches:
-        latest=matches[0]  # GitHub returns statuses newest first.
-        need(latest.get('state') in ('pending','failure','error'),'admission_status_not_blocked')
+    # A missing commit status is not proof of a blocked check: GitHub can
+    # satisfy the same required context with a check run instead.
+    need(bool(matches),'admission_status_missing')
+    latest=matches[0]  # GitHub returns statuses newest first.
+    need(latest.get('state') in ('pending','failure','error'),'admission_status_not_blocked')
     rule=blocking_rule(api,repo,policy,rest)
     close.require_current_policy(api,repo,policy)
     close.guard_identity(api,repo,policy,intent)
