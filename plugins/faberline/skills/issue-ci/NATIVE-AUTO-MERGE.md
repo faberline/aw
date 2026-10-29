@@ -100,13 +100,14 @@ required `Closes #N` line, because only the default target branch is accepted.
 No issue is closed while a request is merely queued.
 
 A fresh authenticated `fail` or `block` decision returns the linked open issue
-to `doing`. It adds doing before it removes todo or done. Other labels
+to `todo`. It adds todo before it removes doing or done. Other labels
 remain. Each removal rechecks the exact PR, issue contract and latest review.
 Closed or blocked issues, stale heads and missing/invalid review receipts are
 held. An interrupted mixed-label update can finish on a later wake. Existing
 CI failure-only behavior remains unchanged; the later Claude outcome owns its
-requested return to doing. The writer runs in the same serialized lifecycle
-group as CI. It never writes issue bodies or comments or deletes branches.
+requested return to todo. The writer runs in the same serialized lifecycle
+group as CI. It posts and updates one receipt-bound recovery journal comment
+per negative result. It never writes issue bodies or deletes branches.
 
 See the [native merge workflow template](templates/claude-native-merge.yml.example)
 and [review producer template](templates/claude-final-review.yml.example).
@@ -142,7 +143,7 @@ and the active strict rule metadata in the
 
 - Claude PASS plus complete approved qualification: queue native squash merge.
   GitHub closes the explicitly linked issue only after the merge completes.
-- Claude fail or block: return the linked open issue to `doing`.
+- Claude fail or block: return the linked open issue to `todo`.
 - CI pending/failing, missing review, stale inputs or coverage hold: do not merge.
 
 `test_review_lifecycle.py` covers rejection, blocked/closed issues, contract or
@@ -217,3 +218,18 @@ metadata is added. Required workflows, mode, qualification rules and blockers
 must be exactly equal to the new root policy; any semantic change refuses.
 This avoids repeating an already-applied failure handoff or undoing an AGY
 retry during rollout.
+
+
+Each authenticated negative receipt has a pending/ready/applied issue journal.
+The writer supplies todo before removing doing/done and preserves other labels.
+A ready checkpoint without todo means a later actor consumed that label. It
+finishes the checkpoint without adding todo again. An applied receipt never
+replays its label writes, so it cannot undo a later agent claim. A new verified
+negative receipt starts its own handoff. Current review, PR head, issue contract
+and blocked/closed checks still apply before every label operation.
+
+When todo already exists, the first durable journal starts at ready. A new
+pending handoff requires an existing managed doing/done label. This keeps the
+old lifecycle label until ready is durable, so an agent cannot claim a sole
+todo during that window. Unmanaged issues remain held instead of guessing a
+lifecycle or creating a pending sole-todo race.

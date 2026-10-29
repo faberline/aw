@@ -352,12 +352,12 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
     return dict(state="queued", head=head)
 
 
-def return_doing(api, repo, number, head, load_document, evaluator, run_id, verify):
-    """Only a fresh authenticated fail/block returns an open issue to doing.
+def return_todo(api, repo, number, head, load_document, evaluator, run_id, verify):
+    """Return one authenticated negative receipt once, with durable recovery.
 
-    All lifecycle writers use issue-ci-handoff. Re-reads make interrupted
-    add/remove operations recoverable without replacing unrelated labels.
-    A failed CI job or missing review receipt is not a Claude decision.
+    The serialized lifecycle writer uses pending/ready/applied checkpoints,
+    as CI handoff does. A later worker can consume a sole todo label; replay
+    must never undo that claim. A CI failure or absent receipt is not a review.
     """
     receipt = verify(api, repo, number, head, load_document, evaluator, run_id)
     need(receipt["payload"]["result"]["decision"] in ("fail", "block"), "review_not_rejected")
@@ -376,22 +376,62 @@ def return_doing(api, repo, number, head, load_document, evaluator, run_id, veri
              == context["issue_sha256"], "issue_contract_changed")
         names = {label["name"] for label in issue.get("labels", [])}
         need(not names & {"blocked", "agy:blocked"}, "issue_blocked")
+        need(bool(names & {"todo", "doing", "done"}), "issue_unmanaged")
         return issue["number"], names
 
     issue, labels = current()
     api.api(f"repos/{repo}/statuses/{head}", method="POST", data=dict(
         state="failure", context="claude/verified-merge", description="Claude review rejected this exact head",
         target_url=f"https://github.com/{repo}/actions/runs/{run_id}"))
-    if "doing" not in labels:
-        api.api(f"repos/{repo}/issues/{issue}/labels", method="POST", data={"labels": ["doing"]})
-    for name in ("todo", "done"):
+    digest = review.r.digest([repo, number, head, issue, receipt])
+    prefix = f"<!-- claude-return-todo:{digest}:"
+
+    def body(phase):
+        return (f"{prefix}{phase} -->\nClaude: todo for PR #{number} head `{head}`.\n"
+                f"Receipt: {receipt['sha256']}\n"
+                f"https://github.com/{repo}/actions/runs/{run_id}")
+
+    comments = api.pages(f"repos/{repo}/issues/{issue}/comments")
+    journals = [comment for comment in comments
+                if comment.get("user", {}).get("login") == "github-actions[bot]"
+                and isinstance(comment.get("body"), str) and comment["body"].startswith(prefix)]
+    need(len(journals) <= 1, "todo_journal_ambiguous")
+    journal = journals[0] if journals else None
+    phase = "pending"
+    if journal is not None:
+        matched = [value for value in ("pending", "ready", "applied") if journal["body"] == body(value)]
+        need(len(matched) == 1, "todo_journal_invalid")
+        phase = matched[0]
+        if phase == "applied":
+            current()
+            return dict(state="already_returned_todo", issue=issue, head=head,
+                        decision=receipt["payload"]["result"]["decision"])
+    if journal is None:
+        _, labels = current()  # History pagination may outlast a lifecycle change.
+        phase = "ready" if "todo" in labels else "pending"
+        journal = api.api(f"repos/{repo}/issues/{issue}/comments", method="POST", data={"body": body(phase)})
+    comment_path = f"repos/{repo}/issues/comments/{journal['id']}"
+    if phase == "pending":
         _, labels = current()
-        need("doing" in labels, "doing_write_unknown")
+        if "todo" not in labels:
+            response = api.api(f"repos/{repo}/issues/{issue}/labels", method="POST", data={"labels": ["todo"]})
+            need(isinstance(response, list)
+                 and any(isinstance(label, dict) and label.get("name") == "todo" for label in response),
+                 "todo_write_unknown")
+        current()  # Do not checkpoint a changed review/issue contract.
+        api.api(comment_path, method="PATCH", data={"body": body("ready")})
+    # A ready checkpoint proves that todo was supplied before cleanup. Its
+    # absence now means a later actor consumed it. Never put it back.
+    for name in ("doing", "done"):
+        _, labels = current()
+        if "todo" not in labels:
+            break
         if name in labels:
             api.api(f"repos/{repo}/issues/{issue}/labels/{quote(name, safe='')}", method="DELETE")
     _, labels = current()
-    need(labels & {"todo", "doing", "done"} == {"doing"}, "doing_result_unknown")
-    return dict(state="returned_doing", issue=issue, head=head,
+    need("todo" not in labels or labels & {"todo", "doing", "done"} == {"todo"}, "todo_result_unknown")
+    api.api(comment_path, method="PATCH", data={"body": body("applied")})
+    return dict(state="returned_todo", issue=issue, head=head,
                 decision=receipt["payload"]["result"]["decision"])
 
 
@@ -432,7 +472,7 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
             if result_verify is not None:
                 receipt = result_verify(api, repo, number, head, load_document, evaluator, attempt["id"])
                 if receipt["payload"]["result"]["decision"] in ("fail", "block"):
-                    row.update(return_doing(api, repo, number, head, load_document, evaluator,
+                    row.update(return_todo(api, repo, number, head, load_document, evaluator,
                         attempt["id"], result_verify))
                     results.append(row)
                     continue
