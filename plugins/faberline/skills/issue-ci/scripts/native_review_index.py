@@ -104,6 +104,9 @@ class Session:
         return self.runs
 
     def result(self,api,repo,number,head,load_document,evaluator,run_id):
+        return self._result(api,repo,number,head,load_document,evaluator,run_id,merged=False)
+
+    def _result(self,api,repo,number,head,load_document,evaluator,run_id,merged):
         self.ensure(number,head)
         review.need(repo==self.repo and evaluator==self.evaluator,'review_session_identity')
         def select(values):
@@ -119,6 +122,9 @@ class Session:
                 and review.integer(records[0]['pr']) and records[0]==dict(version=1,repo=repo,pr=number,head=head),
                 'review_target_record_unknown')
             return raw
+        if merged:
+            return review.verify_merged_receipt(self.api,repo,number,head,load_document,evaluator,run_id,
+                log_reader=logs,latest_selector=select,history_loader=lambda:self.history(number))
         return review.verify_result_receipt(self.api,repo,number,head,load_document,evaluator,run_id,
             log_reader=logs,latest_selector=select,allow_rejected=True,history_loader=lambda:self.history(number))
 
@@ -126,6 +132,9 @@ class Session:
         receipt=self.result(*args)
         review.need(receipt['payload']['result']['decision']=='pass','review_not_pass')
         return receipt
+
+    def verify_merged(self,*args):
+        return self._result(*args,merged=True)
 
 
 def result(api,repo,number,head,load_document,evaluator,run_id,log_reader=review.r.job_log):

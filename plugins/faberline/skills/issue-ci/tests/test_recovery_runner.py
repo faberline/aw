@@ -48,6 +48,17 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result[0]['state'],'held')
         self.assertEqual(result[0]['reason'],'merge_guard_source_not_success')
 
+    def test_prepared_candidate_uses_independent_revalidation_path(self):
+        candidate=dict(issue=7,pr=9,head='a'*40,owner='b'*56,run=123,attempt=2,
+                       state='prepared_revalidation',status='observed_success',close_authorized=False)
+        with patch.object(m.worker,'read_policy',return_value={'current':True}), \
+             patch.object(m.scan,'scan',return_value=[candidate]), \
+             patch.object(m.scan,'historical_document',return_value=({'source_commit':'c'*40},'d'*40)), \
+             patch.object(m.close,'reconcile_native_prepared',return_value=dict(state='closed',issue=7)) as recover, \
+             patch.object(m.close,'reconcile_native') as old:
+            result=m.reconcile(None,'o/r',lambda r,j:'')
+        self.assertEqual(result[0]['state'],'closed');recover.assert_called_once();old.assert_not_called()
+
     def test_abandoned_admission_is_reauthenticated_before_safe_settle(self):
         candidate=dict(issue=7,pr=9,head='a'*40,owner='b'*56,run=123,attempt=2,state='admission_recovery')
         intent=dict(payload=dict(pr=9,issue=7,head='a'*40))

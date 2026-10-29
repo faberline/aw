@@ -138,7 +138,12 @@ writer job does not become a passing CI or review result.
 If the success response is lost and the issue is already closed, the draft can
 authenticate the pre-status record and release only that guard. It reads the
 exact merge and closed issue twice. It never uses that record to close an open
-issue. This does not recover an open issue after an unknown status response.
+issue. The guard-release path does not recover an open issue.
+For a native writer with an unknown status response and an open issue, a draft
+recovery now rebuilds the original review context and CI after the actual merge.
+It checks the same latest independent PASS twice before closing. It also requires
+the same complete policy and guard. The status observation is not authority.
+This path remains blocked by rollout proof and requires hosted verification.
 
 The draft writer requires the `aw-verified-merge-reconcile` repository-dispatch
 trigger. A passing PR-target wake asks for a default-branch wake. The latter

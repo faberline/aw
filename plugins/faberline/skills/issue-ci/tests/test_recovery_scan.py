@@ -79,7 +79,7 @@ class RecoveryScanTests(unittest.TestCase):
              patch.object(m.observer,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
              patch.object(m.observer,'recovery_plan',return_value=dict(state='guard_required')):
             result=m.inspect_prepared(StatusAPI(),'o/r',document,policy,EVALUATOR,123,2,intent,lambda r,j:'')
-        self.assertEqual(result,dict(state='guard_required',status='observed_success',close_authorized=False))
+        self.assertEqual(result,dict(state='prepared_revalidation',status='observed_success',close_authorized=False))
         self.assertEqual(guard.call_count,2)
 
     def test_already_closed_prepared_record_never_requires_status_or_authorizes_close(self):
@@ -106,9 +106,9 @@ class RecoveryScanTests(unittest.TestCase):
              patch.object(m,'historical_document',return_value=(dict(source_commit=SOURCE),EVALUATOR)), \
              patch.object(m.guard,'identify_native_owner',return_value=intent), \
              patch.object(m.closer,'authenticate_checkpoint',side_effect=RuntimeError('merge_guard_source_not_success')), \
-             patch.object(m,'inspect_prepared',return_value=dict(state='guard_required',status='observed_success',close_authorized=False)):
+             patch.object(m,'inspect_prepared',return_value=dict(state='prepared_revalidation',status='observed_success',close_authorized=False)):
             result=m.scan(None,'o/r',{},lambda r,j:'')
-        self.assertEqual(result,[dict(issue=7,state='guard_required',status='observed_success',pr=9,head='d'*40,owner='a'*56,
+        self.assertEqual(result,[dict(issue=7,state='prepared_revalidation',status='observed_success',pr=9,head='d'*40,owner='a'*56,
                                       run=123,attempt=2,close_authorized=False)])
 
     def test_missing_prepared_record_only_proposes_guard_recovery(self):

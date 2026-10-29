@@ -63,6 +63,41 @@ class History(fixtures.Harness):
 
 
 class NativeReviewIndexTests(unittest.TestCase):
+    def test_merged_review_revalidates_same_context_and_never_runs_open_verifier(self):
+        h=History();h.pull.update(state='closed',merged=True,merged_at='2026-01-02T00:00:00Z',merge_commit_sha='f'*40)
+        index=m.Session(h,'o/r',h.document,fixtures.EVALUATOR,h.reader)
+        self.assertEqual(index.verify_merged(h,'o/r',1,fixtures.HEAD,h.document,fixtures.EVALUATOR,200),h.receipt)
+        with self.assertRaisesRegex(RuntimeError,'pr_identity'):h.target_verify()
+        self.assertEqual(h.writes,[])
+
+    def test_merged_review_refuses_newer_review_and_changed_or_failed_ci(self):
+        for mutation in (lambda h:h.add(1,conclusion='failure'),
+                         lambda h:h.gate_job.update(conclusion='failure'),
+                         lambda h:h.issue.update(body='different acceptance'),
+                         lambda h:h.pull.update(merged=False)):
+            h=History();h.pull.update(state='closed',merged=True,merged_at='2026-01-02T00:00:00Z',merge_commit_sha='f'*40)
+            mutation(h)
+            index=m.Session(h,'o/r',h.document,fixtures.EVALUATOR,h.reader)
+            with self.subTest(mutation=mutation),self.assertRaises(RuntimeError):
+                index.verify_merged(h,'o/r',1,fixtures.HEAD,h.document,fixtures.EVALUATOR,200)
+            self.assertEqual(h.writes,[])
+
+    def test_merged_review_accepts_cleared_association_only_for_original_exact_run_and_jobs(self):
+        h=History();h.pull.update(state='closed',merged=True,merged_at='2026-01-02T00:00:00Z',merge_commit_sha='f'*40)
+        h.gate_run['pull_requests']=[]
+        def verify():
+            return m.Session(h,'o/r',h.document,fixtures.EVALUATOR,h.reader).verify_merged(
+                h,'o/r',1,fixtures.HEAD,h.document,fixtures.EVALUATOR,200)
+        self.assertEqual(verify(),h.receipt)
+        for mutation in (lambda:h.gate_job.update(id=999),lambda:h.gate_run.update(run_attempt=2),
+                         lambda:h.gate_run.update(pull_requests=[dict(number=2,head=dict(sha=fixtures.HEAD),
+                                                                       base=dict(sha=fixtures.BASE))])):
+            old_run,old_job=copy.deepcopy(h.gate_run),copy.deepcopy(h.gate_job)
+            mutation()
+            with self.assertRaises(RuntimeError):verify()
+            h.gate_run,h.gate_job=old_run,old_job
+        self.assertEqual(h.writes,[])
+
     def test_large_history_is_indexed_once_and_only_latest_log_is_downloaded(self):
         h=History();h.review_run['run_number']=5000
         h.history=[dict(h.review_run,id=1000+i,run_number=i+1)for i in range(4000)]+[h.review_run]

@@ -161,6 +161,25 @@ class Harness:
 
 
 class GateTests(unittest.TestCase):
+    def test_merged_context_is_read_only_and_keeps_open_review_gate(self):
+        h=Harness();before,_=h.collect()
+        h.pull.update(state='closed',merged=True,merged_at='2026-01-02T00:00:00Z',merge_commit_sha='f'*40)
+        after,_=g.collect_merged(h,'o/r',1,HEAD,h.document,EVALUATOR,source_plan=copy.deepcopy(h.plan))
+        self.assertEqual(after,before)
+        with self.assertRaisesRegex(g.Refused,'pr_identity'):h.collect()
+        self.assertEqual(h.writes,[])
+        for changes in (dict(merged=False),dict(merged_at=None),dict(merge_commit_sha=None),
+                        dict(state='open'),dict(draft=True)):
+            saved=copy.deepcopy(h.pull);h.pull.update(changes)
+            with self.subTest(changes=changes),self.assertRaisesRegex(g.Refused,'merged_pr_identity'):
+                g.collect_merged(h,'o/r',1,HEAD,h.document,EVALUATOR,source_plan=copy.deepcopy(h.plan))
+            h.pull=saved
+
+    def test_open_review_never_accepts_cleared_run_association(self):
+        h=Harness();h.gate_run['pull_requests']=[]
+        with self.assertRaisesRegex(g.Refused,'gate_run_identity'):h.collect()
+        self.assertEqual(h.writes,[])
+
     def test_real_implementation_roundtrip_without_qualification_or_lifecycle_claim(self):
         h = Harness(); receipt = h.produce()
         self.assertEqual(h.verify(), receipt)

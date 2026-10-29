@@ -47,7 +47,8 @@ def inspect_prepared(api,repo,document,current_policy,evaluator,run,attempt,inte
         return dict(state='closed_prepared_recovery',status='not_required',close_authorized=False)
     statuses=api.pages(f'repos/{repo}/commits/{head}/statuses')
     status=prepared.observe(value,statuses)
-    return dict(state=result['state'],status=status['state'],close_authorized=False)
+    state='prepared_revalidation' if result['state']=='guard_required' else result['state']
+    return dict(state=state,status=status['state'],close_authorized=False)
 
 
 def historical_document(api,repo,run,attempt):

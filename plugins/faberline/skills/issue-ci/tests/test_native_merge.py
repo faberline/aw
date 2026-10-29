@@ -188,6 +188,19 @@ class ActionsProviderVisibilityTests(unittest.TestCase):
 
 
 class NativeMergeTests(unittest.TestCase):
+    def test_merged_qualification_rechecks_full_selected_policy(self):
+        p=Provider();context=p.receipt['payload']['context']
+        p.pull.update(state='closed',merged=True,merged_at='2026-01-02T00:00:00Z',merge_commit_sha='f'*40)
+        self.assertEqual(m.qualification_merged(p,'o/r',1,context,p.document),7)
+        with self.assertRaisesRegex(RuntimeError,'pr_identity'):
+            m.qualification(p,'o/r',1,context,p.document)
+        def fail_performance(data):
+            data[qualification.WORKFLOW][1][-1]['conclusion']='failure'
+        p.snapshot_hook=fail_performance
+        with self.assertRaisesRegex(RuntimeError,'qualification_not_ready'):
+            m.qualification_merged(p,'o/r',1,context,p.document)
+        self.assertEqual(p.writes,[])
+
     def setUp(self):
         self.env = patch.dict(os.environ, {}, clear=True)
         self.env.start()

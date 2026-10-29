@@ -307,8 +307,17 @@ def base_rules(api, repo, context, p):
 
 
 def qualification(api, repo, number, context, document):
+    return _qualification(api,repo,number,context,document,review.pull_identity)
+
+
+def qualification_merged(api, repo, number, context, document):
+    """Recheck full qualification after merge without permitting a new merge."""
+    return _qualification(api,repo,number,context,document,review.merged_pull_identity)
+
+
+def _qualification(api, repo, number, context, document, identity):
     pull = api.api(f"repos/{repo}/pulls/{number}")
-    review.pull_identity(pull, repo, number, context["head"])
+    identity(pull, repo, number, context["head"])
     need(pull["base"]["sha"] == context["base"]
          and pull["base"]["ref"] == context["base_ref"], "base_changed")
     linked = review.linked_issue(pull)

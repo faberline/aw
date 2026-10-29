@@ -16,6 +16,7 @@ merge_guard=sibling('merge_guard')
 observation=sibling('post_merge_observation')
 per_pr=sibling('per_pr_checkpoint')
 prepared=sibling('prepared_status')
+native=sibling('native_merge')
 worker=merge_guard.worker
 provider=merge_guard.provider
 need=provider.need
@@ -110,6 +111,43 @@ def reconcile_native(api,repo,document,current_policy,evaluator,run,attempt,pr,h
     return _complete_authenticated(api,repo,current_policy,intent,evidence)
 
 
+def reconcile_native_prepared(api,repo,document,current_policy,evaluator,run,attempt,pr,head,owner,log_reader):
+    """Revalidate review and CI after a lost status response, then close safely.
+
+    The observed status is not authority. The trusted pre-status record binds
+    the original attempt and guard. The latest exact review is independently
+    authenticated and the full original context and CI are rebuilt twice.
+    """
+    old=worker.config(dict(document['config']['issue_guard'],policy_source=document['source_commit']))
+    worker.config(current_policy);worker.check_runtime(current_policy)
+    need(all(old[k]==current_policy[k] for k in ('genesis','ruleset_id','runtime')),
+         'merge_guard_policy_changed')
+    intent=merge_guard.authenticate_native_intent(api,repo,document,evaluator,run,attempt,pr,head,log_reader)
+    p=intent['payload']
+    need(p['owner']==owner and p['repo']==repo and p['pr']==pr and p['head']==head,
+         'merge_guard_checkpoint_mismatch')
+    value=prepared.authenticate_native_prepared(api,repo,document,evaluator,run,attempt,pr,head,log_reader)
+    evidence=value['payload']['checkpoint'];record=evidence['payload'];checkpoint=record['checkpoint']
+    per_pr.guard_binding(p,record)
+    need(checkpoint['issue']==p['issue'],'merge_guard_checkpoint_mismatch')
+    index=sibling('native_review_index').Session(api,repo,lambda:document,evaluator,log_reader)
+    def revalidate():
+        current=merge_guard.review.action.trusted_policy(api,repo,'.github/issue-ci-required-gates.json',metadata=True)
+        need(current['config']==document['config'],'merge_recovery_policy_changed')
+        receipt=index.verify_merged(api,repo,pr,head,lambda:document,evaluator,record['review_run'])
+        context=receipt['payload']['context']
+        need(receipt['sha256']==record['review_sha256']
+             and context['repo']==repo and context['pr']==pr and context['head']==head
+             and context['base']==checkpoint['base'] and context['base_ref']==checkpoint['base_ref']
+             and context['issue_sha256']==checkpoint['issue_sha256']
+             and context['pr_description_sha256']==checkpoint['pr_sha256'],
+             'merge_recovery_review_changed')
+        need(native.qualification_merged(api,repo,pr,context,document)==p['issue'],
+             'merge_recovery_qualification_changed')
+    revalidate()
+    return _complete_authenticated(api,repo,current_policy,intent,evidence,revalidate=revalidate)
+
+
 def reconcile_adoption(api,repo,document,current_policy,evaluator,run,attempt,issue,head,owner,log_reader):
     """Use a separately reviewed publisher's authenticated guard and status."""
     adoption=sibling('adoption_guard')
@@ -175,7 +213,7 @@ def _release_observed_closed(api,repo,current_policy,intent,checkpoint):
     return dict(state='released_after_observed_closed',issue=p['issue'],merge=final['merge'])
 
 
-def _complete_authenticated(api,repo,current_policy,intent,evidence):
+def _complete_authenticated(api,repo,current_policy,intent,evidence,revalidate=None):
     """Finish only after a trusted caller authenticates the source evidence."""
     p=intent['payload'];record=evidence['payload'];checkpoint=record['checkpoint']
     need(record['source_attempt']==p['attempt'] and record['source_run']==p['run']
@@ -192,6 +230,10 @@ def _complete_authenticated(api,repo,current_policy,intent,evidence):
         # guard, then immediately confirm it still belongs to this intent.
         again=observation.recovery_plan(api,checkpoint,started)
         need(again['state']=='guard_required','merge_close_state_changed')
+        if revalidate is not None:
+            revalidate()
+            again=observation.recovery_plan(api,checkpoint,started)
+            need(again['state']=='guard_required','merge_close_state_changed')
         require_current_policy(api,repo,current_policy)
         guard_identity(api,repo,current_policy,intent)
         result=api.api(f"repos/{repo}/issues/{p['issue']}",method='PATCH',

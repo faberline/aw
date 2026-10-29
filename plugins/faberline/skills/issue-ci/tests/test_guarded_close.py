@@ -196,6 +196,53 @@ class GuardedCloseTests(unittest.TestCase):
             self.assertEqual(release()['state'],'released_after_observed_closed')
         self.assertEqual(self.patch_count,0)
 
+    def recover_prepared(self,fail_at=None,policy_changed=False):
+        checkpoint=observer_fixture.Fixture().checkpoint
+        checkpoint.update(repo='o/r',pr=9,issue=7,head='d'*40)
+        evidence=close.observation.record(checkpoint,123,2,self.source,'e'*40,202,'f'*64)
+        value=close.prepared.build(evidence,55,'a'*32)
+        context=dict(repo='o/r',pr=9,head='d'*40,base=checkpoint['base'],base_ref=checkpoint['base_ref'],
+                     issue_sha256=checkpoint['issue_sha256'],pr_description_sha256=checkpoint['pr_sha256'])
+        calls=[]
+        class Index:
+            def __init__(self,*args):pass
+            def verify_merged(self,*args):
+                calls.append(True)
+                if len(calls)==fail_at:raise RuntimeError('required_gates_not_success')
+                return dict(sha256='f'*64,payload=dict(context=context))
+        native_index=type('NativeIndex',(),{'Session':Index})()
+        def plan(api,checkpoint,started):
+            return dict(state='observed_closed' if self.status=='closed' else 'guard_required')
+        def observe(api,checkpoint):
+            return dict(state='observed_closed' if self.status=='closed' else 'observed_merged',merge='f'*40)
+        current=dict(config={} if policy_changed else self.document['config'])
+        with patch.object(close.merge_guard,'authenticate_native_intent',return_value=self.intent), \
+             patch.object(close.prepared,'authenticate_native_prepared',return_value=value), \
+             patch.object(close,'sibling',return_value=native_index), \
+             patch.object(close.merge_guard.review.action,'trusted_policy',return_value=current), \
+             patch.object(close.native,'qualification_merged',return_value=7), \
+             patch.object(close.worker,'read_policy',return_value=self.policy), \
+             patch.object(close.observation,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
+             patch.object(close.observation,'recovery_plan',side_effect=plan), \
+             patch.object(close.observation,'observe',side_effect=observe):
+            result=close.reconcile_native_prepared(self.api,'o/r',self.document,self.policy,'e'*40,123,2,9,
+                'd'*40,self.intent['payload']['owner'],lambda r,j:'')
+        return result,calls
+
+    def test_lost_status_revalidates_review_and_ci_twice_before_close(self):
+        result,calls=self.recover_prepared()
+        self.assertEqual(result['state'],'closed');self.assertEqual(len(calls),2)
+        self.assertEqual(self.patch_count,1)
+
+    def test_lost_status_never_closes_if_review_or_policy_changes(self):
+        for kwargs,reason in ((dict(fail_at=1),'required_gates_not_success'),
+                              (dict(fail_at=2),'required_gates_not_success'),
+                              (dict(policy_changed=True),'merge_recovery_policy_changed')):
+            with self.subTest(reason=reason,kwargs=kwargs),self.assertRaisesRegex(RuntimeError,reason):
+                self.recover_prepared(**kwargs)
+            self.assertEqual(self.patch_count,0)
+            self.assertTrue(close.guard_identity(self.api,'o/r',self.policy,self.intent))
+
     def test_checkpoint_requires_exact_successful_attempt_even_after_rerun(self):
         checkpoint=observer_fixture.Fixture().checkpoint
         record=close.observation.record(checkpoint,123,2,self.source,'e'*40,202,'f'*64)
