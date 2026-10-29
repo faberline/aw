@@ -28,3 +28,11 @@ and bind that evidence to the exact policy and runtime. Unknown evidence must
 hold. This proof and a real hosted merge and issue-close test are not complete.
 
 Do not change planner schedules as part of this work.
+
+`scripts/rollout_inventory.py` provides a read-only Actions inventory for a
+controller. It reads every page for queued, in-progress, requested, waiting and
+pending runs twice. It refuses incomplete, changed or malformed results. It
+always reports actor rollout as unknown and cannot authorize a write. Even an
+empty result does not prove that local or cloud launchers stopped. The caller
+must independently identify all launchers, their installed versions and their
+in-flight work before considering a cutover.
