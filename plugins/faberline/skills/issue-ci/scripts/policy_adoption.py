@@ -571,8 +571,10 @@ def prepare_adoption_close_record(api, document, grant, evaluator, run_id, recei
     pull=api.api(f'repos/{repo}/pulls/{number}')
     issue=api.api(f"repos/{repo}/issues/{grant['issue']}")
     observation=review.sibling('post_merge_observation')
+    baseline=observation.stable_ownership(api,repo,number,head,grant['base'],grant['base_ref'],pull,issue,
+                                           grant['issue_sha256'],grant['pr_sha256'])
     snapshot=observation.capture(repo,number,head,grant['base'],grant['base_ref'],pull,issue,
-                                 grant['issue_sha256'],grant['pr_sha256'])
+                                 grant['issue_sha256'],grant['pr_sha256'],ownership_events=baseline)
     return observation.record(snapshot,run_id,int(attempt),source,evaluator,
         grant['review']['run_id'],grant['review']['receipt_sha256'],r.digest(grant),document['source_commit'])
 

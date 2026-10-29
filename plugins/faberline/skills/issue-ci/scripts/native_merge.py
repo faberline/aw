@@ -353,8 +353,11 @@ def prepare_close_record(api, repo, number, head, document, evaluator, review_ru
     issue_number = review.linked_issue(pull)
     issue = api.api(f'repos/{repo}/issues/{issue_number}')
     observation = review.sibling('post_merge_observation')
+    context=receipt['payload']['context']
+    baseline=observation.stable_ownership(api,repo,number,head,context['base'],context['base_ref'],pull,issue,
+                                          context['issue_sha256'],context['pr_description_sha256'])
     return observation.capture_verified(repo, number, head, pull, issue, receipt,
-        int(run), int(attempt), document['source_commit'], evaluator)
+        int(run), int(attempt), document['source_commit'], evaluator,ownership_events=baseline)
 
 
 def dispatch_default_wake(api, repo, results):

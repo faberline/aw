@@ -71,6 +71,57 @@ class ObservationTests(unittest.TestCase):
         return m.capture(REPO, 9, HEAD, BASE, 'main', pull, self.f.issue,
                          c['issue_sha256'], c['pr_sha256'])
 
+    def test_ownership_baseline_accepts_earlier_changes_but_not_a_later_claim(self):
+        start='2026-10-29T00:00:00Z'
+        labeled=dict(id=101,event='labeled',created_at=start)
+        comment=dict(event='commented',created_at=start)
+        seal=m.ownership_seal([labeled,comment])
+        self.assertTrue(m.ownership_history([labeled,comment],start,seal))
+        with self.assertRaisesRegex(RuntimeError,'close_ownership_epoch_changed'):
+            m.ownership_history([labeled,comment,dict(id=102,event='assigned',created_at=start)],start,seal)
+        changed=dict(labeled,event='unlabeled')
+        with self.assertRaisesRegex(RuntimeError,'close_ownership_epoch_changed'):
+            m.ownership_history([changed],start,seal)
+        with self.assertRaisesRegex(RuntimeError,'close_history_unknown'):
+            m.ownership_seal([dict(event='labeled',created_at=start)])
+
+    def test_baseline_requires_two_matching_complete_timelines_and_issue_reads(self):
+        f=self.f;f.pull.update(state='open',merged=False,draft=False)
+        f.timeline=[dict(id=101,event='labeled',created_at='2026-10-29T00:00:00Z')]
+        c=f.checkpoint
+        def snapshot():
+            return m.stable_ownership(f,REPO,9,HEAD,BASE,'main',f.pull,f.issue,c['issue_sha256'],c['pr_sha256'])
+        self.assertEqual(snapshot(),m.ownership_seal(f.timeline))
+        pages=f.pages;count=[]
+        def changing(path):
+            count.append(True)
+            if len(count)==2:f.timeline.append(dict(id=102,event='assigned',created_at='2026-10-29T00:00:00Z'))
+            return pages(path)
+        f.pages=changing
+        with self.assertRaisesRegex(RuntimeError,'close_ownership_snapshot_changed'):snapshot()
+
+    def test_baseline_refuses_changed_issue_during_collection(self):
+        f=self.f;f.pull.update(state='open',merged=False,draft=False)
+        c=f.checkpoint;pages=f.pages
+        def changing(path):
+            f.issue['updated_at']='2026-10-29T00:00:01Z'
+            return pages(path)
+        f.pages=changing
+        with self.assertRaisesRegex(RuntimeError,'close_ownership_snapshot_changed'):
+            m.stable_ownership(f,REPO,9,HEAD,BASE,'main',f.pull,f.issue,c['issue_sha256'],c['pr_sha256'])
+
+    def test_checkpoint_baseline_rejects_new_claim_even_in_the_same_second(self):
+        start='2026-10-29T00:00:00Z'
+        self.f.timeline=[dict(id=101,event='labeled',created_at=start)]
+        checkpoint=dict(self.f.checkpoint,ownership_events=m.ownership_seal(self.f.timeline))
+        evidence=m.record(checkpoint,123,1,'d'*40,'e'*40,200,'f'*64)
+        parsed=m.parse_records(m.MARKER+m.review.r.canonical(evidence))
+        self.assertEqual(parsed,[evidence])
+        self.assertEqual(m.recovery_plan(self.f,checkpoint,start)['state'],'guard_required')
+        self.f.timeline.append(dict(id=102,event='assigned',created_at=start))
+        with self.assertRaisesRegex(RuntimeError,'close_ownership_epoch_changed'):
+            m.recovery_plan(self.f,checkpoint,start)
+
     def test_capture_is_only_a_snapshot(self):
         self.assertEqual(self.capture(), self.f.checkpoint)
 

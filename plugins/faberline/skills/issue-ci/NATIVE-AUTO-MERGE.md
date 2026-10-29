@@ -146,6 +146,10 @@ the same complete policy and guard. The status observation is not authority.
 The separately reviewed policy publisher has a draft recovery path as well. It
 reauthenticates the grant, the latest target review, every grant-bound CI job,
 the candidate policy and current branch protection before closure.
+Before publishing success, the writer records a compact digest of two matching
+issue timelines. Recovery refuses any later ownership event, including one in
+the same second. Older records keep the more conservative run-start check.
+The timeline digest does not replace the shared guard or prove actor adoption.
 This path remains blocked by rollout proof and requires hosted verification.
 
 The draft writer requires the `aw-verified-merge-reconcile` repository-dispatch

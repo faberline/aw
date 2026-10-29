@@ -16,6 +16,7 @@ review = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(review)
 need = review.need
 MARKER = 'AW_POST_MERGE_CHECKPOINT_V1 '
+HARMLESS_EVENTS = {'commented', 'cross-referenced', 'referenced', 'mentioned', 'subscribed', 'unsubscribed'}
 OPEN_LINKS = '''query($owner:String!,$name:String!,$number:Int!,$after:String){
   repository(owner:$owner,name:$name){nameWithOwner issue(number:$number){number
     closedByPullRequestsReferences(first:100,after:$after){totalCount pageInfo{hasNextPage endCursor}
@@ -26,7 +27,8 @@ OPEN_LINKS = '''query($owner:String!,$name:String!,$number:Int!,$after:String){
 
 def checkpoint_shape(value):
     """Validate structure only, not the authenticity of a checkpoint."""
-    need(review.exact(value, "repo pr head base base_ref issue issue_sha256 pr_sha256 issue_updated_at labels assignees"),
+    keys="repo pr head base base_ref issue issue_sha256 pr_sha256 issue_updated_at labels assignees"
+    need(review.exact(value,keys) or review.exact(value,keys+" ownership_events"),
          "close_checkpoint_shape")
     need(isinstance(value["repo"], str)
          and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value["repo"])
@@ -42,6 +44,8 @@ def checkpoint_shape(value):
         entries = value[key]
         need(isinstance(entries, list) and all(review.text(x, 255) for x in entries)
              and entries == sorted(set(entries)), "close_checkpoint_ownership")
+    if 'ownership_events' in value:
+        validate_ownership_seal(value['ownership_events'])
     return value
 
 
@@ -167,7 +171,7 @@ def authenticate_adoption_source(api, repo, document, evaluator, source_run, pr,
     return evidence
 
 
-def capture(repo, number, head, base, base_ref, pull, issue, issue_sha256, pr_sha256):
+def capture(repo, number, head, base, base_ref, pull, issue, issue_sha256, pr_sha256, ownership_events=None):
     """Capture identities only after the caller verifies CI and review.
 
     The caller must authenticate those proofs and the producer.  The captured
@@ -192,13 +196,15 @@ def capture(repo, number, head, base, base_ref, pull, issue, issue_sha256, pr_sh
                   issue_updated_at=issue.get('updated_at'),
                   labels=sorted(x['name'] for x in labels),
                   assignees=sorted(x['login'] for x in assignees))
+    if ownership_events is not None:
+        result['ownership_events']=validate_ownership_seal(ownership_events)
     checkpoint_shape(result)
     need(not {'blocked', 'agy:blocked'} & set(result['labels']), 'close_issue_blocked')
     return result
 
 
 def capture_verified(repo, number, head, pull, issue, receipt, source_run, source_attempt,
-                     source_commit, evaluator):
+                     source_commit, evaluator, ownership_events=None):
     """Prepare a record after the caller authenticates the review and CI.
 
     This validates the receipt's shape, digest and target. It does not replace
@@ -214,12 +220,62 @@ def capture_verified(repo, number, head, pull, issue, receipt, source_run, sourc
          and context.get('policy_source') == source_commit, 'close_review_target')
     need(isinstance(producer, dict) and review.integer(producer.get('run_id')), 'close_review_run_unknown')
     snapshot = capture(repo, number, head, context.get('base'), context.get('base_ref'), pull, issue,
-                       context.get('issue_sha256'), context.get('pr_description_sha256'))
+                       context.get('issue_sha256'), context.get('pr_description_sha256'),ownership_events)
     return record(snapshot, source_run, source_attempt, source_commit, evaluator,
                   producer['run_id'], receipt['sha256'])
 
 
-def ownership_history(events, started_at):
+def ownership_snapshot(events):
+    """Record immutable ownership-changing event identities, not comments."""
+    need(isinstance(events,list) and len(events)<=10000,'close_history_unknown')
+    result=[];seen=set()
+    for event in events:
+        need(isinstance(event,dict) and review.text(event.get('event'),100)
+             and isinstance(event.get('created_at'),str)
+             and re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z',event['created_at']),
+             'close_history_unknown')
+        try:datetime.fromisoformat(event['created_at'].replace('Z','+00:00'))
+        except ValueError:raise review.Refused('close_history_unknown') from None
+        if event['event'] in HARMLESS_EVENTS:
+            continue
+        need(review.integer(event.get('id')) and event['id'] not in seen,'close_history_unknown')
+        seen.add(event['id'])
+        result.append(dict(id=event['id'],event=event['event'],created_at=event['created_at']))
+    result.sort(key=lambda row:row['id'])
+    return result
+
+
+def ownership_seal(events):
+    snapshot=ownership_snapshot(events)
+    return dict(version=1,count=len(snapshot),sha256=review.r.digest(snapshot))
+
+
+def validate_ownership_seal(value):
+    need(review.exact(value,'version count sha256') and type(value['version']) is int and value['version']==1
+         and type(value['count']) is int and 0<=value['count']<=10000
+         and isinstance(value['sha256'],str) and review.SHA256.fullmatch(value['sha256']),
+         'close_history_unknown')
+    return value
+
+
+def stable_ownership(api,repo,number,head,base,base_ref,pull,issue,issue_sha256,pr_sha256):
+    """Capture two equal complete timelines around stable issue and PR reads."""
+    expected=capture(repo,number,head,base,base_ref,pull,issue,issue_sha256,pr_sha256)
+    path=f'repos/{repo}/issues/{expected["issue"]}/timeline'
+    first=ownership_seal(api.pages(path))
+    def unchanged():
+        fresh_pull=api.api(f'repos/{repo}/pulls/{number}')
+        fresh_issue=api.api(f'repos/{repo}/issues/{expected["issue"]}')
+        need(capture(repo,number,head,base,base_ref,fresh_pull,fresh_issue,issue_sha256,pr_sha256)==expected,
+             'close_ownership_snapshot_changed')
+    unchanged()
+    second=ownership_seal(api.pages(path))
+    need(first==second,'close_ownership_snapshot_changed')
+    unchanged()
+    return first
+
+
+def ownership_history(events, started_at, baseline=None):
     """Refuse evidence of a later claim, even if the snapshot was restored.
 
     The caller must obtain every timeline page and authenticate ``started_at``
@@ -236,13 +292,16 @@ def ownership_history(events, started_at):
 
     start = when(started_at).replace(microsecond=0)
     need(isinstance(events, list), 'close_history_unknown')
-    harmless = {'commented', 'cross-referenced', 'referenced', 'mentioned', 'subscribed', 'unsubscribed'}
+    if baseline is not None:
+        validate_ownership_seal(baseline)
+        need(ownership_seal(events)==baseline,'close_ownership_epoch_changed')
+        return True
     for event in events:
         need(isinstance(event, dict) and review.text(event.get('event'), 100), 'close_history_unknown')
         at = when(event.get('created_at'))
         # A timestamp can have only second precision. Refuse the same second.
         if at >= start:
-            need(event['event'] in harmless, 'close_ownership_epoch_changed')
+            need(event['event'] in HARMLESS_EVENTS, 'close_ownership_epoch_changed')
     return True
 
 
@@ -397,7 +456,7 @@ def recovery_plan(api, checkpoint, started_at):
     if observation['state'] == 'observed_closed':
         return dict(observation, close_authorized=False)
     events = api.pages(f"repos/{repo}/issues/{c['issue']}/timeline")
-    ownership_history(events, started_at)
+    ownership_history(events, started_at, c.get('ownership_events'))
     no_open_linked_prs(api, repo, c['issue'])
     # This explicitly does not assert that no actor can claim after our reads.
     return dict(observation, state='guard_required', close_authorized=False)

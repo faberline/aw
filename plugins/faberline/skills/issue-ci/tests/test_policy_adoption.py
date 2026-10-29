@@ -103,6 +103,9 @@ class AdoptionCheckpointTests(unittest.TestCase):
                 if path=='repos/o/r/pulls/8':return copy.deepcopy(parent.pull)
                 if path=='repos/o/r/issues/7':return copy.deepcopy(parent.issue)
                 raise AssertionError(path)
+            def pages(self,path):
+                if path=='repos/o/r/issues/7/timeline':return []
+                raise AssertionError(path)
         self.api=API()
 
     def test_checkpoint_binds_grant_review_and_source_attempt(self):
@@ -113,6 +116,8 @@ class AdoptionCheckpointTests(unittest.TestCase):
         self.assertEqual(result['payload']['adoption_source'],'9'*40)
         self.assertEqual(result['payload']['checkpoint']['issue'],7)
         self.assertEqual(result['payload']['source_attempt'],2)
+        observation=a.review.sibling('post_merge_observation')
+        self.assertEqual(result['payload']['checkpoint']['ownership_events'],observation.ownership_seal([]))
 
     def test_changed_context_contract_or_review_refuses(self):
         for mutate in (lambda:self.env.update(GITHUB_RUN_ATTEMPT='1'),

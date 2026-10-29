@@ -87,6 +87,7 @@ class Provider:
 
     def pages(self, path, key=None):
         if "/statuses" in path: return copy.deepcopy(self.statuses)
+        if path == 'repos/o/r/issues/7/timeline': return []
         raise AssertionError(path)
 
     def api(self, path, method="GET", data=None):
@@ -410,6 +411,7 @@ class DefaultWakeAndCheckpointTests(unittest.TestCase):
         records = m.review.r.records(out.getvalue(), obs.MARKER)
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]['payload']['review_run'], 200)
+        self.assertEqual(records[0]['payload']['checkpoint']['ownership_events'],obs.ownership_seal([]))
         self.assertEqual([x[0] for x in self.p.writes], ['pending', 'queue', 'success'])
 
     def test_bad_source_or_unknown_ownership_cannot_release_status(self):
