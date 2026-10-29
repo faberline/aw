@@ -171,7 +171,7 @@ class MutationSafetyTests(unittest.TestCase):
     def test_rechecked_evidence_can_queue_only_exact_head(self):
         import os
         g,document,state,env,api=self.setup_run();queued=copy.deepcopy(state)
-        queued['provider']['autoMergeRequest']=dict(mergeMethod='SQUASH',enabledBy={'login':'github-actions[bot]'},
+        queued['provider']['autoMergeRequest']=dict(mergeMethod='SQUASH',enabledBy={'login':'github-actions','__typename':'Bot'},
                                                      commitHeadline='Merge PR #8',commitBody='Closes #7')
         response={'enablePullRequestAutoMerge':{'pullRequest':queued['provider']}}
         with patch.dict(os.environ,env,clear=True),patch.object(a,'verify_grant_attestation'),\
