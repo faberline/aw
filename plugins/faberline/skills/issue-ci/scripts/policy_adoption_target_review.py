@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Review protected policy changes as GitHub source data; no candidate checkout."""
+import ast
 import copy
 import hashlib
 import importlib.util
@@ -19,14 +20,51 @@ a=sibling('policy_adoption')
 model=sibling('policy_adoption_grant_review')
 need=a.need
 MAX_SUPPORTING_PATHS=64
-FRAMEWORK_SOURCES=(
-    ('evaluator','plugins/faberline/skills/issue-ci/scripts/policy_adoption.py'),
-    ('evaluator','plugins/faberline/skills/issue-ci/scripts/policy_adoption_target_review.py'),
-    ('evaluator','plugins/faberline/skills/issue-ci/scripts/policy_adoption_grant_review.py'),
-    ('evaluator','plugins/faberline/skills/issue-ci/scripts/policy_adoption_review_outcome.py'),
-    ('candidate','plugins/faberline/skills/issue-ci/scripts/native_merge.py'),
-    ('candidate','plugins/faberline/skills/issue-ci/scripts/qualification.py'),
+FRAMEWORK_ROOT='plugins/faberline/skills/issue-ci/scripts/'
+# Include all local modules and data reached by the fixed controller entrypoints.
+COMMON_FRAMEWORK_FILES=(
+    'native_merge.py','claude_review.py','handoff.py','qualification.py',
+    'readiness.py','readiness_index.py','action.py','native_review_index.py','json_data.py',
 )
+EVALUATOR_FRAMEWORK_FILES=(
+    'policy_adoption.py','policy_adoption_target_review.py','policy_adoption_grant_review.py',
+    'policy_adoption_review_outcome.py','policy_adoption_supply.json',
+)
+FRAMEWORK_SOURCES=tuple(
+    (role,FRAMEWORK_ROOT+name)
+    for role,names in (('evaluator',COMMON_FRAMEWORK_FILES+EVALUATOR_FRAMEWORK_FILES),
+                       ('candidate',COMMON_FRAMEWORK_FILES))
+    for name in names
+)
+
+
+def framework_dependency_closure(rows):
+    """Reject omitted statically named sibling modules or local data at either ref."""
+    for role in ('evaluator','candidate'):
+        selected={row['path']:row['content'] for row in rows if row['role']==role}
+        need(len(selected)==sum(row['role']==role for row in rows),'target_framework_duplicate')
+        for path,content in selected.items():
+            if not path.endswith('.py'):
+                continue
+            try:
+                tree=ast.parse(content,filename=path)
+            except (SyntaxError,ValueError,TypeError):
+                raise RuntimeError('target_framework_source_parse') from None
+            for node in ast.walk(tree):
+                if not isinstance(node,ast.Call) or not node.args:
+                    continue
+                func=node.func
+                name=func.id if isinstance(func,ast.Name) else func.attr if isinstance(func,ast.Attribute) else None
+                arg=node.args[0]
+                if not isinstance(arg,ast.Constant) or not isinstance(arg.value,str):
+                    continue
+                if name in ('sibling','ci_module'):
+                    dependency=arg.value+'.py'
+                elif name=='with_name' and arg.value.endswith(('.py','.json')):
+                    dependency=arg.value
+                else:
+                    continue
+                need(FRAMEWORK_ROOT+dependency in selected,'target_framework_dependency_missing')
 
 
 def framework_sources(api,candidate_ref,evaluator_ref):
@@ -39,6 +77,7 @@ def framework_sources(api,candidate_ref,evaluator_ref):
         raw=content.encode('utf-8')
         blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
         result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
+    framework_dependency_closure(result)
     return result
 
 

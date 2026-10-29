@@ -211,7 +211,7 @@ class ReviewProtocolTests(unittest.TestCase):
         class API:
             def __init__(self):self.calls=[];self.bad=False
             def api(self,path):
-                self.calls.append(path);raw=path.encode()
+                self.calls.append(path);raw=('# '+path+'\n').encode()
                 blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
                 return dict(type='file',encoding='base64',content=base64.b64encode(raw).decode(),
                             sha='0'*40 if self.bad else blob)
@@ -227,6 +227,25 @@ class ReviewProtocolTests(unittest.TestCase):
         api.bad=True
         with self.assertRaisesRegex(RuntimeError,'source_identity'):
             m.framework_sources(api,candidate,evaluator)
+
+    def test_framework_closure_detects_missing_sibling_at_each_revision(self):
+        def row(role,name,content):
+            return dict(role=role,path=m.FRAMEWORK_ROOT+name,content=content)
+        for role in ('evaluator','candidate'):
+            rows=[row(role,'entry.py',"x=sibling('native_merge')\ny=ci_module('readiness')\nz=Path(__file__).with_name('json_data.py')"),
+                  row(role,'native_merge.py','pass'),row(role,'readiness.py','pass'),row(role,'json_data.py','pass')]
+            m.framework_dependency_closure(rows)
+            for omitted in ('native_merge.py','readiness.py','json_data.py'):
+                with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+                    m.framework_dependency_closure([r for r in rows if not r['path'].endswith('/'+omitted)])
+        with self.assertRaisesRegex(RuntimeError,'target_framework_source_parse'):
+            m.framework_dependency_closure([row('candidate','entry.py','not valid python ???')])
+
+    def test_framework_roster_covers_current_entrypoint_dependency_closure(self):
+        root=Path(m.__file__).parent
+        rows=[dict(role=role,path=path,content=(root/Path(path).name).read_text())
+              for role,path in m.FRAMEWORK_SOURCES]
+        m.framework_dependency_closure(rows)
 
 
 class PreflightTests(unittest.TestCase):
