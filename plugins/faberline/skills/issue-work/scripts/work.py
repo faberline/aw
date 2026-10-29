@@ -29,6 +29,10 @@ _filter_spec = importlib.util.spec_from_file_location('main_filter_safety', Path
 main_filters = importlib.util.module_from_spec(_filter_spec)
 _filter_spec.loader.exec_module(main_filters)
 
+_guard_spec = importlib.util.spec_from_file_location('worker_guard', Path(__file__).resolve().parent / 'worker_guard.py')
+worker_guard = importlib.util.module_from_spec(_guard_spec)
+_guard_spec.loader.exec_module(worker_guard)
+
 
 def run(*args):
     return subprocess.check_output(args, text=True).strip()
@@ -129,6 +133,21 @@ def current_work(client, n):
     if issue['state'] != 'open' or queue.labels(issue) & queue.STATES not in ({'todo'}, {'doing'}):
         refuse('owned/repair work is not exclusively open todo or doing; preserve lease/worktree')
     return issue
+
+
+def guarded_submission(client, n, branch, pr, head):
+    """Recheck the submitted PR and issue before a guarded release."""
+    pull=client.api(f'repos/{client.repo}/pulls/{pr}')
+    issue=client.issue(n)
+    if (type(pull.get('number')) is not int or pull['number']!=pr or pull.get('state')!='open'
+            or pull.get('head',{}).get('sha')!=head or pull.get('head',{}).get('ref')!=branch
+            or (pull.get('head',{}).get('repo') or {}).get('full_name')!=client.repo
+            or pull.get('base',{}).get('ref')!='main'
+            or (pull.get('base',{}).get('repo') or {}).get('full_name')!=client.repo
+            or not re.search(rf'(?im)^Closes #{n}\s*$',pull.get('body') or '')
+            or issue.get('state')!='open' or queue.labels(issue) & {'blocked','agy:blocked'}
+            or queue.labels(issue) & queue.STATES not in ({'doing'},{'done'})):
+        refuse('guarded submission changed; preserve the issue guard and worktree')
 
 
 def planned_snapshot(client):
@@ -234,6 +253,8 @@ def main():
             except (ValueError, TypeError):
                 refuse('legacy/invalid issue-work.lock: verify old session ended before manual recovery; preserve its worktree')
         if command == 'next':
+            if lease and lease.get('guard_intent') is not None and lease.get('phase') not in ('coding','claiming'):
+                refuse('complete the prior guarded submission before selecting another issue')
             mine = sys.argv[2:] == ['--mine']
             if sys.argv[2:] and not mine:
                 refuse('usage: next [--mine]')
@@ -308,10 +329,39 @@ def main():
                 refuse('PR/branch association changed before claim; preserve worktree')
             if work_identity(client.issue(n)) != work_identity(fresh):
                 refuse('issue changed immediately before claim; no label write')
+            guard_api = worker_guard.Api(client)
+            guard_policy = worker_guard.read_policy(guard_api, client.repo)
+            guard_intent = None
+            if guard_policy is None:
+                if lease and lease.get('guard_intent') is not None:
+                    refuse('guard policy disappeared; preserve the existing issue guard')
+                worker_guard.require_no_legacy_guard(guard_api, client.repo, n)
+            elif lease and lease.get('issue') == n and lease.get('phase') in ('coding','claiming'):
+                if lease.get('owner') != owner or lease.get('guard_intent') is None:
+                    refuse('existing work predates the shared guard; preserve its lease and worktree')
+                guard_intent = lease['guard_intent']
+            else:
+                guard_intent = worker_guard.new_intent(n, guard_policy)
             temp_lease = common / 'issue-work.lock.new'
             claimed = dict(issue=n, owner=owner, since=now, pid=os.getppid(), host=socket.gethostname(), phase='claiming')
+            if guard_intent is not None:
+                claimed['guard_intent'] = guard_intent
             temp_lease.write_text(json.dumps(claimed))
             temp_lease.replace(lease_path)
+            if guard_intent is not None:
+                worker_guard.acquire(guard_api,client.repo,guard_policy,guard_intent,guard_policy['policy_source'])
+                current_policy=worker_guard.read_policy(guard_api,client.repo)
+                if current_policy is None:
+                    refuse('guard policy disappeared; preserve the existing issue guard')
+                worker_guard.require_owned(guard_api,client.repo,current_policy,guard_intent,current_policy['policy_source'])
+                if association(n, fresh=True) != (branch, pr) or work_identity(client.issue(n)) != work_identity(fresh):
+                    refuse('issue changed during guarded claim; preserve the guard and worktree')
+            else:
+                if worker_guard.read_policy(guard_api,client.repo) is not None:
+                    refuse('guard policy changed during claim; preserve the lease and worktree')
+                worker_guard.require_no_legacy_guard(guard_api,client.repo,n)
+                if association(n, fresh=True) != (branch, pr) or work_identity(client.issue(n)) != work_identity(fresh):
+                    refuse('issue changed during claim; preserve the lease and worktree')
             if 'todo' in queue.labels(fresh):
                 client.patch(n, labels=sorted((queue.labels(fresh) - {'todo'}) | {'doing'}))
                 confirmed = client.issue(n)
@@ -335,6 +385,34 @@ def main():
             # Keep lease: evidence does not grant another session coding ownership.
             print(f'reported evidence for #{n}; lifecycle and lease unchanged')
             return 0
+        client=queue.Client()
+        guard_api=worker_guard.Api(client)
+        guard_policy=worker_guard.read_policy(guard_api,client.repo)
+        guard_intent=lease.get('guard_intent')
+        if guard_intent is None:
+            if guard_policy is not None:
+                refuse('existing work predates the shared guard; preserve its lease and worktree')
+            worker_guard.require_no_legacy_guard(guard_api,client.repo,n)
+        else:
+            if guard_policy is None:
+                refuse('guard policy disappeared; preserve the existing issue guard')
+            if lease.get('phase')!='guard_release':
+                worker_guard.require_owned(guard_api,client.repo,guard_policy,guard_intent,guard_policy['policy_source'])
+        if guard_intent is not None and lease.get('phase')=='guard_release':
+            pr,branch,head=lease.get('guard_pr'),lease.get('guard_branch'),lease.get('guard_head')
+            if (type(pr) is not int or pr<=0 or not isinstance(branch,str)
+                    or not isinstance(head,str) or not re.fullmatch(r'[0-9a-f]{40}',head)):
+                refuse('invalid guarded submission intent; preserve the issue guard and worktree')
+            wt=prepare(checkout,n,branch,pr)
+            if git('-C',str(wt),'status','--porcelain') or git('-C',str(wt),'rev-parse','HEAD')!=head:
+                refuse('guarded submission worktree changed; preserve it')
+            guarded_submission(client,n,branch,pr,head)
+            tree_state.update(checkout,n,branch,wt,owner,pr=pr,submitted=True)
+            worker_guard.release(guard_api,client.repo,guard_policy,guard_intent,guard_policy['policy_source'])
+            worker_guard.dispatch_wake(guard_api,client.repo)
+            lease_path.unlink()
+            print(f'pr={pr}; guarded submission recovered; waiting for required CI')
+            return 0
         issue = gh('issue', 'view', str(n), '--json', 'state,labels')
         if issue['state'] != 'OPEN' or {l['name'] for l in issue['labels']} & {'todo', 'done', 'blocked'} or 'doing' not in {l['name'] for l in issue['labels']}:
             refuse('finish requires an open doing issue')
@@ -356,12 +434,26 @@ def main():
             _, pr = branch_of(n)
         else:
             run('gh', 'pr', 'comment', str(pr), '--body-file', str(file))
-        lease['phase'] = 'submitted'
+        if guard_intent is not None:
+            head=git('-C',str(wt),'rev-parse','HEAD')
+            if type(pr) is not int or pr<=0 or not re.fullmatch(r'[0-9a-f]{40}',head):
+                refuse('invalid guarded submission head; preserve the issue guard')
+            guarded_submission(client,n,branch,pr,head)
+            lease.update(phase='guard_release',guard_pr=pr,guard_branch=branch,guard_head=head)
+        else:
+            lease['phase'] = 'submitted'
         temp_lease = common / 'issue-work.lock.new'
         temp_lease.write_text(json.dumps(lease))
         temp_lease.replace(lease_path)
         run('gh', 'issue', 'comment', str(n), '--body', f'Work submitted in #{pr}; waiting for required CI on the current head.')
         tree_state.update(checkout, n, branch, wt, owner, pr=pr, submitted=True)
+        if guard_intent is not None:
+            current_policy=worker_guard.read_policy(guard_api,client.repo)
+            if current_policy is None:
+                refuse('guard policy disappeared; preserve the existing issue guard')
+            guarded_submission(client,n,branch,pr,head)
+            worker_guard.release(guard_api,client.repo,current_policy,guard_intent,current_policy['policy_source'])
+            worker_guard.dispatch_wake(guard_api,client.repo)
         lease_path.unlink()
         print(f'pr={pr}; issue #{n} remains doing; waiting for CI')
     return 0

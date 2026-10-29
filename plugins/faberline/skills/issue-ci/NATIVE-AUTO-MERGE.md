@@ -99,9 +99,27 @@ The outcome workflow serializes all status and lifecycle writes in the existing
 repository-wide `issue-ci-handoff` group.
 Each wake paginates all open PRs and all producer attempts. It re-evaluates the
 complete queue in stable PR order. A refused PR does not stop another PR. This
-recovers PRs whose pending wake was replaced. GitHub applies the final merge and closes the single issue named by the
-required `Closes #N` line, because only the default target branch is accepted.
-No issue is closed while a request is merely queued.
+recovers PRs whose pending wake was replaced. GitHub applies the final merge.
+The single `Closes #N` line identifies the linked issue. In Core #75, GitHub
+merged the PR but did not close that issue before a human closed it. The
+repository owner later confirmed that auto-close was enabled. The cause and
+the setting at merge time are unknown. Do not treat a merge as proof of issue
+closure. No issue is closed while a request is merely queued.
+
+The draft post-merge observer authenticates default-branch writer records and
+checks merge, contract and ownership observations. It is not yet wired to a
+recovery wake or an issue write. It does not establish a shared ownership lock.
+Do not claim automatic issue closure until those parts and a real hosted merge
+are verified.
+
+The draft writer requires the `aw-verified-merge-reconcile` repository-dispatch
+trigger. A passing PR-target wake asks for a default-branch wake. The latter
+rechecks every candidate before it can publish success. The dispatch payload is
+not approval evidence. The writer records source and review identities only
+after the success status write returns. A consumer must update the immutable
+action pin, workflow trigger and workflow identity together through its existing
+reviewed policy-adoption process. Existing product checks and holds stay in
+force during rollout.
 
 A fresh authenticated `fail` or `block` decision returns the linked open issue
 to `todo`. It adds todo before it removes doing or done. Other labels

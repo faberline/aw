@@ -357,8 +357,72 @@ class NativeMergeTests(unittest.TestCase):
         self.assertEqual(self.p.writes, [])
 
 
-if __name__ == "__main__":
-    unittest.main()
+class DefaultWakeAndCheckpointTests(unittest.TestCase):
+    def setUp(self):
+        self.p = Provider()
+        self.p.issue.update(assignees=[], updated_at='2026-10-29T00:00:00Z')
+        self.p.receipt['payload'].update(version=1, producer=dict(run_id=200), result=dict(decision='pass'))
+        self.p.receipt['payload']['context'].update(evaluator=EVALUATOR, policy_source=SOURCE)
+        self.p.receipt['sha256'] = m.review.r.digest(self.p.receipt['payload'])
+        self.env = dict(GITHUB_ACTIONS='true', GITHUB_EVENT_NAME='workflow_run',
+                        GITHUB_REPOSITORY='o/r', GITHUB_RUN_ID='300', GITHUB_RUN_ATTEMPT='1',
+                        GITHUB_WORKFLOW_SHA=SOURCE)
+
+    def test_qualified_pr_target_defers_without_queue_or_status_write(self):
+        self.p.pages = lambda path, key=None: [copy.deepcopy(self.p.pull)] if '/pulls?' in path else []
+        attempts = lambda *args: {1: dict(id=200, status='completed', conclusion='success')}
+        rows = m.reconcile(self.p, 'o/r', self.p.load, EVALUATOR, attempts, self.p.verify,
+                           result_verify=self.p.verify, defer_positive=True)
+        self.assertEqual(rows[0]['state'], 'default_wake_required')
+        self.assertEqual(self.p.writes, [])
+
+    def test_one_dispatch_wakes_complete_queue_without_trusting_payload(self):
+        calls = []
+        class API:
+            def api(self, *args, **kwargs): calls.append((args, kwargs))
+        self.assertFalse(m.dispatch_default_wake(API(), 'o/r', [dict(state='held')]))
+        self.assertTrue(m.dispatch_default_wake(API(), 'o/r',
+            [dict(state='default_wake_required'), dict(state='default_wake_required')]))
+        self.assertEqual(calls, [(('repos/o/r/dispatches',), dict(method='POST',
+            data=dict(event_type='aw-verified-merge-reconcile')))])
+
+    def test_valid_default_wake_emits_record_only_after_success_status(self):
+        self.p.auto_complete = False
+        out = io.StringIO()
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(out):
+            result = m.enqueue(self.p, 'o/r', 1, HEAD, self.p.load, EVALUATOR, 200,
+                               verify=self.p.verify, prepare_record=m.prepare_close_record)
+        self.assertEqual(result['state'], 'queued')
+        obs = m.review.sibling('post_merge_observation')
+        records = m.review.r.records(out.getvalue(), obs.MARKER)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]['payload']['review_run'], 200)
+        self.assertEqual([x[0] for x in self.p.writes], ['pending', 'queue', 'success'])
+
+    def test_bad_source_or_unknown_ownership_cannot_release_status(self):
+        for mutation in (lambda: self.env.update(GITHUB_EVENT_NAME='pull_request_target'),
+                         lambda: self.env.update(GITHUB_WORKFLOW_SHA='f' * 40),
+                         lambda: self.p.issue.pop('assignees')):
+            with self.subTest(mutation=mutation):
+                self.setUp()
+                mutation()
+                out = io.StringIO()
+                with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(out):
+                    result = m.enqueue(self.p, 'o/r', 1, HEAD, self.p.load, EVALUATOR, 200,
+                                       verify=self.p.verify, prepare_record=m.prepare_close_record)
+                self.assertEqual(result['state'], 'held_after_pending')
+                self.assertNotIn('success', [x[0] for x in self.p.writes])
+                self.assertNotIn('AW_POST_MERGE_CHECKPOINT_V1', out.getvalue())
+
+    def test_ambiguous_success_response_does_not_emit_a_checkpoint(self):
+        self.p.error_on = 'success'
+        out = io.StringIO()
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(out):
+            result = m.enqueue(self.p, 'o/r', 1, HEAD, self.p.load, EVALUATOR, 200,
+                               verify=self.p.verify, prepare_record=m.prepare_close_record)
+        self.assertEqual(result['state'], 'held_after_pending')
+        self.assertNotIn('AW_POST_MERGE_CHECKPOINT_V1', out.getvalue())
+
 
 class WriterContractTests(unittest.TestCase):
     def setUp(self):

@@ -1,7 +1,10 @@
 """Exact reviewed policy adoption is fail-closed; all providers are synthetic."""
 import copy
+import contextlib
+import io
 import importlib.util
 import json
+import os
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -80,6 +83,48 @@ class GrantTests(unittest.TestCase):
             with self.subTest(bad=bad),self.assertRaises(RuntimeError):a.review_result(g,bad,inventory)
 
 
+class AdoptionCheckpointTests(unittest.TestCase):
+    def setUp(self):
+        self.g=grant();self.pull=v2.pull();self.pull.update(draft=False)
+        self.pull['base'].update(sha=BASE,ref='main',repo={'full_name':'o/r'})
+        self.pull['head'].update(sha=HEAD,repo={'full_name':'o/r'})
+        self.pull.update(number=8,state='open',body='Closes #7\n')
+        self.issue=v2.issue();self.issue.update(assignees=[],updated_at='2026-10-29T00:00:00Z')
+        self.g['issue_sha256']=a.r.digest({k:self.issue[k] for k in ('number','title','body')})
+        self.g['pr_sha256']=a.r.digest([self.pull['title'],self.pull['body']])
+        self.receipt=dict(decision='pass',id='synthetic reviewed result')
+        self.g['review']['receipt_sha256']=a.r.digest(self.receipt)
+        self.env=dict(GITHUB_ACTIONS='true',GITHUB_EVENT_NAME='push',GITHUB_REPOSITORY='o/r',
+            GITHUB_RUN_ID='333',GITHUB_RUN_ATTEMPT='2',GITHUB_WORKFLOW_SHA=self.g['publisher']['source_commit'])
+        parent=self
+        class API:
+            def api(self,path):
+                if path=='repos/o/r/actions/runs/333':return dict(id=333,run_attempt=2)
+                if path=='repos/o/r/pulls/8':return copy.deepcopy(parent.pull)
+                if path=='repos/o/r/issues/7':return copy.deepcopy(parent.issue)
+                raise AssertionError(path)
+        self.api=API()
+
+    def test_checkpoint_binds_grant_review_and_source_attempt(self):
+        with patch.dict(os.environ,self.env,clear=True):
+            result=a.prepare_adoption_close_record(self.api,dict(source_commit='9'*40),self.g,EVALUATOR,333,self.receipt)
+        self.assertEqual(result['payload']['adoption_sha256'],a.r.digest(self.g))
+        self.assertEqual(result['payload']['review_sha256'],self.g['review']['receipt_sha256'])
+        self.assertEqual(result['payload']['adoption_source'],'9'*40)
+        self.assertEqual(result['payload']['checkpoint']['issue'],7)
+        self.assertEqual(result['payload']['source_attempt'],2)
+
+    def test_changed_context_contract_or_review_refuses(self):
+        for mutate in (lambda:self.env.update(GITHUB_RUN_ATTEMPT='1'),
+                       lambda:self.env.update(GITHUB_WORKFLOW_SHA='f'*40),
+                       lambda:self.issue.update(body='changed'),
+                       lambda:self.receipt.update(decision='fail')):
+            with self.subTest(mutate=mutate):
+                self.setUp();mutate()
+                with patch.dict(os.environ,self.env,clear=True),self.assertRaises(RuntimeError):
+                    a.prepare_adoption_close_record(self.api,dict(source_commit='9'*40),self.g,EVALUATOR,333,self.receipt)
+
+
 class EvidenceTests(unittest.TestCase):
     class API:
         evaluate_evidence=staticmethod(a.ci.evaluate_evidence)
@@ -131,6 +176,16 @@ jobs:
         with patch.object(a.review,'blob',return_value=workflow):
             a.publisher_provenance(API(),g,333,'push')
             with self.assertRaises(RuntimeError):a.publisher_provenance(API(),g,333,'pull_request')
+            with self.assertRaises(RuntimeError):a.publisher_provenance(API(),g,333,'push',completed=True)
+            run.update(status='completed',conclusion='success')
+            class CompletedAPI(API):
+                def pages(self,path,key):return [{'id':334,'name':'adopt','status':'completed','conclusion':'success'}]
+            identity=a.publisher_provenance(CompletedAPI(),g,333,'push',completed=True)
+            self.assertEqual(identity['job_id'],334)
+            class FailedJobAPI(API):
+                def pages(self,path,key):return [{'id':334,'name':'adopt','status':'completed','conclusion':'failure'}]
+            with self.assertRaises(RuntimeError):a.publisher_provenance(FailedJobAPI(),g,333,'push',completed=True)
+            with self.assertRaises(RuntimeError):a.publisher_provenance(CompletedAPI(),g,333,'push')
         with patch.object(a.review,'blob',return_value=workflow.replace('issues: read','issues: write')):
             with self.assertRaises(RuntimeError):a.publisher_provenance(API(),g,333,'push')
 
@@ -183,6 +238,24 @@ class MutationSafetyTests(unittest.TestCase):
         self.assertEqual([entry[2]['state'] for entry in api.writes],['pending','success'])
         self.assertEqual(graphql.call_args.args[2]['input']['expectedHeadOid'],HEAD)
         self.assertEqual(graphql.call_args.args[2]['input']['commitBody'],'Closes #7')
+
+    def test_record_is_emitted_only_after_successful_status(self):
+        g,document,state,env,api=self.setup_run();queued=copy.deepcopy(state)
+        queued['provider']['autoMergeRequest']=dict(mergeMethod='SQUASH',enabledBy={'login':'github-actions','__typename':'Bot'},
+                                                     commitHeadline='Merge PR #8',commitBody='Closes #7')
+        response={'enablePullRequestAutoMerge':{'pullRequest':queued['provider']}}
+        out=io.StringIO()
+        def prepare(*args):
+            self.assertEqual([entry[2]['state'] for entry in api.writes],['pending'])
+            return dict(test='prepared')
+        with patch.dict(os.environ,env,clear=True),patch.object(a,'verify_grant_attestation'),\
+             patch.object(a,'publisher_provenance'),patch.object(a,'evaluate',side_effect=[state,state,queued]),\
+             patch.object(a.native,'graphql',return_value=response),\
+             patch.object(a.native,'provider_pull',return_value=queued['provider']),contextlib.redirect_stdout(out):
+            result=a.enqueue(api,'o/r',EVALUATOR,333,'push',grant_loader=lambda:document,prepare_record=prepare)
+        self.assertEqual(result['state'],'queued')
+        self.assertEqual([entry[2]['state'] for entry in api.writes],['pending','success'])
+        self.assertIn('AW_POST_MERGE_CHECKPOINT_V1',out.getvalue())
 
 class AttestationTests(unittest.TestCase):
     def setup_attestation(self):

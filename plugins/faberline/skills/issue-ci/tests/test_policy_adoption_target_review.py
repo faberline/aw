@@ -262,7 +262,37 @@ class ReviewProtocolTests(unittest.TestCase):
         root=Path(m.__file__).resolve().parents[5]
         rows=[dict(role=role,path=path,content=(root/path).read_text())
               for role,path in m.FRAMEWORK_SOURCES]
+        path=m.FRAMEWORK_ROOT+'post_merge_observation.py'
+        rows += [dict(role=role,path=path,content=(root/path).read_text()) for role in ('candidate','evaluator')]
+        rows += [dict(role='candidate',path=m.FRAMEWORK_ROOT+name,content=(root/m.FRAMEWORK_ROOT/name).read_text())
+                 for name in m.EVALUATOR_FRAMEWORK_FILES]
         m.framework_dependency_closure(rows)
+
+    def test_optional_close_observer_is_bound_per_immutable_revision(self):
+        candidate,evaluator='c'*40,'e'*40
+        def blob(api,repo,path,ref):
+            if path.endswith('/native_merge.py') and ref==candidate:
+                return "x=review.sibling('post_merge_observation')"
+            return 'pass'
+        with patch.object(m.a.review,'blob',side_effect=blob):
+            rows=m.framework_sources(None,candidate,evaluator)
+        found=[row for row in rows if row['path'].endswith('/post_merge_observation.py')]
+        self.assertEqual([(row['role'],row['ref']) for row in found],[('candidate',candidate)])
+        with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+            m.framework_dependency_closure([row for row in rows if row not in found])
+
+    def test_observer_adoption_dependencies_are_reviewed_for_candidate(self):
+        candidate,evaluator='c'*40,'e'*40
+        def blob(api,repo,path,ref):
+            if path.endswith('/native_merge.py') and ref==candidate:
+                return "x=review.sibling('post_merge_observation')"
+            if path.endswith('/post_merge_observation.py'):
+                return "x=review.sibling('policy_adoption')"
+            return 'pass'
+        with patch.object(m.a.review,'blob',side_effect=blob):
+            rows=m.framework_sources(None,candidate,evaluator)
+        paths={row['path'] for row in rows if row['role']=='candidate'}
+        self.assertTrue(all(m.FRAMEWORK_ROOT+name in paths for name in m.EVALUATOR_FRAMEWORK_FILES))
 
 
 class PreflightTests(unittest.TestCase):

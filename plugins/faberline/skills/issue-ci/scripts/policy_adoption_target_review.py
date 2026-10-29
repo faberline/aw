@@ -132,6 +132,41 @@ def framework_sources(api,candidate_ref,evaluator_ref):
         raw=content.encode('utf-8')
         blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
         result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
+    # Older reviewed revisions predate this module. Include it at each ref
+    # precisely when that immutable controller statically imports it. The
+    # dependency-closure check below still rejects any unlisted dependency.
+    for role,ref in refs.items():
+        controllers=[row for row in result if row['role']==role and row['path']==FRAMEWORK_ROOT+'native_merge.py']
+        need(len(controllers)==1,'target_framework_dependency_missing')
+        try:
+            tree=ast.parse(controllers[0]['content'])
+        except (SyntaxError,ValueError,TypeError):
+            raise RuntimeError('target_framework_source_parse') from None
+        uses=any(isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute)
+                 and node.func.attr=='sibling' and node.args and isinstance(node.args[0],ast.Constant)
+                 and node.args[0].value=='post_merge_observation' for node in ast.walk(tree))
+        if uses:
+            path=FRAMEWORK_ROOT+'post_merge_observation.py'
+            content=a.review.blob(api,a.GRANTS_REPO,path,ref)
+            raw=content.encode('utf-8')
+            blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+            result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
+            try:
+                observer_tree=ast.parse(content)
+            except (SyntaxError,ValueError,TypeError):
+                raise RuntimeError('target_framework_source_parse') from None
+            uses_adoption=any(isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute)
+                              and node.func.attr=='sibling' and node.args and isinstance(node.args[0],ast.Constant)
+                              and node.args[0].value=='policy_adoption' for node in ast.walk(observer_tree))
+            if uses_adoption:
+                for name in EVALUATOR_FRAMEWORK_FILES:
+                    path=FRAMEWORK_ROOT+name
+                    if any(row['role']==role and row['path']==path for row in result):
+                        continue
+                    content=a.review.blob(api,a.GRANTS_REPO,path,ref)
+                    raw=content.encode('utf-8')
+                    blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+                    result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
     framework_dependency_closure(result)
     return result
 

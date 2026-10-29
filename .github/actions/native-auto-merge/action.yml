@@ -1,5 +1,5 @@
 name: Unified CI handoff, Claude outcome and native auto-merge
-description: Authenticate the exact current review; return rejected issues to todo or merge qualified passing PRs with native issue closure.
+description: Authenticate the exact current review; return rejected issues to todo or request native merge for qualified passing PRs.
 runs:
   using: composite
   steps:

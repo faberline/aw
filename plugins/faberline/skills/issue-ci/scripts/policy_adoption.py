@@ -186,7 +186,7 @@ def review_provenance(api, grant, inventory, log_reader):
     return review_result(grant,records[0],inventory)
 
 
-def publisher_provenance(api, grant, run_id, event):
+def publisher_provenance(api, grant, run_id, event, completed=False):
     spec=grant['publisher'];repo=grant['repo'];ref=spec['source_commit']
     need(review.integer(run_id) and event=='push', 'publisher_event')
     raw=review.blob(api,repo,spec['workflow_path'],ref,spec['workflow_blob'])
@@ -211,12 +211,21 @@ def publisher_provenance(api, grant, run_id, event):
     need(run.get('id')==run_id and run.get('workflow_id')==spec['workflow_id']
          and run.get('path')==spec['workflow_path'] and run.get('head_sha')==ref
          and run.get('head_repository',{}).get('full_name')==repo and run.get('event')==event
-         and run.get('head_branch')==spec['branch'] and run.get('status') in ('queued','in_progress')
+         and run.get('head_branch')==spec['branch']
          and review.integer(run.get('run_attempt')), 'publisher_run_identity')
+    if completed:
+        need(run.get('status')=='completed' and run.get('conclusion')=='success', 'publisher_run_identity')
+    else:
+        need(run.get('status') in ('queued','in_progress'), 'publisher_run_identity')
     jobs=api.pages(f"repos/{repo}/actions/runs/{run_id}/attempts/{run['run_attempt']}/jobs",'jobs')
     matches=[j for j in jobs if j.get('name')==spec['job']]
-    need(len(matches)==1 and review.integer(matches[0].get('id'))
-         and matches[0].get('status')=='in_progress', 'publisher_job_identity')
+    need(len(matches)==1 and review.integer(matches[0].get('id')), 'publisher_job_identity')
+    if completed:
+        need(matches[0].get('status')=='completed' and matches[0].get('conclusion')=='success',
+             'publisher_job_identity')
+    else:
+        need(matches[0].get('status')=='in_progress', 'publisher_job_identity')
+    return dict(run_id=run_id,run_attempt=run['run_attempt'],job_id=matches[0]['id'],source_commit=ref)
 
 
 def candidate_policy(api, grant):
@@ -444,7 +453,29 @@ def verify_grant_attestation(api, document, grant, evaluator, log_reader=r.job_l
     return row
 
 
-def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_grants, log_reader=r.job_log):
+def prepare_adoption_close_record(api, document, grant, evaluator, run_id, receipt):
+    """Snapshot a separately granted target; this does not close its issue."""
+    repo,number,head=grant['repo'],grant['pr'],grant['head']
+    source=grant['publisher']['source_commit']
+    attempt=os.environ.get('GITHUB_RUN_ATTEMPT','')
+    need(os.environ.get('GITHUB_ACTIONS')=='true' and os.environ.get('GITHUB_EVENT_NAME')=='push'
+         and os.environ.get('GITHUB_REPOSITORY')==repo and os.environ.get('GITHUB_RUN_ID')==str(run_id)
+         and os.environ.get('GITHUB_WORKFLOW_SHA')==source and re.fullmatch(r'[1-9][0-9]*',attempt)
+         and review.integer(run_id) and grant.get('evaluator')==evaluator and review.sha(evaluator)
+         and r.digest(receipt)==grant['review']['receipt_sha256'], 'adoption_close_source')
+    run=api.api(f'repos/{repo}/actions/runs/{run_id}')
+    need(run.get('id')==run_id and run.get('run_attempt')==int(attempt), 'adoption_close_attempt')
+    pull=api.api(f'repos/{repo}/pulls/{number}')
+    issue=api.api(f"repos/{repo}/issues/{grant['issue']}")
+    observation=review.sibling('post_merge_observation')
+    snapshot=observation.capture(repo,number,head,grant['base'],grant['base_ref'],pull,issue,
+                                 grant['issue_sha256'],grant['pr_sha256'])
+    return observation.record(snapshot,run_id,int(attempt),source,evaluator,
+        grant['review']['run_id'],grant['review']['receipt_sha256'],r.digest(grant),document['source_commit'])
+
+
+def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_grants, log_reader=r.job_log,
+            prepare_record=None):
     """Queue only after separate grant, exact CI and independent review verification."""
     need(not os.environ.get('CLAUDE_CODE_OAUTH_TOKEN'), 'model_credential_in_publisher')
     document=grant_loader()
@@ -491,9 +522,14 @@ def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_gra
              'adoption_evidence_changed')
         publisher_provenance(api,grant,run_id,event)
         native.queued_request(fresh['provider'],p,headline,body)
+        checkpoint=(prepare_record(api,document,grant,evaluator,run_id,fresh['receipt'])
+                    if prepare_record is not None else None)
         api.api(f'repos/{repo}/statuses/{head}',method='POST',data=dict(
             state='success',context=p['status_context'],description='Reviewed policy, current CI and Claude verified',
             target_url=f"https://github.com/{repo}/actions/runs/{grant['review']['run_id']}"))
+        if checkpoint is not None:
+            observation=review.sibling('post_merge_observation')
+            print(observation.MARKER+r.canonical(checkpoint),flush=True)
     except Exception:
         # The pending status blocks an abandoned request; no blind retry.
         return dict(state='held_after_pending',head=head)
@@ -516,7 +552,7 @@ def main():
     need(review.sha(evaluator) and isinstance(repo,str)
          and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',repo)
          and re.fullmatch(r'[1-9][0-9]*',run), 'publisher_input')
-    result=enqueue(ci,repo,evaluator,int(run),event)
+    result=enqueue(ci,repo,evaluator,int(run),event,prepare_record=prepare_adoption_close_record)
     print(r.canonical(result),flush=True)
     return 0 if result['state'] in ('queued','merged') else 2
 

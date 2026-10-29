@@ -46,11 +46,12 @@ DISABLE = """mutation($input:DisablePullRequestAutoMergeInput!){
     autoMergeRequest{mergeMethod enabledBy{login __typename}} mergeCommit{oid}
   }}
 }"""
-EVENTS = ("workflow_run", "issues", "pull_request_target")
+EVENTS = ("workflow_run", "issues", "pull_request_target", "repository_dispatch")
 TRIGGERS = {
     "workflow_run": {"types": ["requested", "in_progress", "completed"]},
     "issues": {"types": ["edited", "reopened", "closed", "labeled", "unlabeled"]},
     "pull_request_target": {"types": ["opened", "reopened", "synchronize", "edited", "ready_for_review", "converted_to_draft"]},
+    "repository_dispatch": {"types": ["aw-verified-merge-reconcile"]},
 }
 
 
@@ -324,8 +325,38 @@ def qualification(api, repo, number, context, document):
     return linked
 
 
+def prepare_close_record(api, repo, number, head, document, evaluator, review_run, receipt):
+    """Prepare an exact checkpoint only in a trusted default-branch wake."""
+    event = os.environ.get('GITHUB_EVENT_NAME')
+    run, attempt = os.environ.get('GITHUB_RUN_ID', ''), os.environ.get('GITHUB_RUN_ATTEMPT', '')
+    need(os.environ.get('GITHUB_ACTIONS') == 'true'
+         and event in ('issues', 'workflow_run', 'repository_dispatch')
+         and os.environ.get('GITHUB_REPOSITORY') == repo
+         and os.environ.get('GITHUB_WORKFLOW_SHA') == document['source_commit']
+         and review.sha(document['source_commit']) and review.sha(evaluator) and review.integer(review_run)
+         and re.fullmatch(r'[1-9][0-9]*', run) and re.fullmatch(r'[1-9][0-9]*', attempt),
+         'close_source_context')
+    need(receipt.get('payload', {}).get('producer', {}).get('run_id') == review_run,
+         'close_review_run_changed')
+    pull = api.api(f'repos/{repo}/pulls/{number}')
+    issue_number = review.linked_issue(pull)
+    issue = api.api(f'repos/{repo}/issues/{issue_number}')
+    observation = review.sibling('post_merge_observation')
+    return observation.capture_verified(repo, number, head, pull, issue, receipt,
+        int(run), int(attempt), document['source_commit'], evaluator)
+
+
+def dispatch_default_wake(api, repo, results):
+    """Wake one default-branch reconciliation for any deferred candidates."""
+    if not any(row.get('state') == 'default_wake_required' for row in results):
+        return False
+    api.api(f'repos/{repo}/dispatches', method='POST',
+            data=dict(event_type='aw-verified-merge-reconcile'))
+    return True
+
+
 def enqueue(api, repo, number, head, load_document, evaluator, review_run,
-            verify=review.verify_review):
+            verify=review.verify_review, prepare_record=None):
     """Native request + required head status form the cross-run write protocol.
 
     The caller must be the pinned merge producer in the repository-wide
@@ -383,10 +414,15 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
         final = provider_pull(api, repo, number)
         binding(final, context)
         queued_request(final, p, headline, body)
+        checkpoint = (prepare_record(api, repo, number, head, document, evaluator, review_run, fresh)
+                      if prepare_record is not None else None)
         api.api(f"repos/{repo}/statuses/{head}", method="POST", data=dict(
             state="success", context=p["status_context"],
             description="Exact-head Claude PASS and qualified CI verified",
             target_url=f"https://github.com/{repo}/actions/runs/{review_run}"))
+        if checkpoint is not None:
+            observation = review.sibling('post_merge_observation')
+            print(observation.MARKER + review.r.canonical(checkpoint), flush=True)
     except Exception:
         # A response can be lost after a write. Observe provider state on the
         # next wake; never retry a queue or success write in this attempt.
@@ -486,7 +522,8 @@ def return_todo(api, repo, number, head, load_document, evaluator, run_id, verif
                 decision=receipt["payload"]["result"]["decision"])
 
 
-def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=None, ci_process=None):
+def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=None, ci_process=None,
+              defer_positive=False, prepare_record=None):
     """Every wake covers the complete queue; one refused PR cannot drop others."""
     document = load_document()
     policy(document, require_qualification=False)
@@ -527,8 +564,13 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
                         attempt["id"], result_verify))
                     results.append(row)
                     continue
-            row.update(enqueue(api, repo, number, head, load_document, evaluator,
-                attempt["id"], verify=verify))
+            if defer_positive:
+                need(result_verify is not None and receipt['payload']['result']['decision'] == 'pass',
+                     'review_not_pass')
+                row.update(state="default_wake_required")
+            else:
+                row.update(enqueue(api, repo, number, head, load_document, evaluator,
+                    attempt["id"], verify=verify, prepare_record=prepare_record))
         except Exception as error:
             code = str(error)
             row["reason"] = code if isinstance(error, review.Refused) and re.fullmatch(
@@ -565,7 +607,11 @@ def main():
              and review.integer(wake.get("id")), "merge_wake_identity")
     index = review.sibling("native_review_index")
     tracker = index.Session(api, repo, load, evaluator)
-    results = reconcile(api, repo, load, evaluator, tracker.attempts, tracker.verify, tracker.result, api.process_head)
+    results = reconcile(api, repo, load, evaluator, tracker.attempts, tracker.verify, tracker.result, api.process_head,
+                        defer_positive=event_name == 'pull_request_target', prepare_record=prepare_close_record)
+    # PR-target runs may report the candidate head as their run SHA. Wake a
+    # default-branch writer, which must revalidate the entire queue.
+    dispatch_default_wake(api, repo, results)
     print("AW_NATIVE_MERGE_RECONCILIATION_V1 " + review.r.canonical(dict(
         version=1, repo=repo, producer_run=int(current), results=results)))
     return 2 if any(row["state"] == "held_after_pending" for row in results) else 0

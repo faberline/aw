@@ -102,7 +102,7 @@ class CombinedHandoffTests(unittest.TestCase):
             assert token==owner
             return dict(owner=token,host=socket.gethostname(),pid=999999,birth='known fixture process',released=False)
         def invoke(args):
-            with patch.object(sys,'argv',['work.py',*args]),patch.dict(os.environ,ISSUE_WORK_OWNER=owner,ISSUE_MAIN_EXCLUSIVE_OWNER=owner),patch.object(work,'run',side_effect=run),patch.object(work,'branch_exists',side_effect=exists),patch.object(work.queue,'Client',return_value=client),patch.object(work.tree_state,'owner_record',side_effect=process_identity),contextlib.redirect_stdout(io.StringIO()) as output:
+            with patch.object(sys,'argv',['work.py',*args]),patch.dict(os.environ,ISSUE_WORK_OWNER=owner,ISSUE_MAIN_EXCLUSIVE_OWNER=owner),patch.object(work,'run',side_effect=run),patch.object(work,'branch_exists',side_effect=exists),patch.object(work.queue,'Client',return_value=client),patch.object(work.tree_state,'owner_record',side_effect=process_identity),patch.object(work.worker_guard,'read_policy',return_value=None),patch.object(work.worker_guard,'require_no_legacy_guard'),contextlib.redirect_stdout(io.StringIO()) as output:
                 result=work.main()
             self.assertEqual(result,0,output.getvalue())
             return output.getvalue()
