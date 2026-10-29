@@ -392,6 +392,24 @@ def collect(api, repo, number, head, load_document, evaluator, include_sources=F
          and text(issue.get("body"), 65536) and text(issue.get("title"), 1000)
          and text(issue.get("updated_at"), 100), "issue_contract_missing")
     issue = {key: issue[key] for key in ("number", "title", "body", "updated_at")}
+    qualification_v2 = None
+    if document["config"].get("qualification", {}).get("version") == 2:
+        # Enforce v2 here as well as in the surrounding workflow. Calling the
+        # review action directly must never reach a paid model on a held issue.
+        scoped = api.qualify_config(repo, pull, document["config"], files)
+        scoped_context = scoped.get("_qualification_context", {})
+        contract = scoped_context.get("contract") or {}
+        need(contract.get("issue") == issue_number
+             and contract.get("title_sha256") == hashlib.sha256(issue["title"].encode()).hexdigest()
+             and contract.get("body_sha256") == hashlib.sha256(issue["body"].encode()).hexdigest(),
+             "issue_qualification_contract_changed")
+        need(not scoped_context.get("issues") and not scoped_context.get("untrusted_workflows")
+             and not scoped.get("qualification_blockers"), "issue_qualification_not_ready")
+        evidence = api.evaluate_evidence(scoped["workflows"], api.snapshot(repo, head, scoped))
+        need(not evidence["failures"] and not evidence["pending"], "issue_qualification_not_ready")
+        # Failure-only controls lifecycle/merge authority, not a negative review.
+        # It must remain possible to return a rejected issue to todo.
+        qualification_v2 = scoped_context
     if source_plan is not None:
         validate_plan(source_plan, issue)
     trees = {ref: read_tree(api, repo, ref) for ref in {pull["base"]["sha"], head}}
@@ -425,6 +443,8 @@ def collect(api, repo, number, head, load_document, evaluator, include_sources=F
                    requirement_plan=source_plan, diff_sha256=r.digest(contents),
                    changed_ranges=changed_ranges(contents),
                    qualification_blockers=document["config"].get("qualification_blockers", []))
+    if qualification_v2 is not None:
+        context["qualification_v2"] = qualification_v2
     # Fail before any paid planning when context-bound enums cannot fit the
     # CLI's single schema argv. Reserve covers <=32 source IDs,16 claim IDs/hash.
     reserve = SCHEMA_PLAN_RESERVE if source_plan is None else 0

@@ -97,14 +97,21 @@ def qualify_config(repo, pr, config, files=None):
     module = qualification_module()
     if files is None:
         files = pages(f'repos/{repo}/pulls/{pr["number"]}/files')
-    plan = module.select(config, pr, files)
+    issue = None
+    if config['qualification'].get('version') == 2:
+        number = module.linked_issue(pr)
+        if number is not None and str(number) in config['qualification'].get('contracts', {}):
+            if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo):
+                raise RuntimeError('invalid issue repository')
+            issue = api(f'repos/{repo}/issues/{number}')
+    plan = module.select(config, pr, files, issue)
     definitions = {}
     for workflow in plan['workflows']:
         for ref in (pr['head']['sha'], plan['base']):
             if isinstance(ref, str) and re.fullmatch('[0-9a-f]{40}', ref):
                 definitions[workflow['path'], ref] = api(
                     f'repos/{repo}/contents/{workflow["path"]}?ref={ref}')
-    return module.scoped_config(config, pr, files, definitions)
+    return module.scoped_config(config, pr, files, definitions, issue)
 
 
 def evaluate_evidence(workflows, snapshots):

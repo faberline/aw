@@ -1,0 +1,13 @@
+name: Inspect candidate issue contract as data
+description: Read exact-head proposed issue contract metadata. This does not authorize a policy or qualify a PR.
+runs:
+  using: composite
+  steps:
+    - name: Inspect proposed issue contract without executing candidate code
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_HOST: github.com
+      run: |
+        set -euo pipefail
+        exec python3 -I -B "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/proposal_contract.py"

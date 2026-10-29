@@ -12,10 +12,14 @@ one-off reviews are not receipts from the formal default-branch producer.
 
 ## Required consumer state
 
-For merge approval, the consumer needs a separately reviewed complete qualification contract v1,
+For merge approval, the consumer needs a separately reviewed complete qualification contract,
 `lifecycle_mode: full`, no unresolved global qualification blockers, and the
 existing nonempty unit, functional/E2E and performance selection rules. Unknown
-paths, missing evidence and unapproved applicability stay blocked. Changing a
+paths, missing evidence and unapproved applicability stay blocked. Version 2
+also binds the linked source issue title and body and requires an explicit
+per-category decision. Unknown or unresolved issue requirements block paid
+review and merging. Inspecting a proposed contract in PR CI does not approve it
+or authorize a protected gate change. Changing a
 label or clearing a string list does not supply this evidence.
 
 The default-branch `claude_final_review` policy binds the review producer.
@@ -233,3 +237,30 @@ pending handoff requires an existing managed doing/done label. This keeps the
 old lifecycle label until ready is durable, so an agent cannot claim a sole
 todo during that window. Unmanaged issues remain held instead of guessing a
 lifecycle or creating a pending sole-todo race.
+
+### Source issue contract v2
+
+A v2 qualification policy retains every v1 path rule, trusted workflow,
+check ID and protected path. It adds a `contracts` object keyed by the
+canonical linked issue number. Each entry has these exact fields:
+
+```json
+{
+  "title_sha256": "<SHA-256 of the exact UTF-8 issue title>",
+  "body_sha256": "<SHA-256 of the exact UTF-8 issue body>",
+  "applicability": {
+    "unit": {"status": "required", "checks": ["unit-check"], "reason": "Issue requires unit tests"},
+    "functional_e2e": {"status": "unknown", "checks": [], "reason": "Source-specific gate has no evidence"},
+    "performance": {"status": "not_applicable", "checks": [], "reason": "Reviewed issue has no performance requirement"}
+  },
+  "additional": [],
+  "unresolved": ["Missing source-specific functional gate"]
+}
+```
+
+A required check must exist in the policy and have the named category. Each
+reason must describe the reviewed issue, not merely assume a gate is absent.
+`unknown` or a nonempty `unresolved` list holds qualification. Required and
+additional checks add to the path-selected set. Neither an exemption nor a
+candidate inspection removes existing checks. The qualified result binds the
+issue number, exact content hashes, reviewed contract hash, head and base.
