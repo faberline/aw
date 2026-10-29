@@ -698,17 +698,21 @@ def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_gra
         if current['provider'].get('autoMergeRequest') is None:
             history=review.sibling('request_history') if guarded is not None else None
             prior_history=history.stable(api,repo,number) if history is not None else None
+            mutation_id=guarded['intent']['sha256'] if guarded is not None else r.digest(grant)
             result=native.graphql(api,native.QUEUE,dict(input=dict(
                 pullRequestId=current['provider']['id'],expectedHeadOid=head,
-                mergeMethod=p['merge_method'],clientMutationId=r.digest(grant),
+                mergeMethod=p['merge_method'],clientMutationId=mutation_id,
                 commitHeadline=headline,commitBody=body)))
-            queued=result.get('enablePullRequestAutoMerge',{}).get('pullRequest')
+            mutation=result.get('enablePullRequestAutoMerge',{})
+            queued=mutation.get('pullRequest')
             need(isinstance(queued,dict) and queued.get('headRefOid')==head, 'queue_response')
             native.queued_request(queued,p,headline,body)
             if history is not None:
                 observed=history.stable(api,repo,number)
                 record=history.bind(prior_history,observed,queued,guarded['intent'],guarded['policy'],context['base'])
+                ack=history.acknowledgement(mutation,record,guarded['intent'],guarded['policy'])
                 print(history.MARKER+r.canonical(record),flush=True)
+                print(history.ACK_MARKER+r.canonical(ack),flush=True)
         else:
             need(guarded is None,'guard_request_owner_unknown')
             native.queued_request(current['provider'],p,headline,body)

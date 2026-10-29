@@ -20,7 +20,7 @@ _spec.loader.exec_module(review)
 need = review.need
 
 QUEUE = """mutation($input:EnablePullRequestAutoMergeInput!){
-  enablePullRequestAutoMerge(input:$input){pullRequest{
+  enablePullRequestAutoMerge(input:$input){clientMutationId pullRequest{
     id state headRefOid baseRefOid baseRefName
     autoMergeRequest{mergeMethod enabledAt enabledBy{login __typename} commitHeadline commitBody}
     mergeCommit{oid}
@@ -560,11 +560,13 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
         if current.get("autoMergeRequest") is None:
             history=review.sibling('request_history') if guarded_claim is not None else None
             prior_history=history.stable(api,repo,number) if history is not None else None
+            mutation_id=guarded_claim['intent']['sha256'] if guarded_claim is not None else receipt['sha256']
             result = graphql(api, QUEUE, dict(input=dict(
                 pullRequestId=before["id"], expectedHeadOid=head,
-                mergeMethod=p["merge_method"], clientMutationId=receipt["sha256"],
+                mergeMethod=p["merge_method"], clientMutationId=mutation_id,
                 commitHeadline=headline, commitBody=body)))
-            queued = result.get("enablePullRequestAutoMerge", {}).get("pullRequest")
+            mutation = result.get("enablePullRequestAutoMerge", {})
+            queued = mutation.get("pullRequest")
             need(isinstance(queued, dict) and queued.get("headRefOid") == head,
                  "native_request_response")
             queued_request(queued, p, headline, body)
@@ -572,7 +574,9 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
                 observed=history.stable(api,repo,number)
                 record=history.bind(prior_history,observed,queued,guarded_claim['intent'],
                                     guarded_claim['policy'],context['base'])
+                ack=history.acknowledgement(mutation,record,guarded_claim['intent'],guarded_claim['policy'])
                 print(history.MARKER+review.r.canonical(record),flush=True)
+                print(history.ACK_MARKER+review.r.canonical(ack),flush=True)
         else:
             need(guarded_claim is None,'guard_request_owner_unknown')
             queued_request(current, p, headline, body)

@@ -28,10 +28,12 @@ class PerPRNativeTests(unittest.TestCase):
         self.intent=per_pr.guard.build('o/r',1,fixture.HEAD,7,self.policy,300,1,lambda n:next(values))
         self.claim=dict(policy=self.policy,intent=self.intent)
 
-    def run_writer(self,valid_response,valid_pending=True,history_failure=False):
+    def run_writer(self,valid_response,valid_pending=True,history_failure=False,invalid_ack=False):
         original=self.p.api
         def api(path,method='GET',data=None):
             result=original(path,method,data)
+            if path=='graphql' and method=='POST' and 'enablePullRequestAutoMerge' in data['query'] and invalid_ack:
+                result['data']['enablePullRequestAutoMerge']['clientMutationId']='f'*64
             if method=='POST' and isinstance(data,dict) and data.get('state') in ('pending','success'):
                 self.p.statuses[0]['creator']=dict(id=41898282,type='Bot',login='github-actions[bot]')
                 if data['state']=='pending' and valid_pending or data['state']=='success' and valid_response:
@@ -42,8 +44,12 @@ class PerPRNativeTests(unittest.TestCase):
             calls.append([item[0] for item in self.p.writes])
             if history_failure and len(calls)==2:raise RuntimeError('timeline unknown')
             return dict(repo='o/r',pr=1,events=[])
+        def acknowledgement(response,record,intent,policy):
+            if response.get('clientMutationId')!=intent['sha256']:raise RuntimeError('request_ack_unknown')
+            return dict(authorizes_merge=False)
         history=SimpleNamespace(stable=history_read,bind=lambda *args:dict(authorizes_merge=False),
-                                MARKER='AW_REQUEST_HISTORY_OBSERVATION_V1 ')
+                                acknowledgement=acknowledgement,MARKER='AW_REQUEST_HISTORY_OBSERVATION_V1 ',
+                                ACK_MARKER='AW_REQUEST_MUTATION_ACK_V1 ')
         sibling=m.review.sibling
         def select(name):return history if name=='request_history' else sibling(name)
         with patch.dict(os.environ,self.env,clear=True),patch.object(m.review,'sibling',side_effect=select), \
@@ -62,6 +68,16 @@ class PerPRNativeTests(unittest.TestCase):
         self.assertEqual(per_pr.verify_status(self.p,'o/r',fixture.HEAD,bound,self.intent)['payload']['review_run'],200)
         self.assertIn('AW_PREPARED_STATUS_V1 ',log)
         self.assertIn('AW_REQUEST_HISTORY_OBSERVATION_V1 ',log)
+        self.assertIn('AW_REQUEST_MUTATION_ACK_V1 ',log)
+        mutation=next(item[1]['input'] for item in self.p.writes if item[0]=='queue')
+        self.assertEqual(mutation['clientMutationId'],self.intent['sha256'])
+
+    def test_mismatched_mutation_ack_never_publishes_success(self):
+        result,log=self.run_writer(True,invalid_ack=True)
+        self.assertEqual(result['state'],'held_after_pending')
+        self.assertEqual([item[0] for item in self.p.writes],['pending','queue'])
+        self.assertNotIn('AW_REQUEST_MUTATION_ACK_V1 ',log)
+        self.assertNotIn(per_pr.MARKER,log)
 
     def test_ambiguous_status_response_cannot_emit_checkpoint(self):
         result,log=self.run_writer(False)

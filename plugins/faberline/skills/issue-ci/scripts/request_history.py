@@ -17,6 +17,7 @@ need=guard.need
 MAX_ITEMS=10000
 TYPES=('AutoSquashEnabledEvent','AutoRebaseEnabledEvent','AutoMergeEnabledEvent','AutoMergeDisabledEvent')
 MARKER='AW_REQUEST_HISTORY_OBSERVATION_V1 '
+ACK_MARKER='AW_REQUEST_MUTATION_ACK_V1 '
 QUERY='''query($owner:String!,$name:String!,$number:Int!,$after:String){
   repository(owner:$owner,name:$name){nameWithOwner pullRequest(number:$number){number
     timelineItems(first:100,after:$after){totalCount nodes{__typename
@@ -158,3 +159,55 @@ def unchanged(value,current,pull,intent,policy,base):
          and events[-1]['actor_login']=='github-actions'
          and events[-1]['created_at']==record['request']['enabled_at'],'request_history_changed')
     return dict(state='observed_unchanged',authorizes_merge=False)
+
+
+def acknowledgement(response,observation,intent,policy):
+    """Bind a returned client ID to this guard without authorizing a write.
+
+    GitHub echoes clientMutationId in the mutation response, not in a later
+    auto-merge request query. The caller must authenticate the producer log.
+    This observation alone cannot establish request authorship or prevent a
+    later replacement, and does not authorize merge, cancellation or close.
+    """
+    p=guard.validate(intent,policy)
+    need(isinstance(response,dict) and response.get('clientMutationId')==intent['sha256'],
+         'request_ack_unknown')
+    need(isinstance(observation,dict) and set(observation)=={'payload','sha256','authorizes_merge'}
+         and observation['authorizes_merge'] is False and isinstance(observation['payload'],dict)
+         and observation['sha256']==hashlib.sha256(canonical(observation['payload']).encode()).hexdigest()
+         and observation['payload'].get('guard_sha256')==intent['sha256']
+         and all(observation['payload'].get(k)==p[k] for k in ('repo','pr','issue','owner')),
+         'request_ack_unknown')
+    payload=dict(version=1,repo=p['repo'],pr=p['pr'],head=p['head'],issue=p['issue'],owner=p['owner'],
+                 run=p['run'],attempt=p['attempt'],guard_sha256=intent['sha256'],
+                 client_mutation_id=response['clientMutationId'],observation_sha256=observation['sha256'])
+    return dict(payload=payload,sha256=hashlib.sha256(canonical(payload).encode()).hexdigest(),
+                authorizes_merge=False)
+
+
+def find_acknowledgement(log,observation,intent,policy):
+    """Find one bound ACK in a log; the caller must authenticate that log."""
+    p=guard.validate(intent,policy);matches=[]
+    for value in guard.review.r.records(log,ACK_MARKER):
+        need(isinstance(value,dict) and set(value)=={'payload','sha256','authorizes_merge'}
+             and value['authorizes_merge'] is False and isinstance(value['payload'],dict)
+             and value['sha256']==hashlib.sha256(canonical(value['payload']).encode()).hexdigest(),
+             'request_ack_unknown')
+        row=value['payload']
+        need(set(row)=={'version','repo','pr','head','issue','owner','run','attempt','guard_sha256',
+                        'client_mutation_id','observation_sha256'} and type(row['version']) is int
+             and row['version']==1 and isinstance(row['repo'],str)
+             and guard.provider.ledger.REPO.fullmatch(row['repo'])
+             and all(type(row[k]) is int and 0<row[k]<2**53 for k in ('pr','issue','run','attempt'))
+             and isinstance(row['head'],str) and guard.provider.ledger.SHA.fullmatch(row['head'])
+             and isinstance(row['owner'],str) and len(row['owner'])==56
+             and guard.provider.ledger.OWNER.fullmatch(row['owner'])
+             and all(isinstance(row[k],str) and re.fullmatch(r'[0-9a-f]{64}',row[k])
+                     for k in ('guard_sha256','client_mutation_id','observation_sha256'))
+             and row['client_mutation_id']==row['guard_sha256'],'request_ack_unknown')
+        if (row.get('repo'),row.get('pr'),row.get('head'),row.get('owner'))==(p['repo'],p['pr'],p['head'],p['owner']):
+            need(value==acknowledgement(dict(clientMutationId=row['client_mutation_id']),
+                                         observation,intent,policy),'request_ack_unknown')
+            matches.append(value)
+    need(len(matches)<=1,'request_ack_duplicate')
+    return matches[0] if matches else None

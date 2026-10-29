@@ -105,7 +105,8 @@ class Provider:
             inputs=data["variables"]["input"]
             self.native["autoMergeRequest"] = dict(mergeMethod="SQUASH", enabledAt="2026-10-29T00:00:00Z",
                 enabledBy=dict(login="github-actions", __typename="Bot"),commitHeadline=inputs["commitHeadline"],commitBody=inputs["commitBody"])
-            return dict(data=dict(enablePullRequestAutoMerge=dict(pullRequest=copy.deepcopy(self.native))))
+            return dict(data=dict(enablePullRequestAutoMerge=dict(
+                clientMutationId=inputs.get('clientMutationId'),pullRequest=copy.deepcopy(self.native))))
         if method == "POST":
             assert path == "repos/o/r/statuses/" + HEAD
             self.writes.append((data["state"], copy.deepcopy(data)))

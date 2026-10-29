@@ -53,6 +53,37 @@ class RequestHistoryTests(unittest.TestCase):
         self.assertEqual(m.unchanged(value,self.after,self.pull,self.intent,self.policy,BASE),
                          dict(state='observed_unchanged',authorizes_merge=False))
 
+    def test_acknowledgement_binds_the_guard_but_never_authorizes_merge(self):
+        observed=m.bind(self.before,self.after,self.pull,self.intent,self.policy,BASE)
+        ack=m.acknowledgement(dict(clientMutationId=self.intent['sha256']),observed,self.intent,self.policy)
+        self.assertFalse(ack['authorizes_merge'])
+        self.assertEqual(ack['payload']['guard_sha256'],self.intent['sha256'])
+        self.assertEqual(ack['payload']['observation_sha256'],observed['sha256'])
+        self.assertEqual((ack['payload']['run'],ack['payload']['attempt']),(123,2))
+
+    def test_missing_changed_or_forged_acknowledgement_is_refused(self):
+        observed=m.bind(self.before,self.after,self.pull,self.intent,self.policy,BASE)
+        for response in ({},None,dict(clientMutationId='f'*64)):
+            with self.subTest(response=response),self.assertRaisesRegex(RuntimeError,'request_ack_unknown'):
+                m.acknowledgement(response,observed,self.intent,self.policy)
+        forged=copy.deepcopy(observed);forged['payload']['owner']='f'*56
+        with self.assertRaisesRegex(RuntimeError,'request_ack_unknown'):
+            m.acknowledgement(dict(clientMutationId=self.intent['sha256']),forged,self.intent,self.policy)
+
+    def test_logged_ack_is_bound_but_never_authenticates_its_source(self):
+        observed=m.bind(self.before,self.after,self.pull,self.intent,self.policy,BASE)
+        ack=m.acknowledgement(dict(clientMutationId=self.intent['sha256']),observed,self.intent,self.policy)
+        line=m.ACK_MARKER+m.canonical(ack)
+        found=m.find_acknowledgement(line,observed,self.intent,self.policy)
+        self.assertEqual(found,ack)
+        self.assertFalse(found['authorizes_merge'])
+        with self.assertRaisesRegex(RuntimeError,'request_ack_duplicate'):
+            m.find_acknowledgement(line+'\n'+line,observed,self.intent,self.policy)
+        ack['payload']['client_mutation_id']='f'*64
+        ack['sha256']=m.hashlib.sha256(m.canonical(ack['payload']).encode()).hexdigest()
+        with self.assertRaisesRegex(RuntimeError,'request_ack_unknown'):
+            m.find_acknowledgement(m.ACK_MARKER+m.canonical(ack),observed,self.intent,self.policy)
+
     def test_same_second_disable_and_reenable_cannot_reuse_identity(self):
         value=m.bind(self.before,self.after,self.pull,self.intent,self.policy,BASE)
         api=Api({None:page([event('AutoSquashEnabledEvent','enable-1'),

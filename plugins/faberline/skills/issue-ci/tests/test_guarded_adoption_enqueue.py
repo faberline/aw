@@ -31,10 +31,15 @@ class GuardedAdoptionEnqueueTests(unittest.TestCase):
         self.queued=copy.deepcopy(self.state)
         self.queued['provider']['autoMergeRequest']=dict(mergeMethod='SQUASH',enabledBy={'login':'github-actions','__typename':'Bot'},
             commitHeadline=f"Merge PR #{self.grant['pr']}",commitBody=f"Closes #{self.grant['issue']}")
-        self.response={'enablePullRequestAutoMerge':{'pullRequest':self.queued['provider']}}
+        self.response={'enablePullRequestAutoMerge':{'pullRequest':self.queued['provider'],
+                                                    'clientMutationId':self.intent['sha256']}}
+        def acknowledgement(response,record,intent,policy):
+            if response.get('clientMutationId')!=intent['sha256']:raise RuntimeError('request_ack_unknown')
+            return dict(authorizes_merge=False)
         self.history=SimpleNamespace(stable=lambda *args:dict(repo='o/r',pr=self.grant['pr'],events=[]),
                                      bind=lambda *args:dict(authorizes_merge=False),
-                                     MARKER='AW_REQUEST_HISTORY_OBSERVATION_V1 ')
+                                     acknowledgement=acknowledgement,MARKER='AW_REQUEST_HISTORY_OBSERVATION_V1 ',
+                                     ACK_MARKER='AW_REQUEST_MUTATION_ACK_V1 ')
         old=self.api.api
         def api(path,method='GET',data=None):
             if method=='POST' and '/statuses/' in path:
@@ -62,7 +67,7 @@ class GuardedAdoptionEnqueueTests(unittest.TestCase):
         with patch.dict(os.environ,self.env,clear=True),patch.object(a,'verify_grant_attestation',return_value=self.attestation), \
              patch.object(a,'publisher_provenance'),patch.object(a,'evaluate',side_effect=a.review.Refused('guarded_adoption_not_ready')), \
              patch.object(a,'_evaluate_guarded',side_effect=[self.state,self.state,self.queued]), \
-             patch.object(a.review,'sibling',side_effect=sibling),patch.object(a.native,'graphql',return_value=self.response), \
+             patch.object(a.review,'sibling',side_effect=sibling),patch.object(a.native,'graphql',return_value=self.response) as queue, \
              patch.object(a.native,'provider_pull',return_value=self.queued['provider']), \
              patch.object(a,'dispatch_adoption_recovery',return_value=False) as wake,contextlib.redirect_stdout(out):
             result=a.enqueue(self.api,'o/r',fixture.EVALUATOR,333,'push',grant_loader=lambda:self.document,
@@ -73,7 +78,29 @@ class GuardedAdoptionEnqueueTests(unittest.TestCase):
         bound=per_pr.find(out.getvalue(),'o/r',self.grant['pr'],self.grant['head'])
         self.assertIsNotNone(bound)
         self.assertIn('AW_REQUEST_HISTORY_OBSERVATION_V1 ',out.getvalue())
+        self.assertIn('AW_REQUEST_MUTATION_ACK_V1 ',out.getvalue())
+        self.assertEqual(queue.call_args.args[2]['input']['clientMutationId'],self.intent['sha256'])
         self.assertEqual(bound['payload']['evidence']['payload']['adoption_source'],self.document['source_commit'])
+
+    def test_mismatched_mutation_ack_holds_without_success(self):
+        class Guard:
+            def begin(inner,*args):return self.claim
+            def recheck(inner,*args):return self.attestation
+        original=a.review.sibling
+        def sibling(name):
+            return Guard() if name=='adoption_guard' else self.history if name=='request_history' else original(name)
+        self.response['enablePullRequestAutoMerge']['clientMutationId']='f'*64
+        out=io.StringIO()
+        with patch.dict(os.environ,self.env,clear=True),patch.object(a,'verify_grant_attestation',return_value=self.attestation), \
+             patch.object(a,'publisher_provenance'),patch.object(a,'evaluate',side_effect=a.review.Refused('guarded_adoption_not_ready')), \
+             patch.object(a,'_evaluate_guarded',side_effect=[self.state,self.state]), \
+             patch.object(a.review,'sibling',side_effect=sibling),patch.object(a.native,'graphql',return_value=self.response), \
+             contextlib.redirect_stdout(out):
+            result=a.enqueue(self.api,'o/r',fixture.EVALUATOR,333,'push',grant_loader=lambda:self.document,
+                             prepare_record=self.checkpoint)
+        self.assertEqual(result['state'],'held_after_pending')
+        self.assertEqual([row[2]['state'] for row in self.api.writes],['pending'])
+        self.assertNotIn('AW_REQUEST_MUTATION_ACK_V1 ',out.getvalue())
 
     def test_guard_rollout_failure_never_writes_status(self):
         class Guard:
