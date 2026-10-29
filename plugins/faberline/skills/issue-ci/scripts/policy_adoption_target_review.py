@@ -136,8 +136,9 @@ def produce(api,repo,number,head,token,invoke=model.invoke_schema):
         'issue_quote':{'type':'string','enum':lines},'supporting_paths':STRINGS})},'uncertainties':STRINGS})
     outcome=dict(decision='block',reviewed_files=[],requirements=[],findings=[],
                  uncertainties=['Independent review did not produce a complete valid decision.'])
+    stage='planning'
     try:
-        plan=invoke(initial,token,SYSTEM+'\nPlan every issue requirement and request necessary supporting paths. Do not make a verdict.',plan_schema,max_packet=4*1024*1024)
+        plan=invoke(initial,token,SYSTEM+'\nPlan every issue requirement and request necessary supporting paths. A source request or missing initial context is not a contract uncertainty. Report only material ambiguity that source cannot resolve. Do not make a verdict.',plan_schema,max_packet=4*1024*1024)
         need(a.review.exact(plan,'requirements uncertainties') and isinstance(plan['requirements'],list)
              and plan['requirements'] and plan['uncertainties']==[], 'target_plan_uncertain')
         ids=[];paths=[]
@@ -147,7 +148,9 @@ def produce(api,repo,number,head,token,invoke=model.invoke_schema):
                  and isinstance(item['supporting_paths'],list), 'target_plan_invalid')
             ids.append(item['id']);paths.extend(item['supporting_paths'])
         need(len(set(ids))==len(ids), 'target_plan_duplicate')
+        stage='supporting_source'
         supporting=supporting_sources(api,initial,trees,sorted(set(paths)))
+        stage='recheck'
         fresh,_=preflight(api,repo,number,head)
         need(fresh==initial, 'target_changed_during_planning')
         packet=dict(initial,requirement_plan=plan,supporting_sources=supporting)
@@ -157,6 +160,7 @@ def produce(api,repo,number,head,token,invoke=model.invoke_schema):
             'requirements':{'type':'array','items':obj({'id':{'type':'string','enum':ids},
                 'status':{'type':'string','enum':['met','missing','uncertain']},'evidence':STR})},
             'findings':STRINGS,'uncertainties':STRINGS})
+        stage='final_review'
         result=invoke(packet,token,SYSTEM+'\nCompare the full issue and all changed files to the plan. Report any omitted requirement or uncertainty.',result_schema,max_packet=4*1024*1024)
         need(a.review.exact(result,'decision summary reviewed_files requirements findings uncertainties')
              and result['decision'] in ('pass','fail','block') and a.review.text(result['summary'],4000)
@@ -175,10 +179,23 @@ def produce(api,repo,number,head,token,invoke=model.invoke_schema):
             need(result['findings'] or result['uncertainties']
                  or any(x['status']!='met' for x in requirements), 'target_review_negative_without_reason')
         outcome={k:result[k] for k in ('decision','reviewed_files','requirements','findings','uncertainties')}
-    except (RuntimeError,KeyError,TypeError,ValueError,OSError,subprocess.SubprocessError):
-        # A model error or incomplete decision is an authenticated block, not a
-        # pass. Revalidate the target before exposing any lifecycle outcome.
-        pass
+    except (RuntimeError,KeyError,TypeError,ValueError,OSError,subprocess.SubprocessError) as error:
+        # Never expose exception text, source bytes, model prose or credentials.
+        # Known fixed refusal codes make a block actionable without weakening it.
+        allowed={'target_plan_uncertain','target_plan_invalid','target_plan_duplicate',
+                 'target_supporting_paths','target_supporting_source_missing','target_supporting_truncated',
+                 'target_changed_during_planning','target_review_invalid','target_review_incomplete',
+                 'target_review_false_pass','target_review_negative_without_reason',
+                 'grant_review_oauth_missing','grant_review_cli_identity','grant_review_packet_limit',
+                 'review_schema_limit','grant_review_execution_failed','managed_cli_configuration_unknown',
+                 'managed_cli_configuration_refused'}
+        if isinstance(error,subprocess.TimeoutExpired):
+            code='model_timeout'
+        elif isinstance(error,RuntimeError) and str(error) in allowed:
+            code=str(error)
+        else:
+            code='unclassified_error'
+        outcome['uncertainties']=[f'Independent review blocked: {stage}/{code}.']
     final,_=preflight(api,repo,number,head)
     need(final==initial,'target_changed_during_review')
     return dict(version=1,repo=repo,pr=number,issue=context['issue'],head=head,base=context['base'],

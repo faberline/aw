@@ -274,6 +274,27 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(r.records('echo "' + r.ASSERTION_MARKER + '{}"', r.ASSERTION_MARKER), [])
 
 
+class AuthenticatedJobLogTests(unittest.TestCase):
+    def test_new_and_old_cli_capture_escaped_logs_without_printing(self):
+        for supports in (False,True):
+            help_text=b'usage --allow-escape-sequences' if supports else b'usage'
+            raw=b'2026-10-29T01:02:03Z \x1b[31mnot-a-record\x1b[0m\n2026-10-29T01:02:04Z '+r.ASSERTION_MARKER.encode()+b'{"check":"ok"}\n'
+            with self.subTest(supports=supports),patch.object(r.subprocess,'check_output',side_effect=[help_text,raw]) as execute:
+                captured=r.job_log('o/r',42)
+                command=execute.call_args_list[1].args[0]
+                self.assertEqual('--allow-escape-sequences' in command,supports)
+                self.assertEqual(command[-1],'repos/o/r/actions/jobs/42/logs')
+                self.assertEqual(r.records(captured,r.ASSERTION_MARKER),[{'check':'ok'}])
+                self.assertEqual(r.records('2026-10-29T01:02:03Z \x1b[31m'+r.ASSERTION_MARKER+'{}',r.ASSERTION_MARKER),[])
+
+    def test_oversized_invalid_utf8_or_failed_fetch_never_yields_receipts(self):
+        for raw in (b'x'*(r.MAX_LOG+1),b'\xff'):
+            with self.subTest(raw_length=len(raw)),patch.object(r.subprocess,'check_output',side_effect=[b'usage',raw]),self.assertRaises((RuntimeError,UnicodeError)):
+                r.job_log('o/r',42)
+        with patch.object(r.subprocess,'check_output',side_effect=[b'usage',r.subprocess.CalledProcessError(1,'gh')]),self.assertRaises(r.subprocess.CalledProcessError):
+            r.job_log('o/r',42)
+
+
 class DistributionTests(unittest.TestCase):
     def test_action_publishes_read_only_receipt_without_lifecycle_call(self):
         import contextlib

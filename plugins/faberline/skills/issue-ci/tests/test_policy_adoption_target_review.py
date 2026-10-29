@@ -59,6 +59,18 @@ class ReviewProtocolTests(unittest.TestCase):
         self.assertEqual(result['decision'],'block')
         self.assertTrue(result['uncertainties'])
 
+    def test_block_diagnostic_uses_only_allowlisted_fixed_codes(self):
+        packet=self.packet()
+        for error,expected in [(RuntimeError('target_plan_uncertain'),'planning/target_plan_uncertain'),
+                               (RuntimeError('private secret injected into error'),'planning/unclassified_error'),
+                               (subprocess.TimeoutExpired('sensitive command',900),'planning/model_timeout')]:
+            def fail(*args,**kwargs):raise error
+            with self.subTest(expected=expected),patch.object(m,'preflight',return_value=(packet,{BASE:[],HEAD:[]})):
+                receipt=m.produce(None,'o/r',8,HEAD,'token',fail)
+            self.assertEqual(receipt['decision'],'block')
+            self.assertEqual(receipt['uncertainties'],[f'Independent review blocked: {expected}.'])
+            self.assertNotIn('private secret',str(receipt))
+
     def test_genuine_negative_review_retains_the_finding(self):
         packet=self.packet()
         def model(data,token,system,schema,**kwargs):
