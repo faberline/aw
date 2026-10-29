@@ -13,7 +13,7 @@ Publishing the adapter does not activate consumers or clear their holds. Its
 outcome adapter replaces `.github/workflows/issue-ci.yml` with one unified
 writer in `issue-ci-handoff`. Every wake reconciles both existing CI handoff
 and Claude outcomes. Do not install a second lifecycle writer in that group.
-An authenticated negative Claude result returns the linked issue to doing.
+An authenticated negative Claude result returns the linked issue to todo.
 A qualified native merge closes the linked issue through GitHub closing
 keywords. No queued or rejected PR closes an issue.
 
