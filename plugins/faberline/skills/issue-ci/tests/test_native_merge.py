@@ -109,7 +109,7 @@ class Provider:
         if method == "POST":
             assert path == "repos/o/r/statuses/" + HEAD
             self.writes.append((data["state"], copy.deepcopy(data)))
-            self.statuses.insert(0, dict(data, id=len(self.statuses)+1, creator=dict(login="github-actions[bot]")))
+            self.statuses.insert(0, dict(data, id=len(self.statuses)+1, creator=dict(login="github-actions[bot]",type="Bot")))
             if self.error_on == data["state"]:
                 raise TimeoutError("synthetic ambiguous status result")
             if data["state"] == "success" and self.auto_complete:
@@ -489,7 +489,9 @@ class ApprovalWithdrawalTests(unittest.TestCase):
             p.document['config']['issue_guard_cutover']=dict(version=1,phase='drain',nonce='a'*32)
             if case=='foreign':
                 p.native['autoMergeRequest']=dict(enabledBy=dict(login='person',__typename='User'))
-                p.statuses=[dict(id=1,context='claude/verified-merge',state='pending',creator=dict(login='github-actions[bot]'))]
+                p.statuses=[dict(id=1,context='claude/verified-merge',state='pending',creator=dict(login='github-actions[bot]',type='Bot'))]
+            if case=='unknown':
+                p.statuses=[dict(id=1,context='claude/verified-merge',state='pending',creator=dict(login='github-actions[bot]',type='User'))]
             pages=p.pages
             calls=[]
             def inventory(path,key=None):
@@ -518,7 +520,7 @@ class ApprovalWithdrawalTests(unittest.TestCase):
         p=Provider()
         p.document['config']['issue_guard_cutover']=dict(version=1,phase='drain',nonce='a'*32)
         first=copy.deepcopy(p.pull);second=copy.deepcopy(first);second['number']=2
-        p.statuses=[dict(id=1,context='claude/verified-merge',state='pending',creator=dict(login='github-actions[bot]'))]
+        p.statuses=[dict(id=1,context='claude/verified-merge',state='pending',creator=dict(login='github-actions[bot]',type='Bot'))]
         pages=p.pages
         def inventory(path,key=None):
             if '/pulls?state=open' in path:return [first,second]
@@ -530,6 +532,21 @@ class ApprovalWithdrawalTests(unittest.TestCase):
             rows=m.drain_queue(p,'o/r',p.load,p.load())
         self.assertEqual([r['state'] for r in rows],['held','withdrawn'])
         self.assertEqual(withdraw.call_count,2)
+
+    def test_cutover_adds_pending_for_pr_without_prior_review(self):
+        for uncertain in (False,True):
+            p=Provider()
+            p.document['config']['issue_guard_cutover']=dict(version=1,phase='drain',nonce='a'*32)
+            if uncertain:p.error_on='pending'
+            pages=p.pages
+            def inventory(path,key=None):
+                if '/pulls?state=open' in path:return [copy.deepcopy(p.pull)]
+                return pages(path,key)
+            with self.subTest(uncertain=uncertain),patch.object(p,'pages',side_effect=inventory):
+                rows=m.drain_queue(p,'o/r',p.load,p.load())
+            self.assertEqual(rows[0]['state'],'held' if uncertain else 'withdrawn')
+            self.assertEqual([item[0] for item in p.writes],['pending'])
+            self.assertIsNone(p.native['autoMergeRequest'])
 
     def test_withdraw_uses_provider_order_not_numeric_status_id(self):
         p=Provider()

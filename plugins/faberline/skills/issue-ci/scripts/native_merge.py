@@ -283,9 +283,33 @@ def drain_queue(api,repo,load_document,document):
                  'cutover_status_unknown')
             matching=[s for s in statuses if isinstance(s.get('context'),str)
                       and s['context'].casefold()=='claude/verified-merge']
+            if not matching:
+                # A never-reviewed PR has no prior status to withdraw. Create
+                # a blocking status and verify it, without retrying an unknown
+                # response. This does not prove the repository is quiescent.
+                need(load_document()==document,'cutover_policy_changed')
+                current=provider_pull(api,repo,number)
+                need(current.get('state')=='OPEN' and current.get('headRefOid')==head
+                     and current.get('baseRefOid')==base and current.get('autoMergeRequest') is None,
+                     'cutover_target_changed')
+                api.api(f'repos/{repo}/statuses/{head}',method='POST',data=dict(
+                    state='pending',context='claude/verified-merge',
+                    description='Guard cutover in progress; fresh verification required'))
+                statuses=api.pages(f'repos/{repo}/commits/{head}/statuses')
+                need(isinstance(statuses,list) and all(isinstance(s,dict) for s in statuses),
+                     'cutover_status_unknown')
+                matching=[s for s in statuses if isinstance(s.get('context'),str)
+                          and s['context'].casefold()=='claude/verified-merge']
             need(bool(matching) and matching[0].get('state') in ('pending','failure','error')
-                 and matching[0].get('creator',{}).get('login')=='github-actions[bot]',
+                 and review.integer(matching[0].get('id'))
+                 and isinstance(matching[0].get('creator'),dict)
+                 and matching[0]['creator'].get('login')=='github-actions[bot]'
+                 and matching[0]['creator'].get('type')=='Bot',
                  'cutover_status_unknown')
+            final=provider_pull(api,repo,number)
+            need(final.get('state')=='OPEN' and final.get('headRefOid')==head
+                 and final.get('baseRefOid')==base and final.get('autoMergeRequest') is None,
+                 'cutover_request_present_or_changed')
             row['state']='withdrawn'
         except Exception:
             row['reason']='cutover_withdrawal_unverified'

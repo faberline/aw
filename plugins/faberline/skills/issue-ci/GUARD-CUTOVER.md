@@ -14,7 +14,9 @@ The trusted writer scans the complete open PR queue during drain. It withdraws
 its own previous approval and native merge request. It holds a PR if a request,
 status, head, or base cannot be verified. It does not cancel another actor's
 request. It does not change issue labels or authorize a merge. Failure outcomes
-are deferred during this stage.
+are deferred during this stage. When no review status exists, the writer first
+publishes and reads back a blocking pending status. An unknown write result
+holds without a blind retry.
 
 A drain result is not proof that cutover is safe. A worker can have read the
 old policy before the marker appeared. Old worker versions can ignore the
