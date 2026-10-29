@@ -133,7 +133,7 @@ def authenticate_native_source(api, repo, document, evaluator, source_run, pr, h
     return matches[0]
 
 
-def authenticate_adoption_source(api, repo, document, evaluator, source_run, pr, head, log_reader):
+def authenticate_adoption_source(api, repo, document, evaluator, source_run, pr, head, log_reader, source_attempt=None):
     """Authenticate a reviewed grant publisher. It does not authorize a close."""
     adoption = review.sibling('policy_adoption')
     need(isinstance(document, dict) and review.sha(document.get('source_commit')),
@@ -149,7 +149,9 @@ def authenticate_adoption_source(api, repo, document, evaluator, source_run, pr,
          and comparison.get('base_commit', {}).get('sha') == document['source_commit'],
          'close_grant_not_on_default')
     adoption.verify_grant_attestation(api, document, grant, evaluator, log_reader)
-    identity = adoption.publisher_provenance(api, grant, source_run, 'push', completed=True)
+    identity = (adoption.publisher_provenance(api, grant, source_run, 'push', completed=True)
+                if source_attempt is None else
+                adoption.publisher_provenance(api, grant, source_run, 'push', completed=True, attempt=source_attempt))
     evidence = find_record(log_reader(repo, identity['job_id']), repo, pr, head)
     p = evidence['payload']
     c = p['checkpoint']
@@ -418,8 +420,9 @@ def native_recovery_plans(api, repo, document, evaluator, source_run, log_reader
     return results
 
 
-def adoption_recovery_plan(api, repo, document, evaluator, source_run, pr, head, log_reader):
+def adoption_recovery_plan(api, repo, document, evaluator, source_run, pr, head, log_reader, source_attempt=None):
     """Inspect one exact reviewed adoption record, without writes."""
-    evidence = authenticate_adoption_source(api, repo, document, evaluator, source_run, pr, head, log_reader)
+    evidence = authenticate_adoption_source(api, repo, document, evaluator, source_run, pr, head, log_reader,
+                                            source_attempt=source_attempt)
     started_at = source_started_at(api, evidence)
     return recovery_plan(api, evidence['payload']['checkpoint'], started_at)

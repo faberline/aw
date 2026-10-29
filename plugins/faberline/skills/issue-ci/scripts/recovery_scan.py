@@ -14,8 +14,29 @@ discovery=sibling('guard_discovery')
 guard=sibling('merge_guard')
 observer=sibling('post_merge_observation')
 closer=sibling('guarded_close')
+prepared=sibling('prepared_status')
 review=guard.review
 need=guard.need
+
+
+def inspect_prepared(api,repo,document,current_policy,evaluator,run,attempt,intent,log_reader):
+    """Observe a pre-status record without authorizing a close."""
+    p=intent['payload'];pr=p['pr'];head=p['head']
+    value=prepared.authenticate_native_prepared(api,repo,document,evaluator,run,attempt,pr,head,log_reader)
+    evidence=value['payload']['checkpoint'];checkpoint=evidence['payload']['checkpoint']
+    need(checkpoint['issue']==p['issue'] and checkpoint['repo']==repo
+         and checkpoint['pr']==pr and checkpoint['head']==head,'recovery_checkpoint_mismatch')
+    old=guard.worker.config(dict(document['config']['issue_guard'],policy_source=document['source_commit']))
+    guard.worker.config(current_policy);guard.worker.check_runtime(current_policy)
+    need(all(old[k]==current_policy[k] for k in ('genesis','ruleset_id','runtime')),
+         'merge_guard_policy_changed')
+    closer.guard_identity(api,repo,current_policy,intent)
+    statuses=api.pages(f'repos/{repo}/commits/{head}/statuses')
+    status=prepared.observe(value,statuses)
+    started=observer.source_started_at(api,evidence)
+    result=observer.recovery_plan(api,checkpoint,started)
+    closer.guard_identity(api,repo,current_policy,intent)
+    return dict(state=result['state'],status=status['state'],close_authorized=False)
 
 
 def historical_document(api,repo,run,attempt):
@@ -53,7 +74,15 @@ def scan(api,repo,current_policy,log_reader):
             intent=guard.identify_native_owner(api,repo,document,evaluator,run,attempt,item['issue'],
                                                item['head'],item['owner'],log_reader)
             pr=intent['payload']['pr']
-            evidence=closer.authenticate_checkpoint(api,repo,document,evaluator,run,attempt,pr,item['head'],log_reader)
+            try:
+                evidence=closer.authenticate_checkpoint(api,repo,document,evaluator,run,attempt,pr,item['head'],log_reader)
+            except Exception as error:
+                if str(error) not in ('merge_guard_source_not_success','merge_close_record_missing_or_duplicate'):
+                    raise
+                planned=inspect_prepared(api,repo,document,current_policy,evaluator,run,attempt,intent,log_reader)
+                row.update(state=planned['state'],status=planned['status'],pr=pr,head=item['head'],close_authorized=False)
+                results.append(row)
+                continue
             need(evidence['payload']['source_attempt']==attempt
                  and evidence['payload']['checkpoint']['issue']==item['issue'], 'recovery_checkpoint_mismatch')
             started=observer.source_started_at(api,evidence)

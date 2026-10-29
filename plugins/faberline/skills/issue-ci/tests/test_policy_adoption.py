@@ -182,6 +182,18 @@ jobs:
                 def pages(self,path,key):return [{'id':334,'name':'adopt','status':'completed','conclusion':'success'}]
             identity=a.publisher_provenance(CompletedAPI(),g,333,'push',completed=True)
             self.assertEqual(identity['job_id'],334)
+            class HistoricalAPI(CompletedAPI):
+                def api(self,path):
+                    assert path=='repos/o/r/actions/runs/333/attempts/1'
+                    return run
+            identity=a.publisher_provenance(HistoricalAPI(),g,333,'push',completed=True,attempt=1)
+            self.assertEqual(identity['run_attempt'],1)
+            with self.assertRaises(RuntimeError):
+                a.publisher_provenance(HistoricalAPI(),g,333,'push',completed=False,attempt=1)
+            run['run_attempt']=2
+            with self.assertRaises(RuntimeError):
+                a.publisher_provenance(HistoricalAPI(),g,333,'push',completed=True,attempt=1)
+            run['run_attempt']=1
             class FailedJobAPI(API):
                 def pages(self,path,key):return [{'id':334,'name':'adopt','status':'completed','conclusion':'failure'}]
             with self.assertRaises(RuntimeError):a.publisher_provenance(FailedJobAPI(),g,333,'push',completed=True)

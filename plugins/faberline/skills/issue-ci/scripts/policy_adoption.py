@@ -186,9 +186,10 @@ def review_provenance(api, grant, inventory, log_reader):
     return review_result(grant,records[0],inventory)
 
 
-def publisher_provenance(api, grant, run_id, event, completed=False):
+def publisher_provenance(api, grant, run_id, event, completed=False, attempt=None):
     spec=grant['publisher'];repo=grant['repo'];ref=spec['source_commit']
-    need(review.integer(run_id) and event=='push', 'publisher_event')
+    need(review.integer(run_id) and event=='push'
+         and (attempt is None or completed and review.integer(attempt)), 'publisher_event')
     raw=review.blob(api,repo,spec['workflow_path'],ref,spec['workflow_blob'])
     # Accept one fixed, serialized data-only action. A grant cannot authorize
     # candidate checkout, shell steps or a second privileged writer.
@@ -207,12 +208,14 @@ def publisher_provenance(api, grant, run_id, event, completed=False):
                               'statuses':'write','issues':'read'},
                'steps':[{'uses':'faberline/aw/.github/actions/policy-adoption@'+grant['evaluator']}]},
          'publisher_workflow_contract')
-    run=api.api(f'repos/{repo}/actions/runs/{run_id}')
+    path=f'repos/{repo}/actions/runs/{run_id}'
+    run=api.api(path if attempt is None else f'{path}/attempts/{attempt}')
     need(run.get('id')==run_id and run.get('workflow_id')==spec['workflow_id']
          and run.get('path')==spec['workflow_path'] and run.get('head_sha')==ref
          and run.get('head_repository',{}).get('full_name')==repo and run.get('event')==event
          and run.get('head_branch')==spec['branch']
-         and review.integer(run.get('run_attempt')), 'publisher_run_identity')
+         and review.integer(run.get('run_attempt'))
+         and (attempt is None or run['run_attempt']==attempt), 'publisher_run_identity')
     if completed:
         need(run.get('status')=='completed' and run.get('conclusion')=='success', 'publisher_run_identity')
     else:

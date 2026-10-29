@@ -202,8 +202,9 @@ class ObservationTests(unittest.TestCase):
                 assert config == {} and repo == REPO and selected == evaluator
             def verify_grant_attestation(self, *args):
                 calls.append('grant_review')
-            def publisher_provenance(self, api, selected, run, event, completed=False):
+            def publisher_provenance(self, api, selected, run, event, completed=False, attempt=None):
                 assert selected == grant and run == 101 and event == 'push' and completed
+                assert attempt in (None,2)
                 calls.append('publisher')
                 return dict(run_attempt=2, job_id=404, source_commit=source)
         class API:
@@ -217,6 +218,9 @@ class ObservationTests(unittest.TestCase):
                                                       101, 9, HEAD, lambda repo, job:source_log)
         self.assertEqual(verify(log), item)
         self.assertEqual(calls, ['grant_review','publisher'])
+        with patch.object(m.review, 'sibling', return_value=Adoption()):
+            self.assertEqual(m.authenticate_adoption_source(API(), REPO, document, evaluator,
+                             101, 9, HEAD, lambda repo,job:log,source_attempt=2),item)
         forged = m.record(c,101,2,source,evaluator,202,'f' * 64,'0' * 64,grant_source)
         with self.assertRaisesRegex(m.review.Refused, 'close_grant_record_mismatch'):
             verify(m.MARKER + m.review.r.canonical(forged))
