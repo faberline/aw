@@ -82,6 +82,61 @@
         "job": "grant-review",
         "job_id": 123344370860
       }
+    },
+    {
+      "version": 1,
+      "repo": "faberline/core",
+      "pr": 79,
+      "issue": 78,
+      "head": "45e22a31a7cbd541a2e1f3216fe48b33ebe2a719",
+      "base": "4bc3fdb12a2e0846ed88d70c8a5d9c75696dfa44",
+      "base_ref": "main",
+      "evaluator": "8e2e93e5ba8feb30b6668de39139980ea3bb085c",
+      "policy_blob": "901ca0fe85d0adb519802e6ba0304967e08acb67",
+      "base_policy_blob": "8ebb576ddab3d66d27bb542964932d55eea3f553",
+      "issue_sha256": "08379d1bbfa649dc5e104b61d363b468ab96b8263931dd9661353b8bafeb5041",
+      "pr_sha256": "c1f5c52779322a030c629dba64fcc9988e62e289054910fb0c0881d31472250c",
+      "files_sha256": "87cb028c41629d4d775472879326bb714d10b0d3fb030fa7c0b2325789a490e7",
+      "protected_paths": [
+        ".github/issue-ci-required-gates.json",
+        ".github/workflows/ci.yml",
+        "scripts/pr-gates/contracts.py",
+        "scripts/pr-gates/docs.py",
+        "scripts/pr-gates/measure.py",
+        "scripts/pr-gates/plan.py",
+        "scripts/pr-gates/tests/test_contracts.py",
+        "scripts/pr-gates/tests/test_docs.py",
+        "scripts/pr-gates/tests/test_evidence.py",
+        "scripts/pr-gates/tests/test_measure.py",
+        "scripts/pr-gates/tests/test_qualification_policy.py"
+      ],
+      "ci": {
+        "run_id": 40914480449,
+        "attempt": 1,
+        "jobs_sha256": "7091c4026e8e1b6f5a009f7aaa7df62966a70eca7cd709ff29d986aca281a629"
+      },
+      "review": {
+        "workflow_path": ".github/workflows/core-policy-target-review.yml",
+        "workflow_id": 400225137,
+        "workflow_blob": "3c8c68f164a5cc7e8a8702421a5b7b77f34d4ad9",
+        "runner_path": "plugins/faberline/skills/issue-ci/scripts/policy_adoption_target_review.py",
+        "runner_blob": "834caec3ecec0e0551e845827ae0e0489c41c618",
+        "source_commit": "ec22b66707f2a0a4610f51e0f74a82ac1a05ec15",
+        "branch": "codex/core79-policy-target-review",
+        "run_id": 40920812474,
+        "attempt": 2,
+        "job": "review",
+        "job_id": 123617101288,
+        "receipt_sha256": "b6d0ccc7024597a9dcc4be524132a48e72ce4ed0738f7f6e830afe701eb950ee"
+      },
+      "publisher": {
+        "workflow_path": ".github/workflows/core-policy-publisher.yml",
+        "workflow_id": 400223632,
+        "workflow_blob": "b83764eb5efc0e1ddeb986091c2894da051d2591",
+        "source_commit": "f1afb71dc01a0e9fdffeda5a5ea0a017c53a6800",
+        "branch": "codex/core79-policy-publisher",
+        "job": "adopt"
+      }
     }
   ]
 }
