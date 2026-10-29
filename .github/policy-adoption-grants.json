@@ -1,1 +1,72 @@
-{"version": 1, "grants": []}
+{
+  "version": 1,
+  "grants": [
+    {
+      "version": 1,
+      "repo": "faberline/core",
+      "pr": 75,
+      "issue": 73,
+      "head": "dd43c84a741728f5d1b609dce6af682e13ad0532",
+      "base": "2708ce21c782d52eae304e142ba5e899d0241c20",
+      "base_ref": "main",
+      "evaluator": "e12edb64d116ef5b73c63e3be98f979628ae6f40",
+      "policy_blob": "41542ccf93ae6e5be3c90ce6439f9710d8b05768",
+      "base_policy_blob": "160b0416d78da39ef600e2fbc3610e84221ea50e",
+      "issue_sha256": "8ad7612a771898c40d43873d6c367e7a5f54de6668ae3a733863b5eabeb7947a",
+      "pr_sha256": "3a386cb8f17633d6b534d612f5fb811c5a2d33be79475933263dd9a6f9b20bc3",
+      "files_sha256": "1b51fc9cd7f7b26965064b845d151818fcfa3b091c3db44395fb1f61da5f48e2",
+      "protected_paths": [
+        ".github/issue-ci-required-gates.json",
+        ".github/workflows/ci.yml",
+        ".github/workflows/claude-final-review.yml",
+        ".github/workflows/issue-ci.yml",
+        "crates/raft-runtime/tests/snapshot_peak_memory.rs",
+        "scripts/issue-ci/README.md",
+        "scripts/issue-ci/check-policy.py",
+        "scripts/issue-ci/handoff.py",
+        "scripts/issue-ci/json_data.py",
+        "scripts/issue-ci/qualification.py",
+        "scripts/issue-ci/tests/fixtures/legacy-policy.json",
+        "scripts/issue-ci/tests/test_handoff.py",
+        "scripts/pr-gates/contracts.py",
+        "scripts/pr-gates/docs.py",
+        "scripts/pr-gates/generated-rust-dependencies/Cargo.toml",
+        "scripts/pr-gates/generated-rust-dependencies/src/lib.rs",
+        "scripts/pr-gates/measure.py",
+        "scripts/pr-gates/proposal_gate.py",
+        "scripts/pr-gates/tests/test_contracts.py",
+        "scripts/pr-gates/tests/test_docs.py",
+        "scripts/pr-gates/tests/test_measure.py",
+        "scripts/pr-gates/tests/test_proposal_gate.py",
+        "scripts/pr-gates/tests/test_qualification_policy.py"
+      ],
+      "ci": {
+        "run_id": 40838921231,
+        "attempt": 1,
+        "jobs_sha256": "3572b92a6de189c35c40af3d195855bd3ff77627c33faf4466e6782843366985"
+      },
+      "review": {
+        "workflow_path": ".github/workflows/core-policy-target-review.yml",
+        "workflow_id": 400225137,
+        "workflow_blob": "b3e8bc77831030b782ae14a6b2558311df460060",
+        "runner_path": "plugins/faberline/skills/issue-ci/scripts/policy_adoption_target_review.py",
+        "runner_blob": "834caec3ecec0e0551e845827ae0e0489c41c618",
+        "source_commit": "5059a2be605c8b1b5d15608e3057d7324c5f1392",
+        "branch": "codex/core-policy-target-review",
+        "run_id": 40842371439,
+        "attempt": 1,
+        "job": "review",
+        "job_id": 123341583106,
+        "receipt_sha256": "01654fad9e045ebee8baff71610f3c499e442d04f000854dbc5d2c4d7b4cb75c"
+      },
+      "publisher": {
+        "workflow_path": ".github/workflows/core-policy-publisher.yml",
+        "workflow_id": 400223632,
+        "workflow_blob": "27628d3e56a402e06987b2ba3a60ac726ef7134c",
+        "source_commit": "2f409f020a5bbafcac63a5c155f0957311b90123",
+        "branch": "codex/core-policy-publisher",
+        "job": "adopt"
+      }
+    }
+  ]
+}
