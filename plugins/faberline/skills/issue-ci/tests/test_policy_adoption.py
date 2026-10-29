@@ -523,3 +523,14 @@ class CandidatePolicyTests(unittest.TestCase):
         candidate['qualification_blockers']=['source acceptance missing']
         with patch.object(a.review,'blob',side_effect=blob),patch.object(a.native,'writer_contract'):
             with self.assertRaisesRegex(RuntimeError,'candidate_policy_not_full_v2'):a.candidate_policy(None,g)
+
+    def test_guard_policy_cannot_be_added_changed_or_removed_by_legacy_publisher(self):
+        g=grant();candidate=v2.policy();candidate['aw_revision']=EVALUATOR;previous=v2.base.config()
+        def blob(api,repo,path,ref,expected=None):return json.dumps(candidate if ref==HEAD else previous)
+        with patch.object(a.review,'blob',side_effect=blob),patch.object(a.native,'writer_contract'):
+            for old,new in ((False,True),(True,True),(True,False)):
+                previous.pop('issue_guard',None);candidate.pop('issue_guard',None)
+                if old:previous['issue_guard']={'enabled':True}
+                if new:candidate['issue_guard']={'enabled':True}
+                with self.subTest(old=old,new=new),self.assertRaisesRegex(RuntimeError,'guarded_adoption_not_ready'):
+                    a.candidate_policy(None,g)

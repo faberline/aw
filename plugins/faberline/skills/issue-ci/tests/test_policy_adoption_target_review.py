@@ -381,6 +381,10 @@ class PreflightTests(unittest.TestCase):
             packet,_=m.preflight(api,'o/r',8,HEAD);self.assertEqual(packet['ci']['run_id'],111)
             self.assertEqual(packet['verified_provider_policy'],provider_evidence)
             self.assertEqual(packet['shared_framework_sources'][0]['ref'],'c'*40)
+            cfg['issue_guard']={'enabled':True}
+            with self.assertRaisesRegex(RuntimeError,'guarded_adoption_not_ready'):
+                m.preflight(api,'o/r',8,HEAD)
+            del cfg['issue_guard']
             with patch.object(m,'framework_sources',return_value=[dict(content='x'*(4*1024*1024))]):
                 with self.assertRaisesRegex(RuntimeError,'target_packet_limit'):m.preflight(api,'o/r',8,HEAD)
             with patch.object(m.a.native,'base_rules',return_value=None):

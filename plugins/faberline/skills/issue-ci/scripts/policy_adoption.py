@@ -231,12 +231,20 @@ def publisher_provenance(api, grant, run_id, event, completed=False, attempt=Non
     return dict(run_id=run_id,run_attempt=run['run_attempt'],job_id=matches[0]['id'],source_commit=ref)
 
 
+def guarded_adoption_eligible(candidate,prior):
+    """Hold all guard transitions until the publisher uses the shared guard."""
+    need(isinstance(candidate,dict) and isinstance(prior,dict)
+         and 'issue_guard' not in candidate and 'issue_guard' not in prior,
+         'guarded_adoption_not_ready')
+
+
 def candidate_policy(api, grant):
     repo=grant['repo'];head=grant['head'];base=grant['base']
     path='.github/issue-ci-required-gates.json'
     candidate=ci.strict_json_loads(review.blob(api,repo,path,head,grant['policy_blob']))
     prior=ci.strict_json_loads(review.blob(api,repo,path,base,grant['base_policy_blob']))
     ci.validate_config(candidate);ci.validate_adoption(candidate);ci.validate_config(prior)
+    guarded_adoption_eligible(candidate,prior)
     need(candidate.get('lifecycle_mode')=='full' and candidate.get('qualification_blockers')==[]
          and candidate.get('qualification',{}).get('version')==2, 'candidate_policy_not_full_v2')
     native.handoff_policy(candidate)
