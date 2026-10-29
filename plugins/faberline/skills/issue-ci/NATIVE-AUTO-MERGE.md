@@ -142,6 +142,11 @@ rename or reset guard refs; this protection cannot enforce that requirement.
 A queued request keeps its guard. The shared Actions bot identity cannot prove
 which run created that request. Cancellation and its race with merging remain
 unimplemented. Crash recovery and hosted verification are also required.
+If the guarded writer cannot acquire a PR's guard, it requests a pending status
+unless an authenticated blocking status already exists, and reads it back. It does not cancel
+the request or change the issue. An unknown response holds that PR and does not
+stop checks for the rest of the queue. This draft does not prove the status
+write won a race with a merge or replace the required rollout verification.
 The protected policy-adoption draft requires the same guard and a separately
 reviewed grant. It permits bootstrap or an unchanged guard only after rollout
 is verified. The current verifier always holds before paid target review or

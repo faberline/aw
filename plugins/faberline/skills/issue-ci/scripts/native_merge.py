@@ -240,6 +240,44 @@ def withdraw_approval(api, repo, number, head):
              "withdraw_result_unknown")
 
 
+def block_unadmitted(api, repo, number, head):
+    """Block stale approval without cancelling a request owned by another run.
+
+    A shared Actions bot does not identify the run that requested a merge.
+    Leave that request and the issue untouched. An unknown write or readback
+    holds the PR; the caller never blindly retries it in this wake.
+    """
+    pull=provider_pull(api,repo,number)
+    need(pull.get('state')=='OPEN' and pull.get('headRefOid')==head,'guard_block_target_changed')
+    statuses=api.pages(f'repos/{repo}/commits/{head}/statuses')
+    need(isinstance(statuses,list) and all(isinstance(item,dict) for item in statuses),
+         'guard_block_status_unknown')
+    matches=[item for item in statuses if isinstance(item.get('context'),str)
+             and item['context'].casefold()=='claude/verified-merge']
+    need(all(review.integer(item.get('id')) for item in matches)
+         and len({item['id'] for item in matches})==len(matches),'guard_block_status_unknown')
+    def ours(item):
+        creator=item.get('creator')
+        return (isinstance(creator,dict) and creator.get('id')==41898282
+                and creator.get('type')=='Bot' and creator.get('login')=='github-actions[bot]')
+    if matches and ours(matches[0]) and matches[0].get('state') in ('pending','failure','error'):
+        return
+    response=api.api(f'repos/{repo}/statuses/{head}',method='POST',data=dict(
+        state='pending',context='claude/verified-merge',
+        description='Guard unavailable; fresh verification required'))
+    need(isinstance(response,dict) and review.integer(response.get('id')),'guard_block_result_unknown')
+    fresh=api.pages(f'repos/{repo}/commits/{head}/statuses')
+    need(isinstance(fresh,list) and all(isinstance(item,dict) for item in fresh),'guard_block_result_unknown')
+    latest=[item for item in fresh if isinstance(item.get('context'),str)
+            and item['context'].casefold()=='claude/verified-merge']
+    need(bool(latest) and all(review.integer(item.get('id')) for item in latest)
+         and len({item['id'] for item in latest})==len(latest)
+         and latest[0].get('id')==response['id'] and latest[0].get('state')=='pending'
+         and ours(latest[0]),'guard_block_result_unknown')
+    after=provider_pull(api,repo,number)
+    need(after.get('state')=='OPEN' and after.get('headRefOid')==head,'guard_block_target_changed')
+
+
 def drain_marker(config):
     if 'issue_guard_cutover' not in config:
         return None
@@ -651,6 +689,7 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
     producer = review.policy(document)["producer"]
     pulls = api.pages(f"repos/{repo}/pulls?state=open&sort=created&direction=asc")
     admitted = {}
+    withdrawal_errors = set()
     if guarded is not None:
         need(isinstance(pulls,list) and all(isinstance(pull,dict) and review.integer(pull.get('number'))
              and isinstance(pull.get('head'),dict) and review.sha(pull['head'].get('sha')) for pull in pulls)
@@ -662,8 +701,11 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
                     lambda line:print(line,flush=True))
             except Exception:
                 # An unknown claim may have succeeded; never retry it here.
+                try:
+                    block_unadmitted(api,repo,number,head)
+                except Exception:
+                    withdrawal_errors.add(number)
                 continue
-    withdrawal_errors = set()
     for pull in pulls:
         if guarded is not None and pull.get('number') not in admitted:
             continue
@@ -686,7 +728,7 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
         row = dict(pr=number, head=head, state="held")
         try:
             if guarded is not None and number not in admitted:
-                row.update(reason='guard_unavailable')
+                row.update(reason='guard_block_result_unknown' if number in withdrawal_errors else 'guard_unavailable')
                 results.append(row)
                 continue
             if number in withdrawal_errors or number in ci_errors:
