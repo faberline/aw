@@ -642,7 +642,7 @@ def dispatch_adoption_recovery(api,repo):
 
 
 def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_grants, log_reader=r.job_log,
-            prepare_record=None):
+            prepare_record=None, direct_mode=False):
     """Queue only after separate grant, exact CI and independent review verification."""
     need(not os.environ.get('CLAUDE_CODE_OAUTH_TOKEN'), 'model_credential_in_publisher')
     document=grant_loader()
@@ -695,6 +695,49 @@ def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_gra
         if guarded is not None:
             need(guard_action.recheck(api,document,grant,evaluator,run_id,guarded,log_reader)==attestation,
                  'adoption_guard_review_changed')
+        if guarded is not None and direct_mode:
+            # Keep policy adoption on the same synchronous guarded protocol as
+            # ordinary product PRs. The old path remains for legacy policies.
+            need(current['provider'].get('autoMergeRequest') is None, 'guard_request_owner_unknown')
+            checkpoint=prepare_record(api,document,grant,evaluator,run_id,current['receipt'])
+            ready=prepared_module.build_guarded(checkpoint,guarded['policy'],guarded['intent'],pending,nonce,
+                                               grant=grant,grant_source=document['source_commit'])
+            print(prepared_module.MARKER+r.canonical(ready),flush=True)
+            response=api.api(f'repos/{repo}/statuses/{head}',method='POST',data=dict(
+                state='success',context=p['status_context'],description='Reviewed policy, current CI and Claude verified',
+                target_url=target))
+            per_pr=review.sibling('per_pr_checkpoint')
+            bound=per_pr.build(checkpoint,guarded['policy'],guarded['intent'],response,target_url=target,
+                               grant=grant,grant_source=document['source_commit'])
+            print(per_pr.MARKER+r.canonical(bound),flush=True)
+            fresh=_evaluate_guarded(api,grant,log_reader)
+            need(grant_loader()==document and all(fresh[k]==before[k] for k in
+                 ('context','issue','policy','receipt','ci_jobs'))
+                 and fresh['provider'].get('autoMergeRequest') is None
+                 and verify_grant_attestation(api,document,grant,evaluator,log_reader)==attestation,
+                 'adoption_evidence_changed')
+            publisher_provenance(api,grant,run_id,event)
+            need(guard_action.recheck(api,document,grant,evaluator,run_id,guarded,log_reader)==attestation,
+                 'adoption_guard_review_changed')
+            per_pr.verify_status(api,repo,head,bound,guarded['intent'],grant=grant,
+                                 grant_source=document['source_commit'])
+            direct=review.sibling('direct_merge')
+            outcome=direct.merge_http(repo,number,dict(sha=head,merge_method='squash',
+                                                       commit_title=headline,commit_message=body))
+            if outcome['state']=='refused':
+                guard=review.sibling('merge_guard')
+                record=direct.refusal_record(guarded['intent'],guarded['policy'],outcome['http_status'],guard,review)
+                print(direct.REFUSAL_MARKER+r.canonical(record),flush=True)
+                dispatch_adoption_recovery(api,repo)
+                return dict(state='held_after_pending',head=head,reason='direct_merge_refused')
+            merged=outcome['value']
+            need(isinstance(merged,dict) and merged.get('merged') is True and review.sha(merged.get('sha')),
+                 'direct_merge_result_unknown')
+            close=review.sibling('guarded_close')
+            observation=review.sibling('post_merge_observation')
+            direct.finish_close(api,repo,grant['issue'],checkpoint,merged['sha'],guarded['policy'],
+                                guarded['intent'],close,observation,review)
+            return dict(state='closed',head=head,issue=grant['issue'],merge=merged['sha'])
         if current['provider'].get('autoMergeRequest') is None:
             history=review.sibling('request_history') if guarded is not None else None
             prior_history=history.stable(api,repo,number) if history is not None else None
@@ -745,6 +788,9 @@ def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_gra
                 dispatch_adoption_recovery(api,repo)
     except Exception:
         # The pending status blocks an abandoned request; no blind retry.
+        if guarded is not None and direct_mode:
+            try: dispatch_adoption_recovery(api,repo)
+            except Exception: pass  # The periodic recovery workflow is still required.
         return dict(state='held_after_pending',head=head)
     after=native.provider_pull(api,repo,number)
     need(after.get('headRefOid')==head, 'head_changed_after_status')
@@ -765,9 +811,9 @@ def main():
     need(review.sha(evaluator) and isinstance(repo,str)
          and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',repo)
          and re.fullmatch(r'[1-9][0-9]*',run), 'publisher_input')
-    result=enqueue(ci,repo,evaluator,int(run),event,prepare_record=prepare_adoption_close_record)
+    result=enqueue(ci,repo,evaluator,int(run),event,prepare_record=prepare_adoption_close_record,direct_mode=True)
     print(r.canonical(result),flush=True)
-    return 0 if result['state'] in ('queued','merged') else 2
+    return 0 if result['state'] in ('queued','merged','closed') else 2
 
 
 if __name__=='__main__':

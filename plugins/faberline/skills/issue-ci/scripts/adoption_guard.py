@@ -4,6 +4,7 @@ The rollout verifier currently refuses all guarded adoption. This module is
 not authority to bypass that hold or the separate policy and grant reviews.
 """
 import hashlib
+import ast
 import importlib.util
 import json
 import os
@@ -150,6 +151,33 @@ def authenticate_checkpoint(api,document,repo,evaluator,run,attempt,issue,head,o
     need(p['source_run']==run and p['source_attempt']==attempt and p['evaluator']==evaluator,
          'adoption_checkpoint_source')
     return dict(evidence=evidence,intent=intent,grant=grant)
+
+
+def find_direct_refusal(api,document,repo,evaluator,run,attempt,issue,head,owner,log_reader):
+    """Authenticate a terminal adoption publisher's direct merge refusal."""
+    grant=grant_from_default(api,document,repo,evaluator)
+    intent=authenticate_intent(api,document,repo,evaluator,run,attempt,issue,head,owner,log_reader)
+    identity=adoption.publisher_provenance(api,grant,run,'push',attempt=attempt,terminal=True)
+    policy,_=source_policy(api,grant)
+    direct=review.sibling('direct_merge')
+    return direct.find_refusal_in_log(log_reader(repo,identity['job_id']),repo,run,attempt,
+                                      intent,policy,guard,review)
+
+
+def direct_enabled_at(api,evaluator):
+    """Inspect immutable publisher source without executing historical code."""
+    raw=review.blob(api,'faberline/aw','plugins/faberline/skills/issue-ci/scripts/policy_adoption.py',evaluator)
+    try: tree=ast.parse(raw)
+    except (SyntaxError,TypeError,ValueError):raise RuntimeError('adoption_source_unknown') from None
+    mains=[node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='main']
+    need(len(mains)==1,'adoption_source_unknown')
+    calls=[node for node in ast.walk(mains[0]) if isinstance(node,ast.Call)
+           and isinstance(node.func,ast.Name) and node.func.id=='enqueue']
+    need(len(calls)==1,'adoption_source_unknown')
+    values=[keyword.value for keyword in calls[0].keywords if keyword.arg=='direct_mode']
+    need(len(values)<=1 and (not values or isinstance(values[0],ast.Constant)
+         and type(values[0].value) is bool),'adoption_source_unknown')
+    return bool(values and values[0].value)
 
 
 def find_prepared(api,document,repo,evaluator,run,attempt,issue,head,owner,log_reader):

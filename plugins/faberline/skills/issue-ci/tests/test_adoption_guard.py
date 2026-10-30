@@ -35,6 +35,32 @@ class AdoptionGuardTests(unittest.TestCase):
         assert expected==('1'*40 if ref==HEAD else '2'*40)
         return json.dumps(self.candidate if ref==HEAD else self.prior)
 
+    def test_historical_publisher_source_identifies_direct_mode(self):
+        current=(HERE.parent/'scripts/policy_adoption.py').read_text()
+        with patch.object(m.review,'blob',return_value=current):
+            self.assertTrue(m.direct_enabled_at(None,EVALUATOR))
+        with patch.object(m.review,'blob',return_value='def main():\n    return enqueue()\n'):
+            self.assertFalse(m.direct_enabled_at(None,EVALUATOR))
+        with patch.object(m.review,'blob',return_value='not valid python :'):
+            with self.assertRaisesRegex(RuntimeError,'adoption_source_unknown'):
+                m.direct_enabled_at(None,EVALUATOR)
+
+    def test_direct_refusal_is_bound_to_authenticated_publisher_and_guard(self):
+        seen=[]
+        class Direct:
+            def find_refusal_in_log(self,*args):seen.append(args);return {'verified':True}
+        with patch.object(m,'grant_from_default',return_value=self.grant), \
+             patch.object(m,'authenticate_intent',return_value=self.intent) as intent, \
+             patch.object(m.adoption,'publisher_provenance',return_value={'job_id':555}) as source, \
+             patch.object(m,'source_policy',return_value=(self.policy,{})), \
+             patch.object(m.review,'sibling',return_value=Direct()):
+            result=m.find_direct_refusal(None,self.document,'o/r',EVALUATOR,123,2,7,HEAD,
+                                         self.intent['payload']['owner'],lambda repo,job:f'{repo}/{job}')
+        self.assertEqual(result,{'verified':True})
+        intent.assert_called_once();source.assert_called_once()
+        self.assertEqual(seen[0][0],'o/r/555')
+        self.assertEqual(seen[0][4],self.intent)
+
     def test_bootstrap_or_unchanged_policy_only_and_exact_base(self):
         class Api:
             def api(self,path):

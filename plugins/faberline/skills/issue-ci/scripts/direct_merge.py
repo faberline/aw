@@ -3,6 +3,7 @@
 This is called only by the authenticated default-branch writer. Unknown
 provider outcomes retain the guard for recovery; they are never retried here.
 """
+import ast
 import json
 import re
 import secrets
@@ -10,6 +11,18 @@ import subprocess
 
 
 REFUSAL_MARKER = 'AW_DIRECT_MERGE_REFUSAL_V1 '
+
+
+def native_enabled_at(api, evaluator, review):
+    """Check immutable native writer source without executing historical code."""
+    raw = review.blob(api, 'faberline/aw', 'plugins/faberline/skills/issue-ci/scripts/native_merge.py', evaluator)
+    try:
+        tree = ast.parse(raw)
+    except (SyntaxError, TypeError, ValueError):
+        raise RuntimeError('direct_source_unknown') from None
+    return any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+               and node.func.attr == 'sibling' and node.args and isinstance(node.args[0], ast.Constant)
+               and node.args[0].value == 'direct_merge' for node in ast.walk(tree))
 
 
 def merge_http(repo, number, data):
@@ -48,9 +61,8 @@ def refusal_record(intent, policy, status, guard, review):
     return dict(payload=payload, sha256=review.r.digest(payload))
 
 
-def find_refusal(api, repo, document, evaluator, run, attempt, intent, log_reader, guard, review):
-    """Authenticate the exact completed writer and one matching refusal."""
-    policy, log = guard.authenticate_native_log(api, repo, document, evaluator, run, attempt, log_reader)
+def find_refusal_in_log(log, repo, run, attempt, intent, policy, guard, review):
+    """Inspect one already-authenticated source log for the exact refusal."""
     p = guard.validate(intent, policy)
     expected = []
     for item in review.r.records(log, REFUSAL_MARKER):
@@ -74,6 +86,46 @@ def find_refusal(api, repo, document, evaluator, run, attempt, intent, log_reade
             expected.append(item)
     review.need(len(expected) <= 1, 'direct_refusal_duplicate')
     return expected[0] if expected else None
+
+
+def find_refusal(api, repo, document, evaluator, run, attempt, intent, log_reader, guard, review):
+    """Authenticate the exact completed native writer and one refusal."""
+    policy, log = guard.authenticate_native_log(api, repo, document, evaluator, run, attempt, log_reader)
+    return find_refusal_in_log(log, repo, run, attempt, intent, policy, guard, review)
+
+
+def finish_close(api, repo, issue, checkpoint, merge, issue_policy, intent, guard, observation, review):
+    """Close after an observed merge while retaining the exact owned guard."""
+    need = review.need
+    current = guard.worker.read_policy(api, repo)
+    need(current is not None, 'merge_guard_policy_changed')
+    guard.worker.config(current)
+    guard.worker.check_runtime(current)
+    need(all(current.get(k) == issue_policy.get(k)
+             for k in ('version', 'enabled', 'genesis', 'ruleset_id', 'runtime')),
+         'merge_guard_policy_changed')
+    check = checkpoint['payload']['checkpoint']
+    observed = observation.observe(api, check)
+    need(observed['merge'] == merge, 'direct_merge_result_changed')
+    if observed['state'] == 'observed_merged':
+        events = api.pages(f'repos/{repo}/issues/{issue}/timeline')
+        observation.ownership_history(events, '1970-01-01T00:00:00Z', check['ownership_events'])
+        observation.no_open_linked_prs(api, repo, issue)
+        guard.require_current_policy(api, repo, current)
+        guard.guard_identity(api, repo, current, intent)
+        need(observation.observe(api, check) == observed, 'direct_issue_changed')
+        closed = api.api(f'repos/{repo}/issues/{issue}', method='PATCH',
+                         data=dict(state='closed', state_reason='completed'))
+        need(isinstance(closed, dict) and closed.get('number') == issue
+             and closed.get('state') == 'closed', 'direct_close_result_unknown')
+    else:
+        need(observed['state'] == 'observed_closed', 'direct_issue_changed')
+    final = observation.observe(api, check)
+    need(final['state'] == 'observed_closed' and final['merge'] == merge,
+         'direct_close_result_unknown')
+    guard.require_current_policy(api, repo, current)
+    guard.guard_identity(api, repo, current, intent)
+    guard.release(api, repo, current, intent)
 
 
 def merge_and_close(api, repo, number, head, load_document, evaluator,
@@ -156,29 +208,7 @@ def merge_and_close(api, repo, number, head, load_document, evaluator,
         merged = outcome['value']
         need(isinstance(merged, dict) and merged.get('merged') is True and review.sha(merged.get('sha')),
              'direct_merge_result_unknown')
-        check = checkpoint['payload']['checkpoint']
-        observed = observation.observe(api, check)
-        need(observed['merge'] == merged['sha'], 'direct_merge_result_changed')
-        if observed['state'] == 'observed_merged':
-            # The checkpoint seals the ownership timeline. Guard identity is
-            # checked again immediately before closing the issue.
-            events = api.pages(f'repos/{repo}/issues/{issue}/timeline')
-            observation.ownership_history(events, '1970-01-01T00:00:00Z', check['ownership_events'])
-            observation.no_open_linked_prs(api, repo, issue)
-            guard.require_current_policy(api, repo, issue_policy)
-            guard.guard_identity(api, repo, issue_policy, intent)
-            need(observation.observe(api, check) == observed, 'direct_issue_changed')
-            closed = api.api(f'repos/{repo}/issues/{issue}', method='PATCH',
-                             data=dict(state='closed', state_reason='completed'))
-            need(isinstance(closed, dict) and closed.get('number') == issue
-                 and closed.get('state') == 'closed', 'direct_close_result_unknown')
-        else:
-            need(observed['state'] == 'observed_closed', 'direct_issue_changed')
-        final = observation.observe(api, check)
-        need(final['state'] == 'observed_closed' and final['merge'] == merged['sha'],
-             'direct_close_result_unknown')
-        guard.require_current_policy(api, repo, issue_policy)
-        guard.release(api, repo, issue_policy, intent)
+        finish_close(api, repo, issue, checkpoint, merged['sha'], issue_policy, intent, guard, observation, review)
         return dict(state='closed', head=head, issue=issue, merge=merged['sha'])
     except Exception:
         # A provider may have accepted the last write. Keep the guard and the

@@ -82,6 +82,52 @@ class GuardedAdoptionEnqueueTests(unittest.TestCase):
         self.assertEqual(queue.call_args.args[2]['input']['clientMutationId'],self.intent['sha256'])
         self.assertEqual(bound['payload']['evidence']['payload']['adoption_source'],self.document['source_commit'])
 
+    def direct_run(self, merge_error=None):
+        class Guard:
+            def begin(inner,*args):return self.claim
+            def recheck(inner,*args):return self.attestation
+        events=[];original=a.review.sibling
+        def merge(repo,number,data):
+            events.append(('merge',repo,number,data['sha']))
+            if merge_error=='refused':return dict(state='refused',http_status=405)
+            if merge_error:raise TimeoutError('unknown provider result')
+            return dict(state='merged',value=dict(merged=True,sha='f'*40))
+        def finish(api,repo,issue,*args):events.append(('close',repo,issue))
+        direct=SimpleNamespace(merge_http=merge,finish_close=finish,REFUSAL_MARKER='REFUSAL ',
+                               refusal_record=lambda *args:{'terminal':True})
+        bound=SimpleNamespace(MARKER=per_pr.MARKER,build=per_pr.build,verify_status=lambda *a,**k:None)
+        def sibling(name):
+            return {'adoption_guard':Guard(),'direct_merge':direct,'per_pr_checkpoint':bound}.get(name) or original(name)
+        with patch.dict(os.environ,self.env,clear=True),patch.object(a,'verify_grant_attestation',return_value=self.attestation), \
+             patch.object(a,'publisher_provenance'),patch.object(a,'evaluate',side_effect=a.review.Refused('guarded_adoption_not_ready')), \
+             patch.object(a,'_evaluate_guarded',return_value=self.state),patch.object(a.review,'sibling',side_effect=sibling), \
+             patch.object(a.native,'graphql') as queue,patch.object(a,'dispatch_adoption_recovery') as wake, \
+             contextlib.redirect_stdout(io.StringIO()):
+            result=a.enqueue(self.api,'o/r',fixture.EVALUATOR,333,'push',grant_loader=lambda:self.document,
+                             prepare_record=self.checkpoint,direct_mode=True)
+        return result,events,queue,wake
+
+    def test_direct_adoption_merges_then_closes_without_queue(self):
+        result,events,queue,wake=self.direct_run()
+        self.assertEqual(result['state'],'closed')
+        self.assertEqual(events,[('merge','o/r',self.grant['pr'],self.grant['head']),
+                                 ('close','o/r',self.grant['issue'])])
+        self.assertEqual([row[2]['state'] for row in self.api.writes],['pending','success'])
+        queue.assert_not_called();wake.assert_not_called()
+
+    def test_unknown_direct_adoption_never_closes_and_wakes_recovery(self):
+        result,events,queue,wake=self.direct_run(merge_error=True)
+        self.assertEqual(result['state'],'held_after_pending')
+        self.assertEqual([x[0] for x in events],['merge'])
+        queue.assert_not_called();wake.assert_called_once_with(self.api,'o/r')
+
+    def test_refused_direct_adoption_never_closes_and_wakes_recovery(self):
+        result,events,queue,wake=self.direct_run(merge_error='refused')
+        self.assertEqual(result['state'],'held_after_pending')
+        self.assertEqual(result['reason'],'direct_merge_refused')
+        self.assertEqual([x[0] for x in events],['merge'])
+        queue.assert_not_called();wake.assert_called_once_with(self.api,'o/r')
+
     def test_mismatched_mutation_ack_holds_without_success(self):
         class Guard:
             def begin(inner,*args):return self.claim

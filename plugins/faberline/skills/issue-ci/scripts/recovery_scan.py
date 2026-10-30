@@ -122,13 +122,28 @@ def scan(api,repo,current_policy,log_reader):
                                        head=item['head'],owner=item['owner'],run=run,attempt=attempt,
                                        status=status['state'],close_authorized=False)
                             results.append(row);continue
+                        if observed['state']=='waiting':
+                            refusal=adoption.find_direct_refusal(api,source['document'],repo,source['evaluator'],
+                                run,attempt,item['issue'],item['head'],item['owner'],log_reader)
+                            row.update(state='admission_recovery' if refusal is not None else 'waiting',
+                                       kind='adoption',pr=source['pr'],head=item['head'],owner=item['owner'],
+                                       run=run,attempt=attempt,close_authorized=False)
+                            results.append(row);continue
+                    if verified is None and adoption.direct_enabled_at(api,source['evaluator']):
+                        row.update(state='held',reason='direct_attempt_unknown',close_authorized=False)
+                        results.append(row);continue
                     row.update(state='admission_recovery',kind='adoption',pr=source['pr'],head=item['head'],
                                owner=item['owner'],run=run,attempt=attempt,close_authorized=False)
                     results.append(row);continue
                 evidence=verified['evidence']
                 started=observer.source_started_at(api,evidence,require_success=False)
                 observed=observer.recovery_plan(api,evidence['payload']['checkpoint'],started)
-                row.update(state=observed['state'],kind='adoption',pr=source['pr'],head=item['head'],owner=item['owner'],
+                state=observed['state']
+                if state=='waiting':
+                    refusal=adoption.find_direct_refusal(api,source['document'],repo,source['evaluator'],
+                        run,attempt,item['issue'],item['head'],item['owner'],log_reader)
+                    if refusal is not None: state='admission_recovery'
+                row.update(state=state,kind='adoption',pr=source['pr'],head=item['head'],owner=item['owner'],
                            run=run,attempt=attempt,close_authorized=False)
                 results.append(row);continue
             document,evaluator=historical_document(api,repo,run,attempt)
@@ -143,8 +158,11 @@ def scan(api,repo,current_policy,log_reader):
                     raise
                 planned=inspect_prepared(api,repo,document,current_policy,evaluator,run,attempt,intent,log_reader)
                 if planned is None:
-                    row.update(state='admission_recovery',pr=pr,head=item['head'],owner=item['owner'],
-                               run=run,attempt=attempt,close_authorized=False)
+                    if direct.native_enabled_at(api,evaluator,review):
+                        row.update(state='held',reason='direct_attempt_unknown',close_authorized=False)
+                    else:
+                        row.update(state='admission_recovery',pr=pr,head=item['head'],owner=item['owner'],
+                                   run=run,attempt=attempt,close_authorized=False)
                 else:
                     row.update(state=planned['state'],status=planned['status'],pr=pr,head=item['head'],owner=item['owner'],
                                run=run,attempt=attempt,close_authorized=False)

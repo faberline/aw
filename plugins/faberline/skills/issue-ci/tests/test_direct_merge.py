@@ -27,13 +27,16 @@ class Provider:
         self.intent = {'payload': {'repo': 'faberline/test', 'pr': 5, 'head': HEAD,
                                    'issue': 7, 'run': 1, 'attempt': 1}}
         self.claim = {'policy': {'source': BASE}, 'intent': self.intent}
+        self.current_policy = self.claim['policy'].copy()
         self.context = {'repo': 'faberline/test', 'pr': 5, 'head': HEAD,
                         'base': BASE, 'base_ref': 'main'}
         self.receipt = {'payload': {'context': self.context}}
         self.checkpoint = {'payload': {'checkpoint': {'ownership_events': {'seal': 1}}}}
         self.doc = {'config': {}}
         self.guard = SimpleNamespace(require_current_policy=lambda *a: None,
-            guard_identity=lambda *a: None, release=self.release)
+            guard_identity=lambda *a: None, release=self.release,
+            worker=SimpleNamespace(read_policy=lambda *a:self.current_policy,
+                                   config=lambda *a:None,check_runtime=lambda *a:None))
         self.prepared = SimpleNamespace(MARKER='PREPARED ',
             target_identity=lambda *a: 'target', build_guarded=lambda *a: {'ready': True})
         self.per_pr = SimpleNamespace(MARKER='BOUND ', build=lambda *a, **kw: {'bound': True},
@@ -158,6 +161,17 @@ class DirectMergeTests(unittest.TestCase):
         self.assertFalse(any(method == 'PATCH' for method, _, _ in p.writes))
         self.assertFalse(p.released)
 
+    def test_guard_configuration_change_after_merge_prevents_close(self):
+        p = Provider(); p.current_policy['ruleset_id'] = 99
+        self.assertEqual(p.run()['state'], 'held_after_pending')
+        self.assertFalse(any(method == 'PATCH' for method, _, _ in p.writes))
+        self.assertFalse(p.released)
+
+    def test_default_branch_advance_with_same_guard_can_close(self):
+        p = Provider(); p.current_policy['policy_source'] = MERGE
+        self.assertEqual(p.run()['state'], 'closed')
+        self.assertTrue(p.released)
+
     def test_http_only_accepts_explicit_terminal_responses(self):
         for code,rc,body,state in [(200,0,{'merged':True,'sha':MERGE},'merged'),
                                    (405,1,{'message':'not mergeable'},'refused'),
@@ -193,6 +207,16 @@ class DirectMergeTests(unittest.TestCase):
         p.merge_guard.authenticate_native_log=lambda *args:(p.claim['policy'],m.REFUSAL_MARKER+json.dumps(bad))
         with self.assertRaisesRegex(RuntimeError,'direct_refusal_unknown'):
             m.find_refusal(*args)
+
+    def test_historical_native_source_identifies_direct_mode_conservatively(self):
+        source=(Path(__file__).parents[1]/'scripts/native_merge.py').read_text()
+        review=SimpleNamespace(blob=lambda *args:source)
+        self.assertTrue(m.native_enabled_at(None,BASE,review))
+        review.blob=lambda *args:'def main():\n    return None\n'
+        self.assertFalse(m.native_enabled_at(None,BASE,review))
+        review.blob=lambda *args:'not valid python :'
+        with self.assertRaisesRegex(RuntimeError,'direct_source_unknown'):
+            m.native_enabled_at(None,BASE,review)
 
 
 if __name__ == '__main__':
