@@ -30,8 +30,8 @@ def document(raw):
     return value
 
 
-def packet(api, repo, number, head, evaluator):
-    """Bind one squash-merged, data-only grant to its current product evidence."""
+def merged_data(api, repo, number, head, evaluator):
+    """Bind a squash-merged, data-only grant to AW's current default branch."""
     need(a.review.integer(number) and a.review.sha(head) and a.review.sha(evaluator),
          'merged_grant_input')
     root = 'repos/' + a.GRANTS_REPO
@@ -81,17 +81,25 @@ def packet(api, repo, number, head, evaluator):
     need(issue.get('number') == issue_number and issue.get('state') in ('open', 'closed')
          and a.review.text(issue.get('title'), 200) and a.review.text(issue.get('body'), 65536),
          'merged_grant_issue')
+    # Refuse data assembled across a default-branch update.
+    need(api.api(f'{root}/commits/main').get('sha') == main, 'merged_grant_default_changed')
+    return dict(grant=grant, grant_pr=dict(number=number, head=head, merge=merge, parent=parent,
+                default=main, blob=blob, title=pull.get('title'), body=pull.get('body')),
+                grant_issue={k: issue[k] for k in ('number', 'title', 'body')})
+
+
+def packet(api, repo, number, head, evaluator):
+    """Bind merged grant data to the current, still-open product PR."""
+    data = merged_data(api, repo, number, head, evaluator)
+    grant = data['grant']
     verified = a.evaluate(api, grant, a.r.job_log)
     a.latest_target_review(api, grant)
     policy = a.candidate_policy(api, grant)
     target_issue = api.api(f"repos/{repo}/issues/{grant['issue']}")
     target_pull = api.api(f"repos/{repo}/pulls/{grant['pr']}")
-    # Refuse a packet assembled across a default-branch update.
-    need(api.api(f'{root}/commits/main').get('sha') == main, 'merged_grant_default_changed')
-    return dict(grant=grant, grant_pr=dict(number=number, head=head, merge=merge, parent=parent,
-                default=main, blob=blob, title=pull.get('title'), body=pull.get('body')),
-                grant_issue={k: issue[k] for k in ('number', 'title', 'body')},
-                target_issue={k: target_issue[k] for k in ('number', 'title', 'body')},
+    # Recheck AW data after product reads to avoid mixing two source states.
+    need(merged_data(api, repo, number, head, evaluator) == data, 'merged_grant_data_changed')
+    return dict(**data, target_issue={k: target_issue[k] for k in ('number', 'title', 'body')},
                 target_pr={k: target_pull.get(k) for k in ('number', 'title', 'body')},
                 candidate_policy=policy, verified_target=verified)
 
@@ -111,15 +119,17 @@ def produce(api, repo, number, head, evaluator, token, invoke):
                 target_head=before['grant']['head'], grant_pr=number, grant_head=head,
                 grant_merge=source['merge'], grant_parent=source['parent'],
                 grant_default=source['default'], grant_blob=source['blob'],
+                grant_pr_sha256=a.r.digest([source['title'], source['body']]),
+                grant_issue_sha256=a.r.digest(before['grant_issue']),
                 grant_digest=a.r.digest(before['grant']), packet_sha256=a.r.digest(before),
                 decision='pass', findings=[], uncertainties=[])
 
 
-def verify(api, repo, evaluator, attestation, log_reader):
-    """Authenticate a product-side review without granting AW PRs a review gate."""
+def verify(api, repo, evaluator, attestation, log_reader, merged=False):
+    """Authenticate a product-side review; merged mode only observes recovery evidence."""
     fields = ('grant_pr grant_head workflow_path workflow_id workflow_blob source_commit branch '
               'run_id attempt job_id')
-    need(isinstance(repo, str) and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo)
+    need(type(merged) is bool and isinstance(repo, str) and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo)
          and a.review.exact(attestation, fields) and a.review.sha(evaluator)
          and all(a.review.integer(attestation[k]) for k in ('grant_pr', 'workflow_id', 'run_id', 'attempt', 'job_id'))
          and all(a.review.sha(attestation[k]) for k in ('grant_head', 'workflow_blob', 'source_commit'))
@@ -168,14 +178,28 @@ def verify(api, repo, evaluator, attestation, log_reader):
          and jobs[0].get('status') == 'completed' and jobs[0].get('conclusion') == 'success',
          'merged_grant_review_job')
     rows = a.r.records(log_reader(repo, spec['job_id']), MARKER)
-    current = packet(api, repo, spec['grant_pr'], spec['grant_head'], evaluator)
+    need(len(rows) == 1 and isinstance(rows[0], dict), 'merged_grant_review_receipt')
+    current = (merged_data(api, repo, spec['grant_pr'], spec['grant_head'], evaluator) if merged
+               else packet(api, repo, spec['grant_pr'], spec['grant_head'], evaluator))
     grant = current['grant']; source = current['grant_pr']
+    if merged:
+        a.evaluate_merged(api, grant, log_reader)
+        packet_sha = rows[0].get('packet_sha256')
+        need(isinstance(packet_sha, str) and re.fullmatch('[0-9a-f]{64}', packet_sha),
+             'merged_grant_review_receipt')
+    else:
+        packet_sha = a.r.digest(current)
     expected = dict(version=1, repo=repo, target_pr=grant['pr'], target_head=grant['head'],
                     grant_pr=spec['grant_pr'], grant_head=spec['grant_head'], grant_merge=source['merge'],
                     grant_parent=source['parent'], grant_default=source['default'], grant_blob=source['blob'],
-                    grant_digest=a.r.digest(grant), packet_sha256=a.r.digest(current),
+                    grant_pr_sha256=a.r.digest([source['title'], source['body']]),
+                    grant_issue_sha256=a.r.digest(current['grant_issue']),
+                    grant_digest=a.r.digest(grant), packet_sha256=packet_sha,
                     decision='pass', findings=[], uncertainties=[])
     need(rows == [expected], 'merged_grant_review_receipt')
+    if merged:
+        need(merged_data(api, repo, spec['grant_pr'], spec['grant_head'], evaluator) == current,
+             'merged_grant_data_changed')
     need(latest() == before_runs, 'merged_grant_review_changed')
     fresh = api.api(f"repos/{repo}/actions/runs/{spec['run_id']}")
     keys = ('id', 'workflow_id', 'path', 'head_sha', 'head_branch', 'event', 'head_repository',
@@ -185,7 +209,7 @@ def verify(api, repo, evaluator, attestation, log_reader):
     return expected
 
 
-def discover(api, grant, evaluator, log_reader):
+def discover(api, grant, evaluator, log_reader, merged=False):
     """Find and authenticate the latest review on the target-specific branch.
 
     The grant is still inert unless a trusted publisher calls this function and
@@ -226,7 +250,7 @@ def discover(api, grant, evaluator, log_reader):
     att = dict(grant_pr=int(pr), grant_head=head, workflow_path=path, workflow_id=run['workflow_id'],
                workflow_blob=blob, source_commit=run['head_sha'], branch=branch,
                run_id=run['id'], attempt=run['run_attempt'], job_id=jobs[0]['id'])
-    receipt = verify(api, repo, evaluator, att, log_reader)
+    receipt = verify(api, repo, evaluator, att, log_reader, merged=merged)
     need(receipt['grant_digest'] == a.r.digest(grant), 'merged_grant_discovery_mismatch')
     return dict(attestation=att, receipt=receipt)
 

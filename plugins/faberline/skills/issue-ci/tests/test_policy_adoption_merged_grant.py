@@ -171,7 +171,9 @@ class MergedGrantTests(unittest.TestCase):
                    run_attempt=1, run_number=2, status='completed', conclusion='success')
         receipt = dict(version=1, repo='o/r', target_pr=grant['pr'], target_head=grant['head'],
                        grant_pr=77, grant_head=HEAD, grant_merge=MERGE, grant_parent=PARENT,
-                       grant_default=MAIN, grant_blob=BLOB, grant_digest=m.a.r.digest(grant),
+                       grant_default=MAIN, grant_blob=BLOB,
+                       grant_pr_sha256=m.a.r.digest(['Grant', 'Closes #97']),
+                       grant_issue_sha256=m.a.r.digest(current['grant_issue']), grant_digest=m.a.r.digest(grant),
                        packet_sha256=m.a.r.digest(current), decision='pass', findings=[], uncertainties=[])
         class API:
             jobs = [dict(name='review', id=101, status='completed', conclusion='success')]
@@ -195,6 +197,23 @@ class MergedGrantTests(unittest.TestCase):
         api.jobs[0]['conclusion'] = 'success'
         unsafe = copy.deepcopy(workflow); unsafe['jobs']['review']['permissions']['contents'] = 'write'
         with self.assertRaisesRegex(RuntimeError, 'workflow'): execute(line, yaml.safe_dump(unsafe))
+        merged_data = {k: current[k] for k in ('grant', 'grant_pr', 'grant_issue')}
+        with patch.object(m.a.review, 'blob', return_value=yaml.safe_dump(workflow)), \
+             patch.object(m, 'merged_data', return_value=merged_data), \
+             patch.object(m.a, 'evaluate_merged', return_value={'ci': 'verified'}) as merged_verify:
+            self.assertEqual(m.verify(api, 'o/r', adoption.EVALUATOR, att, lambda *args: line, merged=True), receipt)
+        self.assertEqual(merged_verify.call_count, 1)
+        changed = copy.deepcopy(merged_data); changed['grant_issue']['body'] = 'Changed after review'
+        with patch.object(m.a.review, 'blob', return_value=yaml.safe_dump(workflow)), \
+             patch.object(m, 'merged_data', return_value=changed), \
+             patch.object(m.a, 'evaluate_merged', return_value={'ci': 'verified'}), \
+             self.assertRaisesRegex(RuntimeError, 'review_receipt'):
+            m.verify(api, 'o/r', adoption.EVALUATOR, att, lambda *args: line, merged=True)
+        with patch.object(m.a.review, 'blob', return_value=yaml.safe_dump(workflow)), \
+             patch.object(m, 'merged_data', return_value=merged_data), \
+             patch.object(m.a, 'evaluate_merged', side_effect=RuntimeError('merged CI unverified')), \
+             self.assertRaisesRegex(RuntimeError, 'merged CI unverified'):
+            m.verify(api, 'o/r', adoption.EVALUATOR, att, lambda *args: line, merged=True)
 
     def test_discovery_only_uses_latest_target_specific_run_and_matching_grant(self):
         f = Fixture(); grant = f.grant
