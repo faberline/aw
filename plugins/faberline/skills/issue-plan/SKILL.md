@@ -1,13 +1,14 @@
 ---
 name: issue-plan
-description: "The plan step of the issue loop. Each run triages the open issues of one repository, sets their priority, writes the spec of backlog issues, and fills the todo queue from the backlog first, then with new GitHub issues, each one PR the work step can finish. Use when the schedule or the user asks to plan, triage, prioritize, or fill the issue queue."
+description: "Plan one repository's issue queue and assess milestone release readiness. Triage issues, set priorities, write specs, fill todo from the backlog, and report whether the release candidate meets its documented gates. Use when the schedule or user asks to plan or assess a milestone."
 user-invocable: true
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/plan.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/plan.sh *)
 ---
 
 # /faberline:issue-plan
 
-Triage the issues, set priorities, and fill the `todo` queue, then stop.
+Triage the issues, set priorities, fill the `todo` queue, and assess milestone
+release readiness, then stop.
 The mechanics live in `${CLAUDE_SKILL_DIR}/scripts/plan.sh`; your job is
 the direction.
 
@@ -24,8 +25,11 @@ argument, such as `loop` or `once`.
 
 - New issues and specs stay inside the repository's stated goals and the
   user's instructions.
+- Assessing whether a milestone meets its existing release requirements is
+  part of planning. It is read-only: do not publish a release, create a tag,
+  change a package version, or close a milestone as part of this assessment.
 - Never open an issue or write a spec for work that needs a human decision:
-  releases, paid or cloud services, deleting data, or changing a frozen
+  release execution, paid or cloud services, deleting data, or changing a frozen
   contract. When an open backlog or `todo` issue needs one, block it with
   one question (see Blocked). Only a `blocked` issue reaches the controller;
   a note in your run report does not.
@@ -100,6 +104,9 @@ ${CLAUDE_SKILL_DIR}/scripts/plan.sh status
    read is not permission to write or proof of exclusive planner activity.
    Failed/incomplete reads remain errors, never an empty queue. Every mutation
    must use its normal guarded command and fresh revalidation.
+   If status fails, do not mutate the queue. Still attempt the independent
+   read-only release assessment in step 6, and report `HOLD` when its evidence
+   is incomplete.
 
 2. When there is something to do (`room` above 0, an untriaged issue, or a
    backlog issue to spec), read the repository's goals and status (README,
@@ -141,7 +148,14 @@ ${CLAUDE_SKILL_DIR}/scripts/plan.sh new "<title>" <body-file> <p0-p3> --mileston
    that has none, at most one per run, so the next free place is quick to
    fill.
 
-6. End the run. When nothing changed, report one line.
+6. Assess the current milestone's release readiness, including when the queue
+   is full or no issues changed. Follow [RELEASE-READINESS.md](RELEASE-READINESS.md).
+   Report `READY` or `HOLD`, the exact milestone and release candidate, links
+   to the evidence, and any blockers. A missing release contract or unknown
+   evidence is `HOLD`. This verdict does not publish or authorize a release.
+
+7. End the run. Report any issue changes and the milestone verdict. If no
+   milestone can be identified, report `HOLD` and the missing information.
 
 ## Exit codes
 

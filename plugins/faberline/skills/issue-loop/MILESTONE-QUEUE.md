@@ -6,7 +6,10 @@ AGY `issue-work/scripts/work.py` consumes already-planned exclusive todo issues
 by priority and creation time; it uses only shared REST/label helpers, not the
 milestone frontier or dependency parser. Milestones remain assigned metadata.
 Core milestones are repo development batches; crate versions remain independent.
-No schedule, permission, CI qualification, release gate or done policy changes.
+The planner also reports milestone release readiness using the existing
+release contract; see [RELEASE-READINESS.md](../issue-plan/RELEASE-READINESS.md).
+This assessment changes no schedule, permission, CI qualification, release
+gate or done policy.
 
 ## Planner ordering and frontier
 
