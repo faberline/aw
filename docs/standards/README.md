@@ -45,8 +45,12 @@ Promote a guideline only when all three are true:
 | S3 | [Rust layout and layers](rust-layout.md) | every Rust repository | `aw standards rust-arch check` with the repository's `ddd.toml` | `ddd.toml` exception entries | active |
 | S4 | [Core reuse](core-reuse.md) | every Rust repository, and `core` itself | `aw standards check` | `[[standards.core_reuse.exception]]` in `aw.toml` | active since 2026-10-15; 8 of 25 repositories pass |
 | S5 | [SaaS service skeleton](saas-service.md) | repositories with `[project] kind = "saas-service"`: `lumen`, `tape`, `defer`, `relay`, `keep` | `aw standards saas-service check` | `[[standards.saas_service.exception]]` in `aw.toml` | candidate since 2026-10-22; report only; 0 of 5 pass |
+| DEV-PIPELINE-1 | [Normal development pipeline](development-pipeline.md) | Faberline product repositories; first Core, Lumen, Keep, Tape, Defer, Relay; AW has no Claude-review gate | executable consumer conformance and immutable workflow evidence required; implementation pending | reviewed category applicability only; no waiver of required gates or failure reporting | approved design 2026-10-30; candidate; consumer adoption pending |
 
 A candidate becomes active when its checker is on `aw` main.
+For DEV-PIPELINE-1, each consumer also needs its own verified adoption evidence.
+This specification covers ordinary PR development only. Release pipelines
+will be defined separately.
 
 ## Guidelines
 

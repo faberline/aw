@@ -1,5 +1,13 @@
 # Test scopes
 
+For normal pull request development, the approved
+[DEV-PIPELINE-1 specification](development-pipeline.md) takes precedence over
+this older draft. In particular, keep its ordered stages, all existing
+applicable gates, nonzero test rosters, and every-job failure reporting.
+This draft cannot authorize skipping a failing required test. Its release
+and merge-queue proposals are not adopted by the development specification;
+release pipeline design remains a separate discussion.
+
 Guideline. State: **draft, 2026-10-17**. It becomes a standard when
 `aw tests select` and the map checks in [Planned checks](#planned-checks)
 ship; see the [definition](README.md#what-a-standard-is). Until then, a
@@ -195,8 +203,10 @@ A pull request workflow starts with one small `select` job. It reads the
 changed paths and the map, and gives the selectors as outputs. The test jobs
 read those outputs: a `cargo test` job for `lib` and `it`, and the
 [test cluster](test-cluster.md#the-test-job) matrix for `e2e` suites, and a
-job for `perf` tests. A job with no selector is skipped, and a skipped job counts as
-passed.
+job for `perf` tests. In normal development these execute in the stage order
+defined by DEV-PIPELINE-1. When no tests apply, require an explicit reviewed
+not-applicable decision and an applicability receipt. A skipped or zero-test
+required job does not count as passed.
 
 The cargo build happens once for each feature set of a run. The test client image of
 [rust-tests.md](rust-tests.md#the-test-client-image) holds the same test
