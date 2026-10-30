@@ -73,7 +73,8 @@ def verify(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, r
                         grant_issue_sha256=a.r.digest(current['grant_issue']),grant_digest=a.r.digest(grant),
                         packet_sha256=a.r.digest(current),decision='pass',findings=[],uncertainties=[])
         need(positives == [expected] and not negatives, 'merged_outcome_receipt')
-        return dict(decision='pass', issue=grant['issue'], sha256=a.r.digest(expected))
+        return dict(decision='pass', issue=grant['issue'], issue_sha256=grant['issue_sha256'],
+                    sha256=a.r.digest(expected))
     need(not positives and len(negatives) == 1 and isinstance(negatives[0], dict), 'merged_outcome_receipt')
     value = negatives[0]
     fields = ('version repo target_pr issue target_head target_base grant_pr grant_head grant_merge grant_default '
@@ -93,7 +94,54 @@ def verify(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, r
          and (value['decision'] != 'pass' or value['findings'] or value['uncertainties']),
          'merged_outcome_receipt')
     return dict(decision='block' if value['decision']=='block' else 'fail',
-                issue=grant['issue'], sha256=a.r.digest(value))
+                issue=grant['issue'], issue_sha256=grant['issue_sha256'], sha256=a.r.digest(value))
+
+
+def verify_recovery_ready(api, repo, document, evaluator):
+    """Hold until this exact outcome writer has authenticated crash recovery."""
+    raise a.review.Refused('merged_outcome_recovery_not_ready')
+
+
+def apply(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, run_id,
+          log_reader=a.r.job_log):
+    """Apply a negative outcome only with rollout proof and a shared guard."""
+    def current():
+        return verify(api,repo,grant_pr,grant_head,target_pr,target_head,evaluator,run_id,log_reader)
+    receipt = current()
+    if receipt['decision'] == 'pass':
+        return dict(state='pass_waiting_for_adoption',issue=receipt['issue'])
+    document = a.review.action.trusted_policy(api,repo,'.github/issue-ci-required-gates.json',metadata=True)
+    recovery = a.review.sibling('recovery_entry')
+    recovery.verify_rollout(api,repo,document)
+    # Actor rollout is not proof that this writer's crash/retry path is safe.
+    # Keep this separate hard hold until that recovery path is implemented.
+    verify_recovery_ready(api,repo,document,evaluator)
+    guard = a.review.sibling('merge_guard')
+    close = a.review.sibling('guarded_close')
+    admission = a.review.sibling('guarded_admission')
+    policy = guard.worker.read_policy(api,repo)
+    need(policy is not None and policy['policy_source'] == document['source_commit'], 'merged_outcome_guard_policy')
+    guard.worker.check_runtime(policy)
+    provider = a.native.provider_pull(api,repo,target_pr)
+    need(provider.get('state') == 'OPEN' and provider.get('headRefOid') == target_head
+         and provider.get('autoMergeRequest') is None, 'merged_outcome_request_unknown')
+    attempt = os.environ.get('GITHUB_RUN_ATTEMPT','')
+    need(re.fullmatch(r'[1-9][0-9]*',attempt), 'merged_outcome_context')
+    intent = guard.build(repo,target_pr,target_head,receipt['issue'],policy,run_id,int(attempt))
+    guard.acquire(api,policy,intent,lambda line:print(line,flush=True))
+    close.require_current_policy(api,repo,policy)
+    close.guard_identity(api,repo,policy,intent)
+    def checked(*_args):
+        close.require_current_policy(api,repo,policy)
+        close.guard_identity(api,repo,policy,intent)
+        fresh=current()
+        need(fresh == receipt, 'merged_outcome_changed')
+        return dict(payload=dict(context=dict(issue_sha256=receipt['issue_sha256']),
+                                 result=dict(decision=receipt['decision'])), sha256=receipt['sha256'])
+    result = a.native.return_todo(api,repo,target_pr,target_head,lambda:document,evaluator,run_id,checked)
+    settlement = admission.settle(api,repo,policy,intent)
+    need(settlement.get('state') == 'released', 'merged_outcome_guard_retained')
+    return result
 
 
 def main():
@@ -106,9 +154,8 @@ def main():
          and all(re.fullmatch(r'[1-9][0-9]*', value) for value in (grant_pr,target_pr,run))
          and a.review.sha(grant_head) and a.review.sha(target_head) and a.review.sha(evaluator),
          'merged_outcome_identity')
-    result = verify(a.ci, repo, int(grant_pr), grant_head, int(target_pr), target_head, evaluator, int(run))
-    need(result['decision'] == 'pass', 'merged_outcome_guard_not_ready')
-    print(a.r.canonical(dict(state='pass_waiting_for_adoption',issue=result['issue'])), flush=True)
+    result = apply(a.ci, repo, int(grant_pr), grant_head, int(target_pr), target_head, evaluator, int(run))
+    print(a.r.canonical(result), flush=True)
 
 
 if __name__ == '__main__':

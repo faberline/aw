@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import yaml
@@ -98,8 +99,54 @@ class MergedOutcomeTests(unittest.TestCase):
             INPUT_REVIEW_RUN='100',AW_ACTION_REF=adoption.EVALUATOR)
         with patch.dict(os.environ,env,clear=True), \
              patch.object(o,'verify',return_value=dict(decision='fail',issue=7)), \
-             contextlib.redirect_stdout(io.StringIO()),self.assertRaisesRegex(RuntimeError,'guard_not_ready'):
+             patch.object(o.a.review.action,'trusted_policy',return_value={'source_commit':'a'*40}), \
+             patch.object(o.a.review,'sibling',return_value=SimpleNamespace(verify_rollout=lambda *args:None)), \
+             contextlib.redirect_stdout(io.StringIO()),self.assertRaisesRegex(RuntimeError,'recovery_not_ready'):
             o.main()
+
+    def test_negative_uses_guard_before_todo_and_releases_only_after_settlement(self):
+        f=OutcomeFixture();events=[];policy={'policy_source':'a'*40}
+        receipt=dict(decision='fail',issue=7,issue_sha256='d'*64,sha256='e'*64)
+        worker=SimpleNamespace(read_policy=lambda *args:policy,check_runtime=lambda *args:events.append('runtime'))
+        guard=SimpleNamespace(worker=worker,build=lambda *args:{'intent':'bound'},
+                              acquire=lambda *args:events.append('acquire'))
+        close=SimpleNamespace(require_current_policy=lambda *args:events.append('policy'),
+                              guard_identity=lambda *args:events.append('owner'))
+        admission=SimpleNamespace(settle=lambda *args:(events.append('settle') or {'state':'released'}))
+        recovery=SimpleNamespace(verify_rollout=lambda *args:events.append('rollout'))
+        modules={'recovery_entry':recovery,'merge_guard':guard,'guarded_close':close,'guarded_admission':admission}
+        def return_todo(*args):
+            checked=args[-1]()
+            self.assertEqual(checked['payload']['result']['decision'],'fail')
+            events.append('todo')
+            return dict(state='returned_todo',issue=7)
+        with patch.dict(os.environ,f.env,clear=True),patch.object(o,'verify',return_value=receipt), \
+             patch.object(o.a.review.action,'trusted_policy',return_value={'source_commit':'a'*40}), \
+             patch.object(o,'verify_recovery_ready',return_value=None), \
+             patch.object(o.a.review,'sibling',side_effect=lambda name:modules[name]), \
+             patch.object(o.a.native,'provider_pull',return_value=dict(state='OPEN',headRefOid=f.grant['head'],autoMergeRequest=None)), \
+             patch.object(o.a.native,'return_todo',side_effect=return_todo),contextlib.redirect_stdout(io.StringIO()):
+            result=o.apply(f,'o/r',77,fixture.HEAD,8,f.grant['head'],adoption.EVALUATOR,100)
+        self.assertEqual(result['state'],'returned_todo')
+        self.assertLess(events.index('acquire'),events.index('todo'))
+        self.assertLess(events.index('todo'),events.index('settle'))
+
+    def test_unknown_existing_merge_request_never_acquires_guard_or_changes_issue(self):
+        f=OutcomeFixture();events=[];policy={'policy_source':'a'*40}
+        receipt=dict(decision='fail',issue=7,issue_sha256='d'*64,sha256='e'*64)
+        guard=SimpleNamespace(worker=SimpleNamespace(read_policy=lambda *args:policy,check_runtime=lambda *args:None),
+                              acquire=lambda *args:events.append('acquire'))
+        modules={'recovery_entry':SimpleNamespace(verify_rollout=lambda *args:None),
+                 'merge_guard':guard,'guarded_close':SimpleNamespace(),'guarded_admission':SimpleNamespace()}
+        with patch.dict(os.environ,f.env,clear=True),patch.object(o,'verify',return_value=receipt), \
+             patch.object(o.a.review.action,'trusted_policy',return_value={'source_commit':'a'*40}), \
+             patch.object(o,'verify_recovery_ready',return_value=None), \
+             patch.object(o.a.review,'sibling',side_effect=lambda name:modules[name]), \
+             patch.object(o.a.native,'provider_pull',return_value=dict(state='OPEN',headRefOid=f.grant['head'],autoMergeRequest={'unknown':True})), \
+             patch.object(o.a.native,'return_todo',side_effect=lambda *args:events.append('todo')), \
+             self.assertRaisesRegex(RuntimeError,'request_unknown'):
+            o.apply(f,'o/r',77,fixture.HEAD,8,f.grant['head'],adoption.EVALUATOR,100)
+        self.assertEqual(events,[])
 
     def test_positive_main_completes_without_writes(self):
         f=OutcomeFixture();env=dict(f.env,INPUT_GRANT_PR='77',INPUT_GRANT_HEAD=fixture.HEAD,
