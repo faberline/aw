@@ -30,6 +30,7 @@ class Fixture:
         self.commit = dict(sha=MERGE, parents=[dict(sha=PARENT)])
         self.issue = dict(number=97, state='closed', title='Grant', body='Grant requirements')
         self.files = [dict(filename=m.a.GRANTS_PATH, status='modified', sha=BLOB)]
+        self.merged_files = [dict(filename=m.a.GRANTS_PATH, status='modified', sha=BLOB)]
         self.previous = []
         self.proposed = [self.grant]
         self.merged = [self.grant]
@@ -52,6 +53,7 @@ class Fixture:
 
     def pages(self, path, key=None):
         if path == 'repos/faberline/aw/pulls/77/files': return copy.deepcopy(self.files)
+        if path == f'repos/faberline/aw/commits/{MERGE}': return copy.deepcopy(self.merged_files)
         raise AssertionError(path)
 
     def blob(self, api, repo, path, ref, expected=None):
@@ -101,7 +103,9 @@ class MergedGrantTests(unittest.TestCase):
         def duplicate(f): f.proposed = f.merged = [f.grant, f.grant]
         def stale(f): f.current = []
         def existing(f): f.previous = [f.grant]
-        for change in (add_file, mutate_merge, duplicate, stale, existing):
+        def altered_commit(f): f.merged_files.append(dict(filename='other', status='added', sha='9'*40))
+        def wrong_commit_blob(f): f.merged_files[0]['sha'] = '9'*40
+        for change in (add_file, mutate_merge, duplicate, stale, existing, altered_commit, wrong_commit_blob):
             f = Fixture(); change(f)
             with self.subTest(change=change), self.assertRaises(RuntimeError): f.run()
 

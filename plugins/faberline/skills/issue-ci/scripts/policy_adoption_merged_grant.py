@@ -58,6 +58,11 @@ def packet(api, repo, number, head, evaluator):
     need(len(inventory) == 1 and inventory[0]['path'] == a.GRANTS_PATH
          and inventory[0]['status'] == 'modified', 'merged_grant_only_data')
     blob = inventory[0]['sha']
+    merged_files = api.pages(f'{root}/commits/{merge}', 'files')
+    need(isinstance(merged_files, list) and len(merged_files) == 1
+         and merged_files[0].get('filename') == a.GRANTS_PATH
+         and merged_files[0].get('status') == 'modified' and merged_files[0].get('sha') == blob,
+         'merged_grant_commit_scope')
     proposed = document(a.review.blob(api, a.GRANTS_REPO, a.GRANTS_PATH, head, blob))
     merged = document(a.review.blob(api, a.GRANTS_REPO, a.GRANTS_PATH, merge, blob))
     previous = document(a.review.blob(api, a.GRANTS_REPO, a.GRANTS_PATH, parent))
