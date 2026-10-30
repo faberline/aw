@@ -36,6 +36,18 @@ from that workflow exactly once. Keep the full required check inventory,
 feature expansion and issue contracts in the qualification policy. The final
 review and result writer remain separate trusted workflows.
 
+An authenticated `fail` or `block` review also needs a readable issue comment.
+The result writer includes every finding, uncertainty, and unmet requirement,
+with the exact head, base, run, attempt, job, and receipt link. A successful
+workflow that records a negative review is still a failed review stage.
+Long reasons use numbered comments. No reason is silently truncated.
+
+Reason comments are separate from the durable `todo` recovery journal.
+Existing journal identities and pending/ready/applied bodies stay unchanged.
+A retry can add the missing reason to an old journal without resetting an
+agent's later `doing` claim. Duplicate delivery reuses each bot reason comment.
+Unknown comment writes remain retryable before any new label change.
+
 The checker verifies transitive `needs` dependencies. Every unit/static job
 waits for impact and preflight. Both expensive groups wait for every unit
 job. Cycles, unassigned jobs, failure-ignoring steps/jobs and matrix fail-fast

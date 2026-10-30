@@ -82,8 +82,11 @@ class MergedRecoveryTests(unittest.TestCase):
                  'guarded_admission':admission,'todo_mutation_trace':trace}
         output=io.StringIO()
         provider_view=dict(state='OPEN',headRefOid=native_fixture.HEAD,autoMergeRequest=None)
+        def verified(*args,detail_sink=None,**kwargs):
+            if detail_sink is not None:detail_sink(copy.deepcopy(provider.receipt['payload']))
+            return copy.deepcopy(receipt)
         with patch.dict(os.environ,{'GITHUB_RUN_ATTEMPT':'1'},clear=True), \
-             patch.object(m.outcome,'verify',return_value=receipt), \
+             patch.object(m.outcome,'verify',side_effect=verified), \
              patch.object(m.outcome.a.review.action,'trusted_policy',return_value={'source_commit':'d'*40}), \
              patch.object(m.outcome,'verify_recovery_ready'), \
              patch.object(m.outcome.a.review,'sibling',side_effect=lambda name:modules[name]), \
@@ -98,6 +101,7 @@ class MergedRecoveryTests(unittest.TestCase):
             result=m.inspect(provider,'o/r',policy,200,1,7,native_fixture.HEAD,'owner',lambda *args:log)
         self.assertEqual(result,dict(pr=1,phase='applied',state='applied_observed',close_authorized=False))
         self.assertEqual({label['name'] for label in provider.issue['labels']},{'todo','bug'})
+        self.assertTrue(any('Required acceptance evidence is missing.' in row['body'] for row in provider.comments))
         unsealed='\n'.join(line for line in log.splitlines() if not line.startswith(trace.SEAL_MARKER))
         with patch.object(m,'authenticate',return_value=evidence),patch.object(m,'verify_trace_source'), \
              patch.object(m.outcome.a.native,'provider_pull',return_value=provider_view), \

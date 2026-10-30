@@ -18,7 +18,10 @@ class Lifecycle(native.Provider):
         self.pull['body'] = 'Closes #7\n'
         self.issue = dict(number=7, state='open', title='Contract', body='Do exactly this.',
                           labels=[dict(name='done'), dict(name='bug')])
-        self.receipt['payload']['result'] = dict(decision='fail')
+        self.receipt['payload']['result'] = dict(decision='fail',summary='Required acceptance evidence is missing.',
+            requirement_results=[dict(id='R1',status='missing',detail='Supply the exact current-head receipt.')],
+            contract_uncertainties=[],extra_changes=[])
+        self.receipt['payload']['producer'] = dict(run_id=200,run_attempt=1,job_id=44)
         self.receipt['payload']['context']['issue_sha256'] = m.review.r.digest(
             {k:self.issue[k] for k in ('number','title','body')})
         self.issue_writes=[]
@@ -172,7 +175,7 @@ class ReviewLifecycleTests(unittest.TestCase):
         p.issue['body']=original_body;p.after_add=None;p.issue_writes.clear()
         p.reject()
         self.assertEqual(p.issue_writes,[('remove','done')])
-        self.assertEqual(len(p.comments),1)
+        self.assertEqual(len(p.comments),2)
         self.assertIn(':applied -->',p.comments[0]['body'])
 
     def test_other_author_checkpoint_is_not_trusted(self):
@@ -196,7 +199,73 @@ class ReviewLifecycleTests(unittest.TestCase):
         p.receipt['payload']['result']['decision']='block'
         p.reject()
         self.assertEqual(p.issue_writes,[('add',['todo']),('remove','doing')])
+        self.assertEqual(len(p.comments),4)
+
+    def test_reason_is_visible_and_bound_to_exact_review_job(self):
+        p=Lifecycle();p.reject()
+        reason=p.comments[1]['body']
+        self.assertIn('Required acceptance evidence is missing.',reason)
+        self.assertIn('Supply the exact current-head receipt.',reason)
+        self.assertIn('Run: 200. Attempt: 1. Job: 44.',reason)
+        self.assertIn(native.HEAD,reason);self.assertIn(native.BASE,reason)
+        self.assertIn('/actions/runs/200/job/44',reason)
+        p.reject();self.assertEqual(len(p.comments),2)
+
+    def test_old_applied_journal_gets_reason_without_resetting_new_claim(self):
+        p=Lifecycle();p.reject()
+        journal=copy.deepcopy(p.comments[0]);p.comments=[journal]
+        p.issue['labels']=[dict(name='doing'),dict(name='bug')];p.issue_writes.clear()
+        self.assertEqual(p.reject()['state'],'already_returned_todo')
+        self.assertEqual(p.issue_writes,[]);self.assertEqual(p.comments[0],journal)
+        self.assertIn('Supply the exact current-head receipt.',p.comments[1]['body'])
+
+    def test_lost_reason_response_recovers_without_duplicate_or_premature_labels(self):
+        p=Lifecycle();original=p.api
+        def api(path,method='GET',data=None):
+            result=original(path,method,data)
+            if method=='POST' and path.endswith('/comments') and data['body'].startswith('<!-- claude-review-reason:'):
+                raise RuntimeError('lost reason response')
+            return result
+        p.api=api
+        with self.assertRaisesRegex(RuntimeError,'lost reason response'):p.reject()
+        self.assertEqual(p.issue_writes,[]);self.assertEqual(len(p.comments),2)
+        p.api=original;p.reject()
         self.assertEqual(len(p.comments),2)
+        self.assertEqual(p.issue_writes,[('add',['todo']),('remove','done')])
+
+    def test_old_ready_journal_backfills_reason_without_readding_consumed_todo(self):
+        p=Lifecycle();p.reject();p.comments=p.comments[:1]
+        p.comments[0]['body']=p.comments[0]['body'].replace(':applied -->',':ready -->')
+        p.issue['labels']=[dict(name='doing')];p.issue_writes.clear()
+        p.reject()
+        self.assertEqual(p.issue_writes,[])
+        self.assertEqual({v['name'] for v in p.issue['labels']},{'doing'})
+        self.assertIn('Required acceptance evidence is missing.',p.comments[1]['body'])
+
+    def test_all_long_reasons_are_numbered_and_markdown_remains_inert(self):
+        p=Lifecycle();value='```\n@someone <script> [link](https://example.test)\n'+('x'*3900)
+        p.receipt['payload']['result'].update(contract_uncertainties=[value+str(i) for i in range(16)])
+        p.reject()
+        bodies=[c['body'] for c in p.comments if c['body'].startswith('<!-- claude-review-reason:')]
+        self.assertGreater(len(bodies),1)
+        content=[]
+        for body in bodies:
+            self.assertLess(len(body),60000)
+            lines=body.splitlines()
+            start=next(i for i,line in enumerate(lines) if line.endswith('text') and line.startswith('```'))
+            self.assertEqual(lines[start].removesuffix('text'),lines[-1])
+            content.append('\n'.join(lines[start+1:-1]))
+        joined=''.join(content)
+        for i in range(16):self.assertTrue(('x'*3900)+str(i) in joined)
+
+    def test_reason_tamper_or_missing_reason_refuses_label_changes(self):
+        p=Lifecycle();p.reject();p.comments[1]['body']+='extra'
+        p.issue['labels']=[dict(name='doing')];p.issue_writes.clear()
+        with self.assertRaisesRegex(RuntimeError,'review_reason_comment_ambiguous'):p.reject()
+        self.assertEqual(p.issue_writes,[])
+        p=Lifecycle();p.receipt['payload']['result']=dict(decision='fail')
+        with self.assertRaisesRegex(RuntimeError,'review_reason_missing'):p.reject()
+        self.assertEqual(p.comments,[]);self.assertEqual(p.issue_writes,[])
 
 
     def test_existing_todo_intent_starts_ready_before_a_worker_can_claim_it(self):
