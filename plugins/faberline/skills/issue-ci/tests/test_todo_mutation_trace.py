@@ -98,3 +98,19 @@ class TraceTests(unittest.TestCase):
         self.assertEqual([entry[0] for entry in provider.issue_writes],['add','remove'])
         retry_records=[json.loads(line[len(m.MARKER):]) for line in retry_lines if line.startswith(m.MARKER)]
         self.assertTrue(m.complete(retry_records,SHA))
+
+    def test_provider_may_apply_todo_before_the_response_is_lost(self):
+        provider=lifecycle.Lifecycle();original_api=provider.api;lines=[]
+        def api(path,method='GET',data=None):
+            result=original_api(path,method,data)
+            if path=='repos/o/r/issues/7/labels' and method=='POST':
+                raise TimeoutError('response lost after provider applied the label')
+            return result
+        provider.api=api
+        traced=m.TracedApi(provider,'o/r',7,native.HEAD,SHA,lines.append)
+        with self.assertRaises(TimeoutError):
+            lifecycle.m.return_todo(traced,'o/r',1,native.HEAD,provider.load,native.EVALUATOR,200,provider.verify)
+        self.assertIn('todo',{label['name'] for label in provider.issue['labels']})
+        records=[json.loads(line[len(m.MARKER):]) for line in lines]
+        self.assertFalse(m.complete(records,SHA))
+        self.assertFalse(any(line.startswith(m.SEAL_MARKER) for line in lines))

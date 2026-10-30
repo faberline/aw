@@ -2,6 +2,8 @@
 import copy
 import importlib.util
 import json
+import contextlib
+import io
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +14,8 @@ import yaml
 import test_guarded_adoption_enqueue as guarded_fixture
 import test_policy_adoption as adoption
 import test_policy_adoption_merged_outcome as fixture
+import test_review_lifecycle as lifecycle
+import test_native_merge as native_fixture
 
 spec=importlib.util.spec_from_file_location(
     'merged_recovery_test',Path(__file__).parents[1]/'scripts/policy_adoption_merged_recovery.py')
@@ -56,6 +60,50 @@ class RecoveryFixture:
 
 
 class MergedRecoveryTests(unittest.TestCase):
+    def test_sealed_real_todo_journal_is_observed_after_guard_retained(self):
+        provider=lifecycle.Lifecycle();original_pages=provider.pages
+        def pages(path,key=None):
+            rows=original_pages(path,key)
+            if path=='repos/o/r/issues/7/comments':
+                for row in rows:row['user'].update(id=41898282,type='Bot')
+            return rows
+        provider.pages=pages
+        receipt=dict(decision='fail',issue=7,
+            issue_sha256=m.review.r.digest({k:provider.issue[k] for k in ('number','title','body')}),sha256='e'*64)
+        intent=dict(sha256='f'*64)
+        policy=dict(policy_source='d'*40)
+        worker=SimpleNamespace(read_policy=lambda *args:policy,check_runtime=lambda *args:None)
+        guard=SimpleNamespace(worker=worker,build=lambda *args:intent,acquire=lambda *args:None)
+        close=SimpleNamespace(require_current_policy=lambda *args:None,guard_identity=lambda *args:None)
+        admission=SimpleNamespace(settle=lambda *args:dict(state='retained'))
+        recovery=SimpleNamespace(verify_rollout=lambda *args:None)
+        trace=m.sibling('todo_mutation_trace')
+        modules={'recovery_entry':recovery,'merge_guard':guard,'guarded_close':close,
+                 'guarded_admission':admission,'todo_mutation_trace':trace}
+        output=io.StringIO()
+        provider_view=dict(state='OPEN',headRefOid=native_fixture.HEAD,autoMergeRequest=None)
+        with patch.dict(os.environ,{'GITHUB_RUN_ATTEMPT':'1'},clear=True), \
+             patch.object(m.outcome,'verify',return_value=receipt), \
+             patch.object(m.outcome.a.review.action,'trusted_policy',return_value={'source_commit':'d'*40}), \
+             patch.object(m.outcome,'verify_recovery_ready'), \
+             patch.object(m.outcome.a.review,'sibling',side_effect=lambda name:modules[name]), \
+             patch.object(m.outcome.a.native,'provider_pull',return_value=provider_view), \
+             contextlib.redirect_stdout(output),self.assertRaisesRegex(RuntimeError,'guard_retained'):
+            m.outcome.apply(provider,'o/r',77,'3'*40,1,native_fixture.HEAD,adoption.EVALUATOR,200)
+        evidence=dict(pr=1,head=native_fixture.HEAD,issue=7,evaluator=adoption.EVALUATOR,intent=intent,
+                      receipt=receipt,grant_pr=77,grant_head='3'*40,outcome_job=102)
+        log=output.getvalue()
+        with patch.object(m,'authenticate',return_value=evidence),patch.object(m,'verify_trace_source'), \
+             patch.object(m.outcome.a.native,'provider_pull',return_value=provider_view):
+            result=m.inspect(provider,'o/r',policy,200,1,7,native_fixture.HEAD,'owner',lambda *args:log)
+        self.assertEqual(result,dict(pr=1,phase='applied',state='applied_observed',close_authorized=False))
+        self.assertEqual({label['name'] for label in provider.issue['labels']},{'todo','bug'})
+        unsealed='\n'.join(line for line in log.splitlines() if not line.startswith(trace.SEAL_MARKER))
+        with patch.object(m,'authenticate',return_value=evidence),patch.object(m,'verify_trace_source'), \
+             patch.object(m.outcome.a.native,'provider_pull',return_value=provider_view), \
+             self.assertRaisesRegex(RuntimeError,'trace_unknown'):
+            m.inspect(provider,'o/r',policy,200,1,7,native_fixture.HEAD,'owner',lambda *args:unsealed)
+
     def test_exact_completed_outcome_authenticates_guard_without_writing(self):
         f=RecoveryFixture();result,calls=f.call()
         self.assertEqual(result['intent'],f.intent)
