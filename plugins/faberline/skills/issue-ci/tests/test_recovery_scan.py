@@ -98,6 +98,34 @@ class RecoveryScanTests(unittest.TestCase):
         self.assertEqual(result,dict(state='closed_prepared_recovery',status='not_required',close_authorized=False))
         status.assert_not_called()
 
+    def test_open_pr_requires_authenticated_definitive_refusal_for_recovery(self):
+        policy=workers.policy(SOURCE);config=dict(policy);del config['policy_source']
+        document=dict(source_commit=SOURCE,config=dict(issue_guard=config))
+        intent=dict(payload=dict(pr=9,head='d'*40,issue=7))
+        checkpoint=dict(repo='o/r',pr=9,head='d'*40,issue=7)
+        value=dict(payload=dict(checkpoint=dict(payload=dict(checkpoint=checkpoint))))
+        class Api:
+            def pages(self,path):return []
+        with patch.object(m.prepared,'find_native_prepared',return_value=value), \
+             patch.object(m.prepared.per_pr,'guard_binding'), \
+             patch.object(m.prepared,'observe',return_value=dict(state='observed_success')) as status, \
+             patch.object(m.closer,'guard_identity'), \
+             patch.object(m.observer,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
+             patch.object(m.observer,'recovery_plan',return_value=dict(state='waiting')), \
+             patch.object(m.direct,'find_refusal',return_value={'authenticated':True}):
+            result=m.inspect_prepared(Api(),'o/r',document,policy,EVALUATOR,123,2,intent,lambda r,j:'')
+        self.assertEqual(result,dict(state='admission_recovery',status='definitive_refusal',close_authorized=False))
+        status.assert_not_called()
+        with patch.object(m.prepared,'find_native_prepared',return_value=value), \
+             patch.object(m.prepared.per_pr,'guard_binding'), \
+             patch.object(m.prepared,'observe',return_value=dict(state='observed_success')), \
+             patch.object(m.closer,'guard_identity'), \
+             patch.object(m.observer,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
+             patch.object(m.observer,'recovery_plan',return_value=dict(state='waiting')), \
+             patch.object(m.direct,'find_refusal',return_value=None):
+            result=m.inspect_prepared(Api(),'o/r',document,policy,EVALUATOR,123,2,intent,lambda r,j:'')
+        self.assertEqual(result,dict(state='waiting',status='observed_success',close_authorized=False))
+
     def test_missing_success_checkpoint_falls_back_to_observation_only(self):
         items=[dict(issue=7,state='merge_held',run=123,attempt=2,head='d'*40,owner='a'*56)]
         intent=dict(payload=dict(pr=9,head='d'*40,issue=7))
@@ -110,6 +138,22 @@ class RecoveryScanTests(unittest.TestCase):
             result=m.scan(None,'o/r',{},lambda r,j:'')
         self.assertEqual(result,[dict(issue=7,state='prepared_revalidation',status='observed_success',pr=9,head='d'*40,owner='a'*56,
                                       run=123,attempt=2,close_authorized=False)])
+
+    def test_acknowledged_status_and_definitive_refusal_can_recover_open_pr(self):
+        items=[dict(issue=7,state='merge_held',run=123,attempt=2,head='d'*40,owner='a'*56)]
+        intent=dict(payload=dict(pr=9,head='d'*40,issue=7))
+        evidence=dict(payload=dict(source_attempt=2,checkpoint=dict(issue=7)))
+        with patch.object(m.discovery,'inspect',return_value=items), \
+             patch.object(m,'source_event',return_value='workflow_run'), \
+             patch.object(m,'historical_document',return_value=(dict(source_commit=SOURCE),EVALUATOR)), \
+             patch.object(m.guard,'identify_native_owner',return_value=intent), \
+             patch.object(m.closer,'authenticate_checkpoint',return_value=evidence), \
+             patch.object(m.observer,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
+             patch.object(m.observer,'recovery_plan',return_value=dict(state='waiting')), \
+             patch.object(m.direct,'find_refusal',return_value={'authenticated':True}):
+            rows=m.scan(None,'o/r',{},lambda r,j:'')
+        self.assertEqual(rows,[dict(issue=7,state='admission_recovery',pr=9,head='d'*40,
+            owner='a'*56,run=123,attempt=2,close_authorized=False)])
 
     def test_missing_prepared_record_only_proposes_guard_recovery(self):
         items=[dict(issue=7,state='merge_held',run=123,attempt=2,head='d'*40,owner='a'*56)]

@@ -15,6 +15,7 @@ guard=sibling('merge_guard')
 observer=sibling('post_merge_observation')
 closer=sibling('guarded_close')
 prepared=sibling('prepared_status')
+direct=sibling('direct_merge')
 review=guard.review
 need=guard.need
 
@@ -45,6 +46,12 @@ def inspect_prepared(api,repo,document,current_policy,evaluator,run,attempt,inte
         # The issue is already closed. This is only a candidate for releasing
         # the same guard; it is never authority to close an open issue.
         return dict(state='closed_prepared_recovery',status='not_required',close_authorized=False)
+    if result['state']=='waiting':
+        refusal=direct.find_refusal(api,repo,document,evaluator,run,attempt,intent,log_reader,guard,review)
+        if refusal is not None:
+            # A trusted, completed writer received a definitive provider
+            # refusal. Reauthenticate ownership and block before releasing.
+            return dict(state='admission_recovery',status='definitive_refusal',close_authorized=False)
     statuses=api.pages(f'repos/{repo}/commits/{head}/statuses')
     status=prepared.observe(value,statuses)
     state='prepared_revalidation' if result['state']=='guard_required' else result['state']
@@ -147,7 +154,12 @@ def scan(api,repo,current_policy,log_reader):
                  and evidence['payload']['checkpoint']['issue']==item['issue'], 'recovery_checkpoint_mismatch')
             started=observer.source_started_at(api,evidence,require_success=False)
             observed=observer.recovery_plan(api,evidence['payload']['checkpoint'],started)
-            row.update(state=observed['state'],pr=pr,head=item['head'],run=run,attempt=attempt,close_authorized=False)
+            state=observed['state']
+            if state=='waiting' and direct.find_refusal(api,repo,document,evaluator,run,attempt,intent,
+                                                        log_reader,guard,review) is not None:
+                state='admission_recovery'
+                row['owner']=item['owner']
+            row.update(state=state,pr=pr,head=item['head'],run=run,attempt=attempt,close_authorized=False)
         except Exception as error:
             reason=str(error)
             if not re.fullmatch(r'[a-z0-9_]+',reason):reason='recovery_evidence_unknown'
