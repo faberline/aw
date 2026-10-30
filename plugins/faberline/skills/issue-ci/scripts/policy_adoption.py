@@ -200,9 +200,11 @@ def review_provenance(api, grant, inventory, log_reader):
     return review_result(grant,records[0],inventory)
 
 
-def publisher_provenance(api, grant, run_id, event, completed=False, attempt=None, terminal=False):
+def publisher_provenance(api, grant, run_id, event, completed=False, attempt=None, terminal=False,
+                         require_issue_write=False):
     spec=grant['publisher'];repo=grant['repo'];ref=spec['source_commit']
     need(review.integer(run_id) and event=='push' and type(completed) is bool and type(terminal) is bool
+         and type(require_issue_write) is bool
          and not (completed and terminal)
          and (attempt is None or (completed or terminal) and review.integer(attempt)), 'publisher_event')
     raw=review.blob(api,repo,spec['workflow_path'],ref,spec['workflow_blob'])
@@ -218,9 +220,26 @@ def publisher_provenance(api, grant, run_id, event, completed=False, attempt=Non
          and workflow['concurrency']=={'group':'issue-ci-handoff','cancel-in-progress':'false'}
          and set(workflow['jobs'])=={spec['job']}, 'publisher_workflow_contract')
     job=workflow['jobs'][spec['job']]
+    need(isinstance(job,dict) and isinstance(job.get('permissions'),dict),'publisher_workflow_contract')
+    issue_permission=job.get('permissions',{}).get('issues')
+    need(issue_permission in ('read','write')
+         and (not require_issue_write or issue_permission=='write'),'publisher_issue_permission')
+    if issue_permission=='write':
+        # Scope the additional permission to the exact reviewed guard policy.
+        # This metadata check does not replace live rollout authentication.
+        raw=review.blob(api,repo,'.github/issue-ci-required-gates.json',grant['head'],grant['policy_blob'])
+        try:
+            candidate=ci.strict_json_loads(raw)
+        except (TypeError,ValueError):
+            raise review.Refused('publisher_issue_permission') from None
+        need(isinstance(candidate,dict) and isinstance(candidate.get('issue_guard'),dict)
+             and candidate['issue_guard'].get('enabled') is True
+             and isinstance(candidate.get('issue_guard_rollout'),dict)
+             and review.sha(candidate['issue_guard_rollout'].get('source')),
+             'publisher_issue_permission')
     need(job=={'runs-on':'ubuntu-latest','timeout-minutes':'30',
                'permissions':{'actions':'read','contents':'write','pull-requests':'write',
-                              'statuses':'write','issues':'read'},
+                              'statuses':'write','issues':issue_permission},
                'steps':[{'uses':'faberline/aw/.github/actions/policy-adoption@'+grant['evaluator']}]},
          'publisher_workflow_contract')
     path=f'repos/{repo}/actions/runs/{run_id}'

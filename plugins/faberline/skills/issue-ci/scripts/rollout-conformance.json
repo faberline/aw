@@ -26,6 +26,9 @@
     "test_merged_evidence.MergedEvidenceTests.test_actual_merged_pr_accepts_exact_run_with_cleared_links_read_only",
     "test_merged_evidence.MergedEvidenceTests.test_open_unmerged_foreign_or_changed_merge_never_uses_cleared_links",
     "test_merged_evidence.MergedEvidenceTests.test_latest_attempt_never_falls_back_to_an_older_green",
-    "test_native_merge.DefaultWakeAndCheckpointTests.test_main_push_checkpoint_requires_normal_development_policy"
+    "test_native_merge.DefaultWakeAndCheckpointTests.test_main_push_checkpoint_requires_normal_development_policy",
+    "test_publisher_close_permission.PublisherClosePermissionTests.test_exact_guarded_policy_and_fixed_action_allow_close_permission",
+    "test_publisher_close_permission.PublisherClosePermissionTests.test_read_only_is_legacy_only_and_cannot_enter_guarded_completion",
+    "test_publisher_close_permission.PublisherClosePermissionTests.test_extra_code_permissions_or_mutable_action_remain_refused"
   ]
 }

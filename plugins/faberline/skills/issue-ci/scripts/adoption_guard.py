@@ -80,7 +80,7 @@ def begin(api,document,grant,evaluator,run,log_reader,emit,random_bytes=None):
          'adoption_guard_source')
     need(grant_from_default(api,document,grant['repo'],evaluator)==grant,'adoption_guard_source')
     attestation=adoption.verify_grant_attestation(api,document,grant,evaluator,log_reader)
-    identity=adoption.publisher_provenance(api,grant,run,'push')
+    identity=adoption.publisher_provenance(api,grant,run,'push',require_issue_write=True)
     need(identity['run_attempt']==int(attempt),'adoption_guard_source')
     policy,candidate=source_policy(api,grant,require_current=True)
     guard.worker.check_runtime(policy)
@@ -102,7 +102,7 @@ def recheck(api,document,grant,evaluator,run,claim,log_reader):
     """Recheck exact grant, base and owned guard before each publisher write."""
     need(grant_from_default(api,document,grant['repo'],evaluator)==grant,'adoption_guard_source')
     attestation=adoption.verify_grant_attestation(api,document,grant,evaluator,log_reader)
-    identity=adoption.publisher_provenance(api,grant,run,'push')
+    identity=adoption.publisher_provenance(api,grant,run,'push',require_issue_write=True)
     policy,_=source_policy(api,grant,require_current=True)
     guard.worker.check_runtime(policy)
     need(isinstance(claim,dict) and set(claim)=={'policy','intent'} and claim['policy']==policy,
