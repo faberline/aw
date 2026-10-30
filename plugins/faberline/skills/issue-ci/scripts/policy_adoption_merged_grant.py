@@ -255,6 +255,30 @@ def discover(api, grant, evaluator, log_reader, merged=False):
     return dict(attestation=att, receipt=receipt)
 
 
+def authorize(api, repo, evaluator, log_reader, grant_loader=None, merged=False):
+    """Bind discovery to one unchanged, trusted default-branch grant document.
+
+    This read-only helper does not write a status, merge a PR or close an issue.
+    The caller must still enforce all guarded writer and recovery invariants.
+    """
+    loader = a.load_grants if grant_loader is None else grant_loader
+    before = loader()
+    need(isinstance(before, dict) and a.review.sha(before.get('source_commit')),
+         'merged_grant_source')
+    config = before.get('config')
+    need(isinstance(config, dict) and set(config) == {'version', 'grants'}
+         and type(config['version']) is int and config['version'] == 1
+         and isinstance(config['grants'], list), 'merged_grant_document')
+    grants = [a.grant_spec(value) for value in config['grants']]
+    matches = [grant for grant in grants if grant['repo'] == repo and grant['evaluator'] == evaluator]
+    need(len(matches) == 1 and 'grant_review' not in matches[0], 'merged_grant_missing_or_ambiguous')
+    grant = matches[0]
+    evidence = discover(api, grant, evaluator, log_reader, merged=merged)
+    need(evidence['receipt']['grant_default'] == before['source_commit']
+         and loader() == before, 'merged_grant_source_changed')
+    return dict(document=before, grant=grant, evidence=evidence)
+
+
 def main():
     repo = os.environ.get('GITHUB_REPOSITORY', '')
     number = os.environ.get('INPUT_GRANT_PR', '')

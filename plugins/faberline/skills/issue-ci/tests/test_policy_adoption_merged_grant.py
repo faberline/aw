@@ -247,3 +247,25 @@ class MergedGrantTests(unittest.TestCase):
         api.runs = [row, dict(newer, workflow_id=10)]
         with self.assertRaisesRegex(RuntimeError, 'discovery_runs'):
             m.discover(api, grant, adoption.EVALUATOR, lambda *args: '')
+
+    def test_read_only_authorization_requires_one_unchanged_trusted_grant(self):
+        f = Fixture(); grant = f.grant
+        document = dict(source_commit=MAIN, config=dict(version=1, grants=[grant]))
+        evidence = dict(receipt=dict(grant_default=MAIN))
+        with patch.object(m, 'discover', return_value=evidence):
+            result = m.authorize(None, 'o/r', adoption.EVALUATOR, None, grant_loader=lambda: document)
+        self.assertEqual(result['grant'], grant)
+        self.assertEqual(result['evidence'], evidence)
+        later = copy.deepcopy(document); later['source_commit'] = '0'*40
+        changes = iter([document, later])
+        with patch.object(m, 'discover', return_value=evidence), \
+             self.assertRaisesRegex(RuntimeError, 'source_changed'):
+            m.authorize(None, 'o/r', adoption.EVALUATOR, None, grant_loader=lambda: next(changes))
+        ambiguous = dict(source_commit=MAIN, config=dict(version=1, grants=[grant, grant]))
+        with patch.object(m, 'discover') as lookup, self.assertRaisesRegex(RuntimeError, 'ambiguous'):
+            m.authorize(None, 'o/r', adoption.EVALUATOR, None, grant_loader=lambda: ambiguous)
+        lookup.assert_not_called()
+        old = adoption.grant()
+        legacy = dict(source_commit=MAIN, config=dict(version=1, grants=[old]))
+        with self.assertRaisesRegex(RuntimeError, 'ambiguous'):
+            m.authorize(None, 'o/r', adoption.EVALUATOR, None, grant_loader=lambda: legacy)
