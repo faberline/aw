@@ -1,6 +1,6 @@
 ---
 name: issue-loop
-description: "Show the issue loop of the current repository: plan (open and prioritize issues), work (todo -> doing, a PR), CI (done or todo), and review (independent acceptance without merge). Each step skill does one run; the controller sets their schedules. Prints the counts and the blocked issues; creates the labels. Use when the user asks to set up or check the issue loop."
+description: "Show the issue loop of the current repository: plan issues and milestone releases, work (todo -> doing, a PR), CI (done or todo), and review (independent acceptance without merge). Each step skill does one run; the controller sets their schedules. Prints the counts and the blocked issues; creates the labels. Use when the user asks to set up or check the issue loop."
 user-invocable: true
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/loop.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/loop.sh *)
 ---
@@ -12,7 +12,7 @@ the state:
 
 | Step | Skill | Moves | Every |
 |---|---|---|---|
-| plan | `/faberline:issue-plan` | triages the backlog, fills `todo`; sets `priority:p0`..`p3` | 10 min |
+| plan | `/faberline:issue-plan` | triages the backlog, fills `todo`, and progresses milestone releases | 10 min |
 | work | `/faberline:issue-work` | `todo` -> `doing` (submit PR, then wait for CI) | 15 min |
 | review | `/faberline:issue-review` | review `done`; no lifecycle writes or merge | 15 min |
 
@@ -64,4 +64,6 @@ empty milestones do not block, while earlier unresolved work remains visible.
 AGY consumes already-planned todo by priority and creation time, without a
 milestone frontier or dependency-parser eligibility filter. Preserve active
 leases, dirty worktrees and same-PR CI repairs. Core milestones are repo batches,
-not crate versions. No schedule, release/test gate or done change is implied.
+not crate versions. Release uses the documented full gates and exact candidate;
+see [RELEASE-READINESS.md](../issue-plan/RELEASE-READINESS.md). Do not change
+schedules, weaken release/test gates, or change done policy.
