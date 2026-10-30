@@ -56,6 +56,18 @@ It cannot combine two old workflows or discard an old check. These mappings
 do not approve themselves. Protected policy adoption still authenticates the
 exact source, complete CI, independent review, and grant before publication.
 
+AW does not require Claude review, including a PR that only changes product
+adoption grant data. A new grant can use `grant_authorization` with exactly
+`{"version":1,"kind":"product-evidence","pr":<AW grant PR number>}`.
+The verifier requires that AW PR to have merged into main, change only the
+grant data file, retain its full control workflow, and pass the complete AW
+controls at its exact head. It authenticates the grant's current default
+source and verifies the product's full CI and latest independent Claude PASS
+again. No new AW model call is involved. The legacy attestation paths remain
+available for historical evidence. An unmarked grant remains held. This mode
+does not waive guarded actor/recovery rollout, protected adoption, or provider
+requirements. Its product scope is Core, Lumen, Keep, Tape, Defer, and Relay.
+
 ## Read-only action operations
 
 The pinned `.github/actions/issue-ci` action supports:

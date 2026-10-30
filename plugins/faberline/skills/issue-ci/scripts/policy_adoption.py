@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Separate, exact-head policy adoption; never execute candidate code or artifacts.
 
-A separately reviewed default-branch grant is required for every target. The
-ordinary protected-path qualification remains unchanged. The controller uses
-GitHub metadata and authenticated job logs; no model credential is accepted.
+A verified default-branch grant is required for every target. New product
+grants authenticate complete AW controls and the product's independent review
+and CI. AW has no Claude gate. Protected-path qualification remains unchanged.
+The controller uses metadata and job logs; no model credential is accepted.
 """
 import copy
 import hashlib
@@ -43,10 +44,13 @@ def grant_spec(value):
     fields = ('version repo pr issue head base base_ref evaluator policy_blob base_policy_blob '
               'issue_sha256 pr_sha256 files_sha256 protected_paths ci review publisher')
     need(isinstance(value,dict), 'grant_schema')
-    payload={k:v for k,v in value.items() if k!='grant_review'}
+    payload={k:v for k,v in value.items() if k not in ('grant_review','grant_authorization')}
     need(review.exact(payload, fields) and type(value['version']) is int and value['version'] == 1, 'grant_schema')
     if 'grant_review' in value:
         attestation_spec(value['grant_review'],value['repo'])
+    if 'grant_authorization' in value:
+        authorization_spec(value['grant_authorization'])
+        need('grant_review' not in value, 'grant_authorization_ambiguous')
     need(isinstance(value['repo'], str) and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', value['repo'])
          and review.integer(value['pr']) and review.integer(value['issue'])
          and review.sha(value['head']) and review.sha(value['base']) and review.sha(value['evaluator'])
@@ -80,6 +84,13 @@ def grant_spec(value):
     return value
 
 
+def authorization_spec(value):
+    need(review.exact(value,'version kind pr') and type(value['version']) is int
+         and value['version']==1 and value['kind']=='product-evidence'
+         and review.integer(value['pr']), 'grant_authorization_schema')
+    return value
+
+
 def attestation_spec(value, repo):
     fields=('repo pr head blob workflow_path workflow_id workflow_blob source_commit branch '
             'run_id attempt job job_id')
@@ -99,7 +110,7 @@ def choose_grant(document, repo, evaluator, allow_merged=False):
          and isinstance(document['grants'], list), 'grant_document')
     grants = [grant_spec(value) for value in document['grants']]
     matches = [g for g in grants if g['repo'] == repo and g['evaluator'] == evaluator
-               and ('grant_review' in g or allow_merged)]
+               and ('grant_review' in g or 'grant_authorization' in g or allow_merged)]
     need(len(matches) == 1, 'grant_missing_or_ambiguous')
     return matches[0]
 
@@ -537,12 +548,82 @@ def verify_final_grant_review(api,grant,att,evaluator,pr,final_blob,prior,log_re
     return rows[0]
 
 
+def verify_product_authorization(api, document, grant, evaluator, log_reader, require_merged):
+    """AW authenticates data and product evidence. AW has no Claude gate."""
+    auth=authorization_spec(grant['grant_authorization'])
+    need(require_merged is True and grant['evaluator']==evaluator
+         and grant['repo'] in {f'faberline/{name}' for name in ('core','lumen','keep','tape','defer','relay')}
+         and isinstance(document,dict) and review.sha(document.get('source_commit')),
+         'product_grant_source')
+    source=document['source_commit']
+    meta=api.api(f'repos/{GRANTS_REPO}')
+    need(meta.get('full_name')==GRANTS_REPO and meta.get('default_branch')=='main',
+         'product_grant_default_changed')
+    pull=api.api(f"repos/{GRANTS_REPO}/pulls/{auth['pr']}")
+    need(pull.get('number')==auth['pr'] and pull.get('state')=='closed' and pull.get('merged') is True
+         and pull.get('base',{}).get('ref')=='main'
+         and pull.get('head',{}).get('repo',{}).get('full_name')==GRANTS_REPO
+         and pull.get('base',{}).get('repo',{}).get('full_name')==GRANTS_REPO
+         and all(review.sha(sha) for sha in (pull.get('merge_commit_sha'),pull.get('head',{}).get('sha'),
+                                           pull.get('base',{}).get('sha'))), 'product_grant_not_merged')
+    _,inventory=file_inventory(pull,api.pages(f"repos/{GRANTS_REPO}/pulls/{auth['pr']}/files"))
+    need(len(inventory)==1 and inventory[0]['path']==GRANTS_PATH and inventory[0]['status']=='modified',
+         'product_grant_not_data_only')
+    raw=review.blob(api,GRANTS_REPO,GRANTS_PATH,source,inventory[0]['sha'])
+    need(ci.strict_json_loads(raw)==document.get('config')
+         and choose_grant(document['config'],grant['repo'],evaluator)==grant, 'product_grant_data_changed')
+    for before,after in ((pull['merge_commit_sha'],source),(source,'main')):
+        comparison=api.api(f'repos/{GRANTS_REPO}/compare/{before}...{after}')
+        need(comparison.get('status') in ('identical','ahead')
+             and comparison.get('base_commit',{}).get('sha')==before, 'product_grant_not_on_main')
+    # Only the grant file may change. The complete AW control workflow and
+    # all its control code therefore remain identical to the reviewed base.
+    path='.github/workflows/native-auto-merge-controls.yml'
+    base,head=pull['base']['sha'],pull['head']['sha']
+    ancestry=api.api(f'repos/{GRANTS_REPO}/compare/{base}...{head}')
+    need(type(ancestry.get('behind_by')) is int and ancestry['behind_by']==0
+         and ancestry.get('merge_base_commit',{}).get('sha')==base, 'product_grant_behind_base')
+    workflow=review.blob(api,GRANTS_REPO,path,base)
+    need(review.blob(api,GRANTS_REPO,path,head)==workflow, 'product_grant_controls_changed')
+    identity=api.api(f'repos/{GRANTS_REPO}/actions/workflows/native-auto-merge-controls.yml')
+    need(review.integer(identity.get('id')) and identity.get('path')==path,'product_grant_controls_identity')
+    # GitHub clears run.pull_requests after merge. Bind the AW control run to
+    # the merged grant's exact head and unchanged complete control source.
+    # Product PR/head/base qualification below keeps its stricter association.
+    runs=api.pages(f'repos/{GRANTS_REPO}/actions/workflows/native-auto-merge-controls.yml/runs?head_sha={head}&event=pull_request','workflow_runs')
+    runs=[run for run in runs if run.get('head_sha')==head and run.get('event')=='pull_request'
+          and run.get('path')==path and run.get('head_repository',{}).get('full_name')==GRANTS_REPO]
+    need(runs and all(review.integer(run.get('run_number')) and review.integer(run.get('run_attempt'))
+                     for run in runs),'product_grant_controls_missing')
+    run=max(runs,key=lambda row:(row['run_number'],row['run_attempt']))
+    need(review.integer(run.get('id')) and run.get('workflow_id')==identity['id']
+         and run.get('repository',{}).get('full_name')==GRANTS_REPO, 'product_grant_controls_identity')
+    jobs=api.pages(f"repos/{GRANTS_REPO}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs",'jobs')
+    workflows=[dict(path=path,jobs=['complete isolated native merge controls'])]
+    summary=api.evaluate_evidence(workflows,{path:(run,jobs)})
+    need(not summary['failures'] and not summary['pending'],'product_grant_controls_not_green')
+    need(len(jobs)==1 and jobs[0]['name']=='complete isolated native merge controls',
+         'product_grant_controls_incomplete')
+    target=api.api(f"repos/{grant['repo']}/pulls/{grant['pr']}")
+    need(type(target.get('merged')) is bool and target.get('state') in ('open','closed')
+         and ((target['state']=='closed')==target['merged']),'product_grant_target_state')
+    latest_target_review(api,grant)
+    result=(evaluate_merged(api,grant,log_reader) if target['merged'] else evaluate(api,grant,log_reader))
+    need(result['issue']==grant['issue'] and r.digest(result['receipt'])==grant['review']['receipt_sha256'],
+         'product_grant_evidence_changed')
+    return dict(version=1,kind='product-evidence',grant_pr=auth['pr'],grant_source=source,
+                grant_sha256=r.digest(grant),control_run=run['id'],control_attempt=run['run_attempt'],
+                review_sha256=grant['review']['receipt_sha256'],ci=grant['ci'])
+
+
 def verify_grant_attestation(api, document, grant, evaluator, log_reader=r.job_log, require_merged=True):
     """Authenticate an independent review of the exact non-attestation grant.
 
     The reviewed proposal can precede attaching this receipt. Only the opaque
     attestation may change afterwards; every authorized grant field must match.
     """
+    if 'grant_authorization' in grant:
+        return verify_product_authorization(api,document,grant,evaluator,log_reader,require_merged)
     if 'grant_review' not in grant:
         need(require_merged is True, 'merged_grant_requires_default')
         target=api.api(f"repos/{grant['repo']}/pulls/{grant['pr']}")
@@ -665,7 +746,7 @@ def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_gra
     need(isinstance(document,dict) and review.sha(document.get('source_commit')), 'untrusted_grant_source')
     grant=choose_grant(document['config'],grant_document,evaluator,allow_merged=True)
     # Refuse before acquiring a guard if the caller selected the legacy queue.
-    need('grant_review' in grant or direct_mode, 'merged_grant_direct_guard_required')
+    need('grant_review' in grant or 'grant_authorization' in grant or direct_mode, 'merged_grant_direct_guard_required')
     attestation=verify_grant_attestation(api,document,grant,evaluator,log_reader)
     pub=grant['publisher']
     need(os.environ.get('GITHUB_REPOSITORY')==grant['repo']
@@ -686,7 +767,7 @@ def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_gra
         before=_evaluate_guarded(api,grant,log_reader)
     # A newly merged data-only grant can only enter the verified direct path.
     # Never let it fall back to the legacy auto-merge queue without a guard.
-    need('grant_review' in grant or (guarded is not None and direct_mode),
+    need('grant_review' in grant or 'grant_authorization' in grant or (guarded is not None and direct_mode),
          'merged_grant_direct_guard_required')
     repo,number,head=grant['repo'],grant['pr'],grant['head']
     context,p=before['context'],before['policy']
