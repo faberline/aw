@@ -111,6 +111,7 @@ class MergedRecoveryTests(unittest.TestCase):
         api=API();provider=dict(state='OPEN',headRefOid=head,autoMergeRequest=None)
         def inspect():
             with patch.object(m,'authenticate',return_value=evidence), \
+                 patch.object(m,'trace_state',return_value='completed'), \
                  patch.object(m.review,'pull_identity'),patch.object(m.review,'linked_issue',return_value=7), \
                  patch.object(m.outcome.a.native,'provider_pull',return_value=provider):
                 return m.inspect(api,'o/r',f.policy,100,1,7,head,f.intent['payload']['owner'],lambda *args:'')
@@ -120,6 +121,9 @@ class MergedRecoveryTests(unittest.TestCase):
             self.assertEqual(inspect()['state'],'held')
         api.comments=[journal('applied')]
         self.assertEqual(inspect(),dict(pr=8,phase='applied',state='applied_observed',close_authorized=False))
+        with patch.object(m,'authenticate',return_value=evidence),patch.object(m,'trace_state',return_value='unknown'), \
+             self.assertRaisesRegex(RuntimeError,'trace_unknown'):
+            m.inspect(api,'o/r',f.policy,100,1,7,head,f.intent['payload']['owner'],lambda *args:'')
         issue['labels']=[dict(name='doing')]
         with self.assertRaisesRegex(RuntimeError,'issue_changed'):inspect()
         issue['labels']=[dict(name='todo')];provider['autoMergeRequest']={'unknown':True}
@@ -128,6 +132,28 @@ class MergedRecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'journal_ambiguous'):inspect()
         api.comments=[journal('applied')];api.comments[0]['user']['id']=1
         with self.assertRaisesRegex(RuntimeError,'journal_unknown'):inspect()
+
+    def test_trace_requires_a_proven_guard_and_every_mutation_response(self):
+        f=RecoveryFixture();sha=f.intent['sha256'];evidence=dict(intent=f.intent,outcome_job=102)
+        trace=m.sibling('todo_mutation_trace')
+        class API:
+            def api(self,path,method='GET',data=None):return {'accepted':True}
+        lines=[];client=trace.TracedApi(API(),'o/r',7,f.f.grant['head'],sha,lines.append)
+        client.api('repos/o/r/issues/7/labels',method='POST',data={'labels':['todo']})
+        owned=m.outcome.OWNED_MARKER+m.review.r.canonical(dict(version=1,intent_sha256=sha))+'\n'
+        self.assertEqual(m.trace_state('o/r',evidence,lambda *args:''),'unknown')
+        self.assertEqual(m.trace_state('o/r',evidence,lambda *args:owned+'\n'.join(lines)), 'unknown')
+        client.seal()
+        self.assertEqual(m.trace_state('o/r',evidence,lambda *args:owned+'\n'.join(lines)), 'completed')
+        self.assertEqual(m.trace_state('o/r',evidence,lambda *args:owned+lines[0]), 'unknown')
+        with self.assertRaisesRegex(RuntimeError,'owned_record'):
+            m.trace_state('o/r',evidence,lambda *args:owned+owned+'\n'.join(lines))
+        bad_owned=m.outcome.OWNED_MARKER+m.review.r.canonical(dict(version=True,intent_sha256=sha))+'\n'
+        with self.assertRaisesRegex(RuntimeError,'owned_record'):
+            m.trace_state('o/r',evidence,lambda *args:bad_owned+'\n'.join(lines))
+        bad_seal=trace.SEAL_MARKER+m.review.r.canonical(dict(version=1,intent_sha256=sha,operations=True))
+        with self.assertRaisesRegex(RuntimeError,'trace_seal'):
+            m.trace_state('o/r',evidence,lambda *args:owned+'\n'.join(lines[:-1]+[bad_seal]))
 
     def test_guard_release_requires_unchanged_applied_observation_and_safe_settlement(self):
         f=RecoveryFixture();head=f.f.grant['head'];owner=f.intent['payload']['owner']

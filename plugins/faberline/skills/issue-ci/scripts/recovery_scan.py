@@ -117,6 +117,7 @@ def scan(api,repo,current_policy,log_reader):
                                kind='merged_outcome',pr=evidence['pr'],head=item['head'],
                                owner=item['owner'],run=run,attempt=attempt,phase=evidence['phase'],
                                close_authorized=False)
+                    if 'trace' in evidence:row['trace']=evidence['trace']
                     results.append(row);continue
                 adoption=adoption_module()
                 source=adoption.discover_source(api,repo,run,attempt,item['issue'],item['head'],item['owner'],log_reader)

@@ -15,6 +15,7 @@ m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 a = m.a
 need = a.need
+OWNED_MARKER = 'AW_MERGED_OUTCOME_GUARD_OWNED_V1 '
 
 
 def verify(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, run_id,
@@ -172,6 +173,7 @@ def apply(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, ru
     guard.acquire(api,policy,intent,lambda line:print(line,flush=True))
     close.require_current_policy(api,repo,policy)
     close.guard_identity(api,repo,policy,intent)
+    print(OWNED_MARKER+a.r.canonical(dict(version=1,intent_sha256=intent['sha256'])),flush=True)
     def checked(*_args):
         close.require_current_policy(api,repo,policy)
         close.guard_identity(api,repo,policy,intent)
@@ -179,7 +181,11 @@ def apply(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, ru
         need(fresh == receipt, 'merged_outcome_changed')
         return dict(payload=dict(context=dict(issue_sha256=receipt['issue_sha256']),
                                  result=dict(decision=receipt['decision'])), sha256=receipt['sha256'])
-    result = a.native.return_todo(api,repo,target_pr,target_head,lambda:document,evaluator,run_id,checked)
+    trace = a.review.sibling('todo_mutation_trace')
+    traced = trace.TracedApi(api,repo,receipt['issue'],target_head,intent['sha256'],
+                             lambda line:print(line,flush=True))
+    result = a.native.return_todo(traced,repo,target_pr,target_head,lambda:document,evaluator,run_id,checked)
+    traced.seal()
     settlement = admission.settle(api,repo,policy,intent)
     need(settlement.get('state') == 'released', 'merged_outcome_guard_retained')
     return result

@@ -86,7 +86,32 @@ def authenticate(api,repo,policy,run,attempt,issue,head,owner,log_reader):
          'merged_outcome_recovery_changed')
     close.guard_identity(api,repo,policy,intent)
     return dict(pr=number,head=head,issue=issue,evaluator=evaluator,intent=intent,receipt=receipt,
-                grant_pr=grant_number,grant_head=grant_head)
+                grant_pr=grant_number,grant_head=grant_head,outcome_job=writers[0]['id'])
+
+
+def trace_state(repo,evidence,log_reader):
+    """Observe matching request responses, without authorizing a replay."""
+    trace=sibling('todo_mutation_trace')
+    intent=evidence['intent'];sha=intent['sha256']
+    log=log_reader(repo,evidence['outcome_job'])
+    owned=review.r.records(log,outcome.OWNED_MARKER)
+    if not owned:
+        return 'unknown'
+    need(len(owned)==1 and isinstance(owned[0],dict) and set(owned[0])=={'version','intent_sha256'}
+         and type(owned[0]['version']) is int and owned[0]['version']==1
+         and owned[0]['intent_sha256']==sha, 'merged_outcome_owned_record')
+    records=review.r.records(log,trace.MARKER)
+    complete=trace.complete(records,sha)
+    seals=review.r.records(log,trace.SEAL_MARKER)
+    if not seals:
+        return 'unknown'
+    need(complete and len(seals)==1 and isinstance(seals[0],dict)
+         and set(seals[0])=={'version','intent_sha256','operations'}
+         and type(seals[0]['version']) is int and seals[0]['version']==1
+         and seals[0]['intent_sha256']==sha and type(seals[0]['operations']) is int
+         and seals[0]['operations']==len(records)//2,
+         'merged_outcome_trace_seal')
+    return 'completed'
 
 
 def inspect(api,repo,policy,run,attempt,issue,head,owner,log_reader):
@@ -118,7 +143,9 @@ def inspect(api,repo,policy,run,attempt,issue,head,owner,log_reader):
     first=journal()
     phase='absent' if first is None else first[1]
     if phase!='applied':
-        return dict(pr=pr,phase=phase,state='held',close_authorized=False)
+        return dict(pr=pr,phase=phase,trace=trace_state(repo,evidence,log_reader),
+                    state='held',close_authorized=False)
+    need(trace_state(repo,evidence,log_reader)=='completed', 'merged_outcome_trace_unknown')
     def target():
         pull=api.api(f'repos/{repo}/pulls/{pr}')
         review.pull_identity(pull,repo,pr,head)
@@ -140,7 +167,8 @@ def inspect(api,repo,policy,run,attempt,issue,head,owner,log_reader):
         return dict(issue=value,provider=provider)
     before=target()
     need(journal()==first and authenticate(api,repo,policy,run,attempt,issue,head,owner,log_reader)==evidence
-         and target()==before, 'merged_outcome_recovery_changed')
+         and trace_state(repo,evidence,log_reader)=='completed' and target()==before,
+         'merged_outcome_recovery_changed')
     return dict(pr=pr,phase='applied',state='applied_observed',close_authorized=False)
 
 

@@ -138,13 +138,15 @@ class MergedOutcomeTests(unittest.TestCase):
         f=OutcomeFixture();events=[];policy={'policy_source':'a'*40}
         receipt=dict(decision='fail',issue=7,issue_sha256='d'*64,sha256='e'*64)
         worker=SimpleNamespace(read_policy=lambda *args:policy,check_runtime=lambda *args:events.append('runtime'))
-        guard=SimpleNamespace(worker=worker,build=lambda *args:{'intent':'bound'},
+        guard=SimpleNamespace(worker=worker,build=lambda *args:{'intent':'bound','sha256':'f'*64},
                               acquire=lambda *args:events.append('acquire'))
         close=SimpleNamespace(require_current_policy=lambda *args:events.append('policy'),
                               guard_identity=lambda *args:events.append('owner'))
         admission=SimpleNamespace(settle=lambda *args:(events.append('settle') or {'state':'released'}))
         recovery=SimpleNamespace(verify_rollout=lambda *args:events.append('rollout'))
-        modules={'recovery_entry':recovery,'merge_guard':guard,'guarded_close':close,'guarded_admission':admission}
+        trace=SimpleNamespace(TracedApi=lambda api,*args:SimpleNamespace(seal=lambda:events.append('seal')))
+        modules={'recovery_entry':recovery,'merge_guard':guard,'guarded_close':close,
+                 'guarded_admission':admission,'todo_mutation_trace':trace}
         def return_todo(*args):
             checked=args[-1]()
             self.assertEqual(checked['payload']['result']['decision'],'fail')
@@ -159,6 +161,7 @@ class MergedOutcomeTests(unittest.TestCase):
             result=o.apply(f,'o/r',77,fixture.HEAD,8,f.grant['head'],adoption.EVALUATOR,100)
         self.assertEqual(result['state'],'returned_todo')
         self.assertLess(events.index('acquire'),events.index('todo'))
+        self.assertLess(events.index('todo'),events.index('seal'))
         self.assertLess(events.index('todo'),events.index('settle'))
 
     def test_unknown_existing_merge_request_never_acquires_guard_or_changes_issue(self):

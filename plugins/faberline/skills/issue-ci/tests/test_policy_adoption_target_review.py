@@ -282,6 +282,8 @@ class ReviewProtocolTests(unittest.TestCase):
             rows.append(dict(role=role,path=path,content=(root/path).read_text()))
             path=m.FRAMEWORK_ROOT+'policy_adoption_merged_recovery.py'
             rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+            path=m.FRAMEWORK_ROOT+'todo_mutation_trace.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
         m.framework_dependency_closure(rows)
 
     def test_optional_close_observer_is_bound_per_immutable_revision(self):
@@ -304,6 +306,8 @@ class ReviewProtocolTests(unittest.TestCase):
                 return "x=review.sibling('policy_adoption_merged_grant')"
             if path.endswith('/recovery_scan.py') and ref==evaluator:
                 return "x=sibling('policy_adoption_merged_recovery')"
+            if path.endswith('/policy_adoption_merged_outcome.py') and ref==evaluator:
+                return "x=review.sibling('todo_mutation_trace')"
             return 'pass'
         with patch.object(m.a.review,'blob',side_effect=blob):
             rows=m.framework_sources(None,candidate,evaluator)
@@ -317,6 +321,8 @@ class ReviewProtocolTests(unittest.TestCase):
         self.assertEqual([(row['role'],row['ref']) for row in outcome],[('evaluator',evaluator)])
         recovery=[row for row in rows if row['path'].endswith('/policy_adoption_merged_recovery.py')]
         self.assertEqual([(row['role'],row['ref']) for row in recovery],[('evaluator',evaluator)])
+        trace=[row for row in rows if row['path'].endswith('/todo_mutation_trace.py')]
+        self.assertEqual([(row['role'],row['ref']) for row in trace],[('evaluator',evaluator)])
         with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
             m.framework_dependency_closure([row for row in rows if row not in found])
 
@@ -371,6 +377,8 @@ class ReviewProtocolTests(unittest.TestCase):
             path=m.FRAMEWORK_ROOT+'policy_adoption_merged_outcome.py'
             rows.append(dict(role=role,path=path,content=(root/path).read_text()))
             path=m.FRAMEWORK_ROOT+'policy_adoption_merged_recovery.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+            path=m.FRAMEWORK_ROOT+'todo_mutation_trace.py'
             rows.append(dict(role=role,path=path,content=(root/path).read_text()))
         m.framework_dependency_closure(rows)
         for omitted in ('plugins/faberline/skills/issue-work/scripts/worker_guard.py',
