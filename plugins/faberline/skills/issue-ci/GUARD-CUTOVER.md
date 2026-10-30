@@ -36,3 +36,20 @@ always reports actor rollout as unknown and cannot authorize a write. Even an
 empty result does not prove that local or cloud launchers stopped. The caller
 must independently identify all launchers, their installed versions and their
 in-flight work before considering a cutover.
+
+`scripts/local_rollout_inventory.py` can compare one supplied local skills
+directory with four caller-supplied SHA-256 values: the worker entry point,
+worker guard, GitHub guard provider, and guard ledger. It reads a supplied Git
+common directory's `issue-work.lock` without changing it. A matching entry
+point is needed because the guard files alone do not show that the launcher
+uses them. The expected hashes are inputs, not an authenticated policy.
+
+The local report distinguishes missing and different files, and reports an
+observed lease without exposing its owner. It refuses ambiguous or oversized
+evidence, symlinked evidence files, and changes it detects between reads. A
+file can change and be restored between reads. The report never proves a
+process has stopped, that a missing lease means no worker exists, or that all
+launchers were observed.
+Every report states `actor_rollout: unknown`, `quiescence_proven: false`, and
+`authorizes_writes: false`. It does not enable `verify_rollout` or change any
+schedule, lock, issue, or repository setting.
