@@ -117,6 +117,79 @@ class PreflightTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_repository_defines_job_count_and_all_preflight_and_impact_barriers(self):
+        import yaml
+        cfg=config();raw=workflow()
+        cfg['development_pipeline']['stages']['preflight']=['preflight','conflicts','issue']
+        cfg['development_pipeline']['stages']['impact']=['impact','inventory']
+        for name in ('conflicts','issue'):raw['jobs'][name]={'steps':[{'run':'check'}]}
+        for name in ('impact','inventory'):
+            raw['jobs'][name]={'needs':['preflight','conflicts','issue'],'steps':[{'run':'plan'}]}
+        raw['jobs']['unit']['needs']=['impact','inventory']
+        self.assertEqual(d.workflow_contract(yaml.safe_dump(raw),cfg)['stages'],
+                         cfg['development_pipeline']['stages'])
+        for target,missing in [('impact','conflicts'),('unit','inventory')]:
+            bad=copy.deepcopy(raw);bad['jobs'][target]['needs'].remove(missing)
+            with self.subTest(target=target),self.assertRaisesRegex(RuntimeError,'earlier stage'):
+                d.workflow_contract(yaml.safe_dump(bad),cfg)
+        raw['jobs']['conflicts']['needs']='functional'
+        del raw['jobs']['functional']['needs']
+        with self.assertRaisesRegex(RuntimeError,'later stage'):
+            d.workflow_contract(yaml.safe_dump(raw),cfg)
+
+    def grouped(self):
+        old=dict(workflows=[dict(path=WORKFLOW,jobs=['case a','case b'])],
+                 qualification=dict(checks={name:dict(kind='unit',workflow=WORKFLOW,job=label)
+                                           for name,label in [('a','case a'),('b','case b')]}))
+        candidate=config();candidate['workflows']=[dict(path=WORKFLOW,jobs=['batch'])]
+        candidate['qualification']=copy.deepcopy(old['qualification'])
+        candidate['development_pipeline']['grouped_checks']=['a','b']
+        for name,check in candidate['qualification']['checks'].items():
+            check.update(case_id=name,case_label=check['job'],job='batch')
+        return old,candidate
+
+    def test_reviewed_batches_keep_each_prior_case_id_label_and_category(self):
+        old,candidate=self.grouped()
+        self.assertTrue(d.retains_workflows(old,candidate))
+        for field,value in [('case_label','other'),('kind','performance')]:
+            bad=copy.deepcopy(candidate);bad['qualification']['checks']['a'][field]=value
+            with self.subTest(field=field):self.assertFalse(d.retains_workflows(old,bad))
+
+    def test_missing_duplicate_unmapped_or_single_case_batches_refuse(self):
+        old,candidate=self.grouped()
+        for kind in ('lost_id','lost_mapping','duplicate','wrong_id','single','unhashable'):
+            bad=copy.deepcopy(candidate)
+            if kind=='lost_id':del bad['qualification']['checks']['a']
+            if kind=='lost_mapping':bad['development_pipeline']['grouped_checks'].remove('a')
+            if kind=='duplicate':bad['development_pipeline']['grouped_checks'].append('a')
+            if kind=='wrong_id':bad['qualification']['checks']['a']['case_id']='b'
+            if kind=='single':bad['qualification']['checks']['b']['job']='other'
+            if kind=='unhashable':bad['development_pipeline']['grouped_checks'].append({})
+            with self.subTest(kind=kind),self.assertRaises(RuntimeError):d.validate(bad)
+        old['qualification']['checks']['removed']=dict(kind='unit',workflow=WORKFLOW,job='case a')
+        self.assertFalse(d.retains_workflows(old,candidate))
+
+    def test_reviewed_path_move_keeps_every_old_gate(self):
+        old=dict(workflows=[{'path':'.github/workflows/old.yml','jobs':['unit','functional','perf']}])
+        candidate=config();candidate['workflows'][0]['jobs']=['unit','functional','perf','preflight']
+        candidate['development_pipeline']['replaces']={'.github/workflows/old.yml':WORKFLOW}
+        self.assertTrue(d.retains_workflows(old,candidate))
+        candidate['workflows'][0]['jobs'].remove('functional')
+        self.assertFalse(d.retains_workflows(old,candidate))
+        candidate['workflows'][0]['jobs'].append('functional')
+        candidate['development_pipeline']['replaces']={}
+        self.assertFalse(d.retains_workflows(old,candidate))
+
+    def test_historical_move_cannot_alias_two_old_producers_or_add_unreviewed_paths(self):
+        candidate=config();candidate['development_pipeline']['replaces']={'.github/workflows/old.yml':WORKFLOW}
+        old=copy.deepcopy(candidate)
+        self.assertTrue(d.retains_workflows(old,candidate))
+        del old['development_pipeline']['replaces']
+        self.assertFalse(d.retains_workflows(old,candidate))
+        old=copy.deepcopy(candidate)
+        old['workflows'].append({'path':'.github/workflows/old.yml','jobs':['unit']})
+        self.assertFalse(d.retains_workflows(old,candidate))
+
     def check(self, raw):
         import yaml
         return d.workflow_contract(yaml.safe_dump(raw),config())
