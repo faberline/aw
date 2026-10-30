@@ -19,7 +19,7 @@ OWNED_MARKER = 'AW_MERGED_OUTCOME_GUARD_OWNED_V1 '
 
 
 def verify(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, run_id,
-           log_reader=a.r.job_log, historical_attempt=None):
+           log_reader=a.r.job_log, historical_attempt=None, *, detail_sink=None):
     """Read current or completed-attempt evidence; never authorize a write."""
     need(not os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') and a.review.sha(evaluator)
          and all(a.review.integer(x) for x in (grant_pr, target_pr, run_id))
@@ -139,6 +139,9 @@ def verify(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, r
     result=dict(decision='block' if value['decision']=='block' else 'fail',
                 issue=grant['issue'], issue_sha256=grant['issue_sha256'], sha256=a.r.digest(value))
     stable()
+    if detail_sink is not None:
+        detail_sink(dict(context=dict(base=grant['base']),result=dict(value,decision=result['decision']),
+                         producer=dict(run_id=run_id,run_attempt=attempt,job_id=reviews[0]['id'])))
     return result
 
 
@@ -183,8 +186,11 @@ def verify_recovery_ready(api, repo, document, evaluator):
 def apply(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, run_id,
           log_reader=a.r.job_log):
     """Apply a negative outcome only with rollout proof and a shared guard."""
+    details=[]
     def current():
-        return verify(api,repo,grant_pr,grant_head,target_pr,target_head,evaluator,run_id,log_reader)
+        details.clear()
+        return verify(api,repo,grant_pr,grant_head,target_pr,target_head,evaluator,run_id,log_reader,
+                      detail_sink=details.append)
     receipt = current()
     if receipt['decision'] == 'pass':
         return dict(state='pass_waiting_for_adoption',issue=receipt['issue'])
@@ -219,7 +225,8 @@ def apply(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, ru
     trace = a.review.sibling('todo_mutation_trace')
     traced = trace.TracedApi(api,repo,receipt['issue'],target_head,intent['sha256'],
                              lambda line:print(line,flush=True))
-    result = a.native.return_todo(traced,repo,target_pr,target_head,lambda:document,evaluator,run_id,checked)
+    result = a.native.return_todo(traced,repo,target_pr,target_head,lambda:document,evaluator,run_id,checked,
+                                 diagnostic=lambda:details[0])
     traced.seal()
     settlement = admission.settle(api,repo,policy,intent)
     need(settlement.get('state') == 'released', 'merged_outcome_guard_retained')

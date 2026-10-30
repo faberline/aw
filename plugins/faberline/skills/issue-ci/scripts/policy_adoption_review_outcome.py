@@ -11,7 +11,7 @@ a=importlib.util.module_from_spec(spec);spec.loader.exec_module(a)
 need=a.need
 
 
-def verify(api,repo,number,head,evaluator,run_id,log_reader=a.r.job_log):
+def verify(api,repo,number,head,evaluator,run_id,log_reader=a.r.job_log,*,detail_sink=None):
     need(not os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') and a.review.sha(evaluator)
          and a.review.integer(number) and a.review.sha(head) and a.review.integer(run_id), 'outcome_identity')
     run=api.api(f'repos/{repo}/actions/runs/{run_id}')
@@ -62,15 +62,22 @@ def verify(api,repo,number,head,evaluator,run_id,log_reader=a.r.job_log):
     need(issue.get('number')==value['issue'] and issue.get('state')=='open'
          and a.r.digest({k:issue.get(k) for k in ('number','title','body')})==value['issue_sha256'], 'outcome_issue_changed')
     payload=dict(context=dict(issue_sha256=value['issue_sha256']),result=dict(decision=value['decision']))
+    if detail_sink is not None:
+        detail_sink(dict(context=dict(base=value['base']), result=value,
+                         producer=dict(run_id=run_id,run_attempt=attempt,job_id=review_jobs[0]['id'])))
     return dict(payload=payload,sha256=a.r.digest(value))
 
 
 def apply(api,repo,number,head,evaluator,run_id,log_reader=a.r.job_log):
-    def check(*_args):return verify(api,repo,number,head,evaluator,run_id,log_reader)
+    details=[]
+    def check(*_args):
+        details.clear()
+        return verify(api,repo,number,head,evaluator,run_id,log_reader,detail_sink=details.append)
     receipt=check()
     if receipt['payload']['result']['decision']=='pass':
         return dict(state='pass_waiting_for_separate_grant',head=head)
-    return a.native.return_todo(api,repo,number,head,lambda:None,evaluator,run_id,check)
+    return a.native.return_todo(api,repo,number,head,lambda:None,evaluator,run_id,check,
+                                diagnostic=lambda:details[0])
 
 
 def main():

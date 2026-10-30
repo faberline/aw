@@ -5,6 +5,7 @@ immediate merge endpoint. A required head status keeps a queued request blocked
 until the final fresh verification. No PR checkout, model, or PR artifact runs.
 """
 import os
+import json
 import re
 import secrets
 from urllib.parse import quote
@@ -651,7 +652,49 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
     return dict(state="queued", head=head)
 
 
-def return_todo(api, repo, number, head, load_document, evaluator, run_id, verify):
+def review_failure_comments(repo, number, head, run_id, receipt, details):
+    """Render every authenticated negative reason without changing its journal.
+
+    Long results use numbered comments. Code fences keep model text inert,
+    including mentions, HTML, and Markdown. No reason is silently truncated.
+    """
+    producer = details.get('producer', {})
+    need(producer.get('run_id') == run_id and review.integer(producer.get('run_attempt'))
+         and review.integer(producer.get('job_id')), 'review_reason_producer')
+    result = details.get('result', {})
+    need(result.get('decision') == receipt['payload']['result']['decision'], 'review_reason_decision')
+    lines = []
+    if result.get('summary'):
+        lines += ['Summary:', result['summary']]
+    for key in ('findings', 'uncertainties', 'contract_uncertainties', 'extra_changes'):
+        for value in result.get(key, []):
+            lines += [key + ':', value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)]
+    for key in ('requirements', 'requirement_results'):
+        for value in result.get(key, []):
+            if isinstance(value, dict) and value.get('status') != 'met':
+                lines += [key + ':', json.dumps(value, ensure_ascii=False, indent=2)]
+    need(lines and all(isinstance(line, str) for line in lines), 'review_reason_missing')
+    text = '\n\n'.join(lines)
+    parts = [text[start:start + 24000] for start in range(0, len(text), 24000)]
+    identity = review.r.digest([repo, number, head, receipt, producer])
+    base = details.get('context', {}).get('base')
+    need(review.sha(base), 'review_reason_base')
+    url = f'https://github.com/{repo}/actions/runs/{run_id}/job/{producer["job_id"]}'
+    bodies = []
+    for index, part in enumerate(parts, 1):
+        fence = '`' * max(3, 1 + max((len(v) for v in re.findall(r'`+', part)), default=0))
+        prefix = f'<!-- claude-review-reason:{identity}:{index}/{len(parts)} -->'
+        body = (f'{prefix}\nClaude review {result["decision"]}: PR #{number}. '
+                f'Reason {index}/{len(parts)}.\n'
+                f'Head: `{head}`. Base: `{base}`.\n'
+                f'Run: {run_id}. Attempt: {producer["run_attempt"]}. Job: {producer["job_id"]}.\n'
+                f'Receipt: `{receipt["sha256"]}`.\n{url}\n\n{fence}text\n{part}\n{fence}')
+        need(len(body) < 60000, 'review_reason_comment_limit')
+        bodies.append((prefix, body))
+    return bodies
+
+
+def return_todo(api, repo, number, head, load_document, evaluator, run_id, verify, *, diagnostic=None):
     """Return one authenticated negative receipt once, with durable recovery.
 
     The serialized lifecycle writer uses pending/ready/applied checkpoints,
@@ -661,10 +704,15 @@ def return_todo(api, repo, number, head, load_document, evaluator, run_id, verif
     receipt = verify(api, repo, number, head, load_document, evaluator, run_id)
     need(receipt["payload"]["result"]["decision"] in ("fail", "block"), "review_not_rejected")
     context = receipt["payload"]["context"]
+    # A protected-policy verifier supplies authenticated details separately.
+    # Its legacy receipt envelope and lifecycle journal identity stay unchanged.
+    details = diagnostic() if diagnostic is not None else receipt['payload']
+    reasons = review_failure_comments(repo, number, head, run_id, receipt, details)
 
     def current():
         fresh = verify(api, repo, number, head, load_document, evaluator, run_id)
         need(fresh == receipt, "review_changed")
+        need((diagnostic() if diagnostic is not None else fresh['payload']) == details, 'review_changed')
         pull = api.api(f"repos/{repo}/pulls/{number}")
         review.pull_identity(pull, repo, number, head)
         linked = review.linked_issue(pull)
@@ -701,14 +749,26 @@ def return_todo(api, repo, number, head, load_document, evaluator, run_id, verif
         matched = [value for value in ("pending", "ready", "applied") if journal["body"] == body(value)]
         need(len(matched) == 1, "todo_journal_invalid")
         phase = matched[0]
-        if phase == "applied":
-            current()
-            return dict(state="already_returned_todo", issue=issue, head=head,
-                        decision=receipt["payload"]["result"]["decision"])
     if journal is None:
         _, labels = current()  # History pagination may outlast a lifecycle change.
         phase = "ready" if "todo" in labels else "pending"
         journal = api.api(f"repos/{repo}/issues/{issue}/comments", method="POST", data={"body": body(phase)})
+    # A separate reason comment can repair an old applied journal without
+    # replaying labels. A lost POST response is recovered from bot history.
+    for marker, message in reasons:
+        matches = [comment for comment in comments
+                   if comment.get('user', {}).get('login') == 'github-actions[bot]'
+                   and isinstance(comment.get('body'), str) and comment['body'].startswith(marker)]
+        need(len(matches) <= 1 and all(comment['body'] == message for comment in matches),
+             'review_reason_comment_ambiguous')
+        current()
+        if not matches:
+            response = api.api(f'repos/{repo}/issues/{issue}/comments', method='POST', data={'body': message})
+            need(isinstance(response, dict) and review.integer(response.get('id')), 'review_reason_write_unknown')
+    if phase == 'applied':
+        current()
+        return dict(state='already_returned_todo', issue=issue, head=head,
+                    decision=receipt['payload']['result']['decision'])
     comment_path = f"repos/{repo}/issues/comments/{journal['id']}"
     if phase == "pending":
         _, labels = current()

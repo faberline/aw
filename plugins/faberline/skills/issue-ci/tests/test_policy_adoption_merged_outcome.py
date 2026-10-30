@@ -55,12 +55,12 @@ class OutcomeFixture:
 
     def api(self,path): return copy.deepcopy(self.run)
     def pages(self,path,key=None): return copy.deepcopy(self.runs if key=='workflow_runs' else self.jobs)
-    def verify(self, log, packet=None):
+    def verify(self, log, packet=None, detail_sink=None):
         with patch.dict(os.environ,self.env,clear=True), \
              patch.object(o.a.review,'blob',return_value=yaml.safe_dump(self.workflow)), \
              patch.object(o.m,'packet',return_value=self.packet if packet is None else packet):
             return o.verify(self,'o/r',77,fixture.HEAD,self.grant['pr'],self.grant['head'],
-                            adoption.EVALUATOR,100,lambda *args:log)
+                            adoption.EVALUATOR,100,lambda *args:log,detail_sink=detail_sink)
 
 
 class MergedOutcomeTests(unittest.TestCase):
@@ -94,6 +94,16 @@ class MergedOutcomeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'context'):f.verify(log)
         f.env['GITHUB_SHA']=f.source;f.workflow['jobs']['review']['permissions']['contents']='write'
         with self.assertRaisesRegex(RuntimeError,'workflow'):f.verify(log)
+
+    def test_authenticated_negative_retains_reason_and_legacy_receipt_identity(self):
+        f=OutcomeFixture();log=o.m.NONPASS_MARKER+json.dumps(f.negative)+'\n';details=[]
+        original=f.verify(log);actual=f.verify(log,detail_sink=details.append)
+        self.assertEqual(actual,original);self.assertEqual(len(details),1)
+        receipt=dict(payload=dict(result=dict(decision=actual['decision'])),sha256=actual['sha256'])
+        reasons=o.a.native.review_failure_comments('o/r',f.grant['pr'],f.grant['head'],100,receipt,details[0])
+        self.assertEqual(len(reasons),1)
+        self.assertIn('Needs a fix',reasons[0][1]);self.assertIn('finding',reasons[0][1])
+        self.assertIn('Run: 100. Attempt: 1. Job: 101.',reasons[0][1])
 
     def test_historical_attempt_requires_terminal_exact_latest_run(self):
         f=OutcomeFixture();log=o.m.NONPASS_MARKER+json.dumps(f.negative)+'\n'
@@ -192,7 +202,8 @@ class MergedOutcomeTests(unittest.TestCase):
         trace=SimpleNamespace(TracedApi=lambda api,*args:SimpleNamespace(seal=lambda:events.append('seal')))
         modules={'recovery_entry':recovery,'merge_guard':guard,'guarded_close':close,
                  'guarded_admission':admission,'todo_mutation_trace':trace}
-        def return_todo(*args):
+        def return_todo(*args,**kwargs):
+            self.assertTrue(callable(kwargs['diagnostic']))
             checked=args[-1]()
             self.assertEqual(checked['payload']['result']['decision'],'fail')
             events.append('todo')

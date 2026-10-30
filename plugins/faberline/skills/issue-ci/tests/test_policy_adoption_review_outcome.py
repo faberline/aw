@@ -54,6 +54,8 @@ class OutcomeTests(unittest.TestCase):
         self.assertEqual(result['state'],'returned_todo')
         self.assertEqual({x['name'] for x in p.issue['labels']},{'todo','bug'})
         self.assertEqual([w[0] for w in p.writes],['failure'])
+        self.assertIn('Missing authoritative source',p.comments[1]['body'])
+        self.assertIn('planning-question-'+('a'*64),p.comments[1]['body'])
 
     def test_authenticated_fail_or_block_returns_only_issue_to_todo(self):
         for decision in ('fail','block'):
@@ -63,6 +65,23 @@ class OutcomeTests(unittest.TestCase):
             self.assertEqual(result['state'],'returned_todo')
             self.assertEqual({x['name'] for x in p.issue['labels']},{'todo','bug'})
             self.assertEqual([w[0] for w in p.writes],['failure'])
+            text='Missing acceptance evidence' if decision=='fail' else 'Review could not complete'
+            self.assertIn(text,p.comments[1]['body'])
+            self.assertIn('Run: 333. Attempt: 1. Job: 223.',p.comments[1]['body'])
+
+    def test_legacy_receipt_envelope_is_preserved_and_replay_keeps_new_owner(self):
+        p,run,receipt,env,blob=fixture('block');log=lambda *args:o.a.MARKER+json.dumps(receipt)+'\n'
+        expected=dict(payload=dict(context=dict(issue_sha256=receipt['issue_sha256']),result=dict(decision='block')),
+                      sha256=o.a.r.digest(receipt))
+        with patch.dict(os.environ,env,clear=True),patch.object(o.a.review,'blob',side_effect=blob):
+            self.assertEqual(o.verify(p,'o/r',1,HEAD,adoption.EVALUATOR,333,log),expected)
+            o.apply(p,'o/r',1,HEAD,adoption.EVALUATOR,333,log)
+            journal=copy.deepcopy(p.comments[0]);p.comments=[journal]
+            p.issue['labels']=[dict(name='doing')];p.issue_writes.clear()
+            result=o.apply(p,'o/r',1,HEAD,adoption.EVALUATOR,333,log)
+        self.assertEqual(result['state'],'already_returned_todo');self.assertEqual(p.issue_writes,[])
+        self.assertEqual(p.comments[0],journal)
+        self.assertIn('Review could not complete',p.comments[1]['body'])
 
     def test_pass_makes_no_lifecycle_or_status_write(self):
         p,run,receipt,env,blob=fixture('pass');log=lambda *args:o.a.MARKER+json.dumps(receipt)+'\n'
@@ -81,6 +100,23 @@ class OutcomeTests(unittest.TestCase):
                 o.a.enqueue(p,'o/r',adoption.EVALUATOR,333,'push',grant_loader=lambda:empty)
         self.assertEqual(p.writes,[])
         self.assertEqual(p.issue_writes,[])
+
+    def test_changed_attempt_with_same_legacy_receipt_refuses_all_writes(self):
+        p,run,receipt,env,blob=fixture('block');old_pages=p.pages;reads=0
+        def pages(path,key=None):
+            if '/actions/runs/333/attempts/' in path and path.endswith('/jobs'):
+                return [dict(name='review',id=223,status='completed',conclusion='success'),
+                        dict(name='outcome',id=224,status='in_progress')]
+            return old_pages(path,key)
+        def log(*args):
+            nonlocal reads
+            reads+=1
+            if reads==2:run['run_attempt']=2
+            return o.a.MARKER+json.dumps(receipt)+'\n'
+        p.pages=pages
+        with patch.dict(os.environ,env,clear=True),patch.object(o.a.review,'blob',side_effect=blob),self.assertRaisesRegex(RuntimeError,'review_changed'):
+            o.apply(p,'o/r',1,HEAD,adoption.EVALUATOR,333,log)
+        self.assertEqual(p.writes,[]);self.assertEqual(p.issue_writes,[]);self.assertEqual(p.comments,[])
 
     def test_queued_run_with_live_outcome_job_remains_actionable(self):
         p,run,receipt,env,blob=fixture('fail');run['status']='queued'
