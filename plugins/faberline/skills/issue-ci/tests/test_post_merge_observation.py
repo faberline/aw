@@ -246,7 +246,9 @@ class ObservationTests(unittest.TestCase):
                 calls.append(('contract', revision))
         def identity(api, repo, doc, run, completed, spec, events):
             calls.append(('events', events))
-            self.assertEqual(events, ('issues', 'workflow_run', 'repository_dispatch'))
+            expected=('issues','workflow_run','repository_dispatch')
+            if doc['config'].get('development_pipeline') is not None:expected+=('push',)
+            self.assertEqual(events,expected)
             self.assertTrue(completed)
             return dict(head=source, run_attempt=2, job_id=404)
         class Api:
@@ -260,6 +262,10 @@ class ObservationTests(unittest.TestCase):
                 return m.authenticate_native_source(Api(), REPO, document, evaluator, 101, 9, HEAD,
                                                     lambda repo, job: source_log)
         self.assertEqual(verify(), item)
+        document['config']['development_pipeline']={'version':1}
+        self.assertEqual(verify(),item)
+        self.assertIn(('events',('issues','workflow_run','repository_dispatch','push')),calls)
+        document['config'].pop('development_pipeline')
         self.assertIn(('contract', evaluator), calls)
         wrong_attempt = m.record(self.f.checkpoint, 101, 1, source, evaluator, 202, 'f' * 64)
         with self.assertRaisesRegex(m.review.Refused, 'close_record_source_mismatch'):

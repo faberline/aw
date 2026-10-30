@@ -38,6 +38,41 @@ class EntryTests(unittest.TestCase):
             bad=copy.deepcopy(self.document);bad['config']['issue_guard']['enabled']=False
             with self.assertRaises(RuntimeError):m.policy(bad)
 
+    def test_v2_recovery_has_no_schedule_and_keeps_the_same_writer_contract(self):
+        import yaml
+        document=copy.deepcopy(self.document)
+        value=document['config']['issue_recovery'];value['version']=2;value.pop('cron')
+        workflow=yaml.load(self.raw,Loader=yaml.BaseLoader);workflow['on'].pop('schedule')
+        raw=yaml.safe_dump(workflow)
+        with patch.object(m.native,'policy'),patch.object(m.review,'blob',return_value=raw), \
+             patch.object(m,'writer_branch',return_value='main'):
+            self.assertEqual(m.workflow_contract(None,'o/r',document,EVALUATOR),self.spec)
+            workflow['on']['schedule']=[{'cron':'13,43 * * * *'}]
+            with patch.object(m.review,'blob',return_value=yaml.safe_dump(workflow)),self.assertRaises(RuntimeError):
+                m.workflow_contract(None,'o/r',document,EVALUATOR)
+        with patch.object(m.native,'policy'),patch.object(m,'workflow_contract',return_value=self.spec), \
+             self.assertRaisesRegex(RuntimeError,'recovery_wake_identity'):
+            m.validate_wake(None,'o/r',document,EVALUATOR,50,'schedule',dict(schedule='13,43 * * * *'))
+
+    def test_disabled_v2_is_only_a_preparation_and_never_approves_a_guard(self):
+        document=copy.deepcopy(self.document);document['config'].pop('issue_guard')
+        document['config']['issue_recovery']=dict(version=2,enabled=False,producer=self.spec)
+        with patch.object(m.native,'policy'):
+            self.assertEqual(m.policy(document,allow_inactive=True)['enabled'],False)
+            with self.assertRaises(RuntimeError):m.policy(document)
+            document['config']['issue_guard']=self.document['config']['issue_guard']
+            with self.assertRaisesRegex(RuntimeError,'inactive_guard'):m.policy(document,allow_inactive=True)
+
+    def test_rollout_requires_real_verifier_result_and_missing_pointer_stays_held(self):
+        with self.assertRaisesRegex(RuntimeError,'recovery_rollout_not_verified'):
+            m.verify_rollout(None,'o/r',self.document)
+        document=copy.deepcopy(self.document);document['config']['issue_guard_rollout']={}
+        verifier=unittest.mock.Mock();verifier.verify.return_value={'epoch':'9'*32}
+        with patch.object(m,'sibling',return_value=verifier)as load:
+            self.assertEqual(m.verify_rollout(None,'o/r',document),{'epoch':'9'*32})
+        load.assert_called_once_with('rollout_activation')
+        verifier.verify.assert_called_once_with(None,'o/r',document)
+
     def test_exact_workflow_has_one_pinned_writer_and_shared_mutex(self):
         with patch.object(m.native,'policy'),patch.object(m.review,'blob',return_value=self.raw), \
              patch.object(m,'writer_branch',return_value='main'):

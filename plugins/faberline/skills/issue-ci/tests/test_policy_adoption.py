@@ -143,6 +143,9 @@ class EvidenceTests(unittest.TestCase):
         evaluate_evidence=staticmethod(a.ci.evaluate_evidence)
         def __init__(self,run,jobs):self.run=run;self.jobs=jobs
         def snapshot(self,*args):return {v2.base.WORKFLOW:(copy.deepcopy(self.run),copy.deepcopy(self.jobs))}
+        def merged_snapshot(self,repo,head,config,number,base):
+            assert (repo,head,number,base)==('o/r',HEAD,8,BASE)
+            return self.snapshot(repo,head,config)
 
     def test_complete_ci_is_bound_to_latest_run_attempt_and_every_job(self):
         g,cfg,run,jobs=ci_data();api=self.API(run,jobs)
@@ -544,8 +547,14 @@ class ExactTargetTests(unittest.TestCase):
             value=a.evaluate_merged(api,g,lambda *args:'')
             self.assertEqual(value['issue'],7);ci.assert_called_once();review.assert_called_once()
             latest.assert_called_once();rules.assert_called_once()
+            issue['state']='closed'
+            with self.assertRaisesRegex(RuntimeError,'issue_contract_changed'):
+                a.evaluate_merged(api,g,lambda *args:'')
+            self.assertEqual(a.evaluate_merged(api,g,lambda *args:'',allow_closed=True)['issue'],7)
+            self.assertEqual(issue['state'],'closed')
             issue['body']='changed'
-            with self.assertRaisesRegex(RuntimeError,'issue_contract_changed'):a.evaluate_merged(api,g,lambda *args:'')
+            with self.assertRaisesRegex(RuntimeError,'issue_contract_changed'):
+                a.evaluate_merged(api,g,lambda *args:'',allow_closed=True)
 
     def test_merged_target_refuses_a_different_current_policy(self):
         g,pull,issue,cfg,files,provider,policy,api=self.setup_target()
@@ -665,6 +674,25 @@ class DistributionTests(unittest.TestCase):
             self.assertNotIn('actions/checkout',raw)
 
 class CandidatePolicyTests(unittest.TestCase):
+    def test_full_v2_can_only_enter_or_retain_same_inactive_drain(self):
+        old=v2.policy();new=copy.deepcopy(old)
+        marker=dict(version=1,phase='drain',nonce='a'*32)
+        new['issue_guard_cutover']=marker
+        a.guarded_adoption_eligible(new,old)
+        a.guarded_adoption_eligible(new,copy.deepcopy(new))
+        new['issue_recovery']=dict(version=2,enabled=False)
+        a.guarded_adoption_eligible(new,old)
+        variants=[lambda n,o:n['issue_recovery'].update(enabled=True),
+                  lambda n,o:o.update(issue_guard={'enabled':True}),
+                  lambda n,o:o.update(issue_guard_cutover=dict(marker,nonce='b'*32)),
+                  lambda n,o:n.update(issue_guard_rollout={'epoch':marker['nonce']}),
+                  lambda n,o:n.update(lifecycle_mode='failure-only'),
+                  lambda n,o:o.update(qualification_blockers=['held'])]
+        for mutate in variants:
+            candidate,prior=copy.deepcopy(new),copy.deepcopy(old);mutate(candidate,prior)
+            with self.subTest(mutate=mutate),self.assertRaises(RuntimeError):
+                a.guarded_adoption_eligible(candidate,prior)
+
     def test_prior_mandatory_jobs_cannot_be_removed(self):
         g=grant();candidate=v2.policy();candidate['aw_revision']=EVALUATOR
         previous=v2.base.config()

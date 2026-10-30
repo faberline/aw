@@ -1,0 +1,31 @@
+{
+  "merge": [
+    "test_direct_merge.DirectMergeTests.test_confirmed_merge_precedes_exact_issue_close",
+    "test_direct_merge.DirectMergeTests.test_refused_or_unknown_merge_never_closes_issue"
+  ],
+  "close_retry": [
+    "test_guarded_close.GuardedCloseTests.test_unknown_close_response_is_observed_on_retry",
+    "test_guarded_close.GuardedCloseTests.test_waiting_never_closes_or_releases"
+  ],
+  "ownership": [
+    "test_guarded_close.GuardedCloseTests.test_new_owner_is_never_closed_or_released",
+    "test_guarded_close.GuardedCloseTests.test_closed_issue_with_a_new_owner_never_releases_it"
+  ],
+  "failure_handoff": [
+    "test_development_pipeline.DevelopmentHandoffTests.test_later_matrix_failure_is_commented_after_todo_is_claimed",
+    "test_development_pipeline.FailureRecordTests.test_every_expanded_failed_job_has_its_own_identity",
+    "test_development_pipeline.FailureRecordTests.test_comments_dedupe_each_job_and_preserve_distinct_rows"
+  ],
+  "provider_unknown": [
+    "test_direct_merge.DirectMergeTests.test_unknown_close_holds_guard",
+    "test_native_merge.NativeMergeTests.test_unknown_queue_or_success_response_is_not_retried"
+  ],
+  "source_identity": [
+    "test_rollout_activation.ControlRunTests.test_changed_tested_tree_and_superseded_attempt_refuse",
+    "test_control_source.ControlSourceTests.test_dirty_checkout_refuses_a_source_receipt",
+    "test_merged_evidence.MergedEvidenceTests.test_actual_merged_pr_accepts_exact_run_with_cleared_links_read_only",
+    "test_merged_evidence.MergedEvidenceTests.test_open_unmerged_foreign_or_changed_merge_never_uses_cleared_links",
+    "test_merged_evidence.MergedEvidenceTests.test_latest_attempt_never_falls_back_to_an_older_green",
+    "test_native_merge.DefaultWakeAndCheckpointTests.test_main_push_checkpoint_requires_normal_development_policy"
+  ]
+}

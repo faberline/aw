@@ -11,6 +11,7 @@ on:
       - ".github/actions/policy-adoption-merged-grant-outcome/**"
       - ".github/actions/policy-adoption-review-outcome/**"
       - ".github/policy-adoption-grants.json"
+      - ".github/issue-guard-rollouts.json"
       - ".github/workflows/native-auto-merge-controls.yml"
       - "plugins/faberline/skills/issue-ci/**"
       - "plugins/faberline/skills/issue-work/**"
@@ -29,6 +30,7 @@ on:
       - ".github/actions/policy-adoption-merged-grant-outcome/**"
       - ".github/actions/policy-adoption-review-outcome/**"
       - ".github/policy-adoption-grants.json"
+      - ".github/issue-guard-rollouts.json"
       - ".github/workflows/native-auto-merge-controls.yml"
       - "plugins/faberline/skills/issue-ci/**"
       - "plugins/faberline/skills/issue-work/**"
@@ -64,3 +66,5 @@ jobs:
           CONTROL_PYTHON: ${{ runner.temp }}/native-merge-controls/bin/python
         run: |
           "$CONTROL_PYTHON" -c 'import sys,unittest; s=unittest.TestSuite([unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-ci/tests"), unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-work/tests"), unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-loop/tests"), unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-plan/tests"), unittest.defaultTestLoader.discover("scripts/security/tests", top_level_dir="scripts/security/tests")]); n=s.countTestCases(); r=unittest.TextTestRunner(verbosity=2).run(s); sys.exit(0 if n > 0 and r.wasSuccessful() and not r.skipped else 1)'
+      - name: Record the actual clean tested source
+        run: python3 plugins/faberline/skills/issue-ci/scripts/control_source.py

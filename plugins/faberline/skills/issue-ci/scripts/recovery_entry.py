@@ -1,7 +1,7 @@
-"""Draft authenticated entry for issue recovery; not deployed to any repo.
+"""Authenticate issue recovery against an exact audited guard activation.
 
-Recovery must not be enabled until all actors obey the shared guard and the
-remaining writer crash/retry and policy-adoption requirements are complete.
+Missing actor, drain or control evidence prevents recovery writes. Version 2
+adds no schedule; it uses trusted writer completion and explicit wake events.
 """
 import importlib.util
 import os
@@ -22,39 +22,49 @@ DISPATCH='aw-verified-merge-recover'
 WRITER_NAME='Issue CI and Claude outcome'
 
 
-def policy(document):
+def policy(document, allow_inactive=False):
     """Require the existing complete qualification and an exact recovery policy."""
     native.policy(document)
     config=document['config'];value=config.get('issue_recovery')
-    need(review.exact(value,'version enabled cron producer') and type(value['version']) is int
-         and value['version']==1 and value['enabled'] is True
-         and value['cron']=='13,43 * * * *','recovery_policy')
+    need(isinstance(value,dict) and type(value.get('version')) is int
+         and type(value.get('enabled')) is bool and type(allow_inactive) is bool,
+         'recovery_policy')
+    if value['version']==1:
+        need(review.exact(value,'version enabled cron producer') and value['enabled'] is True
+             and value['cron']=='13,43 * * * *','recovery_policy')
+    else:
+        need(value['version']==2 and review.exact(value,'version enabled producer')
+             and (value['enabled'] or allow_inactive),'recovery_policy')
     spec=value['producer']
     need(review.exact(spec,'path id definition_sha job') and spec['path']=='.github/workflows/issue-recovery.yml'
          and review.integer(spec['id']) and review.sha(spec['definition_sha']) and spec['job']=='recovery',
          'recovery_policy')
+    if not value['enabled']:
+        need('issue_guard' not in config, 'recovery_inactive_guard')
+        return value
     guard=config.get('issue_guard')
     need(isinstance(guard,dict) and 'policy_source' not in guard,'recovery_policy')
     runner.worker.config(dict(guard,policy_source=document['source_commit']))
     return value
 
 
-def workflow_contract(api,repo,document,evaluator):
+def workflow_contract(api,repo,document,evaluator,allow_inactive=False):
     """Bind a single pinned writer, restricted events and the lifecycle mutex."""
-    value=policy(document);spec=value['producer']
+    value=policy(document,allow_inactive);spec=value['producer']
     need(review.sha(evaluator),'recovery_action_identity')
     raw=review.blob(api,repo,spec['path'],document['source_commit'],spec['definition_sha'])
     review.r.literal_uses(raw)
     import yaml
     workflow=yaml.load(raw,Loader=yaml.BaseLoader)
     branch=writer_branch(api,repo,document)
+    triggers={'repository_dispatch':{'types':[DISPATCH]},
+              'workflow_run':{'workflows':[WRITER_NAME],'types':['completed'],'branches':[branch]}}
+    if value['version']==1:
+        triggers['schedule']=[{'cron':value['cron']}]
     need(isinstance(workflow,dict) and set(workflow)=={'name','on','permissions','concurrency','jobs'}
          and workflow['name']=='Verified issue recovery' and workflow['permissions']=={}
          and workflow['concurrency']=={'group':'issue-ci-handoff','cancel-in-progress':'false'}
-         and workflow['on']=={'schedule':[{'cron':value['cron']}],
-                              'repository_dispatch':{'types':[DISPATCH]},
-                              'workflow_run':{'workflows':[WRITER_NAME],
-                                              'types':['completed'],'branches':[branch]}}
+         and workflow['on']==triggers
          and set(workflow['jobs'])=={'recovery'},'recovery_workflow_contract')
     job=workflow['jobs']['recovery']
     need(job=={'runs-on':'ubuntu-latest','timeout-minutes':'30',
@@ -79,10 +89,12 @@ def writer_branch(api,repo,document):
     return meta['default_branch']
 
 
-def validate_wake(api,repo,document,evaluator,run,event,payload):
+def validate_wake(api,repo,document,evaluator,run,event,payload,allow_inactive=False):
     """Authenticate the current default-branch workflow, never event inputs."""
-    value=policy(document);spec=workflow_contract(api,repo,document,evaluator)
-    need(event in ('schedule','repository_dispatch','workflow_run') and review.integer(run) and isinstance(payload,dict),
+    value=policy(document,allow_inactive)
+    spec=workflow_contract(api,repo,document,evaluator,allow_inactive)
+    events=('repository_dispatch','workflow_run') if value['version']==2 else ('schedule','repository_dispatch','workflow_run')
+    need(event in events and review.integer(run) and isinstance(payload,dict),
          'recovery_wake_identity')
     if event=='schedule':
         need(payload.get('schedule')==value['cron'],'recovery_wake_identity')
@@ -101,9 +113,9 @@ def validate_wake(api,repo,document,evaluator,run,event,payload):
              and actual.get('workflow_id')==expected['id'] and actual.get('path')==expected['path']
              and actual.get('status')=='completed' and actual.get('head_branch')==branch
              and actual.get('head_repository',{}).get('full_name')==repo
-             and actual.get('event') in ('issues','workflow_run','repository_dispatch'),
+             and actual.get('event') in ('issues','workflow_run','repository_dispatch','push'),
              'recovery_wake_identity')
-    identity=review.producer_identity(api,repo,document,run,False,spec,events=('schedule','repository_dispatch','workflow_run'))
+    identity=review.producer_identity(api,repo,document,run,False,spec,events=events)
     need(identity['head']==document['source_commit'],'recovery_wake_identity')
     row=api.api(f'repos/{repo}/actions/runs/{run}/attempts/{identity["run_attempt"]}')
     need(row.get('id')==run and row.get('run_attempt')==identity['run_attempt']
@@ -115,8 +127,10 @@ def validate_wake(api,repo,document,evaluator,run,event,payload):
 
 
 def verify_rollout(api,repo,document):
-    """No rollout evidence format is implemented yet; always fail closed."""
-    raise review.Refused('recovery_rollout_not_verified')
+    """Authenticate a reviewed activation grant; missing evidence stays held."""
+    need(isinstance(document.get('config',{}).get('issue_guard_rollout'),dict),
+         'recovery_rollout_not_verified')
+    return sibling('rollout_activation').verify(api,repo,document)
 
 
 def main():
@@ -133,7 +147,13 @@ def main():
          and os.environ.get('GITHUB_WORKFLOW_REF')==f'{repo}/.github/workflows/issue-recovery.yml@refs/heads/{branch}'
          and os.environ.get('GITHUB_REF')==f'refs/heads/{branch}','recovery_wake_identity')
     payload=api.strict_json_loads(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())
-    validate_wake(api,repo,document,evaluator,int(run),event,payload)
+    value=document['config'].get('issue_recovery')
+    inactive=isinstance(value,dict) and value.get('version')==2 and value.get('enabled') is False
+    validate_wake(api,repo,document,evaluator,int(run),event,payload,allow_inactive=inactive)
+    if inactive:
+        print('AW_ISSUE_RECOVERY_INACTIVE_V1 '+review.r.canonical(dict(
+            version=1,repo=repo,run=int(run),source_commit=document['source_commit'])))
+        return 0
     # Fail closed until rollout proves every active writer and worker uses the
     # guard, and the writer crash window and durable wake are resolved.
     verify_rollout(api,repo,document)

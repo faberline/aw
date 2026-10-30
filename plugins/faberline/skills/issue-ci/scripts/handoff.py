@@ -103,6 +103,39 @@ def validate_adoption(config):
 
 
 def qualify_config(repo, pr, config, files=None):
+    return _qualify_config(repo, pr, config, files)
+
+
+def _merged_pull(repo, number, head, base):
+    """Authenticate a cleared CI association, not permission to close an issue.
+
+    The close layer must still prove merge ancestry and unchanged ownership.
+    This read-only path cannot qualify an open, unmerged or foreign PR.
+    """
+    if (not isinstance(repo,str) or not re.fullmatch(r'[\w.-]+/[\w.-]+',repo)
+            or type(number) is not int or number<=0
+            or any(not isinstance(x,str) or not re.fullmatch('[0-9a-f]{40}',x) for x in (head,base))):
+        raise RuntimeError('merged CI target identity')
+    pull=api(f'repos/{repo}/pulls/{number}')
+    meta=api(f'repos/{repo}')
+    if not (pull.get('number')==number and pull.get('state')=='closed' and pull.get('merged') is True
+            and pull.get('draft') is False and isinstance(pull.get('merged_at'),str)
+            and isinstance(pull.get('merge_commit_sha'),str) and re.fullmatch('[0-9a-f]{40}',pull['merge_commit_sha'])
+            and pull.get('head',{}).get('sha')==head and pull.get('base',{}).get('sha')==base
+            and pull.get('head',{}).get('repo',{}).get('full_name')==repo
+            and pull.get('base',{}).get('repo',{}).get('full_name')==repo
+            and meta.get('full_name')==repo and isinstance(meta.get('default_branch'),str)
+            and pull['base'].get('ref')==meta['default_branch']):
+        raise RuntimeError('merged CI target identity')
+    return {k:pull[k] for k in ('number','state','merged','merge_commit_sha','head','base')}
+
+
+def qualify_merged_config(repo, pr, config, files=None):
+    _merged_pull(repo,pr['number'],pr['head']['sha'],pr['base']['sha'])
+    return _qualify_config(repo,pr,config,files,merged=True)
+
+
+def _qualify_config(repo, pr, config, files=None, merged=False):
     module = qualification_module()
     if files is None:
         files = pages(f'repos/{repo}/pulls/{pr["number"]}/files')
@@ -113,6 +146,10 @@ def qualify_config(repo, pr, config, files=None):
             if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo):
                 raise RuntimeError('invalid issue repository')
             issue = api(f'repos/{repo}/issues/{number}')
+            if merged and issue.get('state')=='closed':
+                # Reconstruct historical applicability only after actual
+                # merged-PR authentication. Never change the provider issue.
+                issue=dict(issue,state='open')
     plan = module.select(config, pr, files, issue)
     definitions = {}
     for workflow in plan['workflows']:
@@ -196,6 +233,21 @@ def evaluate_policy(config, snapshots):
 
 
 def snapshot(repo, sha, config, diagnostics=None):
+    return _snapshot(repo,sha,config,diagnostics)
+
+
+def merged_snapshot(repo, sha, config, number, base, diagnostics=None):
+    before=_merged_pull(repo,number,sha,base)
+    context=config.get('_qualification_context')
+    if context is not None and (context.get('pr'),context.get('head'),context.get('base'))!=(number,sha,base):
+        raise RuntimeError('merged CI qualification context')
+    result=_snapshot(repo,sha,config,diagnostics,allow_cleared=True)
+    if _merged_pull(repo,number,sha,base)!=before:
+        raise RuntimeError('merged CI target changed')
+    return result
+
+
+def _snapshot(repo, sha, config, diagnostics=None, allow_cleared=False):
     root = f'repos/{repo}'
     snapshots = {}
     for workflow in config['workflows']:
@@ -208,7 +260,15 @@ def snapshot(repo, sha, config, diagnostics=None):
         if not runs:
             continue
         latest = max(runs, key=lambda r: (r['run_number'], r.get('run_attempt', 1)))
-        if '_qualification_context' in config and not qualification_module().trusted_run(latest, config):
+        trusted=True
+        if '_qualification_context' in config:
+            trusted=qualification_module().trusted_run(latest,config)
+            if not trusted and allow_cleared and latest.get('pull_requests')==[]:
+                identity=config['qualification']['trusted_workflows'][workflow['path']]
+                trusted=(latest.get('workflow_id')==identity['id']
+                         and type(latest.get('run_attempt')) is int and latest['run_attempt']>0
+                         and latest.get('repository',{}).get('full_name')==repo)
+        if not trusted:
             if diagnostics is not None:
                 diagnostics[workflow['path']] = 'untrusted_latest_run'
             # Never fall back to an older green run when the newest identity

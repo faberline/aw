@@ -1,6 +1,7 @@
 """AW grants need complete controls and actual product CI/review, no AW model."""
 import copy
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 import unittest
 
@@ -10,6 +11,43 @@ a=fixtures.a
 
 
 class ProductAuthorizationTests(unittest.TestCase):
+    def test_only_actual_rollout_verification_can_admit_guarded_bootstrap(self):
+        for verified in (True,False):
+            g,doc,_,api,blob,result=self.fixture()
+            candidate=dict(issue_guard={'enabled':True},issue_guard_rollout={'epoch':'a'*32})
+            def sources(provider,repo,path,ref,*args):
+                if repo==g['repo'] and path=='.github/issue-ci-required-gates.json':
+                    return json.dumps(candidate)
+                return blob(provider,repo,path,ref,*args)
+            calls=[]
+            def verify(provider,repo,document):
+                calls.append((repo,document))
+                if not verified:raise RuntimeError('deployment not proved')
+            with self.subTest(verified=verified),patch.object(a.review,'blob',side_effect=sources), \
+                 patch.object(a,'latest_target_review'), \
+                 patch.object(a,'evaluate',side_effect=a.review.Refused('guarded_adoption_not_ready')), \
+                 patch.object(a.review,'sibling',return_value=SimpleNamespace(verify_rollout=verify))as sibling, \
+                 patch.object(a,'_evaluate_guarded',return_value=result)as guarded:
+                if verified:
+                    a.verify_grant_attestation(api,doc,g,g['evaluator'])
+                    guarded.assert_called_once()
+                else:
+                    with self.assertRaisesRegex(RuntimeError,'deployment not proved'):
+                        a.verify_grant_attestation(api,doc,g,g['evaluator'])
+                    guarded.assert_not_called()
+                sibling.assert_called_once_with('recovery_entry')
+            self.assertEqual(calls,[(g['repo'],dict(config=candidate,source_commit=g['head']))])
+            self.assertEqual(api.writes,[])
+
+    def test_another_refusal_never_enters_guarded_bootstrap(self):
+        g,doc,_,api,blob,_=self.fixture()
+        with patch.object(a.review,'blob',side_effect=blob),patch.object(a,'latest_target_review'), \
+             patch.object(a,'evaluate',side_effect=a.review.Refused('candidate_ci_not_green')), \
+             patch.object(a.review,'sibling')as sibling,patch.object(a,'_evaluate_guarded')as guarded, \
+             self.assertRaisesRegex(RuntimeError,'candidate_ci_not_green'):
+            a.verify_grant_attestation(api,doc,g,g['evaluator'])
+        sibling.assert_not_called();guarded.assert_not_called()
+
     def fixture(self):
         grant=fixtures.grant();grant.pop('grant_review');grant['repo']='faberline/core'
         grant['grant_authorization']=dict(version=1,kind='product-evidence',pr=77)
