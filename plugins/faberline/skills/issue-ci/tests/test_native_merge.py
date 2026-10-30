@@ -79,6 +79,15 @@ class Provider:
     def qualify_config(self, repo, pull, config):
         return qualification.scope(config, pull, qualification.files())
 
+    def qualify_merged_config(self,repo,pull,config):
+        m.review.merged_pull_identity(pull,repo,pull['number'],pull['head']['sha'])
+        return qualification.scope(config,pull,qualification.files())
+
+    def merged_snapshot(self,repo,head,config,number,base):
+        m.review.merged_pull_identity(self.pull,repo,number,head)
+        assert self.pull['base']['sha']==base
+        return self.snapshot(repo,head,config)
+
     def snapshot(self, repo, head, config):
         data = qualification.evidence(config)
         if self.snapshot_hook:
@@ -193,6 +202,8 @@ class NativeMergeTests(unittest.TestCase):
     def test_merged_qualification_rechecks_full_selected_policy(self):
         p=Provider();context=p.receipt['payload']['context']
         p.pull.update(state='closed',merged=True,merged_at='2026-01-02T00:00:00Z',merge_commit_sha='f'*40)
+        self.assertEqual(m.qualification_merged(p,'o/r',1,context,p.document),7)
+        p.issue['state']='closed'
         self.assertEqual(m.qualification_merged(p,'o/r',1,context,p.document),7)
         with self.assertRaisesRegex(RuntimeError,'pr_identity'):
             m.qualification(p,'o/r',1,context,p.document)
@@ -434,6 +445,16 @@ class DefaultWakeAndCheckpointTests(unittest.TestCase):
         self.assertEqual(records[0]['payload']['review_run'], 200)
         self.assertEqual(records[0]['payload']['checkpoint']['ownership_events'],obs.ownership_seal([]))
         self.assertEqual([x[0] for x in self.p.writes], ['pending', 'queue', 'success'])
+
+    def test_main_push_checkpoint_requires_normal_development_policy(self):
+        self.env['GITHUB_EVENT_NAME']='push'
+        with patch.dict(os.environ,self.env,clear=True),self.assertRaisesRegex(RuntimeError,'close_source_context'):
+            m.prepare_close_record(self.p,'o/r',1,HEAD,self.p.document,EVALUATOR,200,self.p.receipt)
+        self.p.document['config']['development_pipeline']={'version':1}
+        with patch.dict(os.environ,self.env,clear=True):
+            record=m.prepare_close_record(self.p,'o/r',1,HEAD,self.p.document,EVALUATOR,200,self.p.receipt)
+        self.assertEqual(record['payload']['source_commit'],SOURCE)
+        self.assertEqual(self.p.writes,[])
 
     def test_bad_source_or_unknown_ownership_cannot_release_status(self):
         for mutation in (lambda: self.env.update(GITHUB_EVENT_NAME='pull_request_target'),

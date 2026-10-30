@@ -198,6 +198,11 @@ Stage 6 is exempt from the blanket failed-job-to-todo rule below. It still
 records its error and recovery state. A completion API outage is not a new
 product defect, and cannot undo a confirmed merge.
 
+The shared guarded completion path requires a verified deployment.
+See [guard activation](issue-guard-activation.md) for its exact drain, actor,
+runtime and control evidence. An empty registry cannot enable completion.
+This activation process adds no stage and sets no product job count.
+
 ## Every failed job reports to the issue
 
 **Every failed job in stages 1 to 5 must record its failure, post a comment

@@ -341,7 +341,8 @@ def gate_evidence(api, repo, pull, document, merged_gates=None):
     """Preserve every existing configured workflow/job, without an all-green guess."""
     p = policy(document)
     config = document["config"]
-    snapshots = api.snapshot(repo, pull["head"]["sha"], config)
+    snapshots=(api.snapshot(repo,pull['head']['sha'],config) if merged_gates is None else
+               api.merged_snapshot(repo,pull['head']['sha'],config,pull['number'],pull['base']['sha']))
     result = api.evaluate_evidence(config["workflows"], snapshots)
     need(not result["failures"] and not result["pending"], "required_gates_not_success")
     evidence = []
@@ -424,7 +425,9 @@ def _collect(api, repo, number, head, load_document, evaluator, include_sources,
     if document["config"].get("qualification", {}).get("version") == 2:
         # Enforce v2 here as well as in the surrounding workflow. Calling the
         # review action directly must never reach a paid model on a held issue.
-        scoped = api.qualify_config(repo, pull, document["config"], files)
+        merged=identity is merged_pull_identity
+        scoped=(api.qualify_merged_config(repo,pull,document['config'],files) if merged else
+                api.qualify_config(repo,pull,document['config'],files))
         scoped_context = scoped.get("_qualification_context", {})
         contract = scoped_context.get("contract") or {}
         need(contract.get("issue") == issue_number
@@ -433,7 +436,9 @@ def _collect(api, repo, number, head, load_document, evaluator, include_sources,
              "issue_qualification_contract_changed")
         need(not scoped_context.get("issues") and not scoped_context.get("untrusted_workflows")
              and not scoped.get("qualification_blockers"), "issue_qualification_not_ready")
-        evidence = api.evaluate_evidence(scoped["workflows"], api.snapshot(repo, head, scoped))
+        snapshots=(api.merged_snapshot(repo,head,scoped,number,pull['base']['sha']) if merged else
+                   api.snapshot(repo,head,scoped))
+        evidence = api.evaluate_evidence(scoped["workflows"], snapshots)
         need(not evidence["failures"] and not evidence["pending"], "issue_qualification_not_ready")
         # Failure-only controls lifecycle/merge authority, not a negative review.
         # It must remain possible to return a rejected issue to todo.

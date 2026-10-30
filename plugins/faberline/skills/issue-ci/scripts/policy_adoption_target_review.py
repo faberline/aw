@@ -42,6 +42,12 @@ EVALUATOR_FRAMEWORK_FILES=(
     'policy_adoption.py','policy_adoption_target_review.py','policy_adoption_grant_review.py',
     'policy_adoption_review_outcome.py','policy_adoption_supply.json',
 )
+ROLLOUT_SOURCES=(
+    FRAMEWORK_ROOT+'rollout_activation.py',
+    FRAMEWORK_ROOT+'rollout-conformance.json',
+    FRAMEWORK_ROOT+'control_source.py',
+    '.github/workflows/native-auto-merge-controls.yml',
+)
 FRAMEWORK_SOURCES=tuple(
     (role,FRAMEWORK_ROOT+name)
     for role,names in (('evaluator',COMMON_FRAMEWORK_FILES+EVALUATOR_FRAMEWORK_FILES),
@@ -294,6 +300,23 @@ def framework_sources(api,candidate_ref,evaluator_ref,include_recovery=False):
             result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
     if include_recovery:
         add_recovery('candidate',candidate_ref)
+    for role,ref in refs.items():
+        entries=[row for row in result if row['role']==role and row['path']==FRAMEWORK_ROOT+'recovery_entry.py']
+        uses_rollout=False
+        for entry in entries:
+            try:
+                tree=ast.parse(entry['content'])
+            except (SyntaxError,ValueError,TypeError):
+                raise RuntimeError('target_framework_source_parse') from None
+            uses_rollout=uses_rollout or any(isinstance(node,ast.Call) and node.args
+                and isinstance(node.args[0],ast.Constant) and node.args[0].value=='rollout_activation'
+                and ((isinstance(node.func,ast.Name) and node.func.id=='sibling')
+                     or (isinstance(node.func,ast.Attribute) and node.func.attr=='sibling')) for node in ast.walk(tree))
+        if uses_rollout:
+            for path in ROLLOUT_SOURCES:
+                content=a.review.blob(api,a.GRANTS_REPO,path,ref)
+                raw=content.encode('utf-8');blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+                result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
     framework_dependency_closure(result)
     return result
 
@@ -339,8 +362,8 @@ def preflight(api,repo,number,head):
     if 'issue_guard' in candidate or 'issue_guard' in prior:
         recovery=sibling('recovery_entry')
         proposed=dict(config=candidate,source_commit=head)
-        # The current verifier always holds. Once implemented, it must prove
-        # actor rollout before review or guard-policy adoption can proceed.
+        # Authenticate the actual deployed actors before paid review or
+        # guard-policy adoption. Missing activation data remains a hold.
         recovery.verify_rollout(api,repo,proposed)
         a.guarded_adoption_eligible(candidate,prior,a._GUARDED_POLICY_PROOF)
         recovery.workflow_contract(api,repo,proposed,candidate.get('aw_revision'))
@@ -350,6 +373,8 @@ def preflight(api,repo,number,head):
          and candidate.get('qualification',{}).get('version')==2, 'target_policy_not_full_v2')
     a.native.handoff_policy(candidate)
     need(a.review.sha(candidate.get('aw_revision')), 'target_controller_identity')
+    if candidate.get('issue_guard_cutover') is not None:
+        need(candidate['aw_revision']==os.environ.get('AW_ACTION_REF'),'cutover_controller_identity')
     a.native.writer_contract(api,repo,dict(config=candidate,source_commit=head),candidate['aw_revision'])
     old={w['path']:set(w['jobs']) for w in prior['workflows']};new={w['path']:set(w['jobs']) for w in candidate['workflows']}
     retained = (a.review.sibling('development_pipeline').retains_workflows(prior, candidate)

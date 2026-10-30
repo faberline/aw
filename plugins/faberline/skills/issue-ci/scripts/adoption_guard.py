@@ -1,7 +1,7 @@
-"""Draft guard for reviewed policy adoption; not wired into the publisher.
+"""Guard reviewed policy adoption only after authenticated actor activation.
 
-The rollout verifier currently refuses all guarded adoption. This module is
-not authority to bypass that hold or the separate policy and grant reviews.
+Missing activation evidence holds the publisher before any guard mutation.
+This module cannot bypass product CI, independent review or grant checks.
 """
 import hashlib
 import ast
@@ -84,7 +84,8 @@ def begin(api,document,grant,evaluator,run,log_reader,emit,random_bytes=None):
     need(identity['run_attempt']==int(attempt),'adoption_guard_source')
     policy,candidate=source_policy(api,grant,require_current=True)
     guard.worker.check_runtime(policy)
-    # This currently always refuses. It must later authenticate actor rollout.
+    # Candidate producers and actor manifest must already exist at the drain
+    # base. Unknown actors or an incomplete rollout still refuse all writes.
     recovery.verify_rollout(api,grant['repo'],dict(config=candidate,source_commit=grant['base']))
     before=adoption._evaluate_guarded(api,grant,log_reader)
     args=(grant['repo'],grant['pr'],grant['head'],grant['issue'],policy,run,int(attempt))

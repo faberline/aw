@@ -107,6 +107,11 @@ class Harness:
             self.snapshots_hook(self.reads)
         return copy.deepcopy({WORKFLOW: (self.gate_run, [self.gate_job])})
 
+    def merged_snapshot(self,repo,head,config,number,base):
+        g.merged_pull_identity(self.pull,repo,number,head)
+        assert self.pull['base']['sha']==base
+        return self.snapshot(repo,head,config)
+
     def api(self, path, method="GET", data=None):
         if method != "GET":
             self.writes.append((path, method, copy.deepcopy(data)))

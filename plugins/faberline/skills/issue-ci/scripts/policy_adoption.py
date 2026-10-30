@@ -257,10 +257,24 @@ _GUARDED_POLICY_PROOF=object()
 def guarded_adoption_eligible(candidate,prior,proof=None):
     """Hold guard transitions unless the trusted publisher verified rollout."""
     need(isinstance(candidate,dict) and isinstance(prior,dict),'guarded_adoption_not_ready')
-    # The drain marker cannot itself prove that all writers were upgraded or
-    # that old work has ended. No adoption path authorizes this transition yet.
-    need('issue_guard_cutover' not in candidate and 'issue_guard_cutover' not in prior,
-         'guarded_cutover_not_ready')
+    entering=native.drain_marker(candidate)
+    previous=native.drain_marker(prior)
+    if entering is not None:
+        # Entering drain removes permissions. It cannot enable a guard, reset
+        # its epoch, restore legacy claims, or approve any merge/issue close.
+        need('issue_guard' not in prior and (previous is None or previous==entering)
+             and all(c.get('lifecycle_mode')=='full' and c.get('qualification_blockers')==[]
+                     and c.get('qualification',{}).get('version')==2 for c in (candidate,prior))
+             and 'issue_guard_rollout' not in candidate,'guarded_cutover_not_ready')
+        recovery=candidate.get('issue_recovery')
+        need(recovery is None or (isinstance(recovery,dict) and recovery.get('version')==2
+             and recovery.get('enabled') is False),'guarded_cutover_not_ready')
+        return
+    if previous is not None:
+        need(isinstance(candidate.get('issue_guard'),dict),'guarded_cutover_not_ready')
+        need(proof is _GUARDED_POLICY_PROOF,'guarded_adoption_not_ready')
+        need(candidate.get('issue_guard_rollout',{}).get('epoch')==previous['nonce'],
+             'guarded_cutover_not_ready')
     if 'issue_guard' not in candidate and 'issue_guard' not in prior:
         return
     need(proof is _GUARDED_POLICY_PROOF and isinstance(candidate.get('issue_guard'),dict)
@@ -279,6 +293,8 @@ def candidate_policy(api, grant, proof=None):
          and candidate.get('qualification',{}).get('version')==2, 'candidate_policy_not_full_v2')
     native.handoff_policy(candidate)
     need(review.sha(candidate.get('aw_revision')), 'candidate_controller_identity')
+    if candidate.get('issue_guard_cutover') is not None:
+        need(candidate['aw_revision']==grant['evaluator'],'cutover_controller_identity')
     native.writer_contract(api,repo,dict(config=candidate,source_commit=head),candidate['aw_revision'])
     old={w['path']:set(w['jobs']) for w in prior['workflows']}
     new={w['path']:set(w['jobs']) for w in candidate['workflows']}
@@ -308,7 +324,8 @@ def _candidate_evidence(api, grant, candidate, merged):
     # It never clears the ordinary selector's protected-path hold.
     scoped=copy.deepcopy(candidate)
     scoped['_qualification_context']=dict(pr=grant['pr'],head=head,base=base,untrusted_workflows=[])
-    snapshots=api.snapshot(repo,head,scoped)
+    snapshots=(api.merged_snapshot(repo,head,scoped,grant['pr'],base) if merged
+               else api.snapshot(repo,head,scoped))
     summary=api.evaluate_evidence(candidate['workflows'],snapshots)
     need(not summary['failures'] and not summary['pending'], 'candidate_ci_not_green')
     rows=[]
@@ -404,7 +421,7 @@ def latest_target_review(api,grant):
                  for row in seen),'review_superseded')
 
 
-def evaluate_merged(api, grant, log_reader):
+def evaluate_merged(api, grant, log_reader, allow_closed=False):
     """Revalidate the reviewed adoption after merge, without writing anything.
 
     The caller must first authenticate the grant and the publisher's intent.
@@ -420,7 +437,9 @@ def evaluate_merged(api, grant, log_reader):
     need(issue_number==grant['issue'] and r.digest([pull.get('title'),pull.get('body')])==grant['pr_sha256'],
          'pr_contract_changed')
     issue=api.api(f'repos/{repo}/issues/{issue_number}')
-    need(issue.get('number')==issue_number and issue.get('state')=='open' and 'pull_request' not in issue
+    need(issue.get('number')==issue_number
+         and (issue.get('state')=='open' or (allow_closed is True and issue.get('state')=='closed'))
+         and 'pull_request' not in issue
          and r.digest({k:issue.get(k) for k in ('number','title','body')})==grant['issue_sha256'],
          'issue_contract_changed')
     files=api.pages(f'repos/{repo}/pulls/{number}/files')
@@ -429,7 +448,10 @@ def evaluate_merged(api, grant, log_reader):
     candidate=candidate_policy(api,grant,proof=_GUARDED_POLICY_PROOF)
     current=review.action.trusted_policy(api,repo,'.github/issue-ci-required-gates.json',metadata=True)
     need(current['config']==candidate,'merge_recovery_policy_changed')
-    plan=q.select(candidate,pull,files,issue)
+    # The source issue can already be closed when reauthenticating a grant.
+    # This copy is historical applicability, never permission for a mutation.
+    historical=dict(issue,state='open') if allow_closed is True else issue
+    plan=q.select(candidate,pull,files,historical)
     prefix='gate infrastructure change requires reviewed policy update: '
     protected=sorted(item[len(prefix):] for item in plan['issues'] if item.startswith(prefix))
     need(protected==grant['protected_paths'] and len(plan['issues'])==len(protected)
@@ -608,7 +630,20 @@ def verify_product_authorization(api, document, grant, evaluator, log_reader, re
     need(type(target.get('merged')) is bool and target.get('state') in ('open','closed')
          and ((target['state']=='closed')==target['merged']),'product_grant_target_state')
     latest_target_review(api,grant)
-    result=(evaluate_merged(api,grant,log_reader) if target['merged'] else evaluate(api,grant,log_reader))
+    if target['merged']:
+        result=evaluate_merged(api,grant,log_reader,allow_closed=True)
+    else:
+        try:
+            result=evaluate(api,grant,log_reader)
+        except review.Refused as error:
+            # The private sentinel is never derived from caller data. Only
+            # the real read-only rollout verifier can admit this bootstrap.
+            if str(error)!='guarded_adoption_not_ready':raise
+            raw=review.blob(api,grant['repo'],'.github/issue-ci-required-gates.json',grant['head'],grant['policy_blob'])
+            candidate=ci.strict_json_loads(raw)
+            review.sibling('recovery_entry').verify_rollout(api,grant['repo'],
+                dict(config=candidate,source_commit=grant['head']))
+            result=_evaluate_guarded(api,grant,log_reader)
     need(result['issue']==grant['issue'] and r.digest(result['receipt'])==grant['review']['receipt_sha256'],
          'product_grant_evidence_changed')
     return dict(version=1,kind='product-evidence',grant_pr=auth['pr'],grant_source=source,
@@ -761,7 +796,7 @@ def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_gra
     except review.Refused as error:
         if str(error)!='guarded_adoption_not_ready':raise
         guard_action=review.sibling('adoption_guard')
-        # This draft still fails before any mutation until rollout is proved.
+        # Missing rollout proof must fail before any guard mutation.
         guarded=guard_action.begin(api,document,grant,evaluator,run_id,log_reader,
                                    lambda line:print(line,flush=True))
         before=_evaluate_guarded(api,grant,log_reader)

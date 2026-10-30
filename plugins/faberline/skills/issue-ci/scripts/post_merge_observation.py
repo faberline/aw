@@ -108,8 +108,11 @@ def authenticate_native_records(api, repo, document, evaluator, source_run, log_
     native = review.sibling('native_merge')
     policy = native.policy(document)
     native.writer_contract(api, repo, document, evaluator)
+    events=('issues','workflow_run','repository_dispatch')
+    if document['config'].get('development_pipeline') is not None:
+        events+=('push',)
     identity = review.producer_identity(api, repo, document, source_run, True,
-        policy['producer'], events=('issues', 'workflow_run', 'repository_dispatch'))
+        policy['producer'], events=events)
     need(identity['head'] == document['source_commit'], 'close_source_commit_unknown')
     meta = api.api(f'repos/{repo}')
     branch = meta.get('default_branch')

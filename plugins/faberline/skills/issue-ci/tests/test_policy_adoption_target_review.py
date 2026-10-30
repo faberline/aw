@@ -271,7 +271,7 @@ class ReviewProtocolTests(unittest.TestCase):
                  for name in m.EVALUATOR_FRAMEWORK_FILES]
         existing={(r['role'],r['path']) for r in rows}
         for role in ('candidate','evaluator'):
-            for path in m.RECOVERY_CANDIDATE_SOURCES:
+            for path in m.RECOVERY_CANDIDATE_SOURCES+m.ROLLOUT_SOURCES:
                 if (role,path) not in existing:
                     rows.append(dict(role=role,path=path,content=(root/path).read_text()))
                     existing.add((role,path))
@@ -377,12 +377,12 @@ class ReviewProtocolTests(unittest.TestCase):
         observer=m.FRAMEWORK_ROOT+'post_merge_observation.py'
         rows += [dict(role='evaluator',path=observer,content=(root/observer).read_text())]
         existing={(r['role'],r['path']) for r in rows}
-        extra=[m.FRAMEWORK_ROOT+name for name in m.EVALUATOR_FRAMEWORK_FILES]+list(m.RECOVERY_CANDIDATE_SOURCES)
+        extra=[m.FRAMEWORK_ROOT+name for name in m.EVALUATOR_FRAMEWORK_FILES]+list(m.RECOVERY_CANDIDATE_SOURCES+m.ROLLOUT_SOURCES)
         for path in extra:
             if ('candidate',path) not in existing:
                 rows.append(dict(role='candidate',path=path,content=(root/path).read_text()))
                 existing.add(('candidate',path))
-        for path in m.RECOVERY_CANDIDATE_SOURCES:
+        for path in m.RECOVERY_CANDIDATE_SOURCES+m.ROLLOUT_SOURCES:
             if ('evaluator',path) not in existing:
                 rows.append(dict(role='evaluator',path=path,content=(root/path).read_text()))
                 existing.add(('evaluator',path))
@@ -415,6 +415,21 @@ class ReviewProtocolTests(unittest.TestCase):
         selected={(r['role'],r['path'],r['ref']) for r in rows}
         self.assertTrue(all(('candidate',path,candidate) in selected for path in m.RECOVERY_CANDIDATE_SOURCES))
         self.assertFalse(any(role=='evaluator' and path.endswith('/recovery_entry.py') for role,path,ref in selected))
+
+    def test_rollout_verifier_and_control_data_follow_only_the_revision_that_imports_them(self):
+        candidate,evaluator='c'*40,'e'*40
+        def blob(api,repo,path,ref):
+            if ref==candidate and path.endswith('/native_merge.py'):
+                return "module=review.sibling('recovery_entry')"
+            if ref==candidate and path.endswith('/recovery_entry.py'):
+                return "module=sibling('rollout_activation')"
+            return 'pass'
+        with patch.object(m.a.review,'blob',side_effect=blob):
+            rows=m.framework_sources(None,candidate,evaluator)
+        selected={(r['role'],r['path'],r['ref'])for r in rows}
+        for path in m.ROLLOUT_SOURCES:
+            self.assertIn(('candidate',path,candidate),selected)
+            self.assertNotIn(('evaluator',path,evaluator),selected)
 
     def test_native_guard_imports_add_sources_only_at_the_revision_that_uses_them(self):
         candidate,evaluator='c'*40,'e'*40

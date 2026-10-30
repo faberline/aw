@@ -472,13 +472,19 @@ def _qualification(api, repo, number, context, document, identity):
     need(review.r.digest([pull.get("title"), pull.get("body")]) == context["pr_description_sha256"],
          "pr_description_changed")
     issue = api.api(f"repos/{repo}/issues/{linked}")
-    need(issue.get("number") == linked and issue.get("state") == "open" and "pull_request" not in issue
+    merged=identity is review.merged_pull_identity
+    need(issue.get("number") == linked and issue.get("state") in (('open','closed') if merged else ('open',))
+         and "pull_request" not in issue
          and not {label["name"] for label in issue.get("labels", [])} & {"blocked", "agy:blocked"},
          "issue_not_eligible")
     need(review.r.digest({k: issue[k] for k in ("number", "title", "body")}) == context["issue_sha256"],
          "issue_contract_changed")
-    scoped = api.qualify_config(repo, pull, document["config"])
-    snapshots = api.snapshot(repo, context["head"], scoped)
+    if merged:
+        scoped=api.qualify_merged_config(repo,pull,document['config'])
+        snapshots=api.merged_snapshot(repo,context['head'],scoped,number,context['base'])
+    else:
+        scoped = api.qualify_config(repo, pull, document["config"])
+        snapshots = api.snapshot(repo, context["head"], scoped)
     state, _, _ = api.evaluate_policy(scoped, snapshots)
     need(state == "done", "qualification_not_ready")
     return linked
@@ -488,8 +494,11 @@ def prepare_close_record(api, repo, number, head, document, evaluator, review_ru
     """Prepare an exact checkpoint only in a trusted default-branch wake."""
     event = os.environ.get('GITHUB_EVENT_NAME')
     run, attempt = os.environ.get('GITHUB_RUN_ID', ''), os.environ.get('GITHUB_RUN_ATTEMPT', '')
+    events=('issues','workflow_run','repository_dispatch')
+    if document.get('config',{}).get('development_pipeline') is not None:
+        events+=('push',)
     need(os.environ.get('GITHUB_ACTIONS') == 'true'
-         and event in ('issues', 'workflow_run', 'repository_dispatch')
+         and event in events
          and os.environ.get('GITHUB_REPOSITORY') == repo
          and os.environ.get('GITHUB_WORKFLOW_SHA') == document['source_commit']
          and review.sha(document['source_commit']) and review.sha(evaluator) and review.integer(review_run)

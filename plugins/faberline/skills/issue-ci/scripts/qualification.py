@@ -244,10 +244,13 @@ def trusted_run(run, config):
     if (run.get('workflow_id') != identity['id'] or type(run.get('run_attempt')) is not int
             or run['run_attempt'] < 1):
         return False
+    associations=run.get('pull_requests')
+    if not isinstance(associations,list) or not all(isinstance(pr,dict) for pr in associations):
+        return False
     return any(pr.get('number') == context['pr']
                and pr.get('head', {}).get('sha') == context['head']
                and pr.get('base', {}).get('sha') == context['base']
-               for pr in run.get('pull_requests', []))
+               for pr in associations)
 
 
 def scoped_config(config, pr, files, definitions, issue=None):
