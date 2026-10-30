@@ -42,8 +42,9 @@ class EntryTests(unittest.TestCase):
         import yaml
         document=copy.deepcopy(self.document)
         value=document['config']['issue_recovery'];value['version']=2;value.pop('cron')
-        workflow=yaml.load(self.raw,Loader=yaml.BaseLoader);workflow['on'].pop('schedule')
-        raw=yaml.safe_dump(workflow)
+        raw=(HERE.parent/'templates/issue-recovery-v2.yml.example').read_text().replace(
+            'REPLACE_WITH_REVIEWED_FULL_SHA',EVALUATOR).replace('REPLACE_WITH_DEFAULT_BRANCH','main')
+        workflow=yaml.load(raw,Loader=yaml.BaseLoader)
         with patch.object(m.native,'policy'),patch.object(m.review,'blob',return_value=raw), \
              patch.object(m,'writer_branch',return_value='main'):
             self.assertEqual(m.workflow_contract(None,'o/r',document,EVALUATOR),self.spec)
