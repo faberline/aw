@@ -4,6 +4,14 @@ This is a separate adapter for GitHub native auto-merge. The legacy
 `guarded_merge` operation stays disabled. Publishing this source does not
 activate a consumer or approve its qualification policy.
 
+Normal development follows [DEV-PIPELINE-1](../../../../docs/standards/development-pipeline.md).
+The guarded path now supports confirmed direct merge, explicit canonical issue
+closure/readback and authenticated close-only recovery. It requires the
+[activation contract](../../../../docs/standards/issue-guard-activation.md).
+The legacy queue protocol remains separate. Neither publishing this source nor
+an empty actor inventory proves that a consumer deployed safe completion.
+AW has no Claude gate; the six product repositories retain independent review.
+
 The human requested merge after the latest commit passes CI and Claude review.
 Core #74 and Lumen #185 were delivered under that direct authorization after
 their exact head, base, successful CI and authenticated review were rechecked.
@@ -106,24 +114,25 @@ repository owner later confirmed that auto-close was enabled. The cause and
 the setting at merge time are unknown. Do not treat a merge as proof of issue
 closure. No issue is closed while a request is merely queued.
 
-The draft post-merge observer authenticates default-branch writer records and
-checks merge, contract and ownership observations. It is not yet wired to a
-recovery wake or an issue write. It does not establish a shared ownership lock.
-Do not claim automatic issue closure until those parts and a real hosted merge
-are verified.
+The read-only post-merge observer authenticates default-branch writer records
+and checks actual merge, contract and ownership observations. Guarded completion
+and recovery consume these records and separately require the shared issue
+guard before a write. The observer alone never authorizes issue closure.
+Require the consumer's actual hosted merge, issue close/readback and retry
+evidence before claiming delivery.
 
-The recovery entry and workflow template are drafts. The entry always holds.
-It cannot yet verify that every active worker and writer uses the guard. The
-template does not create a schedule. A recovery policy must bind
-the exact workflow and action, and its review must include the recovery and
-worker sources. Do not deploy the template while the writer, crash recovery,
-or actor-adoption checks remain incomplete.
+The recovery entry authenticates the exact reviewed activation record. It holds
+when actor versions, drain, provider or control evidence is missing or changed.
+A recovery policy binds the exact workflow and action. Independent product
+review includes the recovery and worker sources.
 
-The draft recovery workflow can wake when the pinned default-branch writer
-finishes, even if that writer did not dispatch recovery. It checks the writer's
-workflow ID and attempt; the event is a wake only. A queued merge can finish
-later, so this wake does not replace the recurring recovery check. GitHub limits
-workflow-run chains and can delay scheduled jobs. Hosted tests are still needed.
+The [version 2 template](templates/issue-recovery-v2.yml.example) adds no schedule.
+Explicitly disabled version 2 is authenticated preparation only. Active recovery
+wakes when the pinned default-branch writer finishes or receives the exact
+recovery dispatch. It checks the writer's workflow ID and attempt; the event is
+a wake only. The legacy version 1 cron contract remains unchanged. Do not add
+or migrate schedules as part of normal-development adoption. GitHub limits
+workflow-run chains; actual hosted behavior must still be verified.
 The recovery job requires `statuses: write` to establish the blocking status
 when a writer stopped before publishing it. The contract rejects a workflow
 with read-only status permission. Before a negative grant outcome writes, it
@@ -135,7 +144,8 @@ complete, and unknown responses keep the guard.
 The guarded writer draft holds an issue guard while a merge is queued. It
 does not change an issue held by another worker. A PR-target wake only asks
 the default-branch writer to recheck. An unknown write result retains the
-guard. The guarded path is blocked by the same unimplemented rollout proof.
+guard. The guarded path requires the same authenticated rollout proof. Missing
+or unknown deployment evidence still blocks it.
 Before releasing a guard for an open PR, it verifies that the newest matching
 commit status belongs to the GitHub Actions bot and is blocked. It also reads
 the current strict, no-bypass branch rule twice. A missing status, unknown
@@ -169,8 +179,11 @@ These observations remain untrusted until a later verifier authenticates their
 source and provider behavior; no recovery path consumes them yet.
 The protected policy-adoption draft requires the same guard and a separately
 reviewed grant. It permits bootstrap or an unchanged guard only after rollout
-is verified. The current verifier always holds before paid target review or
-publisher writes. Guard removal and incompatible changes remain unsupported.
+is verified. The verifier checks the exact operator authorization, runtime,
+drain, actor and conformance evidence before paid target review or publisher
+writes. Unknown evidence holds. Guard removal and incompatible changes remain
+unsupported. The guarded publisher also requires `issues: write` for explicit
+closure. A read-only publisher cannot enter guarded completion.
 
 The guarded draft records a unique pending status before it requests success.
 That record alone cannot authorize a close. After GitHub acknowledges success,

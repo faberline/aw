@@ -44,7 +44,9 @@ audit must establish this fact before the operator publishes authorization.
 The guard namespace must have its verified genesis and active no-bypass rules.
 The actual writer and recovery workflows must be active and match their
 reviewed IDs and definitions. Version 2 recovery uses writer completion and
-explicit wake events. It adds no schedule.
+explicit wake events. It adds no schedule. Start from the shared
+[version 2 template](../../plugins/faberline/skills/issue-ci/templates/issue-recovery-v2.yml.example).
+Use actual provider IDs and immutable action and definition hashes.
 
 ## Authorize the exact deployment
 

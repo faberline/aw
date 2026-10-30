@@ -1,8 +1,14 @@
-# Guard cutover draft
+# Guard cutover and activation
 
-This code is not a rollout procedure. Do not add the cutover marker to a
-repository yet. The policy publisher refuses that change. The rollout
-verifier also refuses guarded writes.
+Use the reviewed [activation contract](../../../../docs/standards/issue-guard-activation.md)
+with [DEV-PIPELINE-1](../../../../docs/standards/development-pipeline.md).
+The runtime now authenticates a finite activation record. Missing evidence
+still refuses guarded writes. Publishing the code does not activate a repo.
+
+A complete full-version-2 policy can enter drain through separately reviewed
+protected-policy adoption. Require its exact-head full CI and independent
+product review. Entering drain removes authority. It cannot enable a guard,
+reset an existing drain nonce, or enable recovery. AW itself has no Claude gate.
 
 The proposed marker is `issue_guard_cutover` with version `1`, phase
 `drain`, and a unique 32-character lowercase hexadecimal nonce. The marker
@@ -25,7 +31,22 @@ ended, or that a remote actor has stopped. Before activation, a reviewed
 procedure must prove the installed versions and launcher inventory, drain all
 in-flight operations and owned leases, verify provider protection and requests,
 and bind that evidence to the exact policy and runtime. Unknown evidence must
-hold. This proof and a real hosted merge and issue-close test are not complete.
+hold. Each consumer must supply the actual proof and a real hosted merge,
+canonical issue closure/readback and safe recovery result. A passing framework
+suite or a declaration of actors does not supply deployment acceptance.
+
+`scripts/rollout_activation.py` authenticates the merged data-only AW record,
+exact runtime, actor audit, completed drain, current provider rules, active
+workflow definitions and named conformance controls. It rechecks the live
+queue fence and current AW revocation state. The data registry is
+`.github/issue-guard-rollouts.json`. Do not publish an authorized record from
+an empty local inventory or an unverified actor report.
+
+New normal-development deployments use the schedule-free
+[`issue-recovery-v2.yml.example`](templates/issue-recovery-v2.yml.example).
+Bind actual workflow IDs and exact definition blobs. Its policy can remain
+explicitly disabled during preparation. The authenticated disabled entry is
+an inactive no-op, not recovery evidence or permission to activate a guard.
 
 Do not change planner schedules as part of this work.
 
