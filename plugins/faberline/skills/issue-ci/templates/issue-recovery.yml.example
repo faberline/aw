@@ -21,6 +21,6 @@ jobs:
       contents: write
       issues: write
       pull-requests: read
-      statuses: read
+      statuses: write
     steps:
       - uses: faberline/aw/.github/actions/verified-issue-recovery@REPLACE_WITH_REVIEWED_FULL_SHA

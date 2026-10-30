@@ -142,8 +142,41 @@ def verify(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, r
     return result
 
 
+def verify_recovery_workflow(api, repo, document, evaluator):
+    """Require the active, pinned recovery workflow before a guarded write.
+
+    This authenticates a recovery path, not a guarantee that every interrupted
+    request is recoverable. Unknown responses keep their guard. Actor adoption
+    remains a separate prerequisite and is checked before this function.
+    """
+    recovery = a.review.sibling('recovery_entry')
+    need(a.review.sha(evaluator) and os.environ.get('AW_ACTION_REF') == evaluator,
+         'merged_outcome_recovery_not_ready')
+    spec = recovery.workflow_contract(api, repo, document, evaluator)
+    need(isinstance(spec, dict) and a.review.integer(spec.get('id'))
+         and spec.get('path') == '.github/workflows/issue-recovery.yml',
+         'merged_outcome_recovery_not_ready')
+
+    def observe():
+        workflow = api.api(f"repos/{repo}/actions/workflows/{spec['id']}")
+        need(isinstance(workflow, dict) and workflow.get('id') == spec['id']
+             and workflow.get('path') == spec['path'] and workflow.get('state') == 'active',
+             'merged_outcome_recovery_not_ready')
+        current = a.review.action.trusted_policy(
+            api, repo, '.github/issue-ci-required-gates.json', metadata=True)
+        need(current == document, 'merged_outcome_recovery_not_ready')
+        return (workflow['id'], workflow['path'], workflow['state'])
+
+    first = observe()
+    need(recovery.workflow_contract(api, repo, document, evaluator) == spec
+         and observe() == first, 'merged_outcome_recovery_not_ready')
+
+
 def verify_recovery_ready(api, repo, document, evaluator):
-    """Hold until this exact outcome writer has authenticated crash recovery."""
+    """Keep negative writes held until interrupted outcomes are recoverable."""
+    verify_recovery_workflow(api, repo, document, evaluator)
+    # An active workflow alone cannot recover every incomplete todo journal or
+    # resolve a provider request whose response was lost. Keep the hard hold.
     raise a.review.Refused('merged_outcome_recovery_not_ready')
 
 
@@ -158,8 +191,7 @@ def apply(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, ru
     document = a.review.action.trusted_policy(api,repo,'.github/issue-ci-required-gates.json',metadata=True)
     recovery = a.review.sibling('recovery_entry')
     recovery.verify_rollout(api,repo,document)
-    # Actor rollout is not proof that this writer's crash/retry path is safe.
-    # Keep this separate hard hold until that recovery path is implemented.
+    # Actor rollout alone does not establish an active recovery workflow.
     verify_recovery_ready(api,repo,document,evaluator)
     guard = a.review.sibling('merge_guard')
     close = a.review.sibling('guarded_close')

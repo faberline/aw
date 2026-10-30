@@ -132,9 +132,52 @@ class MergedOutcomeTests(unittest.TestCase):
         with patch.dict(os.environ,env,clear=True), \
              patch.object(o,'verify',return_value=dict(decision='fail',issue=7)), \
              patch.object(o.a.review.action,'trusted_policy',return_value={'source_commit':'a'*40}), \
-             patch.object(o.a.review,'sibling',return_value=SimpleNamespace(verify_rollout=lambda *args:None)), \
+             patch.object(o.a.review,'sibling',return_value=SimpleNamespace(verify_rollout=lambda *args:None, \
+                 workflow_contract=lambda *args: (_ for _ in ()).throw(RuntimeError('recovery_not_ready')))), \
              contextlib.redirect_stdout(io.StringIO()),self.assertRaisesRegex(RuntimeError,'recovery_not_ready'):
             o.main()
+
+    def test_recovery_readiness_authenticates_active_exact_workflow_twice(self):
+        source='a'*40; document={'source_commit':source}
+        spec=dict(id=9,path='.github/workflows/issue-recovery.yml')
+        workflow=dict(id=9,path=spec['path'],state='active')
+        calls=[]
+        class API:
+            def api(self,path):
+                calls.append(path)
+                self_path='repos/o/r/actions/workflows/9'
+                if path != self_path: raise AssertionError(path)
+                return dict(workflow)
+        def contract(api,repo,doc,evaluator):
+            self.assertEqual((repo,doc,evaluator),('o/r',document,adoption.EVALUATOR))
+            return dict(spec)
+        recovery=SimpleNamespace(workflow_contract=contract)
+        def check():
+            with patch.dict(os.environ,{'AW_ACTION_REF':adoption.EVALUATOR},clear=True), \
+                 patch.object(o.a.review,'sibling',return_value=recovery), \
+                 patch.object(o.a.review.action,'trusted_policy',return_value=document):
+                return o.verify_recovery_workflow(API(),'o/r',document,adoption.EVALUATOR)
+        check()
+        self.assertEqual(calls,['repos/o/r/actions/workflows/9']*2)
+        for field,value in (('id',10),('path','.github/workflows/other.yml'),('state','disabled_manually')):
+            original=workflow[field];workflow[field]=value
+            with self.subTest(field=field),self.assertRaisesRegex(RuntimeError,'recovery_not_ready'):check()
+            workflow[field]=original
+        with patch.dict(os.environ,{'AW_ACTION_REF':'0'*40},clear=True), \
+             patch.object(o.a.review,'sibling',return_value=recovery), \
+             self.assertRaisesRegex(RuntimeError,'recovery_not_ready'):
+            o.verify_recovery_workflow(API(),'o/r',document,adoption.EVALUATOR)
+        with patch.dict(os.environ,{'AW_ACTION_REF':adoption.EVALUATOR},clear=True), \
+             patch.object(o.a.review,'sibling',return_value=recovery), \
+             patch.object(o.a.review.action,'trusted_policy',return_value={'source_commit':'b'*40}), \
+             self.assertRaisesRegex(RuntimeError,'recovery_not_ready'):
+            o.verify_recovery_workflow(API(),'o/r',document,adoption.EVALUATOR)
+
+    def test_active_workflow_does_not_authorize_unfinished_recovery(self):
+        with patch.object(o,'verify_recovery_workflow') as workflow, \
+             self.assertRaisesRegex(RuntimeError,'recovery_not_ready'):
+            o.verify_recovery_ready(None,'o/r',{},adoption.EVALUATOR)
+        workflow.assert_called_once_with(None,'o/r',{},adoption.EVALUATOR)
 
     def test_negative_uses_guard_before_todo_and_releases_only_after_settlement(self):
         f=OutcomeFixture();events=[];policy={'policy_source':'a'*40}

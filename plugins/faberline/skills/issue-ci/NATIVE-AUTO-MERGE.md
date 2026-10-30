@@ -124,6 +124,13 @@ finishes, even if that writer did not dispatch recovery. It checks the writer's
 workflow ID and attempt; the event is a wake only. A queued merge can finish
 later, so this wake does not replace the recurring recovery check. GitHub limits
 workflow-run chains and can delay scheduled jobs. Hosted tests are still needed.
+The recovery job requires `statuses: write` to establish the blocking status
+when a writer stopped before publishing it. The contract rejects a workflow
+with read-only status permission. Before a negative grant outcome writes, it
+also checks the active recovery workflow ID, path, pinned action and current
+policy twice. These checks do not prove actor rollout or guarantee recovery of
+an unknown provider response; negative writes remain held until recovery is
+complete, and unknown responses keep the guard.
 
 The guarded writer draft holds an issue guard while a merge is queued. It
 does not change an issue held by another worker. A PR-target wake only asks
