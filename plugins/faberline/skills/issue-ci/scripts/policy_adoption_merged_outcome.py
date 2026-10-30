@@ -110,7 +110,10 @@ def verify(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, r
                         grant_blob=source_grant['blob'],grant_pr_sha256=a.r.digest([source_grant['title'],source_grant['body']]),
                         grant_issue_sha256=a.r.digest(current['grant_issue']),grant_digest=a.r.digest(grant),
                         packet_sha256=a.r.digest(current),decision='pass',findings=[],uncertainties=[])
-        need(positives == [expected] and not negatives, 'merged_outcome_receipt')
+        need(len(positives)==1 and isinstance(positives[0],dict)
+             and type(positives[0].get('version')) is int
+             and all(a.review.integer(positives[0].get(k)) for k in ('target_pr','grant_pr'))
+             and positives == [expected] and not negatives, 'merged_outcome_receipt')
         result=dict(decision='pass', issue=grant['issue'], issue_sha256=grant['issue_sha256'],
                     sha256=a.r.digest(expected))
         stable()

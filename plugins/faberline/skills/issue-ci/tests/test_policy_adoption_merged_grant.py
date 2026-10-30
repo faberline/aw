@@ -243,7 +243,8 @@ class MergedGrantTests(unittest.TestCase):
                 return m.verify(api, 'o/r', adoption.EVALUATOR, att, lambda *args: log)
         line = m.MARKER + json.dumps(receipt) + '\n'
         self.assertEqual(execute(line), receipt)
-        for log in ('', line + line, m.MARKER + json.dumps(dict(receipt, decision='fail')) + '\n'):
+        for log in ('', line + line, m.MARKER + json.dumps(dict(receipt, decision='fail')) + '\n',
+                    m.MARKER + json.dumps(dict(receipt, version=True)) + '\n'):
             with self.subTest(log=log), self.assertRaises(RuntimeError): execute(log)
         api.runs.append(dict(id=102, run_number=3, run_attempt=1))
         with self.assertRaisesRegex(RuntimeError, 'not_latest'): execute(line)

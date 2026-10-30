@@ -245,7 +245,9 @@ def verify(api, repo, evaluator, attestation, log_reader, merged=False):
                     grant_issue_sha256=a.r.digest(current['grant_issue']),
                     grant_digest=a.r.digest(grant), packet_sha256=packet_sha,
                     decision='pass', findings=[], uncertainties=[])
-    need(rows == [expected], 'merged_grant_review_receipt')
+    need(len(rows)==1 and isinstance(rows[0],dict) and type(rows[0].get('version')) is int
+         and all(a.review.integer(rows[0].get(k)) for k in ('target_pr','grant_pr'))
+         and rows == [expected], 'merged_grant_review_receipt')
     if merged:
         need(merged_data(api, repo, spec['grant_pr'], spec['grant_head'], evaluator) == current,
              'merged_grant_data_changed')

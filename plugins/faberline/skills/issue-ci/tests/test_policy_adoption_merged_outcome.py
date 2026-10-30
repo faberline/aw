@@ -72,6 +72,8 @@ class MergedOutcomeTests(unittest.TestCase):
         log=o.m.MARKER+json.dumps(receipt)+'\n'
         self.assertEqual(f.verify(log)['decision'],'pass')
         with self.assertRaisesRegex(RuntimeError,'receipt'):f.verify('')
+        malformed=o.m.MARKER+json.dumps(dict(receipt,version=True))+'\n'
+        with self.assertRaisesRegex(RuntimeError,'receipt'):f.verify(malformed)
 
     def test_negative_receipt_is_bound_to_current_pr_issue_and_packet(self):
         f=OutcomeFixture();log=o.m.NONPASS_MARKER+json.dumps(f.negative)+'\n'
