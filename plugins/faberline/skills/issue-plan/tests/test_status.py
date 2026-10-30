@@ -78,7 +78,7 @@ class StatusTests(unittest.TestCase):
                 self.assertEqual(guard.stat().st_ino, before.st_ino)
 
     def test_every_mutation_still_refuses_held_guard_before_client_or_writes(self):
-        commands = [('new',), ('adopt',), ('milestone',), ('spec',), ('prioritize',), ('block',), ('status', 'extra'), ('unknown',)]
+        commands = [('new',), ('new-backlog',), ('adopt',), ('milestone',), ('spec',), ('prioritize',), ('block',), ('status', 'extra'), ('unknown',)]
         with tempfile.TemporaryDirectory() as directory:
             with (Path(directory) / 'issue-work.guard').open('a') as writer:
                 fcntl.flock(writer, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -138,6 +138,78 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(json.loads(first.splitlines()[0])['selected'], 7)
         self.assertIsNone(json.loads(second.splitlines()[0])['selected'])
         self.assertIn('coding in progress', second)
+
+    def test_release_gap_can_be_created_without_admission_when_todo_is_full(self):
+        class GapClient(Client):
+            def __init__(self):
+                super().__init__()
+                self.created=[]
+            def api(self,path):
+                self.asserted_path=path
+                return dict(number=1,title='0.9',state='open')
+            def command(self,*args,payload=None):
+                self.created.append((args,payload))
+                return dict(number=12,html_url='https://github.com/faberline/tape/issues/12')
+            def issue(self,n):
+                payload=self.created[0][1]
+                return dict(number=n,state='open',title=payload['title'],body=payload['body'],
+                            milestone=dict(number=payload['milestone']),labels=payload['labels'])
+        client=GapClient()
+        content='## Goal\nFix gap\n## Acceptance\nProve it\n## Never\nKeep gates\n## Gate\nTest\n'
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict('os.environ',{'ISSUE_TODO_MAX':'1'}),contextlib.redirect_stdout(io.StringIO()):
+            file=Path(directory)/'body.md';file.write_text(content)
+            self.assertEqual(plan.execute(client,['new-backlog','Release gap',str(file),'p1','--milestone','1']),0)
+        self.assertEqual(len(client.created),1)
+        args,payload=client.created[0]
+        self.assertEqual(args,('api','--method','POST','repos/faberline/tape/issues'))
+        self.assertEqual(payload['milestone'],1)
+        self.assertEqual(payload['labels'],['priority:p1'])
+        self.assertNotIn('todo',payload['labels'])
+
+    def test_release_gap_duplicate_is_not_created(self):
+        class GapClient(Client):
+            def api(self,path):return dict(number=1,title='0.9',state='open')
+            def command(self,*args,**kwargs):raise AssertionError('must not create duplicate')
+        client=GapClient();client.value['issues'][0]['title']='Release gap'
+        with tempfile.TemporaryDirectory() as directory:
+            file=Path(directory)/'body.md'
+            file.write_text('## Goal\nX\n## Acceptance\nX\n## Never\nX\n## Gate\nX\n')
+            with self.assertRaisesRegex(ValueError,'already has'):
+                plan.execute(client,['new-backlog','Release gap',str(file),'p1','--milestone','1'])
+
+    def test_release_gap_unknown_create_is_not_retried(self):
+        class GapClient(Client):
+            def __init__(self):super().__init__();self.calls=0
+            def api(self,path):return dict(number=1,title='0.9',state='open')
+            def command(self,*args,**kwargs):
+                self.calls+=1
+                raise TimeoutError('response lost')
+        client=GapClient()
+        with tempfile.TemporaryDirectory() as directory:
+            file=Path(directory)/'body.md'
+            file.write_text('## Goal\nX\n## Acceptance\nX\n## Never\nX\n## Gate\nX\n')
+            with self.assertRaises(TimeoutError):
+                plan.execute(client,['new-backlog','Release gap',str(file),'p1','--milestone','1'])
+        self.assertEqual(client.calls,1)
+
+    def test_release_gap_rejects_changed_or_owned_issue_readback(self):
+        class GapClient(Client):
+            def __init__(self):super().__init__();self.calls=0;self.labels=['priority:p1','doing']
+            def api(self,path):return dict(number=1,title='0.9',state='open')
+            def command(self,*args,payload=None):
+                self.calls+=1;self.payload=payload
+                return dict(number=12,html_url='https://github.com/faberline/tape/issues/12')
+            def issue(self,n):
+                return dict(number=n,state='open',title=self.payload['title'],body=self.payload['body'],
+                            milestone=dict(number=1),labels=self.labels)
+        client=GapClient()
+        with tempfile.TemporaryDirectory() as directory:
+            file=Path(directory)/'body.md'
+            file.write_text('## Goal\nX\n## Acceptance\nX\n## Never\nX\n## Gate\nX\n')
+            with self.assertRaisesRegex(ValueError,'readback mismatch'):
+                plan.execute(client,['new-backlog','Release gap',str(file),'p1','--milestone','1'])
+        self.assertEqual(client.calls,1)
 
 
 if __name__ == '__main__':

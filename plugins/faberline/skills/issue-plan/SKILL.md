@@ -1,14 +1,15 @@
 ---
 name: issue-plan
-description: "Plan one repository's issue queue and assess milestone release readiness. Triage issues, set priorities, write specs, fill todo from the backlog, and report whether the release candidate meets its documented gates. Use when the schedule or user asks to plan or assess a milestone."
+description: "Plan one repository's issues and drive its milestone release lifecycle. Triage and fill todo, create milestone gap issues, validate RC candidates, and promote a fully tested release. Use when the schedule or user asks to plan or progress a milestone."
 user-invocable: true
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/plan.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/plan.sh *)
 ---
 
 # /faberline:issue-plan
 
-Triage the issues, set priorities, fill the `todo` queue, and assess milestone
-release readiness, then stop.
+Triage issues, fill the `todo` queue, and progress the current milestone's
+release lifecycle. Use existing repository release gates and stop safely on
+unknown results.
 The mechanics live in `${CLAUDE_SKILL_DIR}/scripts/plan.sh`; your job is
 the direction.
 
@@ -25,11 +26,12 @@ argument, such as `loop` or `once`.
 
 - New issues and specs stay inside the repository's stated goals and the
   user's instructions.
-- Assessing whether a milestone meets its existing release requirements is
-  part of planning. It is read-only: do not publish a release, create a tag,
-  change a package version, or close a milestone as part of this assessment.
+- Milestone release is part of planning. Follow [RELEASE-READINESS.md](RELEASE-READINESS.md):
+  create RC tags, verify the full release pipeline, then promote the exact
+  passing candidate and close its milestone. Create milestone issues for
+  unmet goals or failed tests. Do not lower any existing gate.
 - Never open an issue or write a spec for work that needs a human decision:
-  release execution, paid or cloud services, deleting data, or changing a frozen
+  unapproved paid or cloud services, deleting data, or changing a frozen
   contract. When an open backlog or `todo` issue needs one, block it with
   one question (see Blocked). Only a `blocked` issue reaches the controller;
   a note in your run report does not.
@@ -150,9 +152,14 @@ ${CLAUDE_SKILL_DIR}/scripts/plan.sh new "<title>" <body-file> <p0-p3> --mileston
 
 6. Assess the current milestone's release readiness, including when the queue
    is full or no issues changed. Follow [RELEASE-READINESS.md](RELEASE-READINESS.md).
-   Report `READY` or `HOLD`, the exact milestone and release candidate, links
-   to the evidence, and any blockers. A missing release contract or unknown
-   evidence is `HOLD`. This verdict does not publish or authorize a release.
+   Report its phase, exact milestone, candidate and evidence. A missing release
+   contract or unknown result is a hold, not a pass. If the goal or a release
+   test is unmet, create scoped issues in the same milestone. When the queue
+   is full, create the issue without claiming it:
+
+```bash
+${CLAUDE_SKILL_DIR}/scripts/plan.sh new-backlog "<title>" <body-file> <p0-p3> --milestone <existing-number>
+```
 
 7. End the run. Report any issue changes and the milestone verdict. If no
    milestone can be identified, report `HOLD` and the missing information.

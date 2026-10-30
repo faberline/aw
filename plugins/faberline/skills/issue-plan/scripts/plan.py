@@ -139,6 +139,33 @@ def execute(client, args):
         print(f'created backlog: {issue["html_url"]}', flush=True)
         adopt(client, issue['number'], value)
         return 0
+    if command == 'new-backlog' and len(args) == 5 and args[3] == '--milestone':
+        title, file, value, _, number = args
+        if not title.strip():
+            raise ValueError('issue title is empty')
+        value, text = priority(value), body(file)
+        sections(text)
+        m = milestone(client, number)
+        snapshot = client.snapshot()
+        if any(i['title'] == title for i in snapshot['issues']):
+            raise ValueError('an open issue already has this title')
+        # Record a milestone gap even when todo is full. Do not claim or adopt
+        # the issue here. An unknown create response must never be retried
+        # without first inspecting the repository for the created issue.
+        issue = client.command('api', '--method', 'POST', f'repos/{client.repo}/issues',
+                               payload=dict(title=title, body=text, milestone=m['number'],
+                                            labels=[f'priority:{value}']))
+        if (not isinstance(issue, dict) or type(issue.get('number')) is not int
+                or issue['number'] < 1 or not isinstance(issue.get('html_url'), str)):
+            raise ValueError('issue create result unknown; inspect before retry')
+        fresh = client.issue(issue['number'])
+        if (fresh.get('state') != 'open' or fresh.get('title') != title
+                or fresh.get('body') != text or (fresh.get('milestone') or {}).get('number') != m['number']
+                or queue.labels(fresh) & queue.STATES
+                or f'priority:{value}' not in queue.labels(fresh)):
+            raise ValueError('created issue readback mismatch; inspect before retry')
+        print(f'created backlog: {issue["html_url"]}', flush=True)
+        return 0
     if command == 'adopt' and (len(args) == 2 or len(args) == 4 and args[2] == '--milestone'):
         adopt(client, args[0], priority(args[1]), args[3] if len(args) == 4 else None)
         return 0
@@ -174,7 +201,7 @@ def execute(client, args):
             raise ValueError('lifecycle changed; comment retained, labels unchanged')
         client.patch(n, labels=sorted((queue.labels(fresh) - {'todo'}) | {'blocked'}))
         return 0
-    raise ValueError('usage: status | new TITLE FILE pN --milestone NUMBER | adopt N pN [--milestone NUMBER] | milestone N NUMBER | spec N FILE | prioritize N pN | block N FILE')
+    raise ValueError('usage: status | new TITLE FILE pN --milestone NUMBER | new-backlog TITLE FILE pN --milestone NUMBER | adopt N pN [--milestone NUMBER] | milestone N NUMBER | spec N FILE | prioritize N pN | block N FILE')
 
 
 def main():

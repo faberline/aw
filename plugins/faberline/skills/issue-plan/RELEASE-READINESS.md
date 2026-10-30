@@ -1,34 +1,79 @@
-# Milestone release readiness
+# Milestone release lifecycle
 
-On every planning pass, decide whether the current release milestone is ready
-to publish. Make this assessment even if the todo queue is full or the planner
-cannot change an issue. It is a read-only decision, not a release operation.
+Progress each repository's current release milestone on each planning pass.
+Use Semantic Versioning for the release version. The Git tags are
+`vMAJOR.MINOR.PATCH-rc.N` for a release candidate and `vMAJOR.MINOR.PATCH` for
+the final release. Start `N` at 1 and never move, overwrite or reuse a tag for a
+different commit. Reconcile existing tags and runs before creating anything.
 
-1. Find the current milestone and its release candidate from the repository's
-   documented release plan, milestone description, issues, and existing release
-   records. Use the explicit product/version mapping. A milestone title or a
-   closed issue alone does not prove a candidate or authorize a release. If the
-   scope, candidate or version mapping is missing or ambiguous, report `HOLD`.
-2. Read the full milestone issue inventory, including closed work, and the
-   linked pull requests, dependencies and decisions. Follow pagination. Check
-   the actual merged commits and unresolved work against the release scope.
-   An open or unknown requirement that the release contract requires is a
-   blocker. A partial PR is not proof that its parent requirement is complete.
-3. Read the repository's actual release contract and its complete required
-   evidence for the exact candidate commit or artifact. Check applicable CI,
-   unit, functional, E2E, performance, security, release approvals, and other
-   gates when that contract requires them. Verify current run identities,
-   results and artifact bindings. A green subset does not prove the full gate.
-4. Return `READY` only if the documented release scope and every applicable
-   requirement have positive, current evidence for the same candidate. A failed,
-   missing, skipped, cancelled, pending, stale, partial or unverifiable result
-   is `HOLD`. Never lower a threshold or invent a release contract or approval.
-5. Report the repository, milestone number and title, exact candidate and
-   version, `READY` or `HOLD`, links to the contract and evidence, and each
-   blocker or missing decision. If an item cannot be identified, say so.
-   Recheck the candidate and material evidence before reporting `READY`.
+## Decide if the milestone goal is complete
 
-Do not create tags, publish packages or releases, change versions, close a
-milestone, change its scope, or alter another session's schedule. Existing
-approval and release ownership remain in force. A `READY` report is a planning
-assessment, not a substitute for the release system's final checks or approval.
+Read the milestone's documented goal, acceptance, existing decisions, full
+paginated issue inventory and related PRs, including closed issues and merged
+PRs. Check actual merged commits and dependencies against the goal. Wait while
+any milestone issue is open or any related PR is unmerged. A closed issue or a
+merged partial PR alone does not prove the milestone goal is met.
+
+If the goal is not met, create the missing, scoped implementation or test
+issues in the same milestone. Check existing issues and PRs first to avoid
+duplicates. Use `plan.sh new-backlog` when the todo queue is full; normal
+planner admission later selects work. The issue must describe the real gap,
+its acceptance and test gate. Do not invent a product contract or overwrite a
+human's issue. Continue this cycle until the goal and all associated work pass.
+
+## Create and test an RC
+
+After all milestone issues close, related PRs merge and the goal is met, bind
+the next RC to the exact landed default-branch commit and the milestone's
+release version. Verify the version against the repository's actual release
+contract and package metadata. If the mapping is missing or inconsistent,
+create the appropriate issue in the milestone; do not guess a version.
+
+Before creating a tag, verify that the repository accepts the `v...-rc.N`
+format and has a full release pipeline bound to that exact tag and commit. If
+either is missing, create a milestone issue to add it and do not create an RC
+yet. Do not substitute a build-only candidate or partial CI for full tests.
+
+Create the next unique RC tag at that commit. Trigger the repository's
+**complete** release test pipeline for that exact tag and commit. A tag push is
+not proof that a pipeline ran: confirm the workflow identity, run ID, attempt,
+tag, commit, required matrix and every result. Dispatch the repository's
+workflow when required. Follow the existing functional, E2E, performance,
+security, platform and artifact gates; preserve their thresholds. Pending
+runs stay pending. Do not create another RC for the same unchanged candidate
+merely because a run is slow, queued or its result is unknown.
+
+On a confirmed test or goal failure, create nonduplicate issues in this same
+milestone with the exact RC, commit, failing run, evidence and required fix.
+Wait for those issues to close and related PRs to merge. Recheck the milestone
+goal, then create the next RC at the fixed landed candidate and run the full
+pipeline again. If the fix is entirely outside the repository, the candidate
+commit may be unchanged only when the issue records and verifies that fix.
+Keep failed RC tags as history.
+
+## Promote the passing candidate
+
+Only promote an RC after all milestone issues are closed, related PRs are
+merged, the goal is still met and every required full release gate passed for
+the exact RC and commit. Recheck the immutable tag, candidate, run attempt and
+milestone immediately before promotion. Create the final `vMAJOR.MINOR.PATCH`
+tag at that same tested commit. Use the repository's release/promotion workflow
+and existing approvals and verify the actual tag and required publication
+results. Do not rebuild a different candidate and call it the tested release.
+
+Close the milestone only after the final tag and all required release results
+are verified. Read the milestone back and report the actual outcome.
+
+## Safety and recovery
+
+Keep the existing coordinator and issue ownership checks. A pending, cancelled,
+skipped, stale, partial or unknown result never passes. Do not change another
+session's worktree or schedule. Do not bypass branch protection or alter an
+existing tag. Before each write, re-read the milestone, candidate and relevant
+ownership. If a tag, issue, workflow dispatch, promotion or closure request has
+an unknown outcome, inspect provider state before any retry; do not blindly
+repeat a write. An existing tag at another commit is a blocker.
+
+Report the milestone, version, current phase, exact RC and commit, full test
+runs, linked gap issues, final tag and any blocker. A `READY` assessment is not
+proof that publication or milestone closure occurred.
