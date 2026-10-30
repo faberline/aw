@@ -18,25 +18,38 @@ need = a.need
 
 
 def verify(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, run_id,
-           log_reader=a.r.job_log):
+           log_reader=a.r.job_log, historical_attempt=None):
+    """Read current or completed-attempt evidence; never authorize a write."""
     need(not os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') and a.review.sha(evaluator)
          and all(a.review.integer(x) for x in (grant_pr, target_pr, run_id))
-         and a.review.sha(grant_head) and a.review.sha(target_head), 'merged_outcome_identity')
-    run = api.api(f'repos/{repo}/actions/runs/{run_id}')
+         and a.review.sha(grant_head) and a.review.sha(target_head)
+         and (historical_attempt is None or a.review.integer(historical_attempt)), 'merged_outcome_identity')
+    historical = historical_attempt is not None
+    run_path = (f'repos/{repo}/actions/runs/{run_id}/attempts/{historical_attempt}' if historical
+                else f'repos/{repo}/actions/runs/{run_id}')
+    run = api.api(run_path)
+    need(isinstance(run,dict), 'merged_outcome_context')
     path, branch, source, attempt = (run.get(k) for k in ('path','head_branch','head_sha','run_attempt'))
     expected_branch = f'codex/merged-grant-{target_pr}-{target_head}'
     need(run.get('id') == run_id and a.review.integer(run.get('workflow_id'))
          and a.review.integer(run.get('run_number')) and a.review.integer(attempt)
-         and run.get('event') == 'push' and run.get('status') == 'in_progress'
+         and run.get('event') == 'push'
          and run.get('head_repository', {}).get('full_name') == repo
          and path == '.github/workflows/review-merged-product-grant.yml' and branch == expected_branch
-         and a.review.sha(source) and os.environ.get('GITHUB_ACTIONS') == 'true'
-         and os.environ.get('GITHUB_REPOSITORY') == repo and os.environ.get('GITHUB_RUN_ID') == str(run_id)
-         and os.environ.get('GITHUB_RUN_ATTEMPT') == str(attempt) and os.environ.get('GITHUB_EVENT_NAME') == 'push'
-         and os.environ.get('GITHUB_SHA') == source and os.environ.get('GITHUB_WORKFLOW_SHA') == source
-         and os.environ.get('GITHUB_REF') == 'refs/heads/' + branch
-         and os.environ.get('GITHUB_WORKFLOW_REF') == repo + '/' + path + '@refs/heads/' + branch,
+         and a.review.sha(source),
          'merged_outcome_context')
+    if historical:
+        need(attempt == historical_attempt and run.get('status') == 'completed'
+             and run.get('conclusion') in ('success','failure','cancelled','timed_out'),
+             'merged_outcome_context')
+    else:
+        need(run.get('status') == 'in_progress' and os.environ.get('GITHUB_ACTIONS') == 'true'
+             and os.environ.get('GITHUB_REPOSITORY') == repo and os.environ.get('GITHUB_RUN_ID') == str(run_id)
+             and os.environ.get('GITHUB_RUN_ATTEMPT') == str(attempt) and os.environ.get('GITHUB_EVENT_NAME') == 'push'
+             and os.environ.get('GITHUB_SHA') == source and os.environ.get('GITHUB_WORKFLOW_SHA') == source
+             and os.environ.get('GITHUB_REF') == 'refs/heads/' + branch
+             and os.environ.get('GITHUB_WORKFLOW_REF') == repo + '/' + path + '@refs/heads/' + branch,
+             'merged_outcome_context')
     workflow = a.review.blob(api, repo, path, source)
     m.workflow_contract(workflow, dict(grant_pr=grant_pr,grant_head=grant_head,target_pr=target_pr,
                                        target_head=target_head,workflow_path=path,branch=branch), evaluator)
@@ -57,7 +70,31 @@ def verify(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, r
     need(len(jobs) == 2 and len(reviews) == 1 and a.review.integer(reviews[0].get('id'))
          and reviews[0].get('status') == 'completed' and reviews[0].get('conclusion') in ('success','failure')
          and len(outcomes) == 1 and a.review.integer(outcomes[0].get('id'))
-         and outcomes[0].get('status') == 'in_progress', 'merged_outcome_jobs')
+         and outcomes[0]['id'] != reviews[0]['id']
+         and ((not historical and outcomes[0].get('status') == 'in_progress')
+              or (historical and outcomes[0].get('status') == 'completed'
+                  and outcomes[0].get('conclusion') in ('success','failure','cancelled','timed_out'))),
+         'merged_outcome_jobs')
+    def stable():
+        later=api.api(run_path)
+        keys=('id','workflow_id','run_number','run_attempt','event','status','conclusion',
+              'head_repository','path','head_branch','head_sha')
+        need(isinstance(later,dict) and all(later.get(k)==run.get(k) for k in keys),
+             'merged_outcome_changed')
+        current_runs=api.pages(runs_path,'workflow_runs')
+        def run_inventory(rows):
+            need(isinstance(rows,list) and len(rows)<=500
+                 and all(isinstance(row,dict) and all(a.review.integer(row.get(k))
+                         for k in ('id','run_number','run_attempt')) for row in rows),
+                 'merged_outcome_changed')
+            return sorted((row['id'],row['run_number'],row['run_attempt']) for row in rows)
+        need(run_inventory(current_runs)==run_inventory(runs), 'merged_outcome_changed')
+        current_jobs=api.pages(f'repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs','jobs')
+        def job_inventory(rows):
+            need(isinstance(rows,list) and all(isinstance(row,dict) and a.review.integer(row.get('id'))
+                 and isinstance(row.get('name'),str) for row in rows), 'merged_outcome_changed')
+            return sorted((row['id'],row['name'],row.get('status'),row.get('conclusion')) for row in rows)
+        need(job_inventory(current_jobs)==job_inventory(jobs), 'merged_outcome_changed')
     log = log_reader(repo, reviews[0]['id'])
     positives = a.r.records(log, m.MARKER)
     negatives = a.r.records(log, m.NONPASS_MARKER)
@@ -73,8 +110,10 @@ def verify(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, r
                         grant_issue_sha256=a.r.digest(current['grant_issue']),grant_digest=a.r.digest(grant),
                         packet_sha256=a.r.digest(current),decision='pass',findings=[],uncertainties=[])
         need(positives == [expected] and not negatives, 'merged_outcome_receipt')
-        return dict(decision='pass', issue=grant['issue'], issue_sha256=grant['issue_sha256'],
+        result=dict(decision='pass', issue=grant['issue'], issue_sha256=grant['issue_sha256'],
                     sha256=a.r.digest(expected))
+        stable()
+        return result
     need(not positives and len(negatives) == 1 and isinstance(negatives[0], dict), 'merged_outcome_receipt')
     value = negatives[0]
     fields = ('version repo target_pr issue target_head target_base grant_pr grant_head grant_merge grant_default '
@@ -93,8 +132,10 @@ def verify(api, repo, grant_pr, grant_head, target_pr, target_head, evaluator, r
          and all(a.review.text(x, 4000) for x in value['findings'] + value['uncertainties'])
          and (value['decision'] != 'pass' or value['findings'] or value['uncertainties']),
          'merged_outcome_receipt')
-    return dict(decision='block' if value['decision']=='block' else 'fail',
+    result=dict(decision='block' if value['decision']=='block' else 'fail',
                 issue=grant['issue'], issue_sha256=grant['issue_sha256'], sha256=a.r.digest(value))
+    stable()
+    return result
 
 
 def verify_recovery_ready(api, repo, document, evaluator):

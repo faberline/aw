@@ -2,6 +2,7 @@
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -29,6 +30,26 @@ class Api:
 
 
 class RecoveryScanTests(unittest.TestCase):
+    def test_push_source_path_requires_a_completed_exact_attempt(self):
+        api=Api();api.row.update(event='push',path='.github/workflows/review-merged-product-grant.yml')
+        self.assertEqual(m.source_path(api,'o/r',123,2),api.row['path'])
+        api.row['status']='in_progress'
+        with self.assertRaisesRegex(RuntimeError,'recovery_source'):m.source_path(api,'o/r',123,2)
+        api.row['status']='completed';api.row.pop('path')
+        with self.assertRaisesRegex(RuntimeError,'recovery_source'):m.source_path(api,'o/r',123,2)
+
+    def test_merged_outcome_scan_authenticates_but_still_holds(self):
+        items=[dict(issue=7,state='merge_held',run=123,attempt=2,head='d'*40,owner='a'*56)]
+        module=SimpleNamespace(authenticate=lambda *args:dict(pr=9))
+        with patch.object(m.discovery,'inspect',return_value=items), \
+             patch.object(m,'source_event',return_value='push'), \
+             patch.object(m,'source_path',return_value='.github/workflows/review-merged-product-grant.yml'), \
+             patch.object(m,'sibling',return_value=module),patch.object(m,'adoption_module') as adoption:
+            result=m.scan(None,'o/r',{},lambda r,j:'')
+        adoption.assert_not_called()
+        self.assertEqual(result,[dict(issue=7,state='held',reason='merged_outcome_recovery_not_implemented',
+            kind='merged_outcome',pr=9,head='d'*40,owner='a'*56,run=123,attempt=2,close_authorized=False)])
+
     def test_historical_policy_comes_from_completed_default_branch_attempt(self):
         api=Api();raw=json.dumps(dict(aw_revision=EVALUATOR))
         with patch.object(m.review,'blob',return_value=raw) as blob:
@@ -189,7 +210,7 @@ class RecoveryScanTests(unittest.TestCase):
             def discover_source(self,*args):return dict(document={},evaluator=EVALUATOR,pr=9)
             def authenticate_checkpoint(self,*args):return dict(evidence=evidence)
         with patch.object(m.discovery,'inspect',return_value=items), \
-             patch.object(m,'source_event',return_value='push'),patch.object(m,'adoption_module',return_value=Adoption()), \
+             patch.object(m,'source_event',return_value='push'),patch.object(m,'source_path',return_value='.github/workflows/adopt.yml'),patch.object(m,'adoption_module',return_value=Adoption()), \
              patch.object(m.observer,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
              patch.object(m.observer,'recovery_plan',return_value=dict(state='guard_required')):
             result=m.scan(None,'o/r',{},lambda r,j:'')
@@ -204,7 +225,7 @@ class RecoveryScanTests(unittest.TestCase):
             def authenticate_checkpoint(self,*args):raise RuntimeError('adoption_checkpoint_missing')
             def find_prepared(self,*args):return dict(evidence=evidence)
         with patch.object(m.discovery,'inspect',return_value=items), \
-             patch.object(m,'source_event',return_value='push'),patch.object(m,'adoption_module',return_value=Adoption()), \
+             patch.object(m,'source_event',return_value='push'),patch.object(m,'source_path',return_value='.github/workflows/adopt.yml'),patch.object(m,'adoption_module',return_value=Adoption()), \
              patch.object(m.observer,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
              patch.object(m.observer,'recovery_plan',return_value=dict(state='observed_closed')):
             result=m.scan(None,'o/r',{},lambda r,j:'')
@@ -221,7 +242,7 @@ class RecoveryScanTests(unittest.TestCase):
         class Api:
             def pages(self,path):return []
         with patch.object(m.discovery,'inspect',return_value=items), \
-             patch.object(m,'source_event',return_value='push'),patch.object(m,'adoption_module',return_value=Adoption()), \
+             patch.object(m,'source_event',return_value='push'),patch.object(m,'source_path',return_value='.github/workflows/adopt.yml'),patch.object(m,'adoption_module',return_value=Adoption()), \
              patch.object(m.observer,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
              patch.object(m.observer,'recovery_plan',return_value=dict(state='guard_required')), \
              patch.object(m.prepared,'observe',return_value=dict(state='observed_success')):
@@ -239,7 +260,7 @@ class RecoveryScanTests(unittest.TestCase):
                 def find_prepared(self,*args):return dict(evidence=evidence,prepared={})
                 def find_direct_refusal(self,*args):return refusal
             with self.subTest(state=state),patch.object(m.discovery,'inspect',return_value=items), \
-                 patch.object(m,'source_event',return_value='push'),patch.object(m,'adoption_module',return_value=Adoption()), \
+                 patch.object(m,'source_event',return_value='push'),patch.object(m,'source_path',return_value='.github/workflows/adopt.yml'),patch.object(m,'adoption_module',return_value=Adoption()), \
                  patch.object(m.observer,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
                  patch.object(m.observer,'recovery_plan',return_value=dict(state='waiting')):
                 rows=m.scan(None,'o/r',{},lambda r,j:'')
@@ -254,7 +275,7 @@ class RecoveryScanTests(unittest.TestCase):
             def find_prepared(self,*args):return None
             def direct_enabled_at(self,*args):return True
         with patch.object(m.discovery,'inspect',return_value=items), \
-             patch.object(m,'source_event',return_value='push'),patch.object(m,'adoption_module',return_value=Adoption()):
+             patch.object(m,'source_event',return_value='push'),patch.object(m,'source_path',return_value='.github/workflows/adopt.yml'),patch.object(m,'adoption_module',return_value=Adoption()):
             rows=m.scan(None,'o/r',{},lambda r,j:'')
         self.assertEqual(rows,[dict(issue=7,state='held',reason='direct_attempt_unknown',close_authorized=False)])
 
@@ -267,7 +288,7 @@ class RecoveryScanTests(unittest.TestCase):
                 def authenticate_checkpoint(self,*args):return dict(evidence=evidence)
                 def find_direct_refusal(self,*args):return refusal
             with self.subTest(state=state),patch.object(m.discovery,'inspect',return_value=items), \
-                 patch.object(m,'source_event',return_value='push'),patch.object(m,'adoption_module',return_value=Adoption()), \
+                 patch.object(m,'source_event',return_value='push'),patch.object(m,'source_path',return_value='.github/workflows/adopt.yml'),patch.object(m,'adoption_module',return_value=Adoption()), \
                  patch.object(m.observer,'source_started_at',return_value='2026-01-01T00:00:00Z'), \
                  patch.object(m.observer,'recovery_plan',return_value=dict(state='waiting')):
                 rows=m.scan(None,'o/r',{},lambda r,j:'')

@@ -93,6 +93,36 @@ class MergedOutcomeTests(unittest.TestCase):
         f.env['GITHUB_SHA']=f.source;f.workflow['jobs']['review']['permissions']['contents']='write'
         with self.assertRaisesRegex(RuntimeError,'workflow'):f.verify(log)
 
+    def test_historical_attempt_requires_terminal_exact_latest_run(self):
+        f=OutcomeFixture();log=o.m.NONPASS_MARKER+json.dumps(f.negative)+'\n'
+        f.run.update(status='completed',conclusion='failure')
+        f.jobs[1].update(status='completed',conclusion='failure')
+        def check():
+            with patch.dict(os.environ,{},clear=True), \
+                 patch.object(o.a.review,'blob',return_value=yaml.safe_dump(f.workflow)), \
+                 patch.object(o.m,'packet',return_value=f.packet):
+                return o.verify(f,'o/r',77,fixture.HEAD,8,f.grant['head'],adoption.EVALUATOR,100,
+                                lambda *args:log,historical_attempt=1)
+        self.assertEqual(check()['decision'],'fail')
+        f.run['status']='in_progress'
+        with self.assertRaisesRegex(RuntimeError,'context'):check()
+        f.run['status']='completed';f.jobs[1]['status']='in_progress'
+        with self.assertRaisesRegex(RuntimeError,'jobs'):check()
+        f.jobs[1]['status']='completed';f.runs[0]['run_attempt']=2
+        with self.assertRaisesRegex(RuntimeError,'not_latest'):check()
+
+    def test_evidence_changes_during_verification_are_rejected(self):
+        f=OutcomeFixture();log=o.m.NONPASS_MARKER+json.dumps(f.negative)+'\n';calls=[]
+        original=f.pages
+        def pages(path,key=None):
+            result=original(path,key)
+            if key=='workflow_runs':
+                calls.append(True)
+                if len(calls)==2:result.append(dict(id=103,run_number=3,run_attempt=1))
+            return result
+        with patch.object(f,'pages',side_effect=pages),self.assertRaisesRegex(RuntimeError,'changed'):
+            f.verify(log)
+
     def test_negative_main_holds_before_any_issue_write(self):
         f=OutcomeFixture();env=dict(f.env,INPUT_GRANT_PR='77',INPUT_GRANT_HEAD=fixture.HEAD,
             INPUT_TARGET_PR=str(f.grant['pr']),INPUT_TARGET_HEAD=f.grant['head'],

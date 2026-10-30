@@ -88,6 +88,15 @@ def source_event(api,repo,run,attempt):
     return row['event']
 
 
+def source_path(api,repo,run,attempt):
+    row=api.api(f'repos/{repo}/actions/runs/{run}/attempts/{attempt}')
+    need(isinstance(row,dict) and row.get('id')==run and row.get('run_attempt')==attempt
+         and row.get('status')=='completed' and row.get('event')=='push'
+         and isinstance(row.get('path'),str) and row['path'].startswith('.github/workflows/'),
+         'recovery_source')
+    return row['path']
+
+
 def scan(api,repo,current_policy,log_reader):
     """Inspect all guards, retaining failures and never mutating an issue."""
     items=discovery.inspect(api,repo,current_policy);results=[]
@@ -98,6 +107,14 @@ def scan(api,repo,current_policy,log_reader):
         try:
             run,attempt=item['run'],item['attempt']
             if source_event(api,repo,run,attempt)=='push':
+                if source_path(api,repo,run,attempt)=='.github/workflows/review-merged-product-grant.yml':
+                    outcome=sibling('policy_adoption_merged_recovery')
+                    evidence=outcome.authenticate(api,repo,current_policy,run,attempt,item['issue'],
+                                                  item['head'],item['owner'],log_reader)
+                    row.update(state='held',reason='merged_outcome_recovery_not_implemented',
+                               kind='merged_outcome',pr=evidence['pr'],head=item['head'],
+                               owner=item['owner'],run=run,attempt=attempt,close_authorized=False)
+                    results.append(row);continue
                 adoption=adoption_module()
                 source=adoption.discover_source(api,repo,run,attempt,item['issue'],item['head'],item['owner'],log_reader)
                 try:
