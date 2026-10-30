@@ -206,6 +206,14 @@ def framework_sources(api,candidate_ref,evaluator_ref,include_recovery=False):
             raw=content.encode('utf-8')
             blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
             result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
+        if any(isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute)
+               and node.func.attr=='sibling' and node.args and isinstance(node.args[0],ast.Constant)
+               and node.args[0].value=='direct_merge' for node in ast.walk(tree)):
+            path=FRAMEWORK_ROOT+'direct_merge.py'
+            content=a.review.blob(api,a.GRANTS_REPO,path,ref)
+            raw=content.encode('utf-8')
+            blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+            result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
     if include_recovery:
         add_recovery('candidate',candidate_ref)
     framework_dependency_closure(result)

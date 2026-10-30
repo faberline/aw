@@ -215,7 +215,7 @@ def actions_request(request):
     return isinstance(actor, dict) and actor.get("__typename") == "Bot" and actor.get("login") == "github-actions"
 
 
-def withdraw_approval(api, repo, number, head):
+def withdraw_approval(api, repo, number, head, cancel_request=True):
     """Revoke our prior authorization before attempting any fresh verification.
 
     A policy/base/issue/index failure must not leave a previous passing head
@@ -242,6 +242,9 @@ def withdraw_approval(api, repo, number, head):
     again = provider_pull(api, repo, number)
     need(again.get("state") == "OPEN" and again["headRefOid"] == head, "withdraw_target_changed")
     if ours and again.get("autoMergeRequest") is not None:
+        # A shared Actions bot does not identify which run owns the request.
+        # Guarded direct merge never cancels a pre-existing request.
+        need(cancel_request, 'withdraw_request_owner_unknown')
         need(actions_request(again["autoMergeRequest"]), "withdraw_request_changed")
         result = graphql(api, DISABLE, dict(input=dict(pullRequestId=again["id"])))
         observed = result.get("disablePullRequestAutoMerge", {}).get("pullRequest")
@@ -500,7 +503,7 @@ def dispatch_default_wake(api, repo, results):
 
 def dispatch_recovery_wake(api,repo,document,evaluator,recovery,results):
     """Wake recovery after a guarded request; its inputs never authorize close."""
-    if not any(row.get('state') in ('queued','merged','already_merged') for row in results):
+    if not any(row.get('state') in ('queued','merged','already_merged','held_after_pending') for row in results):
         return False
     recovery.workflow_contract(api,repo,document,evaluator)
     api.api(f'repos/{repo}/dispatches',method='POST',data=dict(event_type='aw-verified-merge-recover'))
@@ -707,7 +710,7 @@ def return_todo(api, repo, number, head, load_document, evaluator, run_id, verif
 
 
 def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=None, ci_process=None,
-              defer_positive=False, prepare_record=None, guarded=None):
+              defer_positive=False, prepare_record=None, guarded=None, direct_mode=False):
     """Every wake covers the complete queue; one refused PR cannot drop others."""
     document = load_document()
     policy(document, require_qualification=False)
@@ -735,7 +738,11 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
         if guarded is not None and pull.get('number') not in admitted:
             continue
         try:
-            withdraw_approval(api, repo, pull["number"], pull.get("head", {}).get("sha"))
+            if not direct_mode:
+                withdraw_approval(api, repo, pull["number"], pull.get("head", {}).get("sha"))
+            else:
+                withdraw_approval(api, repo, pull["number"], pull.get("head", {}).get("sha"),
+                                  cancel_request=False)
         except Exception:
             withdrawal_errors.add(pull["number"])
     ci_errors = set()
@@ -794,8 +801,17 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
                 if guarded is not None:
                     arguments['guarded_claim']=admitted[number]
                     arguments['before_mutation']=lambda:write_started.__setitem__(0,True)
-                row.update(enqueue(api, repo, number, head, load_document, evaluator,
-                    attempt["id"], **arguments))
+                if direct_mode:
+                    need(guarded is not None and prepare_record is not None, 'direct_guard_required')
+                    direct = review.sibling('direct_merge')
+                    adapter = SimpleNamespace(review=review, policy=policy, qualification=qualification,
+                                              base_rules=base_rules, provider_pull=provider_pull, binding=binding)
+                    row.update(direct.merge_and_close(api, repo, number, head, load_document, evaluator,
+                        attempt['id'], admitted[number], adapter, verify, prepare_record,
+                        before_mutation=arguments['before_mutation']))
+                else:
+                    row.update(enqueue(api, repo, number, head, load_document, evaluator,
+                        attempt["id"], **arguments))
         except Exception as error:
             code = str(error)
             row["reason"] = code if isinstance(error, review.Refused) and re.fullmatch(
@@ -806,7 +822,7 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
     if guarded is not None:
         for row in results:
             claim=admitted.get(row['pr'])
-            if claim is None or row['state'] in ('queued','merged','already_merged','held_after_pending',
+            if claim is None or row['state'] in ('queued','merged','already_merged','closed','held_after_pending',
                                                   'default_wake_required'):
                 continue
             if row['state']=='held' and row['pr'] not in prewrite_holds:
@@ -876,7 +892,7 @@ def main():
     tracker = index.Session(api, repo, load, evaluator)
     results = reconcile(api, repo, load, evaluator, tracker.attempts, tracker.verify, tracker.result, api.process_head,
                         defer_positive=event_name == 'pull_request_target', prepare_record=prepare_close_record,
-                        guarded=guarded)
+                        guarded=guarded, direct_mode=guarded is not None)
     # PR-target runs may report the candidate head as their run SHA. Wake a
     # default-branch writer, which must revalidate the entire queue.
     dispatch_default_wake(api, repo, results)

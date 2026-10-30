@@ -274,6 +274,8 @@ class ReviewProtocolTests(unittest.TestCase):
                     existing.add((role,path))
             path=m.FRAMEWORK_ROOT+'request_history.py'
             rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+            path=m.FRAMEWORK_ROOT+'direct_merge.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
         m.framework_dependency_closure(rows)
 
     def test_optional_close_observer_is_bound_per_immutable_revision(self):
@@ -285,6 +287,19 @@ class ReviewProtocolTests(unittest.TestCase):
         with patch.object(m.a.review,'blob',side_effect=blob):
             rows=m.framework_sources(None,candidate,evaluator)
         found=[row for row in rows if row['path'].endswith('/post_merge_observation.py')]
+        self.assertEqual([(row['role'],row['ref']) for row in found],[('candidate',candidate)])
+        with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+            m.framework_dependency_closure([row for row in rows if row not in found])
+
+    def test_direct_merger_is_bound_to_immutable_controller_revision(self):
+        candidate,evaluator='c'*40,'e'*40
+        def blob(api,repo,path,ref):
+            if path.endswith('/native_merge.py') and ref==candidate:
+                return "x=review.sibling('direct_merge')"
+            return 'pass'
+        with patch.object(m.a.review,'blob',side_effect=blob):
+            rows=m.framework_sources(None,candidate,evaluator)
+        found=[row for row in rows if row['path'].endswith('/direct_merge.py')]
         self.assertEqual([(row['role'],row['ref']) for row in found],[('candidate',candidate)])
         with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
             m.framework_dependency_closure([row for row in rows if row not in found])
@@ -320,10 +335,13 @@ class ReviewProtocolTests(unittest.TestCase):
         for role in ('candidate','evaluator'):
             path=m.FRAMEWORK_ROOT+'request_history.py'
             rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+            path=m.FRAMEWORK_ROOT+'direct_merge.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
         m.framework_dependency_closure(rows)
         for omitted in ('plugins/faberline/skills/issue-work/scripts/worker_guard.py',
                         m.FRAMEWORK_ROOT+'guard_ledger.py',
                         m.FRAMEWORK_ROOT+'request_history.py',
+                        m.FRAMEWORK_ROOT+'direct_merge.py',
                         'plugins/faberline/skills/issue-loop/scripts/milestone_queue.py'):
             with self.subTest(omitted=omitted),self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
                 m.framework_dependency_closure([r for r in rows if not (r['role']=='candidate' and r['path']==omitted)])

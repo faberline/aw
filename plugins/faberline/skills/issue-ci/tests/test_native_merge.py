@@ -623,6 +623,14 @@ class ApprovalWithdrawalTests(unittest.TestCase):
         m.withdraw_approval(p,'o/r',1,HEAD)
         self.assertEqual(p.writes,[])
 
+    def test_direct_mode_blocks_but_never_cancels_an_actions_request(self):
+        p=Provider();p.auto_complete=False;p.run();p.writes.clear()
+        before=copy.deepcopy(p.native['autoMergeRequest'])
+        with self.assertRaisesRegex(RuntimeError,'withdraw_request_owner_unknown'):
+            m.withdraw_approval(p,'o/r',1,HEAD,cancel_request=False)
+        self.assertEqual([w[0] for w in p.writes],['pending'])
+        self.assertEqual(p.native['autoMergeRequest'],before)
+
     def test_human_request_not_disabled_when_prior_status_exists(self):
         p=Provider();p.auto_complete=False;p.run();p.writes.clear()
         p.native['autoMergeRequest']['enabledBy']={'login':'human','__typename':'User'}

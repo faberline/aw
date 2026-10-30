@@ -40,6 +40,20 @@ class GuardedQueueTests(unittest.TestCase):
             return m.reconcile(self.api,'o/r',self.api.load,EVALUATOR,lambda *args:attempts,self.api.verify,
                                guarded=self.guard)
 
+    def test_direct_mode_finishes_with_no_second_guard_settle(self):
+        self.pulls=[self.pulls[1]]
+        attempts={2:dict(id=200,status='completed',conclusion='success')}
+        from types import SimpleNamespace
+        direct=SimpleNamespace(merge_and_close=lambda *args,**kwargs:dict(state='closed',issue=7))
+        with patch.object(m,'withdraw_approval') as withdraw, \
+             patch.object(m.review,'sibling',return_value=direct),patch.object(m,'enqueue') as queue:
+            rows=m.reconcile(self.api,'o/r',self.api.load,EVALUATOR,lambda *args:attempts,
+                self.api.verify,guarded=self.guard,prepare_record=lambda *args:None,direct_mode=True)
+        self.assertEqual(rows[0]['state'],'closed')
+        self.assertNotIn(('settle',2),self.calls)
+        withdraw.assert_called_once_with(self.api,'o/r',2,HEAD,cancel_request=False)
+        queue.assert_not_called()
+
     def test_owned_issue_is_skipped_without_stopping_other_prs(self):
         attempts={2:dict(id=200,status='completed',conclusion='success')}
         rows=self.execute(attempts)

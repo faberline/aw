@@ -53,6 +53,7 @@ class GuardedWriterEntryTests(unittest.TestCase):
     def test_authenticated_default_wake_passes_guard_to_queue(self):
         result,reconcile,guard=self.call('workflow_run',lambda *args:None)
         self.assertEqual(result,0);self.assertIs(reconcile.kwargs['guarded'],guard)
+        self.assertIs(reconcile.kwargs['direct_mode'],True)
         self.assertEqual(self.events,[])
 
     def test_recovery_wake_requires_verified_workflow_and_carries_no_authority(self):
@@ -63,6 +64,12 @@ class GuardedWriterEntryTests(unittest.TestCase):
         self.assertTrue(m.dispatch_recovery_wake(self.api,'o/r',self.api.load(),EVALUATOR,recovery,
                                                  [dict(state='queued'),dict(state='merged')]))
         self.assertEqual(calls,['verified'])
+        self.assertEqual(self.events,[('repos/o/r/dispatches','POST',dict(event_type='aw-verified-merge-recover'))])
+
+    def test_uncertain_direct_write_requests_recovery(self):
+        recovery=SimpleNamespace(workflow_contract=lambda *args:None)
+        self.assertTrue(m.dispatch_recovery_wake(self.api,'o/r',self.api.load(),EVALUATOR,recovery,
+                                                [dict(state='held_after_pending')]))
         self.assertEqual(self.events,[('repos/o/r/dispatches','POST',dict(event_type='aw-verified-merge-recover'))])
 
 
