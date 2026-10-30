@@ -164,6 +164,17 @@ class MergedGrantTests(unittest.TestCase):
                  self.subTest(result=result), self.assertRaisesRegex(RuntimeError, 'not_pass'):
                 m.produce(f, 'o/r', 77, HEAD, adoption.EVALUATOR, 'token', lambda *args: result)
 
+    def test_model_nonpass_binds_issue_and_never_emits_success(self):
+        f = Fixture(); before = f.run()
+        model = lambda *args: dict(decision='fail', summary='Needs a fix', findings=['one finding'], uncertainties=[])
+        with patch.object(m, 'packet', return_value=before), self.assertRaises(m.ReviewNotPassed) as raised:
+            m.produce(f, 'o/r', 77, HEAD, adoption.EVALUATOR, 'token', model)
+        evidence = raised.exception.evidence
+        self.assertEqual((evidence['target_pr'], evidence['issue'], evidence['target_head']),
+                         (8, 7, f.grant['head']))
+        self.assertEqual(evidence['issue_sha256'], f.grant['issue_sha256'])
+        self.assertEqual(evidence['packet_sha256'], m.a.r.digest(before))
+
     def test_entry_emits_only_a_success_receipt(self):
         env = dict(GITHUB_REPOSITORY='o/r', INPUT_GRANT_PR='77', INPUT_GRANT_HEAD=HEAD,
                    AW_ACTION_REF=adoption.EVALUATOR, CLAUDE_CODE_OAUTH_TOKEN='test-token')
@@ -178,20 +189,37 @@ class MergedGrantTests(unittest.TestCase):
              contextlib.redirect_stdout(output), self.assertRaises(RuntimeError):
             m.main()
         self.assertNotIn(m.MARKER, output.getvalue())
+        output = io.StringIO()
+        evidence = dict(version=1, decision='fail')
+        with patch.dict(os.environ, env, clear=True), \
+             patch.object(m, 'produce', side_effect=m.ReviewNotPassed(evidence)), \
+             contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:
+            m.main()
+        self.assertEqual(raised.exception.code, 1)
+        self.assertEqual(output.getvalue().splitlines(), [m.NONPASS_MARKER + m.a.r.canonical(evidence)])
+        self.assertNotIn(m.MARKER, output.getvalue())
 
     def test_verifier_authenticates_exact_latest_product_review(self):
         f = Fixture(); current = f.run(); grant = f.grant
-        att = dict(grant_pr=77, grant_head=HEAD, workflow_path='.github/workflows/grant.yml',
+        att = dict(grant_pr=77, grant_head=HEAD, target_pr=grant['pr'], target_head=grant['head'],
+                   workflow_path='.github/workflows/grant.yml',
                    workflow_id=9, workflow_blob='a'*40, source_commit='b'*40,
                    branch='codex/grant-review', run_id=100, attempt=1, job_id=101)
         workflow = {'name': 'Review merged product grant',
                     'on': {'push': {'branches': [att['branch']], 'paths': [att['workflow_path']]}},
-                    'permissions': {}, 'jobs': {'review': {
+                    'permissions': {}, 'concurrency': {'group': 'issue-ci-handoff', 'cancel-in-progress': 'false'},
+                    'jobs': {'review': {
                         'runs-on': 'ubuntu-latest', 'timeout-minutes': '70',
                         'permissions': {'actions': 'read', 'contents': 'read', 'pull-requests': 'read', 'issues': 'read'},
                         'steps': [{'uses': 'faberline/aw/.github/actions/policy-adoption-merged-grant-review@'+adoption.EVALUATOR,
                                    'with': {'grant-pr': '77', 'grant-head': HEAD,
-                                            'claude-token': '${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}}]}}}
+                                            'claude-token': '${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}}]},
+                             'outcome': {'needs': 'review', 'if': 'always()', 'runs-on': 'ubuntu-latest',
+                                 'timeout-minutes': '30', 'permissions': {'actions': 'read', 'contents': 'read',
+                                 'pull-requests': 'read', 'issues': 'write', 'statuses': 'write'},
+                                 'steps': [{'uses':'faberline/aw/.github/actions/policy-adoption-merged-grant-outcome@'+adoption.EVALUATOR,
+                                            'with': {'grant-pr':'77','grant-head':HEAD,'target-pr':str(grant['pr']),
+                                                     'target-head':grant['head'],'review-run':'${{ github.run_id }}'}}]}}}
         run = dict(id=100, workflow_id=9, path=att['workflow_path'], head_sha=att['source_commit'],
                    head_branch=att['branch'], event='push', head_repository={'full_name': 'o/r'},
                    run_attempt=1, run_number=2, status='completed', conclusion='success')
@@ -202,7 +230,8 @@ class MergedGrantTests(unittest.TestCase):
                        grant_issue_sha256=m.a.r.digest(current['grant_issue']), grant_digest=m.a.r.digest(grant),
                        packet_sha256=m.a.r.digest(current), decision='pass', findings=[], uncertainties=[])
         class API:
-            jobs = [dict(name='review', id=101, status='completed', conclusion='success')]
+            jobs = [dict(name='review', id=101, status='completed', conclusion='success'),
+                    dict(name='outcome', id=102, status='completed', conclusion='success')]
             runs = [dict(id=100, run_number=2, run_attempt=1)]
             def api(self, path): return copy.deepcopy(run)
             def pages(self, path, key=None):
@@ -251,7 +280,7 @@ class MergedGrantTests(unittest.TestCase):
         class API:
             runs = [row]
             def pages(self, path, key=None):
-                return copy.deepcopy(self.runs if key == 'workflow_runs' else [dict(id=101)])
+                return copy.deepcopy(self.runs if key == 'workflow_runs' else [dict(id=101, name='review')])
         api = API()
         receipt = dict(grant_digest=m.a.r.digest(grant))
         with patch.object(m.a.review, 'blob', return_value=raw), \

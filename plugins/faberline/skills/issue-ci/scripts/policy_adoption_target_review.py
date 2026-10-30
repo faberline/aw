@@ -226,7 +226,9 @@ def framework_sources(api,candidate_ref,evaluator_ref,include_recovery=False):
             if uses_merged:
                 add_recovery(role,ref)
                 for path in (FRAMEWORK_ROOT+'policy_adoption_merged_grant.py',
-                             '.github/actions/policy-adoption-merged-grant-review/action.yml'):
+                             FRAMEWORK_ROOT+'policy_adoption_merged_outcome.py',
+                             '.github/actions/policy-adoption-merged-grant-review/action.yml',
+                             '.github/actions/policy-adoption-merged-grant-outcome/action.yml'):
                     content=a.review.blob(api,a.GRANTS_REPO,path,ref)
                     raw=content.encode('utf-8')
                     blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()

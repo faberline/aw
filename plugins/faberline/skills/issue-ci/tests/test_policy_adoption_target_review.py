@@ -278,6 +278,8 @@ class ReviewProtocolTests(unittest.TestCase):
             rows.append(dict(role=role,path=path,content=(root/path).read_text()))
             path=m.FRAMEWORK_ROOT+'policy_adoption_merged_grant.py'
             rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+            path=m.FRAMEWORK_ROOT+'policy_adoption_merged_outcome.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
         m.framework_dependency_closure(rows)
 
     def test_optional_close_observer_is_bound_per_immutable_revision(self):
@@ -305,6 +307,10 @@ class ReviewProtocolTests(unittest.TestCase):
         self.assertEqual([(row['role'],row['ref']) for row in found],[('evaluator',evaluator)])
         action=[row for row in rows if row['path']=='.github/actions/policy-adoption-merged-grant-review/action.yml']
         self.assertEqual([(row['role'],row['ref']) for row in action],[('evaluator',evaluator)])
+        action=[row for row in rows if row['path']=='.github/actions/policy-adoption-merged-grant-outcome/action.yml']
+        self.assertEqual([(row['role'],row['ref']) for row in action],[('evaluator',evaluator)])
+        outcome=[row for row in rows if row['path'].endswith('/policy_adoption_merged_outcome.py')]
+        self.assertEqual([(row['role'],row['ref']) for row in outcome],[('evaluator',evaluator)])
         with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
             m.framework_dependency_closure([row for row in rows if row not in found])
 
@@ -355,6 +361,8 @@ class ReviewProtocolTests(unittest.TestCase):
             path=m.FRAMEWORK_ROOT+'direct_merge.py'
             rows.append(dict(role=role,path=path,content=(root/path).read_text()))
             path=m.FRAMEWORK_ROOT+'policy_adoption_merged_grant.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+            path=m.FRAMEWORK_ROOT+'policy_adoption_merged_outcome.py'
             rows.append(dict(role=role,path=path,content=(root/path).read_text()))
         m.framework_dependency_closure(rows)
         for omitted in ('plugins/faberline/skills/issue-work/scripts/worker_guard.py',

@@ -1,0 +1,44 @@
+name: Authenticate the merged product grant review outcome
+description: Verify the exact outcome without model credentials; negative transitions remain held.
+inputs:
+  grant-pr:
+    required: true
+    description: Exact merged AW grant pull request.
+  grant-head:
+    required: true
+    description: Exact AW grant pull request head.
+  target-pr:
+    required: true
+    description: Exact same-repository product pull request.
+  target-head:
+    required: true
+    description: Exact product pull request head.
+  review-run:
+    required: true
+    description: Current review workflow run.
+runs:
+  using: composite
+  steps:
+    - name: Prepare hash-locked metadata parser
+      id: runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        runtime="$(mktemp -d "$RUNNER_TEMP/aw-merged-outcome-python-XXXXXX")"
+        python3 -I -m venv "$runtime"
+        "$runtime/bin/python" -I -m pip --isolated install --disable-pip-version-check --no-input \
+          --no-deps --only-binary=:all: --require-hashes --index-url https://pypi.org/simple \
+          -r "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/readiness-requirements.txt"
+        echo "python=$runtime/bin/python" >> "$GITHUB_OUTPUT"
+    - name: Authenticate the exact review outcome
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        AW_ACTION_REF: ${{ github.action_ref }}
+        INPUT_GRANT_PR: ${{ inputs.grant-pr }}
+        INPUT_GRANT_HEAD: ${{ inputs.grant-head }}
+        INPUT_TARGET_PR: ${{ inputs.target-pr }}
+        INPUT_TARGET_HEAD: ${{ inputs.target-head }}
+        INPUT_REVIEW_RUN: ${{ inputs.review-run }}
+        OUTCOME_PYTHON: ${{ steps.runtime.outputs.python }}
+      run: exec "$OUTCOME_PYTHON" -I -B "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/policy_adoption_merged_outcome.py"

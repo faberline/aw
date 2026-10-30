@@ -18,6 +18,13 @@ a = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(a)
 need = a.need
 MARKER = 'AW_MERGED_GRANT_REVIEW_V1 '
+NONPASS_MARKER = 'AW_MERGED_GRANT_REVIEW_NONPASS_V1 '
+
+
+class ReviewNotPassed(RuntimeError):
+    def __init__(self, evidence):
+        super().__init__('merged_grant_review_not_pass')
+        self.evidence = evidence
 
 
 def document(raw):
@@ -125,10 +132,19 @@ def produce(api, repo, number, head, evaluator, token, invoke):
     after = packet(api, repo, number, head, evaluator)
     need(before == after, 'merged_grant_review_inputs_changed')
     need(a.review.exact(result, 'decision summary findings uncertainties')
-         and result['decision'] == 'pass' and a.review.text(result['summary'], 4000)
-         and result['findings'] == [] and result['uncertainties'] == [],
+         and result['decision'] in ('pass', 'fail', 'block') and a.review.text(result['summary'], 4000)
+         and isinstance(result['findings'], list) and isinstance(result['uncertainties'], list)
+         and all(a.review.text(x, 4000) for x in result['findings'] + result['uncertainties']),
          'merged_grant_review_not_pass')
     source = before['grant_pr']
+    if result['decision'] != 'pass' or result['findings'] or result['uncertainties']:
+        grant = before['grant']
+        raise ReviewNotPassed(dict(version=1, repo=repo, target_pr=grant['pr'], issue=grant['issue'],
+            target_head=grant['head'], target_base=grant['base'], grant_pr=number, grant_head=head,
+            grant_merge=source['merge'], grant_default=source['default'], grant_blob=source['blob'],
+            grant_digest=a.r.digest(grant), pr_sha256=grant['pr_sha256'], issue_sha256=grant['issue_sha256'],
+            packet_sha256=a.r.digest(before), decision=result['decision'], summary=result['summary'],
+            findings=result['findings'], uncertainties=result['uncertainties']))
     return dict(version=1, repo=repo, target_pr=before['grant']['pr'],
                 target_head=before['grant']['head'], grant_pr=number, grant_head=head,
                 grant_merge=source['merge'], grant_parent=source['parent'],
@@ -139,21 +155,8 @@ def produce(api, repo, number, head, evaluator, token, invoke):
                 decision='pass', findings=[], uncertainties=[])
 
 
-def verify(api, repo, evaluator, attestation, log_reader, merged=False):
-    """Authenticate a product-side review; merged mode only observes recovery evidence."""
-    fields = ('grant_pr grant_head workflow_path workflow_id workflow_blob source_commit branch '
-              'run_id attempt job_id')
-    need(type(merged) is bool and isinstance(repo, str) and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo)
-         and a.review.exact(attestation, fields) and a.review.sha(evaluator)
-         and all(a.review.integer(attestation[k]) for k in ('grant_pr', 'workflow_id', 'run_id', 'attempt', 'job_id'))
-         and all(a.review.sha(attestation[k]) for k in ('grant_head', 'workflow_blob', 'source_commit'))
-         and a.valid_path(attestation['workflow_path'])
-         and attestation['workflow_path'].startswith('.github/workflows/')
-         and isinstance(attestation['branch'], str)
-         and re.fullmatch(r'codex/[A-Za-z0-9._/-]+', attestation['branch'])
-         and '..' not in attestation['branch'], 'merged_grant_attestation')
-    spec = attestation
-    raw = a.review.blob(api, repo, spec['workflow_path'], spec['source_commit'], spec['workflow_blob'])
+def workflow_contract(raw, spec, evaluator):
+    """Require one read-only review and one serialized outcome writer."""
     a.r.literal_uses(raw)
     import yaml
     workflow = yaml.load(raw, Loader=yaml.BaseLoader)
@@ -162,9 +165,35 @@ def verify(api, repo, evaluator, attestation, log_reader, merged=False):
                     'steps': [{'uses': 'faberline/aw/.github/actions/policy-adoption-merged-grant-review@' + evaluator,
                                'with': {'grant-pr': str(spec['grant_pr']), 'grant-head': spec['grant_head'],
                                         'claude-token': '${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}}]}
+    outcome_job = {'needs': 'review', 'if': 'always()', 'runs-on': 'ubuntu-latest', 'timeout-minutes': '30',
+                   'permissions': {'actions': 'read', 'contents': 'read', 'pull-requests': 'read',
+                                   'issues': 'write', 'statuses': 'write'},
+                   'steps': [{'uses': 'faberline/aw/.github/actions/policy-adoption-merged-grant-outcome@' + evaluator,
+                              'with': {'grant-pr': str(spec['grant_pr']), 'grant-head': spec['grant_head'],
+                                       'target-pr': str(spec['target_pr']), 'target-head': spec['target_head'],
+                                       'review-run': '${{ github.run_id }}'}}]}
     need(workflow == {'name': 'Review merged product grant',
                       'on': {'push': {'branches': [spec['branch']], 'paths': [spec['workflow_path']]}},
-                      'permissions': {}, 'jobs': {'review': expected_job}}, 'merged_grant_workflow')
+                      'permissions': {}, 'concurrency': {'group': 'issue-ci-handoff', 'cancel-in-progress': 'false'},
+                      'jobs': {'review': expected_job, 'outcome': outcome_job}}, 'merged_grant_workflow')
+
+
+def verify(api, repo, evaluator, attestation, log_reader, merged=False):
+    """Authenticate a product-side review; merged mode only observes recovery evidence."""
+    fields = ('grant_pr grant_head target_pr target_head workflow_path workflow_id workflow_blob source_commit branch '
+              'run_id attempt job_id')
+    need(type(merged) is bool and isinstance(repo, str) and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo)
+         and a.review.exact(attestation, fields) and a.review.sha(evaluator)
+         and all(a.review.integer(attestation[k]) for k in ('grant_pr', 'target_pr', 'workflow_id', 'run_id', 'attempt', 'job_id'))
+         and all(a.review.sha(attestation[k]) for k in ('grant_head', 'target_head', 'workflow_blob', 'source_commit'))
+         and a.valid_path(attestation['workflow_path'])
+         and attestation['workflow_path'].startswith('.github/workflows/')
+         and isinstance(attestation['branch'], str)
+         and re.fullmatch(r'codex/[A-Za-z0-9._/-]+', attestation['branch'])
+         and '..' not in attestation['branch'], 'merged_grant_attestation')
+    spec = attestation
+    raw = a.review.blob(api, repo, spec['workflow_path'], spec['source_commit'], spec['workflow_blob'])
+    workflow_contract(raw, spec, evaluator)
     run = api.api(f"repos/{repo}/actions/runs/{spec['run_id']}")
     need(run.get('id') == spec['run_id'] and run.get('workflow_id') == spec['workflow_id']
          and run.get('path') == spec['workflow_path'] and run.get('head_sha') == spec['source_commit']
@@ -188,14 +217,20 @@ def verify(api, repo, evaluator, attestation, log_reader, merged=False):
         return sorted((item['id'], item['run_number'], item['run_attempt']) for item in runs)
     before_runs = latest()
     jobs = api.pages(f"repos/{repo}/actions/runs/{spec['run_id']}/attempts/{spec['attempt']}/jobs", 'jobs')
-    need(len(jobs) == 1 and jobs[0].get('name') == 'review' and jobs[0].get('id') == spec['job_id']
-         and jobs[0].get('status') == 'completed' and jobs[0].get('conclusion') == 'success',
+    reviews = [job for job in jobs if job.get('name') == 'review']
+    outcomes = [job for job in jobs if job.get('name') == 'outcome']
+    need(len(jobs) == 2 and len(reviews) == 1 and reviews[0].get('id') == spec['job_id']
+         and reviews[0].get('status') == 'completed' and reviews[0].get('conclusion') == 'success'
+         and len(outcomes) == 1 and a.review.integer(outcomes[0].get('id'))
+         and outcomes[0].get('status') == 'completed' and outcomes[0].get('conclusion') == 'success',
          'merged_grant_review_job')
     rows = a.r.records(log_reader(repo, spec['job_id']), MARKER)
     need(len(rows) == 1 and isinstance(rows[0], dict), 'merged_grant_review_receipt')
     current = (merged_data(api, repo, spec['grant_pr'], spec['grant_head'], evaluator) if merged
                else packet(api, repo, spec['grant_pr'], spec['grant_head'], evaluator))
     grant = current['grant']; source = current['grant_pr']
+    need(grant['pr'] == spec['target_pr'] and grant['head'] == spec['target_head'],
+         'merged_grant_target_changed')
     if merged:
         a.evaluate_merged(api, grant, log_reader)
         packet_sha = rows[0].get('packet_sha256')
@@ -262,11 +297,13 @@ def discover(api, grant, evaluator, log_reader, merged=False):
     need(isinstance(pr, str) and re.fullmatch(r'[1-9][0-9]*', pr) and a.review.sha(head),
          'merged_grant_discovery_workflow')
     jobs = api.pages(f"repos/{repo}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", 'jobs')
-    need(isinstance(jobs, list) and len(jobs) == 1 and isinstance(jobs[0], dict)
-         and a.review.integer(jobs[0].get('id')), 'merged_grant_discovery_job')
-    att = dict(grant_pr=int(pr), grant_head=head, workflow_path=path, workflow_id=run['workflow_id'],
+    reviews = [job for job in jobs if isinstance(job, dict) and job.get('name') == 'review']
+    need(isinstance(jobs, list) and len(reviews) == 1 and a.review.integer(reviews[0].get('id')),
+         'merged_grant_discovery_job')
+    att = dict(grant_pr=int(pr), grant_head=head, target_pr=grant['pr'], target_head=grant['head'],
+               workflow_path=path, workflow_id=run['workflow_id'],
                workflow_blob=blob, source_commit=run['head_sha'], branch=branch,
-               run_id=run['id'], attempt=run['run_attempt'], job_id=jobs[0]['id'])
+               run_id=run['id'], attempt=run['run_attempt'], job_id=reviews[0]['id'])
     receipt = verify(api, repo, evaluator, att, log_reader, merged=merged)
     need(receipt['grant_digest'] == a.r.digest(grant), 'merged_grant_discovery_mismatch')
     return dict(attestation=att, receipt=receipt)
@@ -308,8 +345,12 @@ def main():
         'merged_grant_model', Path(__file__).with_name('policy_adoption_grant_review.py'))
     model = importlib.util.module_from_spec(review_spec)
     review_spec.loader.exec_module(model)
-    receipt = produce(a.ci, repo, int(number), head, evaluator,
-                      os.environ.get('CLAUDE_CODE_OAUTH_TOKEN'), model.invoke)
+    try:
+        receipt = produce(a.ci, repo, int(number), head, evaluator,
+                          os.environ.get('CLAUDE_CODE_OAUTH_TOKEN'), model.invoke)
+    except ReviewNotPassed as error:
+        print(NONPASS_MARKER + a.r.canonical(error.evidence), flush=True)
+        raise SystemExit(1) from None
     print(MARKER + a.r.canonical(receipt), flush=True)
 
 
