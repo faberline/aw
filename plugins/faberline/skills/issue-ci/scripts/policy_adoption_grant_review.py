@@ -93,8 +93,19 @@ def invoke_schema(packet, token, system, schema, execute=subprocess.run, max_pac
               '--no-chrome','--no-session-persistence','--system-prompt',system]
         result=execute(args,input=encoded,text=True,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
                        env=env,cwd=directory,timeout=900,check=False)
-    need(result.returncode==0 and len(result.stdout.encode())<=131072 and token not in result.stdout,
-         'grant_review_execution_failed')
+    need(len(result.stdout.encode())<=131072 and token not in result.stdout,'grant_review_execution_failed')
+    if result.returncode!=0:
+        # Classify only this fixed refusal. Never include provider text or
+        # credentials in review receipts, and never turn an error into approval.
+        try:
+            failed=a.ci.strict_json_loads(result.stdout)
+        except (ValueError,TypeError,RuntimeError):
+            failed=None
+        message=failed.get('result') if isinstance(failed,dict) and failed.get('is_error') is True else None
+        if isinstance(message,str) and any(text in message.lower() for text in
+                ('prompt is too long','context window','context limit','too many tokens')):
+            need(False,'grant_review_context_limit')
+    need(result.returncode==0,'grant_review_execution_failed')
     outer=a.ci.strict_json_loads(result.stdout)
     need(isinstance(outer,dict) and outer.get('type')=='result' and outer.get('subtype')=='success'
          and outer.get('is_error') is False,'grant_review_execution_failed')

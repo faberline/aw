@@ -20,6 +20,75 @@ def question_id(text):
     return 'planning-question-'+hashlib.sha256(text.encode()).hexdigest()
 
 
+class SourceTextPacketTests(unittest.TestCase):
+    def packet(self):
+        same='完整來源\n' * 1000
+        return dict(context={'head':HEAD,'base':BASE},
+            files=[dict(path='src/new.py',previous='src/old.py',before=same,after=same+'changed\n'),
+                   dict(path='src/empty.py',previous='src/empty.py',before=None,after='')],
+            shared_framework_sources=[dict(role=role,repo='faberline/aw',ref=ref,
+                path='framework.py',blob='a'*40,content=same)
+                for role,ref in (('candidate',HEAD),('evaluator',BASE))],
+            supporting_sources=[dict(path='src/old.py',commit=BASE,blob='a'*40,content=same)],
+            issue={'body':'Preserve every requirement.'})
+
+    def test_every_source_byte_identity_and_null_boundary_roundtrips(self):
+        packet=self.packet();original=copy.deepcopy(packet)
+        encoded=m.model_packet(packet)
+        self.assertEqual(m.restore_model_packet(encoded),packet)
+        self.assertEqual(packet,original)
+        self.assertEqual(encoded['files'][1]['before'],None)
+        self.assertEqual(encoded['files'][1]['after']['utf8_bytes'],0)
+        self.assertEqual(encoded['issue'],packet['issue'])
+
+    def test_duplicate_role_revision_and_supporting_text_is_sent_once(self):
+        packet=self.packet();encoded=m.model_packet(packet)
+        self.assertEqual(len(encoded['source_texts']),3)
+        shared=encoded['shared_framework_sources']
+        self.assertEqual(shared[0]['content'],shared[1]['content'])
+        self.assertEqual(shared[0]['content'],encoded['files'][0]['before'])
+        self.assertEqual(shared[0]['content'],encoded['supporting_sources'][0]['content'])
+        self.assertLess(len(m.a.r.canonical(encoded)),len(m.a.r.canonical(packet))*0.6)
+
+    def test_changed_text_never_reuses_the_before_reference(self):
+        encoded=m.model_packet(self.packet());row=encoded['files'][0]
+        self.assertNotEqual(row['before']['source_text_sha256'],row['after']['source_text_sha256'])
+        self.assertEqual(len(encoded['shared_framework_sources']),2)
+        self.assertNotEqual(encoded['shared_framework_sources'][0]['ref'],encoded['shared_framework_sources'][1]['ref'])
+
+    def test_missing_changed_unused_or_wrong_size_text_cannot_decode(self):
+        for problem in ('missing','changed','unused','size','encoding','reference'):
+            encoded=m.model_packet(self.packet());ref=encoded['files'][0]['before'];key=ref['source_text_sha256']
+            if problem=='missing':encoded['source_texts'].pop(key)
+            if problem=='changed':encoded['source_texts'][key]+='tampered'
+            if problem=='unused':encoded['source_texts']['f'*64]='unreferenced'
+            if problem=='size':ref['utf8_bytes']+=1
+            if problem=='encoding':encoded['source_text_encoding']='other'
+            if problem=='reference':ref['extra']='not authorized'
+            with self.subTest(problem=problem),self.assertRaises(RuntimeError):m.restore_model_packet(encoded)
+
+    def test_source_objects_or_reserved_fields_cannot_smuggle_references(self):
+        packet=self.packet();packet['files'][0]['before']={'source_text_sha256':'a'*64,'utf8_bytes':1}
+        with self.assertRaisesRegex(RuntimeError,'source_text_value'):m.model_packet(packet)
+        for key in ('source_texts','source_text_encoding'):
+            packet=self.packet();packet[key]={}
+            with self.subTest(key=key),self.assertRaisesRegex(RuntimeError,'source_text_reserved'):m.model_packet(packet)
+
+    def test_both_review_stages_receive_lossless_complete_source_tables(self):
+        protocol=ReviewProtocolTests();packet=protocol.packet();sources=self.packet()
+        packet.update({key:sources[key] for key in ('files','shared_framework_sources')})
+        calls=[]
+        def invoke(data,token,system,schema,**kwargs):
+            decoded=m.restore_model_packet(data);calls.append(decoded)
+            self.assertIn('Read the full referenced text',system)
+            self.assertEqual(decoded['files'],packet['files'])
+            self.assertEqual(decoded['shared_framework_sources'],packet['shared_framework_sources'])
+            return protocol.model(decoded,token,system,schema,**kwargs)
+        with patch.object(m,'preflight',return_value=(packet,{BASE:[],HEAD:[]})):
+            result=m.produce(None,'o/r',8,HEAD,'token',invoke)
+        self.assertEqual(result['decision'],'pass');self.assertEqual(len(calls),2)
+
+
 class ReviewProtocolTests(unittest.TestCase):
     def packet(self):
         return dict(context=dict(repo='o/r',pr=8,issue=7,head=HEAD,base=BASE,pr_sha256='1'*64,
@@ -83,6 +152,7 @@ class ReviewProtocolTests(unittest.TestCase):
     def test_block_diagnostic_uses_only_allowlisted_fixed_codes(self):
         packet=self.packet()
         for error,expected in [(RuntimeError('target_plan_uncertain'),'planning/target_plan_uncertain'),
+                               (RuntimeError('grant_review_context_limit'),'planning/grant_review_context_limit'),
                                (RuntimeError('private secret injected into error'),'planning/unclassified_error'),
                                (subprocess.TimeoutExpired('sensitive command',900),'planning/model_timeout')]:
             def fail(*args,**kwargs):raise error
