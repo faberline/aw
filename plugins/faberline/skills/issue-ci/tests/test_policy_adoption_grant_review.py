@@ -84,6 +84,24 @@ class GrantReviewTests(unittest.TestCase):
                 m.invoke({'grant':'synthetic'},'token',lambda *args,**kwargs:called.append(True))
             self.assertEqual(called,[])
 
+    def test_context_overflow_stays_blocked_with_only_a_fixed_safe_reason(self):
+        pin=json.loads(Path(m.__file__).with_name('policy_adoption_supply.json').read_text())['binary_sha256']
+        failed=SimpleNamespace(returncode=1,stdout=json.dumps(dict(type='result',subtype='success',
+            is_error=True,result='API Error: prompt is too long: 1036320 tokens. provider-private-detail')))
+        with patch.object(m.Path,'read_bytes',return_value=b'synthetic-binary'),\
+             patch.object(m.hashlib,'sha256',return_value=SimpleNamespace(hexdigest=lambda:pin)),\
+             self.assertRaisesRegex(RuntimeError,'^grant_review_context_limit$'):
+            m.invoke({'grant':'synthetic'},'private-test-credential',lambda *args,**kwargs:failed)
+
+    def test_credential_or_unrecognized_failure_cannot_be_a_context_receipt(self):
+        pin=json.loads(Path(m.__file__).with_name('policy_adoption_supply.json').read_text())['binary_sha256']
+        for message in ('prompt is too long private-test-credential','unknown provider failure'):
+            failed=SimpleNamespace(returncode=1,stdout=json.dumps(dict(type='result',is_error=True,result=message)))
+            with self.subTest(message=message),patch.object(m.Path,'read_bytes',return_value=b'synthetic-binary'),\
+                 patch.object(m.hashlib,'sha256',return_value=SimpleNamespace(hexdigest=lambda:pin)),\
+                 self.assertRaisesRegex(RuntimeError,'^grant_review_execution_failed$'):
+                m.invoke({'grant':'synthetic'},'private-test-credential',lambda *args,**kwargs:failed)
+
     def test_failed_review_or_midflight_change_emits_no_pass(self):
         packet={'grant':adoption.grant(),'grant_pr':{'blob':BLOB}}
         failed=lambda *args:{'decision':'fail','findings':['bad'],'uncertainties':[]}

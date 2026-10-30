@@ -399,17 +399,24 @@ All ordinary protected-path, failure-only and qualification holds stay in place.
    separate serialized outcome job authenticates that receipt. A failed or
    blocked review returns the issue to `todo`; a pass makes no lifecycle write.
    A successful workflow job by itself is not a passing review receipt.
+   Complete source texts use `AW_COMPLETE_SOURCE_TEXTS_V1`. Identical text
+   appears once in `source_texts`. Every file, role and revision keeps its
+   SHA-256 reference and original UTF-8 byte count. Both review stages receive
+   all text. The controller verifies exact reconstruction before each model
+   call. It does not truncate source or summarize requirements to fit the
+   context window. A provider context refusal remains a blocked review and
+   reports the fixed code `grant_review_context_limit` without provider text.
 2. A data-only AW PR proposes a grant for one exact target head and base. It
    names the exact candidate and prior policy blobs, issue and PR hashes,
    protected paths, all current CI jobs, and the authenticated target review.
-   The fixed grant-review action independently checks this data and its current
-   evidence. Claude receives no tools and no candidate code executes. A passing
-   log receipt binds the grant data before the receipt metadata is appended.
-   Run the same independent review again on the final PR head. It verifies the
-   earlier receipt and reviews the final grant file. Its own receipt remains
-   outside the grant, so the review cannot change the head it reviewed.
-3. After the data-only grant is independently reviewed and merged to AW main,
-   a fixed serialized publisher verifies its ancestry, the grant-review log,
+   Use `grant_authorization` version 1, kind `product-evidence`, and the actual
+   AW data PR number. The grant verifier authenticates the product's existing
+   independent review and CI. AW's complete required controls must pass on the
+   final data head. AW has no extra Claude-review gate. Legacy grants that
+   explicitly use grant-review attestations retain their separate checks;
+   they do not impose that mode on a new product-evidence grant.
+3. After the exact data-only grant passes AW controls and merges to AW main,
+   a fixed serialized publisher verifies its ancestry, grant authorization,
    the target-review log, GitHub ruleset, candidate policy, original job set,
    complete current CI, issue and PR identities. It writes pending, queues
    native squash auto-merge at the exact head, repeats the checks, then writes
