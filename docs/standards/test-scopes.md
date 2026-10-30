@@ -204,7 +204,7 @@ changed paths and the map, and gives the selectors as outputs. The test jobs
 read those outputs: a `cargo test` job for `lib` and `it`, and the
 [test cluster](test-cluster.md#the-test-job) matrix for `e2e` suites, and a
 job for `perf` tests. In normal development these execute in the stage order
-defined by DEV-PIPELINE-1. No selectors require an explicit reviewed
+defined by DEV-PIPELINE-1. When no tests apply, require an explicit reviewed
 not-applicable decision and an applicability receipt. A skipped or zero-test
 required job does not count as passed.
 
