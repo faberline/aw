@@ -271,7 +271,10 @@ def candidate_policy(api, grant, proof=None):
     native.writer_contract(api,repo,dict(config=candidate,source_commit=head),candidate['aw_revision'])
     old={w['path']:set(w['jobs']) for w in prior['workflows']}
     new={w['path']:set(w['jobs']) for w in candidate['workflows']}
-    need(all(path in new and jobs <= new[path] for path,jobs in old.items()), 'candidate_dropped_existing_gate')
+    retained = (review.sibling('development_pipeline').retains_workflows(prior, candidate)
+                if candidate.get('development_pipeline') is not None else
+                all(path in new and jobs <= new[path] for path,jobs in old.items()))
+    need(retained, 'candidate_dropped_existing_gate')
     return candidate
 
 

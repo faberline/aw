@@ -8,8 +8,10 @@ not prove that a repository conforms.
 ## Scope
 
 This standard defines the pull request pipeline for normal development.
-AW owns the standard and shared control code. Product repositories own their
-test commands, test content, and acceptance criteria. They link to this file
+AW owns the stage contract and shared control code. Product repositories own
+their job count, job names, matrix size, batch layout, test commands, test
+content, and acceptance criteria. AW sets no fixed job count or batch count.
+They link to this file
 at the reviewed AW revision used by their pipeline. They do not maintain a
 second copy of this standard.
 
@@ -74,7 +76,8 @@ flowchart TD
 
 ### 1. Preflight
 
-Use one job with three checks. Read one PR snapshot and freeze the exact PR
+Cover all three checks in one or more repository-defined jobs. Read one PR
+snapshot and freeze the exact PR
 and current `main` commits for the run.
 
 1. Check whether the PR includes the frozen current `main` commit. A PR
@@ -96,7 +99,7 @@ the actual query failure through the failure contract below.
 
 ### 2. Impact and test plan
 
-Use one planning job. Calculate the PR's changes between its merge base and
+Use repository-defined planning jobs. Calculate the PR's changes between its merge base and
 the frozen PR commit. Use immutable commits, not a new lookup of the moving
 `main` name in each job. Retain file additions, deletions, and both paths of
 a rename. Read every page of changed files; never silently truncate a plan.

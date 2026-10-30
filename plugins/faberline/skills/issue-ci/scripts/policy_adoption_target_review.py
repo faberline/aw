@@ -352,7 +352,10 @@ def preflight(api,repo,number,head):
     need(a.review.sha(candidate.get('aw_revision')), 'target_controller_identity')
     a.native.writer_contract(api,repo,dict(config=candidate,source_commit=head),candidate['aw_revision'])
     old={w['path']:set(w['jobs']) for w in prior['workflows']};new={w['path']:set(w['jobs']) for w in candidate['workflows']}
-    need(all(path in new and jobs<=new[path] for path,jobs in old.items()),'target_dropped_existing_gate')
+    retained = (a.review.sibling('development_pipeline').retains_workflows(prior, candidate)
+                if candidate.get('development_pipeline') is not None else
+                all(path in new and jobs<=new[path] for path,jobs in old.items()))
+    need(retained,'target_dropped_existing_gate')
     plan=a.q.select(candidate,pull,files,issue)
     prefix='gate infrastructure change requires reviewed policy update: '
     need(plan['issues'] and all(x.startswith(prefix) for x in plan['issues'])

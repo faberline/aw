@@ -41,11 +41,17 @@ def validate(config):
     policy = config.get('development_pipeline')
     if policy is None:
         return None
-    need(isinstance(policy, dict) and set(policy) == {'version', 'workflow', 'stages'}
+    need(isinstance(policy, dict) and {'version', 'workflow', 'stages'} <= set(policy)
+         and set(policy) <= {'version', 'workflow', 'stages', 'replaces', 'grouped_checks'}
          and type(policy['version']) is int and policy['version'] == 1,
          'invalid version or fields')
     need(policy['workflow'] in {w['path'] for w in config['workflows']},
          'test workflow must remain in required workflows')
+    replacements = policy.get('replaces', {})
+    need(isinstance(replacements, dict) and len(replacements) <= 1
+         and all(isinstance(old, str) and re.fullmatch(r'\.github/workflows/[\w.-]+\.ya?ml', old)
+                 and new == policy['workflow'] and old != new for old,new in replacements.items()),
+         'workflow replacement must be explicit and one to one')
     stages = policy['stages']
     need(isinstance(stages, dict) and set(stages) == set(STAGES), 'every stage is required')
     ids = []
@@ -54,11 +60,85 @@ def validate(config):
         need(isinstance(jobs, list) and jobs and all(isinstance(x, str)
              and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]*', x) for x in jobs),
              'stage needs explicit job IDs: ' + stage)
-        if stage in ('preflight', 'impact'):
-            need(len(jobs) == 1, 'preflight and impact each require one job')
         ids.extend(jobs)
     need(len(ids) <= 256 and len(ids) == len(set(ids)), 'duplicate or excessive stage job IDs')
+    grouped = policy.get('grouped_checks', [])
+    checks = config.get('qualification', {}).get('checks', {})
+    need(isinstance(grouped, list) and all(isinstance(x, str) and x in checks for x in grouped)
+         and len(grouped) == len(set(grouped)), 'invalid grouped check IDs')
+    labels = set()
+    for name in grouped:
+        check = checks[name]
+        need(check.get('case_id') == name and isinstance(check.get('case_label'), str)
+             and bool(check['case_label'].strip()) and check.get('workflow') == policy['workflow'],
+             'grouped checks require stable case identity and original label')
+        need(check['case_label'] not in labels, 'duplicate grouped case label')
+        labels.add(check['case_label'])
+    for name, check in checks.items():
+        if 'case_id' in check or 'case_label' in check:
+            need(name in grouped, 'case mapping must be explicit')
+    for workflow in config['workflows']:
+        for job in workflow['jobs']:
+            members = [name for name, check in checks.items()
+                       if check.get('workflow') == workflow['path'] and check.get('job') == job]
+            if set(members) & set(grouped):
+                need(len(members) > 1 and set(members) <= set(grouped),
+                     'every check in a batch needs its own case mapping')
     return policy
+
+
+def retains_workflows(prior, candidate):
+    """A reviewed regrouping must retain every old check and case identity."""
+    policy = validate(candidate)
+    replacements = policy.get('replaces', {}) if policy else {}
+    historical = prior.get('development_pipeline', {}).get('replaces', {})
+    old = {w['path']:set(w['jobs']) for w in prior['workflows']}
+    new = {w['path']:set(w['jobs']) for w in candidate['workflows']}
+    grouped = set(policy.get('grouped_checks', [])) if policy else set()
+    old_checks = prior.get('qualification', {}).get('checks', {})
+    new_checks = candidate.get('qualification', {}).get('checks', {})
+    if grouped:
+        for name, before in old_checks.items():
+            after = new_checks.get(name)
+            if not isinstance(after, dict):
+                return False
+            fields = lambda check: {k:v for k,v in check.items()
+                                   if k not in ('workflow','job','case_id','case_label')}
+            target = before['workflow'] if before['workflow'] in new else replacements.get(before['workflow'])
+            if fields(before) != fields(after) or after.get('workflow') != target:
+                return False
+            if after.get('job') != before['job'] or name in grouped:
+                if (name not in grouped or after['case_id'] != name
+                        or after['case_label'] != before.get('case_label', before['job'])):
+                    return False
+    for path,target in replacements.items():
+        if path not in old:
+            if historical.get(path) != target:
+                return False
+        elif path in new or target in old:
+            return False  # No merging two old producers into one name set.
+    for path,jobs in old.items():
+        target = path if path in new else replacements.get(path)
+        if target not in new:
+            return False
+        for job in jobs:
+            if job in new[target]:
+                continue
+            members = {name:check for name,check in old_checks.items()
+                       if check.get('workflow') == path and check.get('job') == job}
+            if not members or not set(members) <= grouped:
+                return False
+            for name, check in members.items():
+                after = new_checks[name]
+                before_fields = {k:v for k,v in check.items()
+                                 if k not in ('workflow','job','case_id','case_label')}
+                after_fields = {k:v for k,v in after.items()
+                                if k not in ('workflow','job','case_id','case_label')}
+                if (before_fields != after_fields or after['case_id'] != name
+                        or after['case_label'] != check.get('case_label', job)
+                        or after['workflow'] != target or after['job'] not in new[target]):
+                    return False
+    return True
 
 
 def yaml_document(raw):
@@ -119,7 +199,11 @@ def workflow_contract(raw, config):
         cache[name] = result
         return result
     groups = policy['stages']
-    need(not dependencies[groups['preflight'][0]], 'preflight must start the pipeline')
+    ranks = {'preflight':0, 'impact':1, 'unit':2, 'functional':3, 'performance':3}
+    rank = {job:ranks[stage] for stage, names in groups.items() for job in names}
+    for job in jobs:
+        need(all(rank[parent] <= rank[job] for parent in ancestors(job, set())),
+             'earlier stage cannot depend on a later stage')
     for stage in STAGES[1:]:
         prior = {'preflight'} if stage == 'impact' else {'preflight', 'impact'}
         if stage in ('functional', 'performance'):

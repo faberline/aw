@@ -26,8 +26,13 @@ the existing protected policy adoption path. For example:
 }
 ```
 
+AW defines stages and their success barriers. Each repository defines its
+job count and batch layout. There is no shared fixed count. Preflight and
+impact can each use several jobs. Every later stage waits for all required
+jobs in its earlier stages.
+
 The job IDs are examples, not an approved gate inventory. List every test job
-from that workflow exactly once. Keep the full required workflow/job names,
+from that workflow exactly once. Keep the full required check inventory,
 feature expansion and issue contracts in the qualification policy. The final
 review and result writer remain separate trusted workflows.
 
@@ -36,6 +41,20 @@ waits for impact and preflight. Both expensive groups wait for every unit
 job. Cycles, unassigned jobs, failure-ignoring steps/jobs and matrix fail-fast
 are refused. The default-branch policy and exact workflow blobs remain the
 authority; a stage label cannot approve an edited workflow.
+
+Repositories can group several required cases in one physical job. A reviewed
+adoption lists every such check ID in `development_pipeline.grouped_checks`.
+Each check keeps its ID and category, adds `case_id` equal to that ID, and
+keeps its prior job label in `case_label`. Its `job` names the new batch.
+Every check in a batch needs this mapping. The batch runner must reject
+missing or duplicate cases, execute every case, retain each result, and fail
+if any case fails. A job with zero selected cases cannot pass. Source changes
+to the runner remain protected and need independent product review.
+
+An explicit `replaces` map can move one required workflow path to another.
+It cannot combine two old workflows or discard an old check. These mappings
+do not approve themselves. Protected policy adoption still authenticates the
+exact source, complete CI, independent review, and grant before publication.
 
 ## Read-only action operations
 
