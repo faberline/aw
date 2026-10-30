@@ -5,6 +5,7 @@ does not satisfy the separate grant-review requirement.  The product publisher
 must still authenticate a review receipt before it can use the grant.
 """
 import importlib.util
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -177,6 +178,52 @@ def verify(api, repo, evaluator, attestation, log_reader):
     need(isinstance(fresh, dict) and all(fresh.get(k) == run.get(k) for k in keys),
          'merged_grant_review_changed')
     return expected
+
+
+def discover(api, grant, evaluator, log_reader):
+    """Find and authenticate the latest review on the target-specific branch.
+
+    The grant is still inert unless a trusted publisher calls this function and
+    rechecks the returned receipt before writing.  Discovery never executes the
+    product branch or accepts workflow inputs as authorization.
+    """
+    a.grant_spec(grant)
+    need(grant['evaluator'] == evaluator and 'grant_review' not in grant, 'merged_grant_discovery_input')
+    repo = grant['repo']
+    branch = f"codex/merged-grant-{grant['pr']}-{grant['head']}"
+    path = '.github/workflows/review-merged-product-grant.yml'
+    runs = api.pages(f"repos/{repo}/actions/runs?branch={quote(branch, safe='')}&event=push", 'workflow_runs')
+    need(isinstance(runs, list) and len(runs) <= 500, 'merged_grant_discovery_runs')
+    selected = [row for row in runs if isinstance(row, dict) and row.get('path') == path
+                and row.get('event') == 'push' and row.get('head_branch') == branch
+                and row.get('head_repository', {}).get('full_name') == repo]
+    need(selected and all(all(a.review.integer(row.get(k)) for k in ('id', 'workflow_id', 'run_number', 'run_attempt'))
+                          and a.review.sha(row.get('head_sha')) for row in selected)
+         and len({row['id'] for row in selected}) == len(selected)
+         and len({row['workflow_id'] for row in selected}) == 1
+         and len({row['run_number'] for row in selected}) == len(selected), 'merged_grant_discovery_runs')
+    run = max(selected, key=lambda row: row['run_number'])
+    raw = a.review.blob(api, repo, path, run['head_sha'])
+    encoded = raw.encode('utf-8')
+    blob = hashlib.sha1(b'blob ' + str(len(encoded)).encode() + b'\0' + encoded).hexdigest()
+    import yaml
+    data = yaml.load(raw, Loader=yaml.BaseLoader)
+    try:
+        inputs = data['jobs']['review']['steps'][0]['with']
+        pr, head = inputs['grant-pr'], inputs['grant-head']
+    except (TypeError, KeyError, IndexError):
+        raise a.review.Refused('merged_grant_discovery_workflow') from None
+    need(isinstance(pr, str) and re.fullmatch(r'[1-9][0-9]*', pr) and a.review.sha(head),
+         'merged_grant_discovery_workflow')
+    jobs = api.pages(f"repos/{repo}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", 'jobs')
+    need(isinstance(jobs, list) and len(jobs) == 1 and isinstance(jobs[0], dict)
+         and a.review.integer(jobs[0].get('id')), 'merged_grant_discovery_job')
+    att = dict(grant_pr=int(pr), grant_head=head, workflow_path=path, workflow_id=run['workflow_id'],
+               workflow_blob=blob, source_commit=run['head_sha'], branch=branch,
+               run_id=run['id'], attempt=run['run_attempt'], job_id=jobs[0]['id'])
+    receipt = verify(api, repo, evaluator, att, log_reader)
+    need(receipt['grant_digest'] == a.r.digest(grant), 'merged_grant_discovery_mismatch')
+    return dict(attestation=att, receipt=receipt)
 
 
 def main():

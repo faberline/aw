@@ -191,3 +191,36 @@ class MergedGrantTests(unittest.TestCase):
         api.jobs[0]['conclusion'] = 'success'
         unsafe = copy.deepcopy(workflow); unsafe['jobs']['review']['permissions']['contents'] = 'write'
         with self.assertRaisesRegex(RuntimeError, 'workflow'): execute(line, yaml.safe_dump(unsafe))
+
+    def test_discovery_only_uses_latest_target_specific_run_and_matching_grant(self):
+        f = Fixture(); grant = f.grant
+        branch = f"codex/merged-grant-{grant['pr']}-{grant['head']}"
+        path = '.github/workflows/review-merged-product-grant.yml'
+        row = dict(id=100, workflow_id=9, run_number=2, run_attempt=1, head_sha='b'*40,
+                   path=path, event='push', head_branch=branch, head_repository={'full_name': 'o/r'})
+        raw = yaml.safe_dump({'jobs': {'review': {'steps': [{'with': {'grant-pr': '77', 'grant-head': HEAD}}]}}})
+        class API:
+            runs = [row]
+            def pages(self, path, key=None):
+                return copy.deepcopy(self.runs if key == 'workflow_runs' else [dict(id=101)])
+        api = API()
+        receipt = dict(grant_digest=m.a.r.digest(grant))
+        with patch.object(m.a.review, 'blob', return_value=raw), \
+             patch.object(m, 'verify', return_value=receipt) as verify:
+            result = m.discover(api, grant, adoption.EVALUATOR, lambda *args: '')
+        self.assertEqual(result['attestation']['run_id'], 100)
+        self.assertEqual(result['attestation']['branch'], branch)
+        self.assertEqual(verify.call_args.args[2], adoption.EVALUATOR)
+        with patch.object(m.a.review, 'blob', return_value=raw), \
+             patch.object(m, 'verify', return_value=dict(grant_digest='0'*64)), \
+             self.assertRaisesRegex(RuntimeError, 'discovery_mismatch'):
+            m.discover(api, grant, adoption.EVALUATOR, lambda *args: '')
+        newer = dict(row, id=102, run_number=3, run_attempt=1, head_sha='c'*40)
+        api.runs = [row, newer]
+        with patch.object(m.a.review, 'blob', return_value=raw), \
+             patch.object(m, 'verify', side_effect=RuntimeError('newer review failed')), \
+             self.assertRaisesRegex(RuntimeError, 'newer review failed'):
+            m.discover(api, grant, adoption.EVALUATOR, lambda *args: '')
+        api.runs = [row, dict(newer, workflow_id=10)]
+        with self.assertRaisesRegex(RuntimeError, 'discovery_runs'):
+            m.discover(api, grant, adoption.EVALUATOR, lambda *args: '')
