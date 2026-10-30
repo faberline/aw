@@ -89,8 +89,22 @@ def authenticate(api,repo,policy,run,attempt,issue,head,owner,log_reader):
                 grant_pr=grant_number,grant_head=grant_head,outcome_job=writers[0]['id'])
 
 
-def trace_state(repo,evidence,log_reader):
+def verify_trace_source(api,evaluator):
+    """Use trace semantics only when the historical action bytes match exactly."""
+    need(review.sha(evaluator),'merged_outcome_trace_source')
+    root=Path(__file__).resolve().parents[5]
+    paths=('plugins/faberline/skills/issue-ci/scripts/policy_adoption_merged_outcome.py',
+           'plugins/faberline/skills/issue-ci/scripts/todo_mutation_trace.py',
+           '.github/actions/policy-adoption-merged-grant-outcome/action.yml')
+    for path in paths:
+        current=(root/path).read_bytes()
+        historical=review.blob(api,'faberline/aw',path,evaluator).encode('utf-8')
+        need(current==historical,'merged_outcome_trace_source')
+
+
+def trace_state(api,repo,evidence,log_reader):
     """Observe matching request responses, without authorizing a replay."""
+    verify_trace_source(api,evidence['evaluator'])
     trace=sibling('todo_mutation_trace')
     intent=evidence['intent'];sha=intent['sha256']
     log=log_reader(repo,evidence['outcome_job'])
@@ -143,9 +157,9 @@ def inspect(api,repo,policy,run,attempt,issue,head,owner,log_reader):
     first=journal()
     phase='absent' if first is None else first[1]
     if phase!='applied':
-        return dict(pr=pr,phase=phase,trace=trace_state(repo,evidence,log_reader),
+        return dict(pr=pr,phase=phase,trace=trace_state(api,repo,evidence,log_reader),
                     state='held',close_authorized=False)
-    need(trace_state(repo,evidence,log_reader)=='completed', 'merged_outcome_trace_unknown')
+    need(trace_state(api,repo,evidence,log_reader)=='completed', 'merged_outcome_trace_unknown')
     def target():
         pull=api.api(f'repos/{repo}/pulls/{pr}')
         review.pull_identity(pull,repo,pr,head)
@@ -167,7 +181,7 @@ def inspect(api,repo,policy,run,attempt,issue,head,owner,log_reader):
         return dict(issue=value,provider=provider)
     before=target()
     need(journal()==first and authenticate(api,repo,policy,run,attempt,issue,head,owner,log_reader)==evidence
-         and trace_state(repo,evidence,log_reader)=='completed' and target()==before,
+         and trace_state(api,repo,evidence,log_reader)=='completed' and target()==before,
          'merged_outcome_recovery_changed')
     return dict(pr=pr,phase='applied',state='applied_observed',close_authorized=False)
 
