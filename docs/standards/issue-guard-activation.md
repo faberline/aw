@@ -78,6 +78,11 @@ the reviewed grant and the guarded publisher. Merge must be confirmed before
 the canonical issue can close. Read back the issue after closure. An uncertain
 merge or close response requires observation before another mutation.
 
+The guarded publisher requires `issues: write` for explicit issue closure.
+Its exact reviewed workflow and guard policy must authorize this permission.
+Live rollout and ownership checks still run before a write. A publisher with
+only `issues: read` cannot enter the guarded completion path.
+
 GitHub can clear a CI run's PR links after merge. The dedicated read-only
 merged path authenticates the actual merged PR, repository, default target,
 head, base and current run attempt. It also checks the original review's exact

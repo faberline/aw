@@ -123,11 +123,12 @@ class AdoptionGuardTests(unittest.TestCase):
             self.assertEqual(api.writes,[]);output.append(line)
         with patch.dict(os.environ,env,clear=True),patch.object(m.adoption,'verify_grant_attestation',return_value={}), \
              patch.object(m,'grant_from_default',return_value=self.grant), \
-             patch.object(m.adoption,'publisher_provenance',return_value=dict(run_attempt=2)), \
+             patch.object(m.adoption,'publisher_provenance',return_value=dict(run_attempt=2))as publisher, \
              patch.object(m,'source_policy',return_value=(self.policy,self.candidate)), \
              patch.object(m.guard.worker,'check_runtime'),patch.object(m.recovery,'verify_rollout'), \
              patch.object(m.adoption,'_evaluate_guarded',return_value={'stable':True}):
             result=m.begin(api,self.document,self.grant,EVALUATOR,123,lambda r,j:'',emit,lambda n:next(values))
+        self.assertTrue(publisher.call_args.kwargs['require_issue_write'])
         self.assertTrue(output[0].startswith(m.MARKER));self.assertTrue(output[1].startswith(m.guard.MARKER))
         state=m.guard.provider.read_chain(api,'o/r',provider.GENESIS,provider.RULE,7)
         self.assertEqual(state['state']['locks']['7']['owner'],result['intent']['payload']['owner'])
@@ -137,10 +138,11 @@ class AdoptionGuardTests(unittest.TestCase):
         claim=dict(policy=self.policy,intent=self.intent)
         with patch.object(m,'grant_from_default',return_value=self.grant), \
              patch.object(m.adoption,'verify_grant_attestation',return_value={'review':'pass'}), \
-             patch.object(m.adoption,'publisher_provenance',return_value=dict(run_attempt=2)), \
+             patch.object(m.adoption,'publisher_provenance',return_value=dict(run_attempt=2))as publisher, \
              patch.object(m,'source_policy',return_value=(self.policy,self.candidate)), \
              patch.object(m.guard.worker,'check_runtime'):
             self.assertEqual(m.recheck(api,self.document,self.grant,EVALUATOR,123,claim,lambda r,j:''),{'review':'pass'})
+            self.assertTrue(publisher.call_args.kwargs['require_issue_write'])
             changed=copy.deepcopy(claim);changed['intent']['payload']['owner']='f'*56
             with self.assertRaises(RuntimeError):
                 m.recheck(api,self.document,self.grant,EVALUATOR,123,changed,lambda r,j:'')
