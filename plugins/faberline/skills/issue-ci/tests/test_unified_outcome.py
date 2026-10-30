@@ -52,6 +52,12 @@ class UnifiedWriterTests(unittest.TestCase):
         if event=='issues':wake=dict(action='edited',repository=dict(full_name='o/r'))
         if event=='pull_request_target':wake=dict(action='synchronize',repository=dict(full_name='o/r'))
         if event=='repository_dispatch':wake=dict(action='aw-verified-merge-reconcile',repository=dict(full_name='o/r'))
+        if event=='push':
+            from test_development_pipeline import config
+            development=config()['development_pipeline']
+            development['workflow']=p.document['config']['workflows'][0]['path']
+            p.document['config']['development_pipeline']=development
+            wake=dict(ref='refs/heads/main',deleted=False,repository=dict(full_name='o/r'))
         with tempfile.TemporaryDirectory() as directory:
             file=Path(directory)/'event.json';file.write_text(json.dumps(wake))
             env=dict(GITHUB_ACTIONS='true',GITHUB_EVENT_NAME=event,GITHUB_REPOSITORY='o/r',

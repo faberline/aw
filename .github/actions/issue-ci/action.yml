@@ -2,7 +2,7 @@ name: Trusted PR qualification and CI handoff
 description: Evaluate GitHub metadata with pinned aw logic and default-branch consumer policy.
 inputs:
   operation:
-    description: validate, qualify, handoff, readiness, verify-readiness, index, verify-index, or assertion-library (trusted test helper path).
+    description: validate, qualify, handoff, readiness, verify-readiness, index, verify-index, development-preflight, development-plan, or assertion-library.
     default: handoff
   policy:
     description: Policy JSON path on the consumer default branch. PR policy is never loaded.
@@ -13,9 +13,26 @@ inputs:
     description: PR number for read-only qualification.
   head:
     description: Exact PR head SHA for read-only qualification.
+  base:
+    description: Frozen base SHA for development stages; main movement refuses.
   receipt:
     description: Untrusted receipt JSON file to authenticate for verify-readiness; never grants permissions.
 outputs:
+  base:
+    description: Exact frozen default-branch commit from development preflight.
+    value: ${{ steps.evaluate.outputs.base }}
+  head:
+    description: Exact PR commit checked by development preflight.
+    value: ${{ steps.evaluate.outputs.head }}
+  issue:
+    description: Canonical linked issue, when verified.
+    value: ${{ steps.evaluate.outputs.issue }}
+  result:
+    description: Metadata-only development stage result, not merge authority.
+    value: ${{ steps.evaluate.outputs.result }}
+  plan-sha256:
+    description: Stable development plan digest.
+    value: ${{ steps.evaluate.outputs.plan_sha256 }}
   assertion-library:
     description: Trusted pinned helper module for a consumer enforcer; no assertions run by this output.
     value: ${{ steps.assertion-library.outputs.path }}
@@ -29,7 +46,7 @@ runs:
       run: echo "path=$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/assertion_record.py" >> "$GITHUB_OUTPUT"
     - name: Prepare hash-locked readiness parser
       id: readiness-runtime
-      if: inputs.operation == 'readiness' || inputs.operation == 'verify-readiness' || inputs.operation == 'index' || inputs.operation == 'verify-index'
+      if: inputs.operation == 'readiness' || inputs.operation == 'verify-readiness' || inputs.operation == 'index' || inputs.operation == 'verify-index' || inputs.operation == 'qualify' || inputs.operation == 'handoff' || inputs.operation == 'validate' || inputs.operation == 'development-preflight' || inputs.operation == 'development-plan'
       shell: bash
       run: |
         set -euo pipefail
@@ -40,6 +57,7 @@ runs:
           -r "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/readiness-requirements.txt"
         echo "python=$runtime/bin/python" >> "$GITHUB_OUTPUT"
     - name: Evaluate trusted policy and current GitHub evidence
+      id: evaluate
       if: inputs.operation != 'assertion-library'
       shell: bash
       env:
@@ -51,6 +69,7 @@ runs:
         INPUT_RUN_ID: ${{ inputs.run-id }}
         INPUT_PR: ${{ inputs.pr }}
         INPUT_HEAD: ${{ inputs.head }}
+        INPUT_BASE: ${{ inputs.base }}
         INPUT_RECEIPT: ${{ inputs.receipt }}
       run: |
         set -euo pipefail

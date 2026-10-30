@@ -159,6 +159,31 @@ def framework_sources(api,candidate_ref,evaluator_ref,include_recovery=False):
             raw=content.encode('utf-8')
             blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
             result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
+    # Development enforcement is absent from older immutable revisions. Read
+    # its source exactly when a reviewed controller at that ref imports it.
+    for role,ref in refs.items():
+        uses_development = False
+        for row in list(result):
+            if row['role'] != role or not row['path'].endswith('.py'):
+                continue
+            try:
+                tree = ast.parse(row['content'])
+            except (SyntaxError, ValueError, TypeError):
+                raise RuntimeError('target_framework_source_parse') from None
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or not node.args or not isinstance(node.args[0], ast.Constant):
+                    continue
+                func = node.func
+                name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else None
+                if ((name in ('sibling', 'ci_module') and node.args[0].value == 'development_pipeline')
+                        or (name == 'with_name' and node.args[0].value == 'development_pipeline.py')):
+                    uses_development = True
+        if uses_development:
+            path = FRAMEWORK_ROOT + 'development_pipeline.py'
+            content = a.review.blob(api, a.GRANTS_REPO, path, ref)
+            raw = content.encode('utf-8')
+            blob = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+            result.append(dict(role=role, repo=a.GRANTS_REPO, ref=ref, path=path, blob=blob, content=content))
     # Older reviewed revisions predate this module. Include it at each ref
     # precisely when that immutable controller statically imports it. The
     # dependency-closure check below still rejects any unlisted dependency.

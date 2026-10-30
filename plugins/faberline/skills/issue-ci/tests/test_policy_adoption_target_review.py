@@ -262,6 +262,9 @@ class ReviewProtocolTests(unittest.TestCase):
         root=Path(m.__file__).resolve().parents[5]
         rows=[dict(role=role,path=path,content=(root/path).read_text())
               for role,path in m.FRAMEWORK_SOURCES]
+        rows += [dict(role=role,path=m.FRAMEWORK_ROOT+'development_pipeline.py',
+                      content=(root/m.FRAMEWORK_ROOT/'development_pipeline.py').read_text())
+                 for role in ('candidate','evaluator')]
         path=m.FRAMEWORK_ROOT+'post_merge_observation.py'
         rows += [dict(role=role,path=path,content=(root/path).read_text()) for role in ('candidate','evaluator')]
         rows += [dict(role='candidate',path=m.FRAMEWORK_ROOT+name,content=(root/m.FRAMEWORK_ROOT/name).read_text())
@@ -285,6 +288,19 @@ class ReviewProtocolTests(unittest.TestCase):
             path=m.FRAMEWORK_ROOT+'todo_mutation_trace.py'
             rows.append(dict(role=role,path=path,content=(root/path).read_text()))
         m.framework_dependency_closure(rows)
+
+    def test_development_runtime_is_bound_only_when_that_revision_imports_it(self):
+        candidate,evaluator='c'*40,'e'*40
+        def blob(api,repo,path,ref):
+            if path.endswith('/handoff.py') and ref==candidate:
+                return "x=Path(__file__).with_name('development_pipeline.py')"
+            return 'pass'
+        with patch.object(m.a.review,'blob',side_effect=blob):
+            rows=m.framework_sources(None,candidate,evaluator)
+        found=[row for row in rows if row['path'].endswith('/development_pipeline.py')]
+        self.assertEqual([(r['role'],r['ref']) for r in found],[('candidate',candidate)])
+        with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+            m.framework_dependency_closure([row for row in rows if row not in found])
 
     def test_optional_close_observer_is_bound_per_immutable_revision(self):
         candidate,evaluator='c'*40,'e'*40
@@ -355,6 +371,9 @@ class ReviewProtocolTests(unittest.TestCase):
     def test_recovery_policy_roster_covers_worker_and_recovery_sources(self):
         root=Path(m.__file__).resolve().parents[5]
         rows=[dict(role=role,path=path,content=(root/path).read_text()) for role,path in m.FRAMEWORK_SOURCES]
+        rows += [dict(role=role,path=m.FRAMEWORK_ROOT+'development_pipeline.py',
+                      content=(root/m.FRAMEWORK_ROOT/'development_pipeline.py').read_text())
+                 for role in ('candidate','evaluator')]
         observer=m.FRAMEWORK_ROOT+'post_merge_observation.py'
         rows += [dict(role='evaluator',path=observer,content=(root/observer).read_text())]
         existing={(r['role'],r['path']) for r in rows}

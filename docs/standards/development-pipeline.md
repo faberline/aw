@@ -289,6 +289,10 @@ branch-protection bypass to work around an incomplete rollout.
 
 ## Adoption and proof
 
+The [development adapter](../../plugins/faberline/skills/issue-ci/DEVELOPMENT-PIPELINE.md)
+documents the shared metadata/DAG checks and per-job failure reporting.
+Its publication does not activate a consumer or waive its adoption proof.
+
 Shared enforcement is tracked in
 [faberline/aw#129](https://github.com/faberline/aw/issues/129). The issue remains
 open until its implementation and conformance evidence pass; publishing this
