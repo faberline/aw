@@ -1,6 +1,8 @@
 """Affected offline contract/evidence tests; never dispatch a test job."""
 import base64
+import contextlib
 import copy
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -201,6 +203,36 @@ class TrustedEvidenceTests(unittest.TestCase):
         state, reasons, _ = ci.evaluate_policy(cfg, snapshots)
         self.assertEqual(state, 'todo'); self.assertIn(snapshots[WORKFLOW][1][0]['html_url'], reasons[0])
 
+    def test_untrusted_workflow_only_contributes_verified_failures(self):
+        definitions={(WORKFLOW,HEAD):dict(sha='e'*40),(WORKFLOW,BASE):dict(sha=BLOB)}
+        cfg=scope(definitions=definitions);run=dict(self.run_metadata(),status='completed',
+                                                   conclusion='success',html_url='https://example/run')
+        job=dict(name='unit',status='completed',conclusion='success',html_url='https://example/job')
+        for conclusion in ('success','skipped','cancelled'):
+            with self.subTest(conclusion=conclusion),patch.object(ci,'pages',side_effect=[[run],[dict(job,conclusion=conclusion)]]):
+                self.assertEqual(ci.untrusted_failure_snapshots('o/r',HEAD,cfg),{})
+        with patch.object(ci,'pages',side_effect=[[run],[dict(job,conclusion='failure')]]):
+            result=ci.untrusted_failure_snapshots('o/r',HEAD,cfg)
+        self.assertEqual(result[WORKFLOW][1][0]['conclusion'],'failure')
+        self.assertEqual(ci.evaluate_policy(cfg,{})[0],'pending')
+
+    def test_untrusted_failure_must_bind_current_head_base_and_workflow(self):
+        definitions={(WORKFLOW,HEAD):dict(sha='e'*40),(WORKFLOW,BASE):dict(sha=BLOB)}
+        cfg=scope(definitions=definitions);run=dict(self.run_metadata(),status='completed',
+                                                   conclusion='failure',html_url='https://example/run')
+        for change in [dict(head_sha='f'*40),dict(workflow_id=99),dict(event='push'),
+                       dict(head_repository={'full_name':'other/repo'}),
+                       dict(pull_requests=run['pull_requests']*2),
+                       dict(pull_requests=[dict(number=8,head=dict(sha=HEAD),base=dict(sha='c'*40))])]:
+            with self.subTest(change=change),patch.object(ci,'pages',return_value=[dict(run,**change)]):
+                self.assertEqual(ci.untrusted_failure_snapshots('o/r',HEAD,cfg),{})
+        newer=dict(run,id=4,run_number=4,pull_requests=[])
+        with patch.object(ci,'pages',return_value=[run,newer]):
+            self.assertEqual(ci.untrusted_failure_snapshots('o/r',HEAD,cfg),{})
+        newer=dict(run,id=4,run_number=4,run_attempt=None)
+        with patch.object(ci,'pages',return_value=[run,newer]):
+            self.assertEqual(ci.untrusted_failure_snapshots('o/r',HEAD,cfg),{})
+
 
 class QualifiedHandoffTests(unittest.TestCase):
     def harness(self):
@@ -284,6 +316,33 @@ class QualifiedHandoffTests(unittest.TestCase):
         with patch.object(ci, 'qualify_config', return_value=scope(changes=files('unknown/path'))):
             h.invoke(evidence(scope()))
         self.assertEqual(h.writes, [])
+
+    def test_untrusted_failure_returns_todo_without_ever_qualifying_success(self):
+        h=self.harness(); definitions={(WORKFLOW,HEAD):dict(sha='e'*40),(WORKFLOW,BASE):dict(sha=BLOB)}
+        cfg=scope(definitions=definitions)
+        run=dict(id=1,run_attempt=1,status='completed',conclusion='failure',html_url='https://example/run')
+        failed={WORKFLOW:(run,[dict(name='unit',status='completed',conclusion='failure',html_url='https://example/job')])}
+        args=ci.argparse.Namespace(repo='o/r',pr=8,head=HEAD,apply=True,run_id=None)
+        with patch.object(ci,'api',side_effect=h.api),patch.object(ci,'pages',return_value=[]), \
+             patch.object(ci,'qualify_config',return_value=cfg),patch.object(ci,'snapshot',return_value={}), \
+             patch.object(ci,'untrusted_failure_snapshots',return_value=failed),contextlib.redirect_stdout(io.StringIO()):
+            ci.process_head(args,config(),check_event=False)
+        self.assertEqual({x['name'] for x in h.issue['labels']},{'todo','priority:p1'})
+        self.assertEqual(ci.evaluate_policy(cfg,{})[0],'pending')
+
+    def test_changed_untrusted_failure_never_changes_issue_labels(self):
+        h=self.harness(); definitions={(WORKFLOW,HEAD):dict(sha='e'*40),(WORKFLOW,BASE):dict(sha=BLOB)}
+        cfg=scope(definitions=definitions)
+        run=dict(id=1,run_attempt=1,status='completed',conclusion='failure',html_url='https://example/run')
+        failed={WORKFLOW:(run,[dict(name='unit',status='completed',conclusion='failure',html_url='https://example/job')])}
+        args=ci.argparse.Namespace(repo='o/r',pr=8,head=HEAD,apply=True,run_id=None)
+        with patch.object(ci,'api',side_effect=h.api),patch.object(ci,'pages',return_value=[]), \
+             patch.object(ci,'qualify_config',return_value=cfg),patch.object(ci,'snapshot',return_value={}), \
+             patch.object(ci,'untrusted_failure_snapshots',side_effect=[failed,{}]),contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError,'untrusted CI failure changed'):
+                ci.process_head(args,config(),check_event=False)
+        self.assertEqual({x['name'] for x in h.issue['labels']},{'doing','priority:p1'})
+        self.assertTrue(all('/comments' in path for path,_,_ in h.writes))
 
 
 class DistributionTests(unittest.TestCase):

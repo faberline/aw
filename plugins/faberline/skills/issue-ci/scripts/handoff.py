@@ -199,6 +199,44 @@ def snapshot(repo, sha, config, diagnostics=None):
     return snapshots
 
 
+def untrusted_failure_snapshots(repo, sha, config):
+    """Collect exact-run failures without authorizing changed CI as a pass.
+
+    A protected workflow edit needs reviewed adoption for positive evidence.
+    Its real failed jobs can still return the associated issue to todo. A
+    missing, skipped, cancelled, successful or unbound run is never a failure.
+    """
+    context = config.get('_qualification_context', {})
+    paths = context.get('untrusted_workflows', [])
+    if not paths:
+        return {}
+    root = f'repos/{repo}'
+    results = {}
+    for workflow in config['workflows']:
+        path = workflow['path']
+        if path not in paths:
+            continue
+        runs = pages(f'{root}/actions/workflows/{quote(path.split("/")[-1], safe="")}/runs?head_sha={sha}&event=pull_request', 'workflow_runs')
+        runs = [r for r in runs if r.get('head_sha') == sha and r.get('event') == 'pull_request'
+                and r.get('head_repository', {}).get('full_name') == repo and r.get('path') == path]
+        if not runs:
+            continue
+        if not all(type(r.get('id')) is int and r['id'] > 0
+                   and type(r.get('run_number')) is int and r['run_number'] > 0
+                   and type(r.get('run_attempt')) is int and r['run_attempt'] > 0 for r in runs):
+            continue  # An unknown latest attempt must not revive older evidence.
+        latest = max(runs, key=lambda r: (r['run_number'], r['run_attempt']))
+        associations = latest.get('pull_requests')
+        if not isinstance(associations, list) or len(associations) != 1 \
+                or not qualification_module().trusted_run(latest, config):
+            continue
+        jobs = pages(f'{root}/actions/runs/{latest["id"]}/attempts/{latest["run_attempt"]}/jobs', 'jobs')
+        evidence = evaluate_evidence([workflow], {path: (latest, jobs)})
+        if evidence['failures']:
+            results[path] = (latest, jobs)
+    return results
+
+
 def process_head(args, config, check_event=True):
     source_config = config
     root = f'repos/{args.repo}'
@@ -216,6 +254,13 @@ def process_head(args, config, check_event=True):
         config = qualify_config(args.repo, pr, config)
     snapshots = snapshot(args.repo, args.head, config)
     state, reasons, evidence = evaluate_policy(config, snapshots)
+    negative_snapshots = untrusted_failure_snapshots(args.repo, args.head, config)
+    if negative_snapshots:
+        negative = evaluate_evidence(config['workflows'], negative_snapshots)
+        if negative['failures']:
+            state = 'todo'
+            reasons = negative['failures'] + reasons
+            evidence = sorted(set(evidence + negative['evidence']))
     if not args.apply and state == 'done' and 'qualification' in source_config:
         if snapshot(args.repo, args.head, config) != snapshots:
             raise RuntimeError('CI runs changed during read-only qualification')
@@ -310,6 +355,8 @@ def process_head(args, config, check_event=True):
     labels = fresh_labels()
     if snapshot(args.repo, args.head, config) != snapshots:
         raise RuntimeError('CI runs changed during evaluation; pending intent is retryable')
+    if untrusted_failure_snapshots(args.repo, args.head, config) != negative_snapshots:
+        raise RuntimeError('untrusted CI failure changed during evaluation; no label mutation')
     if 'qualification' in source_config:
         current_pr = api(pr_path)
         if (current_pr['state'] != 'open' or current_pr['head']['sha'] != args.head
