@@ -2,6 +2,7 @@
 """Pinned action entrypoint: fetch only the consumer's default-branch policy."""
 import base64
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
@@ -54,8 +55,45 @@ def main():
     ci = controller()
     repo = os.environ['GITHUB_REPOSITORY']
     operation = os.environ.get('INPUT_OPERATION', 'handoff')
-    if operation not in ('validate', 'qualify', 'handoff', 'readiness', 'verify-readiness', 'index', 'verify-index'):
+    if operation not in ('validate', 'qualify', 'handoff', 'readiness', 'verify-readiness', 'index', 'verify-index',
+                         'development-preflight', 'development-plan'):
         raise RuntimeError('unknown issue-ci operation')
+    if operation in ('development-preflight', 'development-plan'):
+        from types import SimpleNamespace
+        development = ci_module('development_pipeline')
+        pr, head = os.environ.get('INPUT_PR', ''), os.environ.get('INPUT_HEAD', '')
+        if not re.fullmatch('[1-9][0-9]*', pr) or not re.fullmatch('[0-9a-f]{40}', head):
+            raise RuntimeError('development stages require PR number and exact head')
+        adapter = SimpleNamespace(api=ci.api, pages=ci.pages)
+        result = development.preflight(adapter, repo, int(pr), head, os.environ.get('INPUT_BASE') or None)
+        if operation == 'development-plan' and result['status'] == 'success':
+            document = trusted_policy(ci, repo, os.environ.get('INPUT_POLICY', '.github/issue-ci-required-gates.json'), metadata=True)
+            ci.validate_config(document['config'])
+            if document['source_commit'] != result['base']:
+                raise RuntimeError('default policy moved during impact planning')
+            pull = ci.api(f'repos/{repo}/pulls/{pr}')
+            if pull.get('base', {}).get('sha') != result['base']:
+                raise RuntimeError('PR base metadata does not match frozen current main')
+            scoped = ci.qualify_config(repo, pull, document['config'])
+            result['plan'] = scoped['_qualification_context']
+            result['policy_source'] = document['source_commit']
+            result['plan_sha256'] = development.digest(result['plan'])
+            if result['plan']['issues']:
+                result['status'] = 'failure'
+                result['reasons'].extend(result['plan']['issues'])
+            fresh = development.preflight(adapter, repo, int(pr), head, result['base'])
+            if any(fresh[k] != result[k] for k in ('base', 'head', 'issue', 'issue_sha256')):
+                raise RuntimeError('PR or issue moved during impact planning')
+        encoded = json.dumps(result, sort_keys=True, separators=(',', ':'))
+        print('AW_DEVELOPMENT_PIPELINE_V1 ' + encoded, flush=True)
+        output = os.environ.get('GITHUB_OUTPUT')
+        if output:
+            with open(output, 'a') as stream:
+                for key in ('base', 'head', 'issue', 'status', 'plan_sha256'):
+                    if result.get(key) is not None:
+                        stream.write(f'{key}={result[key]}\n')
+                stream.write('result=' + encoded + '\n')
+        return 0 if result['status'] == 'success' else 2
     if operation in ('index', 'verify-index'):
         index = ci_module('readiness_index')
         load_document = lambda: trusted_policy(ci, repo, os.environ.get('INPUT_POLICY', '.github/issue-ci-required-gates.json'), metadata=True)

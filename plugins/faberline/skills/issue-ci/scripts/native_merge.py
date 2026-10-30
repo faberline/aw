@@ -47,7 +47,7 @@ DISABLE = """mutation($input:DisablePullRequestAutoMergeInput!){
     autoMergeRequest{mergeMethod enabledBy{login __typename}} mergeCommit{oid}
   }}
 }"""
-EVENTS = ("workflow_run", "issues", "pull_request_target", "repository_dispatch")
+EVENTS = ("workflow_run", "issues", "pull_request_target", "repository_dispatch", "push")
 TRIGGERS = {
     "workflow_run": {"types": ["requested", "in_progress", "completed"]},
     "issues": {"types": ["edited", "reopened", "closed", "labeled", "unlabeled"]},
@@ -90,7 +90,7 @@ def handoff_policy(config):
          "ci_policy_snapshot")
     review.ci.validate_config(prior)
     need(all(prior.get(key) == config.get(key) for key in
-             ("workflows", "lifecycle_mode", "qualification_blockers", "qualification")),
+             ("workflows", "lifecycle_mode", "qualification_blockers", "qualification", "development_pipeline")),
          "ci_policy_semantics_changed")
     return prior
 
@@ -129,6 +129,8 @@ def writer_contract(api, repo, document, evaluator):
     expected = {k: dict(v) for k, v in TRIGGERS.items()}
     expected["workflow_run"]["workflows"] = names + [producer["name"]]
     expected["pull_request_target"]["branches"] = [api.api(f"repos/{repo}")["default_branch"]]
+    if document['config'].get('development_pipeline') is not None:
+        expected['push'] = dict(branches=expected['pull_request_target']['branches'])
     need(trigger == expected, "writer_trigger")
 
 
@@ -168,18 +170,32 @@ def reconcile_ci(api, repo, document, pulls, process, track_write=False):
     for pull in sorted(pulls, key=lambda p: p["number"]):
         head = pull.get("head", {})
         match = re.fullmatch(r"(?:issue/|agy/issue-)([0-9]+)", head.get("ref", ""))
-        if (not match or (head.get("repo") or {}).get("full_name") != repo
-                or not re.search(rf'(?im)^Closes #{int(match[1])}\s*$', pull.get("body") or "")):
+        issue = (review.ci.qualification_module().linked_issue(pull)
+                 if document['config'].get('development_pipeline') is not None else (int(match[1]) if match else None))
+        if (document['config'].get('development_pipeline') is not None and issue is None
+                and (head.get('repo') or {}).get('full_name') == repo):
+            row = dict(pr=pull['number'], head=head['sha'], state='ci_held', reason='canonical_issue_missing')
+            try:
+                development = review.ci.development_module()
+                development.report_missing_issue(api, repo, pull)
+            except Exception:
+                row['reason'] = 'issue_link_diagnostic_refused_or_unknown'
+            rows.append(row)
+            continue
+        if (issue is None or (head.get("repo") or {}).get("full_name") != repo
+                or not re.search(rf'(?im)^Closes #{issue}\s*$', pull.get("body") or "")):
             continue
         row = dict(pr=pull["number"], head=head["sha"], state="ci_processed")
         args = SimpleNamespace(repo=repo, pr=pull["number"], head=head["sha"], apply=True, run_id=None)
         write_started=[False]
         try:
+            extra = ({'development_config':document['config']}
+                     if document['config'].get('development_pipeline') is not None else {})
             if track_write:
                 process(args, handoff_policy(document["config"]), check_event=False,
-                        before_mutation=lambda:write_started.__setitem__(0,True))
+                        before_mutation=lambda:write_started.__setitem__(0,True), **extra)
             else:
-                process(args, handoff_policy(document["config"]), check_event=False)
+                process(args, handoff_policy(document["config"]), check_event=False, **extra)
         except RuntimeError:
             if track_write and not write_started[0]:
                 row.update(state="ci_refused_prewrite",reason="ci_handoff_refused_prewrite")
@@ -864,8 +880,13 @@ def main():
     wake = event.get("workflow_run", {})
     p = review.policy(document)["producer"]
     event_name = os.environ["GITHUB_EVENT_NAME"]
-    need(event.get("repository", {}).get("full_name") == repo
-         and event.get("action") in TRIGGERS[event_name]["types"], "merge_wake_identity")
+    need(event.get("repository", {}).get("full_name") == repo, "merge_wake_identity")
+    if event_name == 'push':
+        need(document['config'].get('development_pipeline') is not None
+             and event.get('ref') == 'refs/heads/' + api.api(f'repos/{repo}')['default_branch']
+             and event.get('deleted') is False, 'merge_wake_identity')
+    else:
+        need(event.get("action") in TRIGGERS[event_name]["types"], "merge_wake_identity")
     if event_name == "workflow_run":
         identities = {p["path"]: dict(id=p["id"]), **review.policy(document)["gates"]}
         source = identities.get(wake.get("path"))
