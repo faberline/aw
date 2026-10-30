@@ -3,6 +3,7 @@ import copy
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import yaml
@@ -127,3 +128,47 @@ class MergedRecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'journal_ambiguous'):inspect()
         api.comments=[journal('applied')];api.comments[0]['user']['id']=1
         with self.assertRaisesRegex(RuntimeError,'journal_unknown'):inspect()
+
+    def test_guard_release_requires_unchanged_applied_observation_and_safe_settlement(self):
+        f=RecoveryFixture();head=f.f.grant['head'];owner=f.intent['payload']['owner']
+        observed=dict(pr=8,phase='applied',state='applied_observed',close_authorized=False)
+        evidence=dict(pr=8,intent=f.intent)
+        class Admission:
+            calls=0
+            def settle(self,*args):self.calls+=1;return dict(state='released')
+        admission=Admission()
+        modules={'recovery_entry':SimpleNamespace(verify_rollout=lambda *args:None),'guarded_admission':admission}
+        with patch.object(m.review.action,'trusted_policy',return_value={'source_commit':f.policy['policy_source']}), \
+             patch.object(m,'inspect',return_value=observed),patch.object(m,'authenticate',return_value=evidence), \
+             patch.object(m,'sibling',side_effect=lambda name:modules[name]):
+            result=m.release_applied(f,'o/r',f.policy,100,1,7,head,owner,lambda *args:'')
+        self.assertEqual(result['state'],'todo_guard_released');self.assertEqual(admission.calls,1)
+        with patch.object(m.review.action,'trusted_policy',return_value={'source_commit':f.policy['policy_source']}), \
+             patch.object(m,'inspect',return_value=dict(pr=8,phase='ready',state='held')), \
+             patch.object(m,'sibling',side_effect=lambda name:modules[name]),self.assertRaisesRegex(RuntimeError,'not_applied'):
+            m.release_applied(f,'o/r',f.policy,100,1,7,head,owner,lambda *args:'')
+        self.assertEqual(admission.calls,1)
+        class Retained:
+            def settle(self,*args):return dict(state='retained')
+        modules['guarded_admission']=Retained()
+        with patch.object(m.review.action,'trusted_policy',return_value={'source_commit':f.policy['policy_source']}), \
+             patch.object(m,'inspect',return_value=observed),patch.object(m,'authenticate',return_value=evidence), \
+             patch.object(m,'sibling',side_effect=lambda name:modules[name]), \
+             self.assertRaisesRegex(RuntimeError,'guard_retained'):
+            m.release_applied(f,'o/r',f.policy,100,1,7,head,owner,lambda *args:'')
+        changed=dict(observed,pr=9)
+        with patch.object(m.review.action,'trusted_policy',return_value={'source_commit':f.policy['policy_source']}), \
+             patch.object(m,'inspect',side_effect=[observed,changed]), \
+             patch.object(m,'authenticate',return_value=evidence),patch.object(m,'sibling',side_effect=lambda name:modules[name]), \
+             self.assertRaisesRegex(RuntimeError,'changed'):
+            m.release_applied(f,'o/r',f.policy,100,1,7,head,owner,lambda *args:'')
+        self.assertEqual(admission.calls,1)
+
+    def test_release_holds_before_inspection_when_actor_rollout_is_unproven(self):
+        f=RecoveryFixture()
+        def refuse(*args):raise RuntimeError('rollout_unverified')
+        with patch.object(m.review.action,'trusted_policy',return_value={'source_commit':f.policy['policy_source']}), \
+             patch.object(m,'sibling',return_value=SimpleNamespace(verify_rollout=refuse)), \
+             patch.object(m,'inspect') as inspect,self.assertRaisesRegex(RuntimeError,'rollout_unverified'):
+            m.release_applied(f,'o/r',f.policy,100,1,7,f.f.grant['head'],f.intent['payload']['owner'],lambda *args:'')
+        inspect.assert_not_called()

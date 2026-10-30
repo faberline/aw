@@ -1,6 +1,7 @@
 """The unwired recovery coordinator reauthenticates each candidate."""
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -10,6 +11,17 @@ m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
 
 class RunnerTests(unittest.TestCase):
+    def test_applied_merged_outcome_is_reauthenticated_before_guard_release(self):
+        candidate=dict(issue=7,pr=9,head='a'*40,owner='b'*56,run=123,attempt=2,
+                       kind='merged_outcome',state='merged_outcome_applied')
+        calls=[]
+        merged=SimpleNamespace(release_applied=lambda *args:(calls.append(args) or dict(state='todo_guard_released')))
+        with patch.object(m.worker,'read_policy',return_value={'current':True}), \
+             patch.object(m.scan,'scan',return_value=[candidate]), \
+             patch.object(m.scan,'sibling',return_value=merged):
+            result=m.reconcile(None,'o/r',lambda r,j:'')
+        self.assertEqual(result[0]['state'],'todo_guard_released')
+        self.assertEqual(len(calls),1)
     def test_refuses_missing_guard_policy_before_scan(self):
         with patch.object(m.worker,'read_policy',return_value=None),patch.object(m.scan,'scan') as scan:
             with self.assertRaisesRegex(RuntimeError,'merge_guard_policy_missing'):

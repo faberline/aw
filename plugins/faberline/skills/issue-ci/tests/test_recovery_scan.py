@@ -38,18 +38,30 @@ class RecoveryScanTests(unittest.TestCase):
         api.row['status']='completed';api.row.pop('path')
         with self.assertRaisesRegex(RuntimeError,'recovery_source'):m.source_path(api,'o/r',123,2)
 
-    def test_merged_outcome_scan_authenticates_but_still_holds(self):
+    def test_merged_outcome_scan_only_proposes_applied_revalidation(self):
         items=[dict(issue=7,state='merge_held',run=123,attempt=2,head='d'*40,owner='a'*56)]
-        module=SimpleNamespace(inspect=lambda *args:dict(pr=9,phase='applied'))
+        module=SimpleNamespace(inspect=lambda *args:dict(pr=9,phase='applied',state='applied_observed'))
         with patch.object(m.discovery,'inspect',return_value=items), \
              patch.object(m,'source_event',return_value='push'), \
              patch.object(m,'source_path',return_value='.github/workflows/review-merged-product-grant.yml'), \
              patch.object(m,'sibling',return_value=module),patch.object(m,'adoption_module') as adoption:
             result=m.scan(None,'o/r',{},lambda r,j:'')
         adoption.assert_not_called()
-        self.assertEqual(result,[dict(issue=7,state='held',reason='merged_outcome_recovery_not_implemented',
+        self.assertEqual(result,[dict(issue=7,state='merged_outcome_applied',reason='merged_outcome_applied_revalidation',
             kind='merged_outcome',pr=9,head='d'*40,owner='a'*56,run=123,attempt=2,phase='applied',
             close_authorized=False)])
+
+    def test_merged_outcome_unfinished_journal_keeps_guard_held(self):
+        items=[dict(issue=7,state='merge_held',run=123,attempt=2,head='d'*40,owner='a'*56)]
+        for phase in ('absent','pending','ready'):
+            module=SimpleNamespace(inspect=lambda *args,phase=phase:dict(pr=9,phase=phase,state='held'))
+            with self.subTest(phase=phase),patch.object(m.discovery,'inspect',return_value=items), \
+                 patch.object(m,'source_event',return_value='push'), \
+                 patch.object(m,'source_path',return_value='.github/workflows/review-merged-product-grant.yml'), \
+                 patch.object(m,'sibling',return_value=module):
+                result=m.scan(None,'o/r',{},lambda r,j:'')
+            self.assertEqual(result[0]['state'],'held')
+            self.assertEqual(result[0]['phase'],phase)
 
     def test_historical_policy_comes_from_completed_default_branch_attempt(self):
         api=Api();raw=json.dumps(dict(aw_revision=EVALUATOR))

@@ -142,3 +142,24 @@ def inspect(api,repo,policy,run,attempt,issue,head,owner,log_reader):
     need(journal()==first and authenticate(api,repo,policy,run,attempt,issue,head,owner,log_reader)==evidence
          and target()==before, 'merged_outcome_recovery_changed')
     return dict(pr=pr,phase='applied',state='applied_observed',close_authorized=False)
+
+
+def release_applied(api,repo,policy,run,attempt,issue,head,owner,log_reader):
+    """Release only a fully observed todo journal and the same blocked guard."""
+    document=review.action.trusted_policy(api,repo,'.github/issue-ci-required-gates.json',metadata=True)
+    need(isinstance(document,dict) and document.get('source_commit')==policy['policy_source'],
+         'merged_outcome_recovery_policy')
+    sibling('recovery_entry').verify_rollout(api,repo,document)
+    observed=inspect(api,repo,policy,run,attempt,issue,head,owner,log_reader)
+    need(observed.get('state')=='applied_observed' and observed.get('phase')=='applied',
+         'merged_outcome_not_applied')
+    evidence=authenticate(api,repo,policy,run,attempt,issue,head,owner,log_reader)
+    need(evidence['pr']==observed['pr']
+         and inspect(api,repo,policy,run,attempt,issue,head,owner,log_reader)==observed,
+         'merged_outcome_recovery_changed')
+    # Settlement checks the same held owner, current rules, a blocking status,
+    # an open PR and absence of any pending merge request before release.
+    admission=sibling('guarded_admission')
+    result=admission.settle(api,repo,policy,evidence['intent'])
+    need(result.get('state')=='released', 'merged_outcome_guard_retained')
+    return dict(state='todo_guard_released',pr=evidence['pr'],issue=issue,head=head)

@@ -27,11 +27,17 @@ def reconcile(api,repo,log_reader):
     need(policy is not None,'merge_guard_policy_missing')
     candidates=scan.scan(api,repo,policy,log_reader);results=[]
     for candidate in candidates:
-        if candidate['state'] not in ('guard_required','observed_closed','admission_recovery','closed_prepared_recovery','prepared_revalidation','adoption_prepared_revalidation'):
+        if candidate['state'] not in ('guard_required','observed_closed','admission_recovery','closed_prepared_recovery','prepared_revalidation','adoption_prepared_revalidation','merged_outcome_applied'):
             results.append(candidate);continue
         row=dict(issue=candidate['issue'],pr=candidate['pr'],head=candidate['head'],state='held')
         try:
             run,attempt=candidate['run'],candidate['attempt']
+            if candidate.get('kind')=='merged_outcome':
+                need(candidate['state']=='merged_outcome_applied','merged_outcome_not_applied')
+                merged=scan.sibling('policy_adoption_merged_recovery')
+                result=merged.release_applied(api,repo,policy,run,attempt,candidate['issue'],
+                                               candidate['head'],candidate['owner'],log_reader)
+                row.update(result);results.append(row);continue
             if candidate.get('kind')=='adoption':
                 adoption=scan.adoption_module()
                 source=adoption.discover_source(api,repo,run,attempt,candidate['issue'],candidate['head'],

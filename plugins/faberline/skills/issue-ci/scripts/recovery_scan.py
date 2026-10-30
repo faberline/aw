@@ -111,7 +111,9 @@ def scan(api,repo,current_policy,log_reader):
                     outcome=sibling('policy_adoption_merged_recovery')
                     evidence=outcome.inspect(api,repo,current_policy,run,attempt,item['issue'],
                                              item['head'],item['owner'],log_reader)
-                    row.update(state='held',reason='merged_outcome_recovery_not_implemented',
+                    applied=evidence['state']=='applied_observed' and evidence['phase']=='applied'
+                    row.update(state='merged_outcome_applied' if applied else 'held',
+                               reason='merged_outcome_applied_revalidation' if applied else 'merged_outcome_recovery_not_implemented',
                                kind='merged_outcome',pr=evidence['pr'],head=item['head'],
                                owner=item['owner'],run=run,attempt=attempt,phase=evidence['phase'],
                                close_authorized=False)
