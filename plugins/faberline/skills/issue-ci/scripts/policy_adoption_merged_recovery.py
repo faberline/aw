@@ -87,3 +87,58 @@ def authenticate(api,repo,policy,run,attempt,issue,head,owner,log_reader):
     close.guard_identity(api,repo,policy,intent)
     return dict(pr=number,head=head,issue=issue,evaluator=evaluator,intent=intent,receipt=receipt,
                 grant_pr=grant_number,grant_head=grant_head)
+
+
+def inspect(api,repo,policy,run,attempt,issue,head,owner,log_reader):
+    """Observe a durable todo journal; never replay writes or release a guard."""
+    evidence=authenticate(api,repo,policy,run,attempt,issue,head,owner,log_reader)
+    receipt=evidence['receipt'];pr=evidence['pr']
+    normalized=dict(payload=dict(context=dict(issue_sha256=receipt['issue_sha256']),
+                                 result=dict(decision=receipt['decision'])),sha256=receipt['sha256'])
+    digest=review.r.digest([repo,pr,head,issue,normalized])
+    prefix=f'<!-- claude-return-todo:{digest}:'
+    def body(phase):
+        return (f'{prefix}{phase} -->\nClaude: todo for PR #{pr} head `{head}`.\n'
+                f"Receipt: {receipt['sha256']}\nhttps://github.com/{repo}/actions/runs/{run}")
+    def journal():
+        comments=api.pages(f'repos/{repo}/issues/{issue}/comments')
+        need(isinstance(comments,list) and all(isinstance(row,dict) for row in comments),
+             'merged_outcome_journal_unknown')
+        matches=[row for row in comments if row.get('user',{}).get('login')=='github-actions[bot]'
+                 and isinstance(row.get('body'),str) and row['body'].startswith(prefix)]
+        need(len(matches)<=1, 'merged_outcome_journal_ambiguous')
+        if not matches:
+            return None
+        item=matches[0]
+        need(review.integer(item.get('id')) and item['user'].get('id')==41898282
+             and item['user'].get('type')=='Bot', 'merged_outcome_journal_unknown')
+        phases=[phase for phase in ('pending','ready','applied') if item['body']==body(phase)]
+        need(len(phases)==1, 'merged_outcome_journal_unknown')
+        return (item['id'],phases[0],item['body'])
+    first=journal()
+    phase='absent' if first is None else first[1]
+    if phase!='applied':
+        return dict(pr=pr,phase=phase,state='held',close_authorized=False)
+    def target():
+        pull=api.api(f'repos/{repo}/pulls/{pr}')
+        review.pull_identity(pull,repo,pr,head)
+        need(review.linked_issue(pull)==issue, 'merged_outcome_issue_changed')
+        value=api.api(f'repos/{repo}/issues/{issue}')
+        need(isinstance(value,dict) and value.get('number')==issue and value.get('state')=='open'
+             and 'pull_request' not in value and all(k in value for k in ('title','body'))
+             and review.r.digest({k:value[k] for k in ('number','title','body')})==receipt['issue_sha256']
+             and isinstance(value.get('labels'),list), 'merged_outcome_issue_changed')
+        labels=value['labels']
+        need(all(isinstance(label,dict) and isinstance(label.get('name'),str) for label in labels),
+             'merged_outcome_issue_changed')
+        names={label['name'] for label in labels}
+        need(names & {'todo','doing','done'}=={'todo'} and not names & {'blocked','agy:blocked'},
+             'merged_outcome_issue_changed')
+        provider=outcome.a.native.provider_pull(api,repo,pr)
+        need(provider.get('state')=='OPEN' and provider.get('headRefOid')==head
+             and provider.get('autoMergeRequest') is None, 'merged_outcome_request_unknown')
+        return dict(issue=value,provider=provider)
+    before=target()
+    need(journal()==first and authenticate(api,repo,policy,run,attempt,issue,head,owner,log_reader)==evidence
+         and target()==before, 'merged_outcome_recovery_changed')
+    return dict(pr=pr,phase='applied',state='applied_observed',close_authorized=False)

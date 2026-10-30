@@ -109,11 +109,12 @@ def scan(api,repo,current_policy,log_reader):
             if source_event(api,repo,run,attempt)=='push':
                 if source_path(api,repo,run,attempt)=='.github/workflows/review-merged-product-grant.yml':
                     outcome=sibling('policy_adoption_merged_recovery')
-                    evidence=outcome.authenticate(api,repo,current_policy,run,attempt,item['issue'],
-                                                  item['head'],item['owner'],log_reader)
+                    evidence=outcome.inspect(api,repo,current_policy,run,attempt,item['issue'],
+                                             item['head'],item['owner'],log_reader)
                     row.update(state='held',reason='merged_outcome_recovery_not_implemented',
                                kind='merged_outcome',pr=evidence['pr'],head=item['head'],
-                               owner=item['owner'],run=run,attempt=attempt,close_authorized=False)
+                               owner=item['owner'],run=run,attempt=attempt,phase=evidence['phase'],
+                               close_authorized=False)
                     results.append(row);continue
                 adoption=adoption_module()
                 source=adoption.discover_source(api,repo,run,attempt,item['issue'],item['head'],item['owner'],log_reader)

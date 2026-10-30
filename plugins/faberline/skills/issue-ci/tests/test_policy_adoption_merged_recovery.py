@@ -86,3 +86,44 @@ class MergedRecoveryTests(unittest.TestCase):
              self.assertRaisesRegex(RuntimeError,'changed'):
             m.authenticate(f,'o/r',f.policy,100,1,7,f.f.grant['head'],f.intent['payload']['owner'],
                            lambda repo,job:f.logs.get(job,''))
+
+    def test_only_applied_journal_with_exact_todo_and_no_request_is_observed(self):
+        f=RecoveryFixture();head=f.f.grant['head']
+        issue=dict(number=7,state='open',title='Target',body='Requirements',labels=[dict(name='todo')])
+        f.receipt['issue_sha256']=m.review.r.digest({k:issue[k] for k in ('number','title','body')})
+        evidence=dict(pr=8,head=head,issue=7,evaluator=adoption.EVALUATOR,intent=f.intent,
+                      receipt=f.receipt,grant_pr=77,grant_head=fixture.fixture.HEAD)
+        normalized=dict(payload=dict(context=dict(issue_sha256=f.receipt['issue_sha256']),
+                                     result=dict(decision='fail')),sha256=f.receipt['sha256'])
+        digest=m.review.r.digest(['o/r',8,head,7,normalized])
+        def journal(phase):
+            body=(f'<!-- claude-return-todo:{digest}:{phase} -->\nClaude: todo for PR #8 head `{head}`.\n'
+                  f"Receipt: {f.receipt['sha256']}\nhttps://github.com/o/r/actions/runs/100")
+            return dict(id=77,user=dict(login='github-actions[bot]',id=41898282,type='Bot'),body=body)
+        class API:
+            comments=[]
+            def api(self,path):
+                if path=='repos/o/r/pulls/8':return dict(number=8)
+                if path=='repos/o/r/issues/7':return copy.deepcopy(issue)
+                raise AssertionError(path)
+            def pages(self,path):return copy.deepcopy(self.comments)
+        api=API();provider=dict(state='OPEN',headRefOid=head,autoMergeRequest=None)
+        def inspect():
+            with patch.object(m,'authenticate',return_value=evidence), \
+                 patch.object(m.review,'pull_identity'),patch.object(m.review,'linked_issue',return_value=7), \
+                 patch.object(m.outcome.a.native,'provider_pull',return_value=provider):
+                return m.inspect(api,'o/r',f.policy,100,1,7,head,f.intent['payload']['owner'],lambda *args:'')
+        self.assertEqual(inspect()['phase'],'absent')
+        for phase in ('pending','ready'):
+            api.comments=[journal(phase)]
+            self.assertEqual(inspect()['state'],'held')
+        api.comments=[journal('applied')]
+        self.assertEqual(inspect(),dict(pr=8,phase='applied',state='applied_observed',close_authorized=False))
+        issue['labels']=[dict(name='doing')]
+        with self.assertRaisesRegex(RuntimeError,'issue_changed'):inspect()
+        issue['labels']=[dict(name='todo')];provider['autoMergeRequest']={'unknown':True}
+        with self.assertRaisesRegex(RuntimeError,'request_unknown'):inspect()
+        provider['autoMergeRequest']=None;api.comments.append(journal('applied'))
+        with self.assertRaisesRegex(RuntimeError,'journal_ambiguous'):inspect()
+        api.comments=[journal('applied')];api.comments[0]['user']['id']=1
+        with self.assertRaisesRegex(RuntimeError,'journal_unknown'):inspect()

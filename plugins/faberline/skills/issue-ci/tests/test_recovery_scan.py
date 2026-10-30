@@ -40,7 +40,7 @@ class RecoveryScanTests(unittest.TestCase):
 
     def test_merged_outcome_scan_authenticates_but_still_holds(self):
         items=[dict(issue=7,state='merge_held',run=123,attempt=2,head='d'*40,owner='a'*56)]
-        module=SimpleNamespace(authenticate=lambda *args:dict(pr=9))
+        module=SimpleNamespace(inspect=lambda *args:dict(pr=9,phase='applied'))
         with patch.object(m.discovery,'inspect',return_value=items), \
              patch.object(m,'source_event',return_value='push'), \
              patch.object(m,'source_path',return_value='.github/workflows/review-merged-product-grant.yml'), \
@@ -48,7 +48,8 @@ class RecoveryScanTests(unittest.TestCase):
             result=m.scan(None,'o/r',{},lambda r,j:'')
         adoption.assert_not_called()
         self.assertEqual(result,[dict(issue=7,state='held',reason='merged_outcome_recovery_not_implemented',
-            kind='merged_outcome',pr=9,head='d'*40,owner='a'*56,run=123,attempt=2,close_authorized=False)])
+            kind='merged_outcome',pr=9,head='d'*40,owner='a'*56,run=123,attempt=2,phase='applied',
+            close_authorized=False)])
 
     def test_historical_policy_comes_from_completed_default_branch_attempt(self):
         api=Api();raw=json.dumps(dict(aw_revision=EVALUATOR))
