@@ -258,7 +258,7 @@ class MainSyncTests(unittest.TestCase):
                 args=tuple(str(self.remote) if a=='origin' else a for a in args)
             return subprocess.check_output(args,cwd=self.main,stderr=subprocess.PIPE,text=True).strip()
         def exists(ref):return subprocess.run(['git','show-ref','--verify','--quiet',ref],cwd=self.main).returncode==0
-        with patch.object(sys,'argv',['work.py','next']),patch.dict(os.environ,ISSUE_WORK_OWNER='owner',ISSUE_MAIN_EXCLUSIVE_OWNER=''),patch.object(work,'run',side_effect=run),patch.object(work,'branch_exists',side_effect=exists),patch.object(work.queue,'Client',return_value=Client()),contextlib.redirect_stdout(io.StringIO()):
+        with patch.object(sys,'argv',['work.py','next']),patch.dict(os.environ,ISSUE_WORK_OWNER='owner',ISSUE_MAIN_EXCLUSIVE_OWNER=''),patch.object(work,'run',side_effect=run),patch.object(work,'branch_exists',side_effect=exists),patch.object(work.queue,'Client',return_value=Client()),patch.object(work.worker_guard,'read_policy',return_value=None),patch.object(work.worker_guard,'require_no_legacy_guard'),contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(work.main(),0)
         issue=self.main/'.claude/worktrees/issue-7'
         self.assertEqual(self.git(issue,'rev-parse','HEAD'),pr_head)

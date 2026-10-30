@@ -12,6 +12,8 @@ on:
   pull_request_target:
     branches: [main] # Use the verified default branch before joining concurrency.
     types: [opened, reopened, synchronize, edited, ready_for_review, converted_to_draft]
+  repository_dispatch:
+    types: [aw-verified-merge-reconcile]
 permissions:
   actions: read
   contents: read

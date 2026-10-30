@@ -310,6 +310,17 @@ def pull_identity(pull, repo, number, head):
          and sha(pull["base"].get("sha")), "pr_identity")
 
 
+def merged_pull_identity(pull, repo, number, head):
+    """Identify a merged PR for read-only recovery, never for new review."""
+    need(type(pull.get("number")) is int and pull.get("number") == number and type(number) is int and number > 0
+         and sha(head) and pull.get("state") == "closed" and pull.get("merged") is True
+         and pull.get("draft") is False and text(pull.get("merged_at"),100)
+         and sha(pull.get("merge_commit_sha")) and pull.get("head", {}).get("sha") == head
+         and pull["head"].get("repo", {}).get("full_name") == repo
+         and pull.get("base", {}).get("repo", {}).get("full_name") == repo
+         and sha(pull["base"].get("sha")), "merged_pr_identity")
+
+
 def linked_issue(pull):
     """Allow one canonical closing reference and no other closing keywords.
 
@@ -326,7 +337,7 @@ def linked_issue(pull):
     return int(lines[0])
 
 
-def gate_evidence(api, repo, pull, document):
+def gate_evidence(api, repo, pull, document, merged_gates=None):
     """Preserve every existing configured workflow/job, without an all-green guess."""
     p = policy(document)
     config = document["config"]
@@ -344,29 +355,46 @@ def gate_evidence(api, repo, pull, document):
         need(run.get("workflow_id") == identity["id"] and run.get("path") == path
              and run.get("event") == "pull_request" and run.get("head_sha") == pull["head"]["sha"]
              and run.get("head_repository", {}).get("full_name") == repo
-             and integer(run.get("id")) and integer(run.get("run_attempt"))
-             and isinstance(associations, list) and len(associations) == 1
-             and associations[0].get("number") == pull["number"]
-             and associations[0].get("head", {}).get("sha") == pull["head"]["sha"]
-             and associations[0].get("base", {}).get("sha") == pull["base"]["sha"], "gate_run_identity")
+             and integer(run.get("id")) and integer(run.get("run_attempt")), "gate_run_identity")
+        associated=(isinstance(associations,list) and len(associations)==1
+                    and associations[0].get("number")==pull["number"]
+                    and associations[0].get("head",{}).get("sha")==pull["head"]["sha"]
+                    and associations[0].get("base",{}).get("sha")==pull["base"]["sha"])
         selected = []
         for name in workflow["jobs"]:
             matches = [j for j in jobs if j.get("name") == name]
             need(len(matches) == 1 and integer(matches[0].get("id")), "gate_job_identity")
             job = matches[0]
             selected.append(dict(name=name, id=job["id"], status=job["status"], conclusion=job["conclusion"]))
-        evidence.append(dict(path=path, workflow_id=identity["id"], definition_sha=identity["definition_sha"],
-                             run_id=run["id"], run_attempt=run["run_attempt"], jobs=selected))
+        item=dict(path=path, workflow_id=identity["id"], definition_sha=identity["definition_sha"],
+                  run_id=run["id"], run_attempt=run["run_attempt"], jobs=selected)
+        # GitHub can clear PR associations after merge. Only an authenticated
+        # original review context can supply that missing historical link. It
+        # must bind this exact run, attempt, workflow definition and jobs.
+        if not associated:
+            need(associations==[] and isinstance(merged_gates,list)
+                 and sum(value==item for value in merged_gates)==1,'gate_run_identity')
+        evidence.append(item)
     return evidence
 
 
 def collect(api, repo, number, head, load_document, evaluator, include_sources=False, source_plan=None):
+    return _collect(api,repo,number,head,load_document,evaluator,include_sources,source_plan,pull_identity,None)
+
+
+def collect_merged(api, repo, number, head, load_document, evaluator, include_sources=False, source_plan=None,
+                   merged_gates=None):
+    """Rebuild the same review context after a merge, without authorizing writes."""
+    return _collect(api,repo,number,head,load_document,evaluator,include_sources,source_plan,merged_pull_identity,merged_gates)
+
+
+def _collect(api, repo, number, head, load_document, evaluator, include_sources, source_plan, identity, merged_gates):
     need(isinstance(repo, str) and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo)
          and sha(evaluator), "caller_identity")
     document = load_document()
     p = policy(document)
     pull = api.api(f"repos/{repo}/pulls/{number}")
-    pull_identity(pull, repo, number, head)
+    identity(pull, repo, number, head)
     meta = api.api(f"repos/{repo}")
     need(pull["base"].get("ref") == meta["default_branch"], "nondefault_base")
     files = api.pages(f"repos/{repo}/pulls/{number}/files")
@@ -430,7 +458,7 @@ def collect(api, repo, number, head, load_document, evaluator, include_sources=F
         plan_sha, supporting, supporting_contents, claims = None, [], [], []
     else:
         plan_sha, supporting, supporting_contents, claims = supporting_context(api, repo, pull, source_plan, trees)
-    gates = gate_evidence(api, repo, pull, document)
+    gates = gate_evidence(api, repo, pull, document, merged_gates)
     context = dict(version=1, repo=repo, pr=number, head=head, base=pull["base"]["sha"],
                    base_ref=pull["base"]["ref"], evaluator=evaluator, policy_source=document["source_commit"],
                    policy_sha256=r.digest(document), inventory=sorted(inventory, key=lambda f: f["path"]),
@@ -787,6 +815,21 @@ def review(api, repo, number, head, load_document, evaluator, run_id, invoke=inv
 def verify_result_receipt(api, repo, number, head, load_document, evaluator, run_id,
                           log_reader=r.job_log, latest_selector=None, allow_rejected=False,
                           history_loader=None):
+    return _verify_result_receipt(api,repo,number,head,load_document,evaluator,run_id,log_reader,
+                                  latest_selector,allow_rejected,history_loader,collect)
+
+
+def verify_merged_receipt(api, repo, number, head, load_document, evaluator, run_id,
+                          log_reader=r.job_log, latest_selector=None, history_loader=None):
+    """Revalidate a successful review after merge; this does not authorize a write."""
+    receipt=_verify_result_receipt(api,repo,number,head,load_document,evaluator,run_id,log_reader,
+                                   latest_selector,False,history_loader,collect_merged)
+    need(receipt['payload']['result']['decision']=='pass','review_not_pass')
+    return receipt
+
+
+def _verify_result_receipt(api, repo, number, head, load_document, evaluator, run_id,
+                           log_reader, latest_selector, allow_rejected, history_loader, collector):
     document = load_document()
     p = policy(document)
     load_history = history_loader or (lambda: api.pages(
@@ -804,8 +847,15 @@ def verify_result_receipt(api, repo, number, head, load_document, evaluator, run
          and type(receipt["payload"]["version"]) is int and receipt["payload"]["version"] == 1
          and receipt["sha256"] == r.digest(receipt["payload"]), "review_receipt_schema")
     payload = receipt["payload"]
-    current, _ = collect(api, repo, number, head, load_document, evaluator, source_plan=payload["context"].get("requirement_plan"))
-    need(payload["producer"] == identity and payload["context"] == current, "review_stale")
+    need(payload["producer"] == identity, "review_stale")
+    if collector is collect_merged:
+        validate_result(payload["result"],payload["context"])
+        need(payload["result"]["decision"]=='pass','review_not_pass')
+        current, _ = collector(api, repo, number, head, load_document, evaluator,
+            source_plan=payload["context"].get("requirement_plan"),merged_gates=payload["context"].get("gates"))
+    else:
+        current, _ = collector(api, repo, number, head, load_document, evaluator, source_plan=payload["context"].get("requirement_plan"))
+    need(payload["context"] == current, "review_stale")
     validate_result(payload["result"], current)
     if allow_rejected:
         run = api.api(f"repos/{repo}/actions/runs/{run_id}")

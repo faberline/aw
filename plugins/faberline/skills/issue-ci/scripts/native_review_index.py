@@ -14,21 +14,29 @@ def attempts(api,repo,document,runs,targets=None,default_branch=None):
     """Index metadata only. This is candidate selection, never approval."""
     spec=review.policy(document)['producer']
     default=default_branch or api.api(f'repos/{repo}')['default_branch']
-    latest,seen,invalid={},set(),set()
+    latest,run_ids,run_numbers,invalid={},{},{},set()
     for run in runs:
         if (run.get('workflow_id')!=spec['id'] or run.get('path')!=spec['path']
                 or run.get('event')!='workflow_run' or run.get('head_branch')!=default
                 or run.get('head_repository',{}).get('full_name')!=repo):
             continue
-        target=TITLE.fullmatch(run.get('display_title',''))
-        if target is None:continue
-        number,head=int(target[1]),target[2]
-        if targets is not None and targets.get(number)!=head:continue
+        title=run.get('display_title')
+        target=TITLE.fullmatch(title) if isinstance(title,str) else None
+        number,head=(int(target[1]),target[2]) if target else (None,None)
         if not all(review.integer(run.get(k)) for k in ('id','run_number','run_attempt')):
-            invalid.add(number);continue
-        candidate=dict(run);key=run['id'],run['run_attempt']
-        if key in seen:candidate['_native_index_error']='review_attempt_duplicate'
-        seen.add(key)
+            if number is not None and (targets is None or targets.get(number)==head):invalid.add(number)
+            continue
+        # A workflow run ID and run number each identify one run. A repeated
+        # or conflicting page is not an ordering tie: neither target may use
+        # an arbitrarily selected result as its latest review.
+        if run['id'] in run_ids:
+            invalid.update(n for n in (number,run_ids[run['id']]) if n is not None)
+        if run['run_number'] in run_numbers:
+            invalid.update(n for n in (number,run_numbers[run['run_number']]) if n is not None)
+        run_ids[run['id']]=number
+        run_numbers[run['run_number']]=number
+        if number is None or (targets is not None and targets.get(number)!=head):continue
+        candidate=dict(run)
         prior=latest.get(number)
         if prior is None or (run['run_number'],run['run_attempt']) >= (prior['run_number'],prior['run_attempt']):
             latest[number]=candidate
@@ -104,6 +112,9 @@ class Session:
         return self.runs
 
     def result(self,api,repo,number,head,load_document,evaluator,run_id):
+        return self._result(api,repo,number,head,load_document,evaluator,run_id,merged=False)
+
+    def _result(self,api,repo,number,head,load_document,evaluator,run_id,merged):
         self.ensure(number,head)
         review.need(repo==self.repo and evaluator==self.evaluator,'review_session_identity')
         def select(values):
@@ -119,6 +130,9 @@ class Session:
                 and review.integer(records[0]['pr']) and records[0]==dict(version=1,repo=repo,pr=number,head=head),
                 'review_target_record_unknown')
             return raw
+        if merged:
+            return review.verify_merged_receipt(self.api,repo,number,head,load_document,evaluator,run_id,
+                log_reader=logs,latest_selector=select,history_loader=lambda:self.history(number))
         return review.verify_result_receipt(self.api,repo,number,head,load_document,evaluator,run_id,
             log_reader=logs,latest_selector=select,allow_rejected=True,history_loader=lambda:self.history(number))
 
@@ -126,6 +140,9 @@ class Session:
         receipt=self.result(*args)
         review.need(receipt['payload']['result']['decision']=='pass','review_not_pass')
         return receipt
+
+    def verify_merged(self,*args):
+        return self._result(*args,merged=True)
 
 
 def result(api,repo,number,head,load_document,evaluator,run_id,log_reader=review.r.job_log):

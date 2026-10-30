@@ -38,7 +38,7 @@ class CombinedHandoffTests(unittest.TestCase):
     git=fixture.MainSyncTests.git
     publish=fixture.MainSyncTests.publish
 
-    def lifecycle(self,strategy):
+    def lifecycle(self,strategy,drain=False):
         owner='contract-owner'
         issue_number,pr_number=7,9
         issue_path=self.main/'.claude/worktrees/issue-7'
@@ -101,15 +101,23 @@ class CombinedHandoffTests(unittest.TestCase):
         def process_identity(token):
             assert token==owner
             return dict(owner=token,host=socket.gethostname(),pid=999999,birth='known fixture process',released=False)
+        current_policy=None
         def invoke(args):
-            with patch.object(sys,'argv',['work.py',*args]),patch.dict(os.environ,ISSUE_WORK_OWNER=owner,ISSUE_MAIN_EXCLUSIVE_OWNER=owner),patch.object(work,'run',side_effect=run),patch.object(work,'branch_exists',side_effect=exists),patch.object(work.queue,'Client',return_value=client),patch.object(work.tree_state,'owner_record',side_effect=process_identity),contextlib.redirect_stdout(io.StringIO()) as output:
+            with patch.object(sys,'argv',['work.py',*args]),patch.dict(os.environ,ISSUE_WORK_OWNER=owner,ISSUE_MAIN_EXCLUSIVE_OWNER=owner),patch.object(work,'run',side_effect=run),patch.object(work,'branch_exists',side_effect=exists),patch.object(work.queue,'Client',return_value=client),patch.object(work.tree_state,'owner_record',side_effect=process_identity),patch.object(work.worker_guard,'read_policy',side_effect=lambda *args:current_policy),patch.object(work.worker_guard,'require_no_legacy_guard'),contextlib.redirect_stdout(io.StringIO()) as output:
                 result=work.main()
             self.assertEqual(result,0,output.getvalue())
             return output.getvalue()
         # next performs FF only in this isolated fixture, then actually creates
         # and records the issue tree. No fixture fabricates registry provenance.
+        if drain:
+            current_policy=dict(cutover=dict(version=1,phase='drain',nonce='a'*32),policy_source='b'*40)
+            with self.assertRaisesRegex(RuntimeError,'cutover is draining'):
+                invoke(['next'])
+            self.assertEqual(item['labels'],['todo'])
+            self.assertFalse((self.main/'.git/issue-work.lock').exists())
+            current_policy=None
         output=invoke(['next'])
-        self.assertIn('"status": "updated"',output)
+        self.assertIn('"status": "current"' if drain else '"status": "updated"',output)
         self.assertEqual(self.git(self.main,'rev-parse','HEAD'),self.fetched)
         data=work.tree_state.load(self.main/'.git')
         created=copy.deepcopy(data['trees'][str(issue_path)])
@@ -121,6 +129,16 @@ class CombinedHandoffTests(unittest.TestCase):
         self.git(issue_path,'add','implemented');self.git(issue_path,'commit','-qm','implementation')
         head=self.git(issue_path,'rev-parse','HEAD')
         summary=Path(self.tmp.name)/'summary.md';summary.write_text('isolated contract fixture; no product tests')
+        if drain:
+            current_policy=dict(cutover=dict(version=1,phase='drain',nonce='a'*32),policy_source='b'*40)
+            lease_path=self.main/'.git/issue-work.lock'
+            lease=json.loads(lease_path.read_text())
+            lease['guard_intent']={'unverified':'intent'}
+            lease_path.write_text(json.dumps(lease))
+            with self.assertRaisesRegex(RuntimeError,'preserve the existing issue guard'):
+                invoke(['finish','7',str(summary)])
+            del lease['guard_intent']
+            lease_path.write_text(json.dumps(lease))
         invoke(['finish','7',str(summary)])
         submitted=work.tree_state.load(self.main/'.git')['trees'][str(issue_path)]
         self.assertEqual(submitted['identity'],created['identity'])
@@ -182,6 +200,9 @@ class CombinedHandoffTests(unittest.TestCase):
 
     def test_create_submit_normal_merge_cleanup_preserves_provenance(self):
         self.lifecycle('normal')
+
+    def test_cutover_blocks_new_claim_but_allows_owned_legacy_finish(self):
+        self.lifecycle('squash',drain=True)
 
 
 if __name__=='__main__':unittest.main()

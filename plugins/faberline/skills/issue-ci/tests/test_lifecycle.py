@@ -145,6 +145,26 @@ class ApplyTests(unittest.TestCase):
         self.assertIn(('repos/o/r/issues/7/labels/doing', 'DELETE', None), self.writes)
         self.assertFalse(any('/labels/priority' in w[0] for w in self.writes))
 
+    def test_handoff_marks_before_first_provider_write(self):
+        args=ci.argparse.Namespace(repo='o/r',pr=8,head=SHA,apply=True,run_id=None)
+        marks=[]
+        def mark():marks.append(len(self.writes))
+        with patch.object(ci,'api',side_effect=self.api), \
+             patch.object(ci,'pages',side_effect=lambda *a:self.comments), \
+             patch.object(ci,'snapshot',return_value=evidence()),contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ci.process_head(args,dict(workflows=GATES),check_event=False,before_mutation=mark),0)
+        self.assertTrue(self.writes)
+        self.assertEqual(marks[0],0)
+        self.assertEqual(len(marks),len(self.writes))
+
+    def test_handoff_prewrite_refusal_does_not_mark_write(self):
+        args=ci.argparse.Namespace(repo='o/r',pr=8,head='b'*40,apply=True,run_id=None);marks=[]
+        with patch.object(ci,'api',side_effect=self.api):
+            with self.assertRaises(RuntimeError):
+                ci.process_head(args,dict(workflows=GATES),check_event=False,before_mutation=lambda:marks.append(1))
+        self.assertEqual(marks,[])
+        self.assertEqual(self.writes,[])
+
     def test_stale_head_before_and_during_evaluation(self):
         for move_on in (1, 2):
             self.move_on, self.pr_reads = move_on, 0
@@ -508,7 +528,7 @@ class WorkTests(unittest.TestCase):
             current['labels'] = [{'name': v} for v in kwargs['labels']]
             self.calls.append(('PATCH', n, tuple(kwargs['labels'])))
         client.patch.side_effect = patch_issue
-        with patch.object(sys, 'argv', ['work.py', *command]), patch.dict(os.environ, ISSUE_WORK_OWNER='mine'), patch.object(work, 'git', side_effect=git), patch.object(work, 'gh', side_effect=gh), patch.object(work, 'run', side_effect=lambda *a: self.calls.append(a)), patch.object(work, 'branch_of', return_value=('agy/issue-7', 8)), patch.object(work, 'prepare', return_value=Path(self.tmp.name)), patch.object(work, 'sync_main', return_value={'status':'held','reason':'fixture'}), patch.object(work.queue, 'Client', return_value=client), contextlib.redirect_stdout(io.StringIO()):
+        with patch.object(sys, 'argv', ['work.py', *command]), patch.dict(os.environ, ISSUE_WORK_OWNER='mine'), patch.object(work, 'git', side_effect=git), patch.object(work, 'gh', side_effect=gh), patch.object(work, 'run', side_effect=lambda *a: self.calls.append(a)), patch.object(work, 'branch_of', return_value=('agy/issue-7', 8)), patch.object(work, 'prepare', return_value=Path(self.tmp.name)), patch.object(work, 'sync_main', return_value={'status':'held','reason':'fixture'}), patch.object(work.queue, 'Client', return_value=client), patch.object(work.worker_guard, 'read_policy', return_value=None), patch.object(work.worker_guard, 'require_no_legacy_guard'), contextlib.redirect_stdout(io.StringIO()):
             return work.main()
 
     def test_waiting_doing_not_resumed_even_with_mine(self):

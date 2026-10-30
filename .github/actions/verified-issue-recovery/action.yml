@@ -1,0 +1,25 @@
+name: Verified post-merge issue recovery
+description: Authenticate a default-branch recovery wake and recheck each guarded issue.
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+      with:
+        version: 0.12.1
+        enable-cache: false
+    - name: Provision hash-locked metadata parser
+      shell: bash
+      run: |
+        set -euo pipefail
+        uv venv --python 3.13.9 "$RUNNER_TEMP/aw-issue-recovery-runtime"
+        uv pip install --python "$RUNNER_TEMP/aw-issue-recovery-runtime/bin/python" \
+          --require-hashes --only-binary :all: --no-deps \
+          -r "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/readiness-requirements.txt"
+    - name: Recheck guarded recovery candidates
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        AW_ACTION_REF: ${{ github.action_ref }}
+      run: |
+        set -euo pipefail
+        exec "$RUNNER_TEMP/aw-issue-recovery-runtime/bin/python" -I -B "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/recovery_entry.py"

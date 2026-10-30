@@ -262,7 +262,165 @@ class ReviewProtocolTests(unittest.TestCase):
         root=Path(m.__file__).resolve().parents[5]
         rows=[dict(role=role,path=path,content=(root/path).read_text())
               for role,path in m.FRAMEWORK_SOURCES]
+        path=m.FRAMEWORK_ROOT+'post_merge_observation.py'
+        rows += [dict(role=role,path=path,content=(root/path).read_text()) for role in ('candidate','evaluator')]
+        rows += [dict(role='candidate',path=m.FRAMEWORK_ROOT+name,content=(root/m.FRAMEWORK_ROOT/name).read_text())
+                 for name in m.EVALUATOR_FRAMEWORK_FILES]
+        existing={(r['role'],r['path']) for r in rows}
+        for role in ('candidate','evaluator'):
+            for path in m.RECOVERY_CANDIDATE_SOURCES:
+                if (role,path) not in existing:
+                    rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+                    existing.add((role,path))
+            path=m.FRAMEWORK_ROOT+'request_history.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+            path=m.FRAMEWORK_ROOT+'direct_merge.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+            path=m.FRAMEWORK_ROOT+'policy_adoption_merged_grant.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+            path=m.FRAMEWORK_ROOT+'policy_adoption_merged_outcome.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+            path=m.FRAMEWORK_ROOT+'policy_adoption_merged_recovery.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+            path=m.FRAMEWORK_ROOT+'todo_mutation_trace.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
         m.framework_dependency_closure(rows)
+
+    def test_optional_close_observer_is_bound_per_immutable_revision(self):
+        candidate,evaluator='c'*40,'e'*40
+        def blob(api,repo,path,ref):
+            if path.endswith('/native_merge.py') and ref==candidate:
+                return "x=review.sibling('post_merge_observation')"
+            return 'pass'
+        with patch.object(m.a.review,'blob',side_effect=blob):
+            rows=m.framework_sources(None,candidate,evaluator)
+        found=[row for row in rows if row['path'].endswith('/post_merge_observation.py')]
+        self.assertEqual([(row['role'],row['ref']) for row in found],[('candidate',candidate)])
+        with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+            m.framework_dependency_closure([row for row in rows if row not in found])
+
+    def test_optional_merged_grant_verifier_is_bound_to_its_source_revision(self):
+        candidate,evaluator='c'*40,'e'*40
+        def blob(api,repo,path,ref):
+            if path.endswith('/policy_adoption.py') and ref==evaluator:
+                return "x=review.sibling('policy_adoption_merged_grant')"
+            if path.endswith('/recovery_scan.py') and ref==evaluator:
+                return "x=sibling('policy_adoption_merged_recovery')"
+            if path.endswith('/policy_adoption_merged_outcome.py') and ref==evaluator:
+                return "x=review.sibling('todo_mutation_trace')"
+            return 'pass'
+        with patch.object(m.a.review,'blob',side_effect=blob):
+            rows=m.framework_sources(None,candidate,evaluator)
+        found=[row for row in rows if row['path'].endswith('/policy_adoption_merged_grant.py')]
+        self.assertEqual([(row['role'],row['ref']) for row in found],[('evaluator',evaluator)])
+        action=[row for row in rows if row['path']=='.github/actions/policy-adoption-merged-grant-review/action.yml']
+        self.assertEqual([(row['role'],row['ref']) for row in action],[('evaluator',evaluator)])
+        action=[row for row in rows if row['path']=='.github/actions/policy-adoption-merged-grant-outcome/action.yml']
+        self.assertEqual([(row['role'],row['ref']) for row in action],[('evaluator',evaluator)])
+        outcome=[row for row in rows if row['path'].endswith('/policy_adoption_merged_outcome.py')]
+        self.assertEqual([(row['role'],row['ref']) for row in outcome],[('evaluator',evaluator)])
+        recovery=[row for row in rows if row['path'].endswith('/policy_adoption_merged_recovery.py')]
+        self.assertEqual([(row['role'],row['ref']) for row in recovery],[('evaluator',evaluator)])
+        trace=[row for row in rows if row['path'].endswith('/todo_mutation_trace.py')]
+        self.assertEqual([(row['role'],row['ref']) for row in trace],[('evaluator',evaluator)])
+        with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+            m.framework_dependency_closure([row for row in rows if row not in found])
+
+    def test_direct_merger_is_bound_to_immutable_controller_revision(self):
+        candidate,evaluator='c'*40,'e'*40
+        def blob(api,repo,path,ref):
+            if path.endswith('/native_merge.py') and ref==candidate:
+                return "x=review.sibling('direct_merge')"
+            return 'pass'
+        with patch.object(m.a.review,'blob',side_effect=blob):
+            rows=m.framework_sources(None,candidate,evaluator)
+        found=[row for row in rows if row['path'].endswith('/direct_merge.py')]
+        self.assertEqual([(row['role'],row['ref']) for row in found],[('candidate',candidate)])
+        with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+            m.framework_dependency_closure([row for row in rows if row not in found])
+
+    def test_observer_adoption_dependencies_are_reviewed_for_candidate(self):
+        candidate,evaluator='c'*40,'e'*40
+        def blob(api,repo,path,ref):
+            if path.endswith('/native_merge.py') and ref==candidate:
+                return "x=review.sibling('post_merge_observation')"
+            if path.endswith('/post_merge_observation.py'):
+                return "x=review.sibling('policy_adoption')"
+            return 'pass'
+        with patch.object(m.a.review,'blob',side_effect=blob):
+            rows=m.framework_sources(None,candidate,evaluator)
+        paths={row['path'] for row in rows if row['role']=='candidate'}
+        self.assertTrue(all(m.FRAMEWORK_ROOT+name in paths for name in m.EVALUATOR_FRAMEWORK_FILES))
+
+    def test_recovery_policy_roster_covers_worker_and_recovery_sources(self):
+        root=Path(m.__file__).resolve().parents[5]
+        rows=[dict(role=role,path=path,content=(root/path).read_text()) for role,path in m.FRAMEWORK_SOURCES]
+        observer=m.FRAMEWORK_ROOT+'post_merge_observation.py'
+        rows += [dict(role='evaluator',path=observer,content=(root/observer).read_text())]
+        existing={(r['role'],r['path']) for r in rows}
+        extra=[m.FRAMEWORK_ROOT+name for name in m.EVALUATOR_FRAMEWORK_FILES]+list(m.RECOVERY_CANDIDATE_SOURCES)
+        for path in extra:
+            if ('candidate',path) not in existing:
+                rows.append(dict(role='candidate',path=path,content=(root/path).read_text()))
+                existing.add(('candidate',path))
+        for path in m.RECOVERY_CANDIDATE_SOURCES:
+            if ('evaluator',path) not in existing:
+                rows.append(dict(role='evaluator',path=path,content=(root/path).read_text()))
+                existing.add(('evaluator',path))
+        for role in ('candidate','evaluator'):
+            path=m.FRAMEWORK_ROOT+'request_history.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+            path=m.FRAMEWORK_ROOT+'direct_merge.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+            path=m.FRAMEWORK_ROOT+'policy_adoption_merged_grant.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+            path=m.FRAMEWORK_ROOT+'policy_adoption_merged_outcome.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+            path=m.FRAMEWORK_ROOT+'policy_adoption_merged_recovery.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+            path=m.FRAMEWORK_ROOT+'todo_mutation_trace.py'
+            rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+        m.framework_dependency_closure(rows)
+        for omitted in ('plugins/faberline/skills/issue-work/scripts/worker_guard.py',
+                        m.FRAMEWORK_ROOT+'guard_ledger.py',
+                        m.FRAMEWORK_ROOT+'request_history.py',
+                        m.FRAMEWORK_ROOT+'direct_merge.py',
+                        'plugins/faberline/skills/issue-loop/scripts/milestone_queue.py'):
+            with self.subTest(omitted=omitted),self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+                m.framework_dependency_closure([r for r in rows if not (r['role']=='candidate' and r['path']==omitted)])
+
+    def test_recovery_sources_are_requested_at_candidate_revision_only(self):
+        candidate,evaluator='c'*40,'e'*40
+        with patch.object(m.a.review,'blob',return_value='pass'):
+            rows=m.framework_sources(None,candidate,evaluator,include_recovery=True)
+        selected={(r['role'],r['path'],r['ref']) for r in rows}
+        self.assertTrue(all(('candidate',path,candidate) in selected for path in m.RECOVERY_CANDIDATE_SOURCES))
+        self.assertFalse(any(role=='evaluator' and path.endswith('/recovery_entry.py') for role,path,ref in selected))
+
+    def test_native_guard_imports_add_sources_only_at_the_revision_that_uses_them(self):
+        candidate,evaluator='c'*40,'e'*40
+        def blob(api,repo,path,ref):
+            if path.endswith('/native_merge.py') and ref==candidate:
+                return "x=review.sibling('guarded_admission')"
+            return 'pass'
+        with patch.object(m.a.review,'blob',side_effect=blob):
+            rows=m.framework_sources(None,candidate,evaluator)
+        selected={(r['role'],r['path'],r['ref']) for r in rows}
+        self.assertTrue(all(('candidate',path,candidate) in selected for path in m.RECOVERY_CANDIDATE_SOURCES))
+        self.assertFalse(any(role=='evaluator' and path.endswith('/guarded_admission.py') for role,path,ref in selected))
+
+    def test_request_history_is_bound_only_to_revisions_that_import_it(self):
+        candidate,evaluator='c'*40,'e'*40
+        def blob(api,repo,path,ref):
+            if path.endswith('/native_merge.py') and ref==candidate:
+                return "x=review.sibling('request_history')"
+            return 'pass'
+        with patch.object(m.a.review,'blob',side_effect=blob):
+            rows=m.framework_sources(None,candidate,evaluator)
+        found=[row for row in rows if row['path'].endswith('/request_history.py')]
+        self.assertEqual([(row['role'],row['ref']) for row in found],[('candidate',candidate)])
+        with self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+            m.framework_dependency_closure([row for row in rows if row not in found])
 
 
 class PreflightTests(unittest.TestCase):
@@ -303,6 +461,15 @@ class PreflightTests(unittest.TestCase):
             packet,_=m.preflight(api,'o/r',8,HEAD);self.assertEqual(packet['ci']['run_id'],111)
             self.assertEqual(packet['verified_provider_policy'],provider_evidence)
             self.assertEqual(packet['shared_framework_sources'][0]['ref'],'c'*40)
+            cfg['issue_guard']={'enabled':True}
+            with self.assertRaisesRegex(RuntimeError,'recovery_rollout_not_verified'):
+                m.preflight(api,'o/r',8,HEAD)
+            recovery=type('Recovery',(),{'verify_rollout':lambda this,*args:None,
+                                        'workflow_contract':lambda this,*args:None})()
+            with patch.object(m,'sibling',return_value=recovery):
+                accepted,_=m.preflight(api,'o/r',8,HEAD)
+                self.assertEqual(accepted['ci']['run_id'],111)
+            del cfg['issue_guard']
             with patch.object(m,'framework_sources',return_value=[dict(content='x'*(4*1024*1024))]):
                 with self.assertRaisesRegex(RuntimeError,'target_packet_limit'):m.preflight(api,'o/r',8,HEAD)
             with patch.object(m.a.native,'base_rules',return_value=None):

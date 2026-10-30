@@ -99,9 +99,115 @@ The outcome workflow serializes all status and lifecycle writes in the existing
 repository-wide `issue-ci-handoff` group.
 Each wake paginates all open PRs and all producer attempts. It re-evaluates the
 complete queue in stable PR order. A refused PR does not stop another PR. This
-recovers PRs whose pending wake was replaced. GitHub applies the final merge and closes the single issue named by the
-required `Closes #N` line, because only the default target branch is accepted.
-No issue is closed while a request is merely queued.
+recovers PRs whose pending wake was replaced. GitHub applies the final merge.
+The single `Closes #N` line identifies the linked issue. In Core #75, GitHub
+merged the PR but did not close that issue before a human closed it. The
+repository owner later confirmed that auto-close was enabled. The cause and
+the setting at merge time are unknown. Do not treat a merge as proof of issue
+closure. No issue is closed while a request is merely queued.
+
+The draft post-merge observer authenticates default-branch writer records and
+checks merge, contract and ownership observations. It is not yet wired to a
+recovery wake or an issue write. It does not establish a shared ownership lock.
+Do not claim automatic issue closure until those parts and a real hosted merge
+are verified.
+
+The recovery entry and workflow template are drafts. The entry always holds.
+It cannot yet verify that every active worker and writer uses the guard. The
+template does not create a schedule. A recovery policy must bind
+the exact workflow and action, and its review must include the recovery and
+worker sources. Do not deploy the template while the writer, crash recovery,
+or actor-adoption checks remain incomplete.
+
+The draft recovery workflow can wake when the pinned default-branch writer
+finishes, even if that writer did not dispatch recovery. It checks the writer's
+workflow ID and attempt; the event is a wake only. A queued merge can finish
+later, so this wake does not replace the recurring recovery check. GitHub limits
+workflow-run chains and can delay scheduled jobs. Hosted tests are still needed.
+The recovery job requires `statuses: write` to establish the blocking status
+when a writer stopped before publishing it. The contract rejects a workflow
+with read-only status permission. Before a negative grant outcome writes, it
+also checks the active recovery workflow ID, path, pinned action and current
+policy twice. These checks do not prove actor rollout or guarantee recovery of
+an unknown provider response; negative writes remain held until recovery is
+complete, and unknown responses keep the guard.
+
+The guarded writer draft holds an issue guard while a merge is queued. It
+does not change an issue held by another worker. A PR-target wake only asks
+the default-branch writer to recheck. An unknown write result retains the
+guard. The guarded path is blocked by the same unimplemented rollout proof.
+Before releasing a guard for an open PR, it verifies that the newest matching
+commit status belongs to the GitHub Actions bot and is blocked. It also reads
+the current strict, no-bypass branch rule twice. A missing status, unknown
+origin, changed rule or passing status keeps the guard. A missing commit status
+cannot prove that a same-named check run is blocked. Recovery for an interrupted
+admission before the first status still needs a durable, safe pending write.
+The guard ref requires an active ruleset that blocks both force updates and
+deletion, with no bypass actors. This blocks direct deletion and recreation.
+Repository administrators can still rename protected branches. They must not
+rename or reset guard refs; this protection cannot enforce that requirement.
+A queued request keeps its guard. The shared Actions bot identity cannot prove
+which run created that request. Cancellation and its race with merging remain
+unimplemented. Crash recovery and hosted verification are also required.
+If the guarded writer cannot acquire a PR's guard, it requests a pending status
+unless an authenticated blocking status already exists, and reads it back. It does not cancel
+the request or change the issue. An unknown response holds that PR and does not
+stop checks for the rest of the queue. This draft does not prove the status
+write won a race with a merge or replace the required rollout verification.
+A read-only request-history draft can compare full paginated timelines and bind
+one observed squash-enable event to the guard and request fields. It detects a
+later disable or re-enable even in the same second. It does not prove that a
+writer caused the event, that the provider timeline is complete in real time,
+or that the request belongs to that writer. It cannot authorize a merge or
+restore a blocked status. The hash of the earlier event prefix checks record
+integrity only; it does not authenticate the writer. The queued-PR liveness gap
+remains unresolved.
+Both guarded publishers now capture this observation around a new request
+before publishing success. Missing or changing timeline data holds the request
+behind pending. An already-existing request is not reused under a new guard.
+These observations remain untrusted until a later verifier authenticates their
+source and provider behavior; no recovery path consumes them yet.
+The protected policy-adoption draft requires the same guard and a separately
+reviewed grant. It permits bootstrap or an unchanged guard only after rollout
+is verified. The current verifier always holds before paid target review or
+publisher writes. Guard removal and incompatible changes remain unsupported.
+
+The guarded draft records a unique pending status before it requests success.
+That record alone cannot authorize a close. After GitHub acknowledges success,
+the writer records its exact status ID and guard owner for that PR. Recovery
+requires that status to remain the newest status for the same context. It
+rechecks that record, the source, the latest review, full CI, and the actual
+merge before closing. A legacy record without a status ID cannot authorize a
+close. A failed writer job does not become a passing CI or review result.
+If the success response is lost and the issue is already closed, the draft can
+authenticate the pre-status record and release only that guard. It reads the
+exact merge and closed issue twice. It never uses that record to close an open
+issue. The guard-release path does not recover an open issue.
+For a native writer with an unknown status response and an open issue, a draft
+recovery now rebuilds the original review context and CI after the actual merge.
+It checks the same latest independent PASS twice before closing. It also requires
+the same complete policy and guard. The status observation is not authority.
+The separately reviewed policy publisher has a draft recovery path as well. It
+reauthenticates the grant, the latest target review, every grant-bound CI job,
+the candidate policy and current branch protection before closure.
+Both paths read the bound pending status and latest success again before and
+after review and CI revalidation. They require the same success status ID. A
+newer status, missing status, or changed status identity keeps the guard and
+leaves the issue open.
+Before publishing success, the writer records a compact digest of two matching
+issue timelines. Recovery refuses any later ownership event, including one in
+the same second. Older records keep the more conservative run-start check.
+The timeline digest does not replace the shared guard or prove actor adoption.
+This path remains blocked by rollout proof and requires hosted verification.
+
+The draft writer requires the `aw-verified-merge-reconcile` repository-dispatch
+trigger. A passing PR-target wake asks for a default-branch wake. The latter
+rechecks every candidate before it can publish success. The dispatch payload is
+not approval evidence. The writer records source and review identities only
+after the success status write returns. A consumer must update the immutable
+action pin, workflow trigger and workflow identity together through its existing
+reviewed policy-adoption process. Existing product checks and holds stay in
+force during rollout.
 
 A fresh authenticated `fail` or `block` decision returns the linked open issue
 to `todo`. It adds todo before it removes doing or done. Other labels

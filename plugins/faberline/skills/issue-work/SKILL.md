@@ -23,6 +23,15 @@ PID. Legacy/malformed/foreign leases refuse; verify the old session ended
 before manually reconciling metadata, preserving its branch and worktree.
 Never bypass a lock just because a run took longer than expected.
 
+When the repository policy enables the shared issue guard, `next` also takes
+that guard before it changes `todo` to `doing`. It keeps the guard while this
+session writes code. `finish` releases it only after it verifies the submitted
+PR, then wakes the CI writer. If release or the wake has an unknown result,
+keep the lease and run `finish` again with the same owner and summary. Do not
+start another issue or release another owner's guard. Older workers cannot use
+this guard. Do not enable it until all active workers and writers have adopted
+the verified version.
+
 `next` selects already-planned todo by priority, then creation time, or
 resumes the recoverable
 lease's doing issue in coding phase (including an active CI retry with a PR). Submitted doing issues wait for CI and are

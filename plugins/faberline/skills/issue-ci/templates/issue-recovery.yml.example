@@ -1,0 +1,26 @@
+name: Verified issue recovery
+on:
+  schedule:
+    - cron: '13,43 * * * *'
+  repository_dispatch:
+    types: [aw-verified-merge-recover]
+  workflow_run:
+    workflows: [Issue CI and Claude outcome]
+    types: [completed]
+    branches: [REPLACE_WITH_DEFAULT_BRANCH]
+permissions: {}
+concurrency:
+  group: issue-ci-handoff
+  cancel-in-progress: false
+jobs:
+  recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+      issues: write
+      pull-requests: read
+      statuses: write
+    steps:
+      - uses: faberline/aw/.github/actions/verified-issue-recovery@REPLACE_WITH_REVIEWED_FULL_SHA

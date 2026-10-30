@@ -87,6 +87,7 @@ class Provider:
 
     def pages(self, path, key=None):
         if "/statuses" in path: return copy.deepcopy(self.statuses)
+        if path == 'repos/o/r/issues/7/timeline': return []
         raise AssertionError(path)
 
     def api(self, path, method="GET", data=None):
@@ -104,11 +105,12 @@ class Provider:
             inputs=data["variables"]["input"]
             self.native["autoMergeRequest"] = dict(mergeMethod="SQUASH", enabledAt="2026-10-29T00:00:00Z",
                 enabledBy=dict(login="github-actions", __typename="Bot"),commitHeadline=inputs["commitHeadline"],commitBody=inputs["commitBody"])
-            return dict(data=dict(enablePullRequestAutoMerge=dict(pullRequest=copy.deepcopy(self.native))))
+            return dict(data=dict(enablePullRequestAutoMerge=dict(
+                clientMutationId=inputs.get('clientMutationId'),pullRequest=copy.deepcopy(self.native))))
         if method == "POST":
             assert path == "repos/o/r/statuses/" + HEAD
             self.writes.append((data["state"], copy.deepcopy(data)))
-            self.statuses.insert(0, dict(data, id=len(self.statuses)+1, creator=dict(login="github-actions[bot]")))
+            self.statuses.insert(0, dict(data, id=len(self.statuses)+1, creator=dict(login="github-actions[bot]",type="Bot")))
             if self.error_on == data["state"]:
                 raise TimeoutError("synthetic ambiguous status result")
             if data["state"] == "success" and self.auto_complete:
@@ -188,6 +190,19 @@ class ActionsProviderVisibilityTests(unittest.TestCase):
 
 
 class NativeMergeTests(unittest.TestCase):
+    def test_merged_qualification_rechecks_full_selected_policy(self):
+        p=Provider();context=p.receipt['payload']['context']
+        p.pull.update(state='closed',merged=True,merged_at='2026-01-02T00:00:00Z',merge_commit_sha='f'*40)
+        self.assertEqual(m.qualification_merged(p,'o/r',1,context,p.document),7)
+        with self.assertRaisesRegex(RuntimeError,'pr_identity'):
+            m.qualification(p,'o/r',1,context,p.document)
+        def fail_performance(data):
+            data[qualification.WORKFLOW][1][-1]['conclusion']='failure'
+        p.snapshot_hook=fail_performance
+        with self.assertRaisesRegex(RuntimeError,'qualification_not_ready'):
+            m.qualification_merged(p,'o/r',1,context,p.document)
+        self.assertEqual(p.writes,[])
+
     def setUp(self):
         self.env = patch.dict(os.environ, {}, clear=True)
         self.env.start()
@@ -357,8 +372,93 @@ class NativeMergeTests(unittest.TestCase):
         self.assertEqual(self.p.writes, [])
 
 
-if __name__ == "__main__":
-    unittest.main()
+class DefaultWakeAndCheckpointTests(unittest.TestCase):
+    def setUp(self):
+        self.p = Provider()
+        self.p.issue.update(assignees=[], updated_at='2026-10-29T00:00:00Z')
+        self.p.receipt['payload'].update(version=1, producer=dict(run_id=200), result=dict(decision='pass'))
+        self.p.receipt['payload']['context'].update(evaluator=EVALUATOR, policy_source=SOURCE)
+        self.p.receipt['sha256'] = m.review.r.digest(self.p.receipt['payload'])
+        self.env = dict(GITHUB_ACTIONS='true', GITHUB_EVENT_NAME='workflow_run',
+                        GITHUB_REPOSITORY='o/r', GITHUB_RUN_ID='300', GITHUB_RUN_ATTEMPT='1',
+                        GITHUB_WORKFLOW_SHA=SOURCE)
+
+    def test_qualified_pr_target_defers_without_queue_or_status_write(self):
+        self.p.pages = lambda path, key=None: [copy.deepcopy(self.p.pull)] if '/pulls?' in path else []
+        attempts = lambda *args: {1: dict(id=200, status='completed', conclusion='success')}
+        rows = m.reconcile(self.p, 'o/r', self.p.load, EVALUATOR, attempts, self.p.verify,
+                           result_verify=self.p.verify, defer_positive=True)
+        self.assertEqual(rows[0]['state'], 'default_wake_required')
+        self.assertEqual(self.p.writes, [])
+
+    def test_write_boundary_marks_before_an_ambiguous_pending_response(self):
+        self.p.error_on='pending';marks=[]
+        def mark():
+            self.assertEqual(self.p.writes,[])
+            marks.append('before')
+        with self.assertRaises(TimeoutError):
+            m.enqueue(self.p,'o/r',1,HEAD,self.p.load,EVALUATOR,200,
+                      verify=self.p.verify,before_mutation=mark)
+        self.assertEqual(marks,['before'])
+        self.assertEqual([item[0] for item in self.p.writes],['pending'])
+
+    def test_prewrite_review_refusal_never_marks_a_write(self):
+        marks=[]
+        def refuse(*args):raise m.review.Refused('review_stale')
+        with self.assertRaisesRegex(m.review.Refused,'review_stale'):
+            m.enqueue(self.p,'o/r',1,HEAD,self.p.load,EVALUATOR,200,
+                      verify=refuse,before_mutation=lambda:marks.append('before'))
+        self.assertEqual(marks,[])
+        self.assertEqual(self.p.writes,[])
+
+    def test_one_dispatch_wakes_complete_queue_without_trusting_payload(self):
+        calls = []
+        class API:
+            def api(self, *args, **kwargs): calls.append((args, kwargs))
+        self.assertFalse(m.dispatch_default_wake(API(), 'o/r', [dict(state='held')]))
+        self.assertTrue(m.dispatch_default_wake(API(), 'o/r',
+            [dict(state='default_wake_required'), dict(state='default_wake_required')]))
+        self.assertEqual(calls, [(('repos/o/r/dispatches',), dict(method='POST',
+            data=dict(event_type='aw-verified-merge-reconcile')))])
+
+    def test_valid_default_wake_emits_record_only_after_success_status(self):
+        self.p.auto_complete = False
+        out = io.StringIO()
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(out):
+            result = m.enqueue(self.p, 'o/r', 1, HEAD, self.p.load, EVALUATOR, 200,
+                               verify=self.p.verify, prepare_record=m.prepare_close_record)
+        self.assertEqual(result['state'], 'queued')
+        obs = m.review.sibling('post_merge_observation')
+        records = m.review.r.records(out.getvalue(), obs.MARKER)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]['payload']['review_run'], 200)
+        self.assertEqual(records[0]['payload']['checkpoint']['ownership_events'],obs.ownership_seal([]))
+        self.assertEqual([x[0] for x in self.p.writes], ['pending', 'queue', 'success'])
+
+    def test_bad_source_or_unknown_ownership_cannot_release_status(self):
+        for mutation in (lambda: self.env.update(GITHUB_EVENT_NAME='pull_request_target'),
+                         lambda: self.env.update(GITHUB_WORKFLOW_SHA='f' * 40),
+                         lambda: self.p.issue.pop('assignees')):
+            with self.subTest(mutation=mutation):
+                self.setUp()
+                mutation()
+                out = io.StringIO()
+                with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(out):
+                    result = m.enqueue(self.p, 'o/r', 1, HEAD, self.p.load, EVALUATOR, 200,
+                                       verify=self.p.verify, prepare_record=m.prepare_close_record)
+                self.assertEqual(result['state'], 'held_after_pending')
+                self.assertNotIn('success', [x[0] for x in self.p.writes])
+                self.assertNotIn('AW_POST_MERGE_CHECKPOINT_V1', out.getvalue())
+
+    def test_ambiguous_success_response_does_not_emit_a_checkpoint(self):
+        self.p.error_on = 'success'
+        out = io.StringIO()
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(out):
+            result = m.enqueue(self.p, 'o/r', 1, HEAD, self.p.load, EVALUATOR, 200,
+                               verify=self.p.verify, prepare_record=m.prepare_close_record)
+        self.assertEqual(result['state'], 'held_after_pending')
+        self.assertNotIn('AW_POST_MERGE_CHECKPOINT_V1', out.getvalue())
+
 
 class WriterContractTests(unittest.TestCase):
     def setUp(self):
@@ -390,6 +490,111 @@ class WriterContractTests(unittest.TestCase):
 
 
 class ApprovalWithdrawalTests(unittest.TestCase):
+    def test_cutover_withdraws_owned_request_and_never_enables_merge(self):
+        p=Provider()
+        p.document['config']['issue_guard_cutover']=dict(version=1,phase='drain',nonce='a'*32)
+        p.native['autoMergeRequest']=dict(enabledBy=dict(login='github-actions',__typename='Bot'))
+        p.statuses=[dict(id=1,context='claude/verified-merge',state='success',creator=dict(login='github-actions[bot]'))]
+        pages=p.pages
+        def inventory(path,key=None):
+            if '/pulls?state=open' in path:return [copy.deepcopy(p.pull)]
+            return pages(path,key)
+        with patch.object(p,'pages',side_effect=inventory):
+            result=m.drain_queue(p,'o/r',p.load,p.load())
+        self.assertEqual(result,[dict(pr=1,head=HEAD,state='withdrawn')])
+        self.assertEqual([item[0] for item in p.writes],['pending','disable'])
+
+    def test_cutover_holds_foreign_request_unknown_status_and_changed_inventory(self):
+        for case in ('foreign','unknown','inventory'):
+            p=Provider()
+            p.document['config']['issue_guard_cutover']=dict(version=1,phase='drain',nonce='a'*32)
+            if case=='foreign':
+                p.native['autoMergeRequest']=dict(enabledBy=dict(login='person',__typename='User'))
+                p.statuses=[dict(id=1,context='claude/verified-merge',state='pending',creator=dict(login='github-actions[bot]',type='Bot'))]
+            if case=='unknown':
+                p.statuses=[dict(id=1,context='claude/verified-merge',state='pending',creator=dict(login='github-actions[bot]',type='User'))]
+            pages=p.pages
+            calls=[]
+            def inventory(path,key=None):
+                if '/pulls?state=open' in path:
+                    calls.append(1)
+                    return [] if case=='inventory' and len(calls)>1 else [copy.deepcopy(p.pull)]
+                return pages(path,key)
+            with self.subTest(case=case),patch.object(p,'pages',side_effect=inventory):
+                if case=='inventory':
+                    with self.assertRaisesRegex(RuntimeError,'cutover_snapshot_changed'):
+                        m.drain_queue(p,'o/r',p.load,p.load())
+                else:
+                    result=m.drain_queue(p,'o/r',p.load,p.load())
+                    self.assertEqual(result[0]['state'],'held')
+                self.assertFalse(any(item[0] in ('disable','queue','success') for item in p.writes))
+
+    def test_malformed_cutover_never_authorizes_drain(self):
+        marker=dict(version=1,phase='drain',nonce='a'*32)
+        for bad in (None,dict(marker,version=True),dict(marker,phase='active'),dict(marker,nonce='x'*32),dict(marker,extra=1)):
+            with self.subTest(marker=bad),self.assertRaises(RuntimeError):
+                m.drain_marker(dict(issue_guard_cutover=bad))
+        with self.assertRaises(RuntimeError):
+            m.drain_marker(dict(issue_guard_cutover=marker,issue_guard={}))
+
+    def test_cutover_continues_after_one_pr_fails(self):
+        p=Provider()
+        p.document['config']['issue_guard_cutover']=dict(version=1,phase='drain',nonce='a'*32)
+        first=copy.deepcopy(p.pull);second=copy.deepcopy(first);second['number']=2
+        p.statuses=[dict(id=1,context='claude/verified-merge',state='pending',creator=dict(login='github-actions[bot]',type='Bot'))]
+        pages=p.pages
+        def inventory(path,key=None):
+            if '/pulls?state=open' in path:return [first,second]
+            return pages(path,key)
+        def withdrawal(api,repo,number,head):
+            if number==1:raise RuntimeError('unavailable')
+        with patch.object(p,'pages',side_effect=inventory),patch.object(m,'provider_pull',return_value=p.native),\
+             patch.object(m,'withdraw_approval',side_effect=withdrawal) as withdraw:
+            rows=m.drain_queue(p,'o/r',p.load,p.load())
+        self.assertEqual([r['state'] for r in rows],['held','withdrawn'])
+        self.assertEqual(withdraw.call_count,2)
+
+    def test_cutover_adds_pending_for_pr_without_prior_review(self):
+        for uncertain in (False,True):
+            p=Provider()
+            p.document['config']['issue_guard_cutover']=dict(version=1,phase='drain',nonce='a'*32)
+            if uncertain:p.error_on='pending'
+            pages=p.pages
+            def inventory(path,key=None):
+                if '/pulls?state=open' in path:return [copy.deepcopy(p.pull)]
+                return pages(path,key)
+            with self.subTest(uncertain=uncertain),patch.object(p,'pages',side_effect=inventory):
+                rows=m.drain_queue(p,'o/r',p.load,p.load())
+            self.assertEqual(rows[0]['state'],'held' if uncertain else 'withdrawn')
+            self.assertEqual([item[0] for item in p.writes],['pending'])
+            self.assertIsNone(p.native['autoMergeRequest'])
+
+    def test_cutover_holds_if_target_changes_after_pending(self):
+        for change in ('request','base'):
+            p=Provider()
+            p.document['config']['issue_guard_cutover']=dict(version=1,phase='drain',nonce='a'*32)
+            pages,api=p.pages,p.api
+            def inventory(path,key=None):
+                if '/pulls?state=open' in path:return [copy.deepcopy(p.pull)]
+                return pages(path,key)
+            def write(path,method='GET',data=None):
+                result=api(path,method,data)
+                if method=='POST' and path.endswith('/statuses/'+HEAD):
+                    if change=='base':p.native['baseRefOid']='f'*40
+                    else:p.native['autoMergeRequest']=dict(enabledBy=dict(login='person',__typename='User'))
+                return result
+            with self.subTest(change=change),patch.object(p,'pages',side_effect=inventory),patch.object(p,'api',side_effect=write):
+                rows=m.drain_queue(p,'o/r',p.load,p.load())
+            self.assertEqual(rows[0]['state'],'held')
+            self.assertEqual([item[0] for item in p.writes],['pending'])
+
+    def test_withdraw_uses_provider_order_not_numeric_status_id(self):
+        p=Provider()
+        p.statuses=[dict(id=2,context='claude/verified-merge',state='success',creator=dict(login='github-actions[bot]')),
+                    dict(id=99,context='claude/verified-merge',state='pending',creator=dict(login='github-actions[bot]'))]
+        m.withdraw_approval(p,'o/r',1,HEAD)
+        self.assertEqual([w[0] for w in p.writes],['pending'])
+
     def test_closed_blocked_changed_issue_or_extra_closing_reference_never_queues(self):
         for mutate in (lambda p:p.issue.update(state='closed'),
                        lambda p:p.issue['labels'].append(dict(name='blocked')),
@@ -417,6 +622,14 @@ class ApprovalWithdrawalTests(unittest.TestCase):
         p=Provider();p.native['autoMergeRequest']=dict(mergeMethod='SQUASH',enabledBy=dict(login='human'))
         m.withdraw_approval(p,'o/r',1,HEAD)
         self.assertEqual(p.writes,[])
+
+    def test_direct_mode_blocks_but_never_cancels_an_actions_request(self):
+        p=Provider();p.auto_complete=False;p.run();p.writes.clear()
+        before=copy.deepcopy(p.native['autoMergeRequest'])
+        with self.assertRaisesRegex(RuntimeError,'withdraw_request_owner_unknown'):
+            m.withdraw_approval(p,'o/r',1,HEAD,cancel_request=False)
+        self.assertEqual([w[0] for w in p.writes],['pending'])
+        self.assertEqual(p.native['autoMergeRequest'],before)
 
     def test_human_request_not_disabled_when_prior_status_exists(self):
         p=Provider();p.auto_complete=False;p.run();p.writes.clear()

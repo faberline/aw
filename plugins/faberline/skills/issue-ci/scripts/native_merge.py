@@ -6,6 +6,7 @@ until the final fresh verification. No PR checkout, model, or PR artifact runs.
 """
 import os
 import re
+import secrets
 from urllib.parse import quote
 
 import importlib.util
@@ -19,7 +20,7 @@ _spec.loader.exec_module(review)
 need = review.need
 
 QUEUE = """mutation($input:EnablePullRequestAutoMergeInput!){
-  enablePullRequestAutoMerge(input:$input){pullRequest{
+  enablePullRequestAutoMerge(input:$input){clientMutationId pullRequest{
     id state headRefOid baseRefOid baseRefName
     autoMergeRequest{mergeMethod enabledAt enabledBy{login __typename} commitHeadline commitBody}
     mergeCommit{oid}
@@ -46,11 +47,12 @@ DISABLE = """mutation($input:DisablePullRequestAutoMergeInput!){
     autoMergeRequest{mergeMethod enabledBy{login __typename}} mergeCommit{oid}
   }}
 }"""
-EVENTS = ("workflow_run", "issues", "pull_request_target")
+EVENTS = ("workflow_run", "issues", "pull_request_target", "repository_dispatch")
 TRIGGERS = {
     "workflow_run": {"types": ["requested", "in_progress", "completed"]},
     "issues": {"types": ["edited", "reopened", "closed", "labeled", "unlabeled"]},
     "pull_request_target": {"types": ["opened", "reopened", "synchronize", "edited", "ready_for_review", "converted_to_draft"]},
+    "repository_dispatch": {"types": ["aw-verified-merge-reconcile"]},
 }
 
 
@@ -156,7 +158,7 @@ def writer_identity(api, repo, document, run_id):
          "writer_job_identity")
 
 
-def reconcile_ci(api, repo, document, pulls, process):
+def reconcile_ci(api, repo, document, pulls, process, track_write=False):
     """The same writer reconciles existing CI and Claude on every event.
 
     A replaced pending CI or outcome wake therefore loses neither operation.
@@ -171,8 +173,18 @@ def reconcile_ci(api, repo, document, pulls, process):
             continue
         row = dict(pr=pull["number"], head=head["sha"], state="ci_processed")
         args = SimpleNamespace(repo=repo, pr=pull["number"], head=head["sha"], apply=True, run_id=None)
+        write_started=[False]
         try:
-            process(args, handoff_policy(document["config"]), check_event=False)
+            if track_write:
+                process(args, handoff_policy(document["config"]), check_event=False,
+                        before_mutation=lambda:write_started.__setitem__(0,True))
+            else:
+                process(args, handoff_policy(document["config"]), check_event=False)
+        except RuntimeError:
+            if track_write and not write_started[0]:
+                row.update(state="ci_refused_prewrite",reason="ci_handoff_refused_prewrite")
+            else:
+                row.update(state="ci_held",reason="ci_handoff_refused_or_unknown")
         except Exception:
             row.update(state="ci_held", reason="ci_handoff_refused_or_unknown")
         rows.append(row)
@@ -203,7 +215,7 @@ def actions_request(request):
     return isinstance(actor, dict) and actor.get("__typename") == "Bot" and actor.get("login") == "github-actions"
 
 
-def withdraw_approval(api, repo, number, head):
+def withdraw_approval(api, repo, number, head, cancel_request=True):
     """Revoke our prior authorization before attempting any fresh verification.
 
     A policy/base/issue/index failure must not leave a previous passing head
@@ -213,9 +225,13 @@ def withdraw_approval(api, repo, number, head):
     pull = provider_pull(api, repo, number)
     need(pull.get("state") == "OPEN" and pull["headRefOid"] == head, "withdraw_target_changed")
     statuses = api.pages(f"repos/{repo}/commits/{head}/statuses")
-    owned = [s for s in statuses if s.get("context") == "claude/verified-merge"
+    need(isinstance(statuses,list) and all(isinstance(item,dict) for item in statuses),"withdraw_status_unknown")
+    owned = [s for s in statuses if isinstance(s.get("context"),str)
+             and s['context'].casefold() == "claude/verified-merge"
              and s.get("creator", {}).get("login") == "github-actions[bot]"]
-    prior = max(owned, key=lambda s: s["id"]) if owned else None
+    need(all(review.integer(item.get('id')) for item in owned)
+         and len({item['id'] for item in owned})==len(owned),"withdraw_status_unknown")
+    prior = owned[0] if owned else None  # GitHub returns statuses newest first.
     request = pull.get("autoMergeRequest")
     ours = actions_request(request)
     if not ours and (prior is None or prior.get("state") != "success"):
@@ -226,12 +242,131 @@ def withdraw_approval(api, repo, number, head):
     again = provider_pull(api, repo, number)
     need(again.get("state") == "OPEN" and again["headRefOid"] == head, "withdraw_target_changed")
     if ours and again.get("autoMergeRequest") is not None:
+        # A shared Actions bot does not identify which run owns the request.
+        # Guarded direct merge never cancels a pre-existing request.
+        need(cancel_request, 'withdraw_request_owner_unknown')
         need(actions_request(again["autoMergeRequest"]), "withdraw_request_changed")
         result = graphql(api, DISABLE, dict(input=dict(pullRequestId=again["id"])))
         observed = result.get("disablePullRequestAutoMerge", {}).get("pullRequest")
         need(isinstance(observed, dict) and observed.get("headRefOid") == head
              and observed.get("state") == "OPEN" and observed.get("autoMergeRequest") is None,
              "withdraw_result_unknown")
+
+
+def block_unadmitted(api, repo, number, head):
+    """Block stale approval without cancelling a request owned by another run.
+
+    A shared Actions bot does not identify the run that requested a merge.
+    Leave that request and the issue untouched. An unknown write or readback
+    holds the PR; the caller never blindly retries it in this wake.
+    """
+    pull=provider_pull(api,repo,number)
+    need(pull.get('state')=='OPEN' and pull.get('headRefOid')==head,'guard_block_target_changed')
+    statuses=api.pages(f'repos/{repo}/commits/{head}/statuses')
+    need(isinstance(statuses,list) and all(isinstance(item,dict) for item in statuses),
+         'guard_block_status_unknown')
+    matches=[item for item in statuses if isinstance(item.get('context'),str)
+             and item['context'].casefold()=='claude/verified-merge']
+    need(all(review.integer(item.get('id')) for item in matches)
+         and len({item['id'] for item in matches})==len(matches),'guard_block_status_unknown')
+    def ours(item):
+        creator=item.get('creator')
+        return (isinstance(creator,dict) and creator.get('id')==41898282
+                and creator.get('type')=='Bot' and creator.get('login')=='github-actions[bot]')
+    if matches and ours(matches[0]) and matches[0].get('state') in ('pending','failure','error'):
+        return
+    response=api.api(f'repos/{repo}/statuses/{head}',method='POST',data=dict(
+        state='pending',context='claude/verified-merge',
+        description='Guard unavailable; fresh verification required'))
+    need(isinstance(response,dict) and review.integer(response.get('id')),'guard_block_result_unknown')
+    fresh=api.pages(f'repos/{repo}/commits/{head}/statuses')
+    need(isinstance(fresh,list) and all(isinstance(item,dict) for item in fresh),'guard_block_result_unknown')
+    latest=[item for item in fresh if isinstance(item.get('context'),str)
+            and item['context'].casefold()=='claude/verified-merge']
+    need(bool(latest) and all(review.integer(item.get('id')) for item in latest)
+         and len({item['id'] for item in latest})==len(latest)
+         and latest[0].get('id')==response['id'] and latest[0].get('state')=='pending'
+         and ours(latest[0]),'guard_block_result_unknown')
+    after=provider_pull(api,repo,number)
+    need(after.get('state')=='OPEN' and after.get('headRefOid')==head,'guard_block_target_changed')
+
+
+def drain_marker(config):
+    if 'issue_guard_cutover' not in config:
+        return None
+    marker=config['issue_guard_cutover']
+    need('issue_guard' not in config and review.exact(marker,'version phase nonce')
+         and type(marker['version']) is int and marker['version']==1
+         and marker['phase']=='drain' and isinstance(marker['nonce'],str)
+         and re.fullmatch(r'[0-9a-f]{32}',marker['nonce']), 'cutover_marker_invalid')
+    return marker
+
+
+def drain_queue(api,repo,load_document,document):
+    """Withdraw prior native requests during cutover; this is not rollout proof."""
+    marker=drain_marker(document['config'])
+    need(marker is not None,'cutover_marker_missing')
+    path=f'repos/{repo}/pulls?state=open&sort=created&direction=asc'
+    def inventory():
+        pulls=api.pages(path)
+        need(isinstance(pulls,list) and all(isinstance(p,dict) and review.integer(p.get('number'))
+             and isinstance(p.get('head'),dict) and review.sha(p['head'].get('sha'))
+             and isinstance(p.get('base'),dict) and review.sha(p['base'].get('sha'))
+             for p in pulls) and len({p['number'] for p in pulls})==len(pulls),
+             'cutover_queue_unknown')
+        return {p['number']:(p['head']['sha'],p['base']['sha']) for p in pulls}
+    original=inventory()
+    results=[]
+    for number,(head,base) in sorted(original.items()):
+        row=dict(pr=number,head=head,state='held')
+        try:
+            need(load_document()==document,'cutover_policy_changed')
+            before=provider_pull(api,repo,number)
+            need(before.get('state')=='OPEN' and before.get('headRefOid')==head
+                 and before.get('baseRefOid')==base,'cutover_target_changed')
+            withdraw_approval(api,repo,number,head)
+            after=provider_pull(api,repo,number)
+            need(after.get('state')=='OPEN' and after.get('headRefOid')==head
+                 and after.get('baseRefOid')==base and after.get('autoMergeRequest') is None,
+                 'cutover_request_present_or_changed')
+            statuses=api.pages(f'repos/{repo}/commits/{head}/statuses')
+            need(isinstance(statuses,list) and all(isinstance(s,dict) for s in statuses),
+                 'cutover_status_unknown')
+            matching=[s for s in statuses if isinstance(s.get('context'),str)
+                      and s['context'].casefold()=='claude/verified-merge']
+            if not matching:
+                # A never-reviewed PR has no prior status to withdraw. Create
+                # a blocking status and verify it, without retrying an unknown
+                # response. This does not prove the repository is quiescent.
+                need(load_document()==document,'cutover_policy_changed')
+                current=provider_pull(api,repo,number)
+                need(current.get('state')=='OPEN' and current.get('headRefOid')==head
+                     and current.get('baseRefOid')==base and current.get('autoMergeRequest') is None,
+                     'cutover_target_changed')
+                api.api(f'repos/{repo}/statuses/{head}',method='POST',data=dict(
+                    state='pending',context='claude/verified-merge',
+                    description='Guard cutover in progress; fresh verification required'))
+                statuses=api.pages(f'repos/{repo}/commits/{head}/statuses')
+                need(isinstance(statuses,list) and all(isinstance(s,dict) for s in statuses),
+                     'cutover_status_unknown')
+                matching=[s for s in statuses if isinstance(s.get('context'),str)
+                          and s['context'].casefold()=='claude/verified-merge']
+            need(bool(matching) and matching[0].get('state') in ('pending','failure','error')
+                 and review.integer(matching[0].get('id'))
+                 and isinstance(matching[0].get('creator'),dict)
+                 and matching[0]['creator'].get('login')=='github-actions[bot]'
+                 and matching[0]['creator'].get('type')=='Bot',
+                 'cutover_status_unknown')
+            final=provider_pull(api,repo,number)
+            need(final.get('state')=='OPEN' and final.get('headRefOid')==head
+                 and final.get('baseRefOid')==base and final.get('autoMergeRequest') is None,
+                 'cutover_request_present_or_changed')
+            row['state']='withdrawn'
+        except Exception:
+            row['reason']='cutover_withdrawal_unverified'
+        results.append(row)
+    need(load_document()==document and inventory()==original,'cutover_snapshot_changed')
+    return results
 
 
 def binding(pull, context):
@@ -304,8 +439,17 @@ def base_rules(api, repo, context, p):
 
 
 def qualification(api, repo, number, context, document):
+    return _qualification(api,repo,number,context,document,review.pull_identity)
+
+
+def qualification_merged(api, repo, number, context, document):
+    """Recheck full qualification after merge without permitting a new merge."""
+    return _qualification(api,repo,number,context,document,review.merged_pull_identity)
+
+
+def _qualification(api, repo, number, context, document, identity):
     pull = api.api(f"repos/{repo}/pulls/{number}")
-    review.pull_identity(pull, repo, number, context["head"])
+    identity(pull, repo, number, context["head"])
     need(pull["base"]["sha"] == context["base"]
          and pull["base"]["ref"] == context["base_ref"], "base_changed")
     linked = review.linked_issue(pull)
@@ -324,8 +468,50 @@ def qualification(api, repo, number, context, document):
     return linked
 
 
+def prepare_close_record(api, repo, number, head, document, evaluator, review_run, receipt):
+    """Prepare an exact checkpoint only in a trusted default-branch wake."""
+    event = os.environ.get('GITHUB_EVENT_NAME')
+    run, attempt = os.environ.get('GITHUB_RUN_ID', ''), os.environ.get('GITHUB_RUN_ATTEMPT', '')
+    need(os.environ.get('GITHUB_ACTIONS') == 'true'
+         and event in ('issues', 'workflow_run', 'repository_dispatch')
+         and os.environ.get('GITHUB_REPOSITORY') == repo
+         and os.environ.get('GITHUB_WORKFLOW_SHA') == document['source_commit']
+         and review.sha(document['source_commit']) and review.sha(evaluator) and review.integer(review_run)
+         and re.fullmatch(r'[1-9][0-9]*', run) and re.fullmatch(r'[1-9][0-9]*', attempt),
+         'close_source_context')
+    need(receipt.get('payload', {}).get('producer', {}).get('run_id') == review_run,
+         'close_review_run_changed')
+    pull = api.api(f'repos/{repo}/pulls/{number}')
+    issue_number = review.linked_issue(pull)
+    issue = api.api(f'repos/{repo}/issues/{issue_number}')
+    observation = review.sibling('post_merge_observation')
+    context=receipt['payload']['context']
+    baseline=observation.stable_ownership(api,repo,number,head,context['base'],context['base_ref'],pull,issue,
+                                          context['issue_sha256'],context['pr_description_sha256'])
+    return observation.capture_verified(repo, number, head, pull, issue, receipt,
+        int(run), int(attempt), document['source_commit'], evaluator,ownership_events=baseline)
+
+
+def dispatch_default_wake(api, repo, results):
+    """Wake one default-branch reconciliation for any deferred candidates."""
+    if not any(row.get('state') == 'default_wake_required' for row in results):
+        return False
+    api.api(f'repos/{repo}/dispatches', method='POST',
+            data=dict(event_type='aw-verified-merge-reconcile'))
+    return True
+
+
+def dispatch_recovery_wake(api,repo,document,evaluator,recovery,results):
+    """Wake recovery after a guarded request; its inputs never authorize close."""
+    if not any(row.get('state') in ('queued','merged','already_merged','held_after_pending') for row in results):
+        return False
+    recovery.workflow_contract(api,repo,document,evaluator)
+    api.api(f'repos/{repo}/dispatches',method='POST',data=dict(event_type='aw-verified-merge-recover'))
+    return True
+
+
 def enqueue(api, repo, number, head, load_document, evaluator, review_run,
-            verify=review.verify_review):
+            verify=review.verify_review, prepare_record=None, guarded_claim=None, before_mutation=None):
     """Native request + required head status form the cross-run write protocol.
 
     The caller must be the pinned merge producer in the repository-wide
@@ -333,6 +519,7 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
     Unknown mutation results are observed, never blindly retried here.
     """
     need(not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"), "model_credential_in_merge")
+    need(guarded_claim is None or prepare_record is not None,'guard_record_required')
     document = load_document()
     p = policy(document)
     before = provider_pull(api, repo, number)
@@ -349,30 +536,52 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
     binding(before, context)
     headline, body = f"Merge PR #{number}", f"Closes #{linked}"
     request = before.get("autoMergeRequest")
+    need(guarded_claim is None or request is None, 'guard_request_owner_unknown')
     need(request is None or request.get("mergeMethod") == p["merge_method"],
          "existing_merge_method_conflict")
     if request is not None:
         queued_request(before, p, headline, body)
+    target=f"https://github.com/{repo}/actions/runs/{review_run}"
+    prepared_module = None
+    nonce = None
+    if guarded_claim is not None:
+        prepared_module=review.sibling('prepared_status')
+        intent=guarded_claim['intent']['payload'];nonce=secrets.token_hex(16)
+        target=prepared_module.target_identity(repo,review_run,intent['run'],intent['attempt'],nonce)
     # Block this exact head before creating a native request. A different head
     # has no passing status from this operation and cannot inherit its approval.
-    api.api(f"repos/{repo}/statuses/{head}", method="POST", data=dict(
+    if before_mutation is not None:
+        before_mutation()
+    pending_response=api.api(f"repos/{repo}/statuses/{head}", method="POST", data=dict(
         state="pending", context=p["status_context"],
         description="Rechecking authenticated review and qualified CI",
-        target_url=f"https://github.com/{repo}/actions/runs/{review_run}"))
+        target_url=target))
     try:
         current = provider_pull(api, repo, number)
         binding(current, context)
         need(load_document() == document, "policy_changed")
         if current.get("autoMergeRequest") is None:
+            history=review.sibling('request_history') if guarded_claim is not None else None
+            prior_history=history.stable(api,repo,number) if history is not None else None
+            mutation_id=guarded_claim['intent']['sha256'] if guarded_claim is not None else receipt['sha256']
             result = graphql(api, QUEUE, dict(input=dict(
                 pullRequestId=before["id"], expectedHeadOid=head,
-                mergeMethod=p["merge_method"], clientMutationId=receipt["sha256"],
+                mergeMethod=p["merge_method"], clientMutationId=mutation_id,
                 commitHeadline=headline, commitBody=body)))
-            queued = result.get("enablePullRequestAutoMerge", {}).get("pullRequest")
+            mutation = result.get("enablePullRequestAutoMerge", {})
+            queued = mutation.get("pullRequest")
             need(isinstance(queued, dict) and queued.get("headRefOid") == head,
                  "native_request_response")
             queued_request(queued, p, headline, body)
+            if history is not None:
+                observed=history.stable(api,repo,number)
+                record=history.bind(prior_history,observed,queued,guarded_claim['intent'],
+                                    guarded_claim['policy'],context['base'])
+                ack=history.acknowledgement(mutation,record,guarded_claim['intent'],guarded_claim['policy'])
+                print(history.MARKER+review.r.canonical(record),flush=True)
+                print(history.ACK_MARKER+review.r.canonical(ack),flush=True)
         else:
+            need(guarded_claim is None,'guard_request_owner_unknown')
             queued_request(current, p, headline, body)
         # Repeat source/CI/issue/producer verification after queueing. Passing
         # status is the final write. An abandoned native request stays blocked.
@@ -383,10 +592,24 @@ def enqueue(api, repo, number, head, load_document, evaluator, review_run,
         final = provider_pull(api, repo, number)
         binding(final, context)
         queued_request(final, p, headline, body)
-        api.api(f"repos/{repo}/statuses/{head}", method="POST", data=dict(
+        checkpoint = (prepare_record(api, repo, number, head, document, evaluator, review_run, fresh)
+                      if prepare_record is not None else None)
+        if guarded_claim is not None:
+            prepared=prepared_module.build_guarded(checkpoint,guarded_claim['policy'],guarded_claim['intent'],
+                                                    pending_response,nonce)
+            print(prepared_module.MARKER+review.r.canonical(prepared),flush=True)
+        response = api.api(f"repos/{repo}/statuses/{head}", method="POST", data=dict(
             state="success", context=p["status_context"],
             description="Exact-head Claude PASS and qualified CI verified",
-            target_url=f"https://github.com/{repo}/actions/runs/{review_run}"))
+            target_url=target))
+        if checkpoint is not None:
+            if guarded_claim is None:
+                observation = review.sibling('post_merge_observation')
+                print(observation.MARKER + review.r.canonical(checkpoint), flush=True)
+            else:
+                per_pr = review.sibling('per_pr_checkpoint')
+                bound = per_pr.build(checkpoint,guarded_claim['policy'],guarded_claim['intent'],response,target_url=target)
+                print(per_pr.MARKER + review.r.canonical(bound),flush=True)
     except Exception:
         # A response can be lost after a write. Observe provider state on the
         # next wake; never retry a queue or success write in this attempt.
@@ -486,33 +709,72 @@ def return_todo(api, repo, number, head, load_document, evaluator, run_id, verif
                 decision=receipt["payload"]["result"]["decision"])
 
 
-def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=None, ci_process=None):
+def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=None, ci_process=None,
+              defer_positive=False, prepare_record=None, guarded=None, direct_mode=False):
     """Every wake covers the complete queue; one refused PR cannot drop others."""
     document = load_document()
     policy(document, require_qualification=False)
     producer = review.policy(document)["producer"]
     pulls = api.pages(f"repos/{repo}/pulls?state=open&sort=created&direction=asc")
+    admitted = {}
     withdrawal_errors = set()
+    if guarded is not None:
+        need(isinstance(pulls,list) and all(isinstance(pull,dict) and review.integer(pull.get('number'))
+             and isinstance(pull.get('head'),dict) and review.sha(pull['head'].get('sha')) for pull in pulls)
+             and len({pull['number'] for pull in pulls})==len(pulls),'guard_queue_unknown')
+        for pull in pulls:
+            number,head=pull.get('number'),pull.get('head',{}).get('sha')
+            try:
+                admitted[number]=guarded.begin(api,repo,document,evaluator,number,head,
+                    lambda line:print(line,flush=True))
+            except Exception:
+                # An unknown claim may have succeeded; never retry it here.
+                try:
+                    block_unadmitted(api,repo,number,head)
+                except Exception:
+                    withdrawal_errors.add(number)
+                continue
     for pull in pulls:
+        if guarded is not None and pull.get('number') not in admitted:
+            continue
         try:
-            withdraw_approval(api, repo, pull["number"], pull.get("head", {}).get("sha"))
+            if not direct_mode:
+                withdraw_approval(api, repo, pull["number"], pull.get("head", {}).get("sha"))
+            else:
+                withdraw_approval(api, repo, pull["number"], pull.get("head", {}).get("sha"),
+                                  cancel_request=False)
         except Exception:
             withdrawal_errors.add(pull["number"])
     ci_errors = set()
+    ci_prewrite_refusals = set()
     if ci_process is not None:
         ci_rows = reconcile_ci(api, repo, document,
-                               [pull for pull in pulls if pull["number"] not in withdrawal_errors], ci_process)
+                               [pull for pull in pulls if pull["number"] not in withdrawal_errors
+                                and (guarded is None or pull["number"] in admitted)], ci_process,
+                               track_write=guarded is not None)
         ci_errors = {row["pr"] for row in ci_rows if row["state"] == "ci_held"}
+        ci_prewrite_refusals = {row["pr"] for row in ci_rows if row["state"] == "ci_refused_prewrite"}
         print("AW_UNIFIED_CI_RECONCILIATION_V1 " + review.r.canonical(ci_rows))
     runs = api.pages(f'repos/{repo}/actions/workflows/{producer["id"]}/runs', "workflow_runs")
     attempts = index(api, repo, document, runs, {pull["number"]:pull.get("head",{}).get("sha") for pull in pulls})
     results = []
+    prewrite_holds = set()
     for pull in sorted(pulls, key=lambda p: p["number"]):
         number, head = pull["number"], pull.get("head", {}).get("sha")
         row = dict(pr=number, head=head, state="held")
+        write_started = [False]
         try:
+            if guarded is not None and number not in admitted:
+                row.update(reason='guard_block_result_unknown' if number in withdrawal_errors else 'guard_unavailable')
+                results.append(row)
+                continue
             if number in withdrawal_errors or number in ci_errors:
                 row.update(state="held_after_pending", reason="withdrawal_or_ci_result_unknown")
+                results.append(row)
+                continue
+            if number in ci_prewrite_refusals:
+                row.update(reason='ci_handoff_refused_prewrite')
+                prewrite_holds.add(number)
                 results.append(row)
                 continue
             attempt = attempts.get(number)
@@ -523,17 +785,63 @@ def reconcile(api, repo, load_document, evaluator, index, verify, result_verify=
             if result_verify is not None:
                 receipt = result_verify(api, repo, number, head, load_document, evaluator, attempt["id"])
                 if receipt["payload"]["result"]["decision"] in ("fail", "block"):
+                    # return_todo writes status and issue state. A lost response
+                    # must never be mistaken for a pre-write refusal.
+                    write_started[0] = True
                     row.update(return_todo(api, repo, number, head, load_document, evaluator,
                         attempt["id"], result_verify))
                     results.append(row)
                     continue
-            row.update(enqueue(api, repo, number, head, load_document, evaluator,
-                attempt["id"], verify=verify))
+            if defer_positive:
+                need(result_verify is not None and receipt['payload']['result']['decision'] == 'pass',
+                     'review_not_pass')
+                row.update(state="default_wake_required")
+            else:
+                arguments=dict(verify=verify,prepare_record=prepare_record)
+                if guarded is not None:
+                    arguments['guarded_claim']=admitted[number]
+                    arguments['before_mutation']=lambda:write_started.__setitem__(0,True)
+                if direct_mode:
+                    need(guarded is not None and prepare_record is not None, 'direct_guard_required')
+                    direct = review.sibling('direct_merge')
+                    adapter = SimpleNamespace(review=review, policy=policy, qualification=qualification,
+                                              base_rules=base_rules, provider_pull=provider_pull, binding=binding)
+                    row.update(direct.merge_and_close(api, repo, number, head, load_document, evaluator,
+                        attempt['id'], admitted[number], adapter, verify, prepare_record,
+                        before_mutation=arguments['before_mutation']))
+                else:
+                    row.update(enqueue(api, repo, number, head, load_document, evaluator,
+                        attempt["id"], **arguments))
         except Exception as error:
             code = str(error)
             row["reason"] = code if isinstance(error, review.Refused) and re.fullmatch(
                 r"[a-z0-9_]+", code) else "verification_or_provider_failed"
+            if guarded is not None and isinstance(error,review.Refused) and not write_started[0]:
+                prewrite_holds.add(number)
         results.append(row)
+    if guarded is not None:
+        for row in results:
+            claim=admitted.get(row['pr'])
+            if claim is None or row['state'] in ('queued','merged','already_merged','closed','held_after_pending',
+                                                  'default_wake_required'):
+                continue
+            if row['state']=='held' and row['pr'] not in prewrite_holds:
+                continue
+            try:
+                if row['state']=='held' and row['pr'] in prewrite_holds:
+                    # Even a never-reviewed PR may have a same-named check
+                    # run. Establish the Actions status before releasing an
+                    # otherwise unused guard; settle rechecks the status,
+                    # exact owner, linked issue, branch rule and request.
+                    guarded.block_held(api,repo,claim['policy'],claim['intent'])
+                result=guarded.settle(api,repo,claim['policy'],claim['intent'])
+                if result.get('state') not in ('released','retained'):
+                    row.update(state='held_after_pending',reason='guard_result_unknown')
+                else:
+                    row['guard']=result['state']
+            except Exception:
+                # The provider could have accepted the release. Do not retry.
+                row.update(state='held_after_pending',reason='guard_result_unknown')
     return results
 
 
@@ -563,9 +871,33 @@ def main():
         source = identities.get(wake.get("path"))
         need(source is not None and wake.get("workflow_id") == source["id"]
              and review.integer(wake.get("id")), "merge_wake_identity")
+    if drain_marker(document['config']) is not None:
+        results=drain_queue(api,repo,load,document)
+        print('AW_NATIVE_MERGE_CUTOVER_V1 '+review.r.canonical(dict(
+            version=1,repo=repo,producer_run=int(current),results=results)))
+        return 2 if any(row['state']=='held' for row in results) else 0
+    guarded = None
+    if 'issue_guard' in document['config']:
+        # The draft verifier always holds until actor rollout and recovery are
+        # proved. No guarded lifecycle mutation may run before that proof.
+        recovery = review.sibling('recovery_entry')
+        recovery.verify_rollout(api,repo,document)
+        if event_name == 'pull_request_target':
+            api.api(f'repos/{repo}/dispatches',method='POST',data=dict(event_type='aw-verified-merge-reconcile'))
+            print('AW_NATIVE_MERGE_RECONCILIATION_V1 '+review.r.canonical(dict(
+                version=1,repo=repo,producer_run=int(current),results=[dict(state='default_wake_required')])))
+            return 0
+        guarded = review.sibling('guarded_admission')
     index = review.sibling("native_review_index")
     tracker = index.Session(api, repo, load, evaluator)
-    results = reconcile(api, repo, load, evaluator, tracker.attempts, tracker.verify, tracker.result, api.process_head)
+    results = reconcile(api, repo, load, evaluator, tracker.attempts, tracker.verify, tracker.result, api.process_head,
+                        defer_positive=event_name == 'pull_request_target', prepare_record=prepare_close_record,
+                        guarded=guarded, direct_mode=guarded is not None)
+    # PR-target runs may report the candidate head as their run SHA. Wake a
+    # default-branch writer, which must revalidate the entire queue.
+    dispatch_default_wake(api, repo, results)
+    if guarded is not None:
+        dispatch_recovery_wake(api,repo,document,evaluator,recovery,results)
     print("AW_NATIVE_MERGE_RECONCILIATION_V1 " + review.r.canonical(dict(
         version=1, repo=repo, producer_run=int(current), results=results)))
     return 2 if any(row["state"] == "held_after_pending" for row in results) else 0

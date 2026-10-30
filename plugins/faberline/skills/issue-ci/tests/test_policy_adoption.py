@@ -1,7 +1,10 @@
 """Exact reviewed policy adoption is fail-closed; all providers are synthetic."""
 import copy
+import contextlib
+import io
 import importlib.util
 import json
+import os
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -48,6 +51,14 @@ class GrantTests(unittest.TestCase):
             with self.subTest(doc=doc),self.assertRaises(RuntimeError):a.choose_grant(doc,'o/r',EVALUATOR)
         with self.assertRaises(RuntimeError):a.choose_grant(document,'x/r',EVALUATOR)
 
+    def test_merged_data_grant_is_only_selected_by_explicit_verification_path(self):
+        g=grant();g.pop('grant_review');document={'version':1,'grants':[g]}
+        with self.assertRaisesRegex(RuntimeError,'missing_or_ambiguous'):
+            a.choose_grant(document,'o/r',EVALUATOR)
+        self.assertEqual(a.choose_grant(document,'o/r',EVALUATOR,allow_merged=True),g)
+        with self.assertRaisesRegex(RuntimeError,'missing_or_ambiguous'):
+            a.choose_grant({'version':1,'grants':[g,grant()]},'o/r',EVALUATOR,allow_merged=True)
+
     def test_malformed_broad_or_incomplete_grants_are_rejected(self):
         edits=[lambda g:g.update(head='branch'),lambda g:g.update(pr=True),lambda g:g.update(base_ref='dev'),
                lambda g:g.update(protected_paths=[]),lambda g:g.update(protected_paths=['../gate']),
@@ -80,6 +91,53 @@ class GrantTests(unittest.TestCase):
             with self.subTest(bad=bad),self.assertRaises(RuntimeError):a.review_result(g,bad,inventory)
 
 
+class AdoptionCheckpointTests(unittest.TestCase):
+    def setUp(self):
+        self.g=grant();self.pull=v2.pull();self.pull.update(draft=False)
+        self.pull['base'].update(sha=BASE,ref='main',repo={'full_name':'o/r'})
+        self.pull['head'].update(sha=HEAD,repo={'full_name':'o/r'})
+        self.pull.update(number=8,state='open',body='Closes #7\n')
+        self.issue=v2.issue();self.issue.update(assignees=[],updated_at='2026-10-29T00:00:00Z')
+        self.g['issue_sha256']=a.r.digest({k:self.issue[k] for k in ('number','title','body')})
+        self.g['pr_sha256']=a.r.digest([self.pull['title'],self.pull['body']])
+        self.receipt=dict(decision='pass',id='synthetic reviewed result')
+        self.g['review']['receipt_sha256']=a.r.digest(self.receipt)
+        self.env=dict(GITHUB_ACTIONS='true',GITHUB_EVENT_NAME='push',GITHUB_REPOSITORY='o/r',
+            GITHUB_RUN_ID='333',GITHUB_RUN_ATTEMPT='2',GITHUB_WORKFLOW_SHA=self.g['publisher']['source_commit'])
+        parent=self
+        class API:
+            def api(self,path):
+                if path=='repos/o/r/actions/runs/333':return dict(id=333,run_attempt=2)
+                if path=='repos/o/r/pulls/8':return copy.deepcopy(parent.pull)
+                if path=='repos/o/r/issues/7':return copy.deepcopy(parent.issue)
+                raise AssertionError(path)
+            def pages(self,path):
+                if path=='repos/o/r/issues/7/timeline':return []
+                raise AssertionError(path)
+        self.api=API()
+
+    def test_checkpoint_binds_grant_review_and_source_attempt(self):
+        with patch.dict(os.environ,self.env,clear=True):
+            result=a.prepare_adoption_close_record(self.api,dict(source_commit='9'*40),self.g,EVALUATOR,333,self.receipt)
+        self.assertEqual(result['payload']['adoption_sha256'],a.r.digest(self.g))
+        self.assertEqual(result['payload']['review_sha256'],self.g['review']['receipt_sha256'])
+        self.assertEqual(result['payload']['adoption_source'],'9'*40)
+        self.assertEqual(result['payload']['checkpoint']['issue'],7)
+        self.assertEqual(result['payload']['source_attempt'],2)
+        observation=a.review.sibling('post_merge_observation')
+        self.assertEqual(result['payload']['checkpoint']['ownership_events'],observation.ownership_seal([]))
+
+    def test_changed_context_contract_or_review_refuses(self):
+        for mutate in (lambda:self.env.update(GITHUB_RUN_ATTEMPT='1'),
+                       lambda:self.env.update(GITHUB_WORKFLOW_SHA='f'*40),
+                       lambda:self.issue.update(body='changed'),
+                       lambda:self.receipt.update(decision='fail')):
+            with self.subTest(mutate=mutate):
+                self.setUp();mutate()
+                with patch.dict(os.environ,self.env,clear=True),self.assertRaises(RuntimeError):
+                    a.prepare_adoption_close_record(self.api,dict(source_commit='9'*40),self.g,EVALUATOR,333,self.receipt)
+
+
 class EvidenceTests(unittest.TestCase):
     class API:
         evaluate_evidence=staticmethod(a.ci.evaluate_evidence)
@@ -100,6 +158,19 @@ class EvidenceTests(unittest.TestCase):
                 if change=='skipped':bad.jobs[0]['conclusion']='skipped'
                 if change=='failed':bad.jobs[0]['conclusion']='failure'
                 with self.subTest(change=change),self.assertRaises(RuntimeError):a.candidate_evidence(bad,g,cfg)
+
+    def test_merged_evidence_requires_the_exact_grant_bound_run_and_jobs(self):
+        g,cfg,run,jobs=ci_data();run['pull_requests']=[];api=self.API(run,jobs)
+        with patch.object(a.review,'blob',return_value='trusted'):
+            with self.assertRaisesRegex(RuntimeError,'candidate_ci_identity'):a.candidate_evidence(api,g,cfg)
+            self.assertEqual(len(a.candidate_merged_evidence(api,g,cfg)),4)
+            for mutate in (lambda x:x.run.update(run_attempt=2),
+                           lambda x:x.jobs[0].update(id=999),
+                           lambda x:x.jobs[0].update(conclusion='failure'),
+                           lambda x:x.run.update(pull_requests=[dict(number=999)])):
+                bad=self.API(copy.deepcopy(run),copy.deepcopy(jobs));mutate(bad)
+                with self.subTest(mutate=mutate),self.assertRaises(RuntimeError):
+                    a.candidate_merged_evidence(bad,g,cfg)
 
     def test_untrusted_or_nonterminal_publisher_cannot_authorize(self):
         g=grant();p=g['publisher'];workflow='''name: Reviewed policy adoption
@@ -131,6 +202,37 @@ jobs:
         with patch.object(a.review,'blob',return_value=workflow):
             a.publisher_provenance(API(),g,333,'push')
             with self.assertRaises(RuntimeError):a.publisher_provenance(API(),g,333,'pull_request')
+            with self.assertRaises(RuntimeError):a.publisher_provenance(API(),g,333,'push',completed=True)
+            run.update(status='completed',conclusion='success')
+            class CompletedAPI(API):
+                def pages(self,path,key):return [{'id':334,'name':'adopt','status':'completed','conclusion':'success'}]
+            identity=a.publisher_provenance(CompletedAPI(),g,333,'push',completed=True)
+            self.assertEqual(identity['job_id'],334)
+            class HistoricalAPI(CompletedAPI):
+                def api(self,path):
+                    assert path=='repos/o/r/actions/runs/333/attempts/1'
+                    return run
+            identity=a.publisher_provenance(HistoricalAPI(),g,333,'push',completed=True,attempt=1)
+            self.assertEqual(identity['run_attempt'],1)
+            with self.assertRaises(RuntimeError):
+                a.publisher_provenance(HistoricalAPI(),g,333,'push',completed=False,attempt=1)
+            run['run_attempt']=2
+            with self.assertRaises(RuntimeError):
+                a.publisher_provenance(HistoricalAPI(),g,333,'push',completed=True,attempt=1)
+            run['run_attempt']=1
+            class FailedJobAPI(API):
+                def pages(self,path,key):return [{'id':334,'name':'adopt','status':'completed','conclusion':'failure'}]
+            with self.assertRaises(RuntimeError):a.publisher_provenance(FailedJobAPI(),g,333,'push',completed=True)
+            run['conclusion']='failure'
+            terminal=a.publisher_provenance(FailedJobAPI(),g,333,'push',attempt=1,terminal=True)
+            self.assertEqual(terminal['run_attempt'],1)
+            with self.assertRaises(RuntimeError):
+                a.publisher_provenance(FailedJobAPI(),g,333,'push',completed=True,terminal=True)
+            run['status']='in_progress'
+            with self.assertRaises(RuntimeError):
+                a.publisher_provenance(FailedJobAPI(),g,333,'push',attempt=1,terminal=True)
+            run.update(status='completed',conclusion='success')
+            with self.assertRaises(RuntimeError):a.publisher_provenance(CompletedAPI(),g,333,'push')
         with patch.object(a.review,'blob',return_value=workflow.replace('issues: read','issues: write')):
             with self.assertRaises(RuntimeError):a.publisher_provenance(API(),g,333,'push')
 
@@ -159,6 +261,16 @@ class MutationSafetyTests(unittest.TestCase):
                 a.enqueue(api,'o/r',EVALUATOR,333,'push',grant_loader=lambda:document)
         self.assertEqual(api.writes,[])
 
+    def test_merged_data_grant_never_uses_unguarded_queue(self):
+        g,document,state,env,api=self.setup_run();g.pop('grant_review')
+        for direct in (False,True):
+            with self.subTest(direct=direct),patch.dict(os.environ,env,clear=True), \
+                 patch.object(a,'verify_grant_attestation'),patch.object(a,'publisher_provenance'), \
+                 patch.object(a,'evaluate',return_value=state), \
+                 self.assertRaisesRegex(RuntimeError,'direct_guard_required'):
+                a.enqueue(api,'o/r',EVALUATOR,333,'push',grant_loader=lambda:document,direct_mode=direct)
+        self.assertEqual(api.writes,[])
+
     def test_evidence_drift_after_pending_never_writes_success(self):
         import os
         g,document,state,env,api=self.setup_run();changed=copy.deepcopy(state);changed['ci_jobs']=[{'id':2}]
@@ -184,7 +296,51 @@ class MutationSafetyTests(unittest.TestCase):
         self.assertEqual(graphql.call_args.args[2]['input']['expectedHeadOid'],HEAD)
         self.assertEqual(graphql.call_args.args[2]['input']['commitBody'],'Closes #7')
 
+    def test_record_is_emitted_only_after_successful_status(self):
+        g,document,state,env,api=self.setup_run();queued=copy.deepcopy(state)
+        queued['provider']['autoMergeRequest']=dict(mergeMethod='SQUASH',enabledBy={'login':'github-actions','__typename':'Bot'},
+                                                     commitHeadline='Merge PR #8',commitBody='Closes #7')
+        response={'enablePullRequestAutoMerge':{'pullRequest':queued['provider']}}
+        out=io.StringIO()
+        def prepare(*args):
+            self.assertEqual([entry[2]['state'] for entry in api.writes],['pending'])
+            return dict(test='prepared')
+        with patch.dict(os.environ,env,clear=True),patch.object(a,'verify_grant_attestation'),\
+             patch.object(a,'publisher_provenance'),patch.object(a,'evaluate',side_effect=[state,state,queued]),\
+             patch.object(a.native,'graphql',return_value=response),\
+             patch.object(a.native,'provider_pull',return_value=queued['provider']),contextlib.redirect_stdout(out):
+            result=a.enqueue(api,'o/r',EVALUATOR,333,'push',grant_loader=lambda:document,prepare_record=prepare)
+        self.assertEqual(result['state'],'queued')
+        self.assertEqual([entry[2]['state'] for entry in api.writes],['pending','success'])
+        self.assertIn('AW_POST_MERGE_CHECKPOINT_V1',out.getvalue())
+
 class AttestationTests(unittest.TestCase):
+    def test_merged_data_dispatch_authenticates_product_review_and_source(self):
+        g=grant();g.pop('grant_review')
+        doc=dict(config=dict(version=1,grants=[g]),source_commit='9'*40)
+        evidence=dict(receipt={'decision':'pass'})
+        result=dict(document=doc,grant=g,evidence=evidence)
+        class API:
+            def __init__(self,state,merged):self.target=dict(state=state,merged=merged)
+            def api(self,path):return self.target
+        class Verifier:
+            calls=[]
+            def authorize(self,*args,**kwargs):
+                self.calls.append(kwargs);return result
+        verifier=Verifier()
+        with patch.object(a.review,'sibling',return_value=verifier):
+            self.assertEqual(a.verify_grant_attestation(API('open',False),doc,g,EVALUATOR),evidence)
+            self.assertFalse(verifier.calls[-1]['merged'])
+            self.assertEqual(a.verify_grant_attestation(API('closed',True),doc,g,EVALUATOR),evidence)
+            self.assertTrue(verifier.calls[-1]['merged'])
+            with self.assertRaisesRegex(RuntimeError,'target_state'):
+                a.verify_grant_attestation(API('closed',False),doc,g,EVALUATOR)
+            with self.assertRaisesRegex(RuntimeError,'requires_default'):
+                a.verify_grant_attestation(API('open',False),doc,g,EVALUATOR,require_merged=False)
+            wrong=copy.deepcopy(doc);wrong['source_commit']='0'*40
+            with self.assertRaisesRegex(RuntimeError,'source_changed'):
+                a.verify_grant_attestation(API('open',False),wrong,g,EVALUATOR)
+
     def setup_attestation(self):
         g=grant();att=g['grant_review'];payload={k:v for k,v in g.items() if k!='grant_review'}
         doc=dict(config=dict(version=1,grants=[g]),source_commit='9'*40)
@@ -227,13 +383,13 @@ jobs:
                 if '/compare/' in path:return {'status':'diverged' if self.bad=='history' else 'ahead'}
                 if path=='repos/o/r/actions/runs/1000':return dict(id=1000,workflow_id=9,path=att['workflow_path'],
                     head_sha='0'*40,head_branch=att['branch'],event='push',head_repository={'full_name':'o/r'},
-                    run_attempt=1,status='completed',conclusion='failure' if self.bad=='final_failure' else 'success')
+                    run_number=2,run_attempt=1,status='completed',conclusion='failure' if self.bad=='final_failure' else 'success')
                 if path=='repos/o/r/actions/runs/999':return dict(id=999,workflow_id=9,path=att['workflow_path'],
                     head_sha=att['source_commit'],head_branch=att['branch'],event='push',head_repository={'full_name':'o/r'},
-                    run_attempt=1,status='completed',conclusion='success')
+                    run_number=1,run_attempt=1,status='completed',conclusion='success')
                 raise AssertionError(path)
             def pages(self,path,key=None):
-                if '/actions/workflows/9/runs?' in path:return [] if self.bad=='missing_final' else [dict(id=1000,head_sha='0'*40)]
+                if '/actions/workflows/9/runs?' in path:return [] if self.bad=='missing_final' else [dict(id=1000,head_sha='0'*40,run_number=2,run_attempt=1)]
                 if path.endswith('/runs/1000/attempts/1/jobs'):return [dict(name=att['job'],id=1001,status='completed',conclusion='success')]
                 if path.endswith('/pulls/77/files'):return [dict(filename=a.GRANTS_PATH,status='modified',sha=finalblob)]
                 if path.endswith('/pulls/77/commits'):return [{'sha':att['head']}]
@@ -267,6 +423,49 @@ jobs:
                 return line*2 if change=='duplicate' and job==1001 else line
             with self.subTest(change=change),patch.object(a.review,'blob',side_effect=blob),self.assertRaises(RuntimeError):
                 a.verify_grant_attestation(api,doc,g,EVALUATOR,log)
+
+    def test_final_review_order_uses_workflow_run_number_not_opaque_id(self):
+        g=grant();att=g['grant_review'];head='9'*40;finalblob='7'*40;prior={'decision':'pass'}
+        def run(identifier,number,conclusion='success'):
+            return dict(id=identifier,workflow_id=att['workflow_id'],path=att['workflow_path'],
+                head_sha='0'*40,head_branch=att['branch'],event='push',head_repository={'full_name':'o/r'},
+                run_number=number,run_attempt=1,status='completed',conclusion=conclusion)
+        original=run(att['run_id'],1);older=run(5000,2);latest=run(5,3)
+        class Api:
+            def api(self,path):
+                number=int(path.rsplit('/',1)[1])
+                return copy.deepcopy({att['run_id']:original,5000:older,5:latest}[number])
+            def pages(self,path,key=None):
+                if '/actions/workflows/' in path:return [copy.deepcopy(older),copy.deepcopy(latest)]
+                return [dict(name=att['job'],id=6,status='completed',conclusion='success')]
+        expected=dict(prior,grant_head=head,grant_blob=finalblob)
+        log=lambda repo,job:a.GRANT_MARKER+json.dumps(expected)+'\n'
+        with patch.object(a,'grant_review_workflow',return_value={'pr':att['pr'],'head':head}):
+            self.assertEqual(a.verify_final_grant_review(Api(),g,att,EVALUATOR,{'head':{'sha':head}},
+                                                         finalblob,prior,log),expected)
+            latest['conclusion']='failure'
+            with self.assertRaisesRegex(RuntimeError,'final_grant_review_run'):
+                a.verify_final_grant_review(Api(),g,att,EVALUATOR,{'head':{'sha':head}},finalblob,prior,log)
+        latest['head_sha']='1'*40
+        def target(api,grant,att,evaluator,source,expected):
+            return {'pr':att['pr'],'head':'2'*40 if source=='1'*40 else head}
+        with patch.object(a,'grant_review_workflow',side_effect=target):
+            self.assertEqual(a.verify_final_grant_review(Api(),g,att,EVALUATOR,{'head':{'sha':head}},
+                                                         finalblob,prior,log),expected)
+        with patch.object(a,'grant_review_workflow',side_effect=RuntimeError('malformed')):
+            with self.assertRaisesRegex(RuntimeError,'final_grant_workflow_unknown'):
+                a.verify_final_grant_review(Api(),g,att,EVALUATOR,{'head':{'sha':head}},finalblob,prior,log)
+        latest['head_sha']='0'*40;latest['conclusion']='success'
+        class Changed(Api):
+            def __init__(self):self.reads=0
+            def pages(self,path,key=None):
+                if '/actions/workflows/' in path:
+                    self.reads+=1
+                    return [copy.deepcopy(older),copy.deepcopy(latest)]+([run(2,4)] if self.reads>1 else [])
+                return super().pages(path,key)
+        with patch.object(a,'grant_review_workflow',return_value={'pr':att['pr'],'head':head}):
+            with self.assertRaisesRegex(RuntimeError,'final_grant_review_changed'):
+                a.verify_final_grant_review(Changed(),g,att,EVALUATOR,{'head':{'sha':head}},finalblob,prior,log)
 
     def test_final_open_head_can_verify_earlier_attestation_without_authorizing_merge(self):
         g,doc,api,receipt,blob,workflow=self.setup_attestation();api.bad='open'
@@ -331,6 +530,51 @@ class ExactTargetTests(unittest.TestCase):
                 if change=='unknown':cfg['qualification']['contracts']['7']['unresolved']=['missing gate']
                 with self.subTest(change=change),self.assertRaises(RuntimeError):a.evaluate(api,g,lambda *args:'')
                 api.current=old_api;issue.clear();issue.update(old_issue);files[:]=old_file;g['protected_paths']=old_paths;cfg.clear();cfg.update(old_cfg)
+
+    def test_merged_target_rechecks_policy_ci_review_and_selection(self):
+        g,pull,issue,cfg,files,provider,policy,api=self.setup_target()
+        pull.update(state='closed',merged=True,merged_at='2026-01-02T00:00:00Z',merge_commit_sha='f'*40)
+        pull['head']['repo']={'full_name':'o/r'};pull['base']['repo']={'full_name':'o/r'}
+        with patch.object(a,'candidate_policy',return_value=cfg), \
+             patch.object(a,'candidate_merged_evidence',return_value=['green']) as ci, \
+             patch.object(a,'review_provenance',return_value={'decision':'pass'}) as review, \
+             patch.object(a,'latest_target_review') as latest, \
+             patch.object(a.review.action,'trusted_policy',return_value={'config':cfg}), \
+             patch.object(a.native,'policy',return_value=policy),patch.object(a.native,'base_rules') as rules:
+            value=a.evaluate_merged(api,g,lambda *args:'')
+            self.assertEqual(value['issue'],7);ci.assert_called_once();review.assert_called_once()
+            latest.assert_called_once();rules.assert_called_once()
+            issue['body']='changed'
+            with self.assertRaisesRegex(RuntimeError,'issue_contract_changed'):a.evaluate_merged(api,g,lambda *args:'')
+
+    def test_merged_target_refuses_a_different_current_policy(self):
+        g,pull,issue,cfg,files,provider,policy,api=self.setup_target()
+        pull.update(state='closed',merged=True,merged_at='2026-01-02T00:00:00Z',merge_commit_sha='f'*40)
+        pull['head']['repo']={'full_name':'o/r'};pull['base']['repo']={'full_name':'o/r'}
+        with patch.object(a,'candidate_policy',return_value=cfg), \
+             patch.object(a.review.action,'trusted_policy',return_value={'config':{}}), \
+             patch.object(a,'candidate_merged_evidence') as ci:
+            with self.assertRaisesRegex(RuntimeError,'merge_recovery_policy_changed'):
+                a.evaluate_merged(api,g,lambda *args:'')
+            ci.assert_not_called()
+
+
+class TargetReviewFreshnessTests(unittest.TestCase):
+    def test_later_or_ambiguous_attempt_is_held(self):
+        g=grant();spec=g['review']
+        row=dict(id=spec['run_id'],workflow_id=spec['workflow_id'],path=spec['workflow_path'],
+                 event='push',head_branch=spec['branch'],head_repository={'full_name':g['repo']},
+                 run_number=4,run_attempt=spec['attempt'])
+        class Api:
+            def __init__(self):self.rows=[row]
+            def api(self,path):return copy.deepcopy(row)
+            def pages(self,path,key):return copy.deepcopy(self.rows)
+        api=Api();a.latest_target_review(api,g)
+        for rows in ([row,row],[],[row,dict(row,id=row['id']+1,run_number=5)],
+                     [dict(row,run_attempt=row['run_attempt']+1)]):
+            api.rows=rows
+            with self.subTest(rows=rows),self.assertRaisesRegex(RuntimeError,'review_superseded'):
+                a.latest_target_review(api,g)
 
 class TargetReviewProvenanceTests(unittest.TestCase):
     def fixture(self):
@@ -438,3 +682,30 @@ class CandidatePolicyTests(unittest.TestCase):
         candidate['qualification_blockers']=['source acceptance missing']
         with patch.object(a.review,'blob',side_effect=blob),patch.object(a.native,'writer_contract'):
             with self.assertRaisesRegex(RuntimeError,'candidate_policy_not_full_v2'):a.candidate_policy(None,g)
+
+    def test_guard_policy_cannot_be_added_changed_or_removed_by_legacy_publisher(self):
+        g=grant();candidate=v2.policy();candidate['aw_revision']=EVALUATOR;previous=v2.base.config()
+        def blob(api,repo,path,ref,expected=None):return json.dumps(candidate if ref==HEAD else previous)
+        with patch.object(a.review,'blob',side_effect=blob),patch.object(a.native,'writer_contract'):
+            for old,new in ((False,True),(True,True),(True,False)):
+                previous.pop('issue_guard',None);candidate.pop('issue_guard',None)
+                if old:previous['issue_guard']={'enabled':True}
+                if new:candidate['issue_guard']={'enabled':True}
+                with self.subTest(old=old,new=new),self.assertRaisesRegex(RuntimeError,'guarded_adoption_not_ready'):
+                    a.candidate_policy(None,g)
+
+    def test_only_internal_guard_proof_permits_bootstrap_or_unchanged_policy(self):
+        guard=dict(enabled=True,version=1)
+        marker=dict(version=1,phase='drain',nonce='a'*32)
+        for new,old in ((dict(issue_guard_cutover=marker),{}),({},dict(issue_guard_cutover=marker))):
+            with self.assertRaisesRegex(RuntimeError,'guarded_cutover_not_ready'):
+                a.guarded_adoption_eligible(new,old,a._GUARDED_POLICY_PROOF)
+        for proof in (None,True,'verified',{}):
+            with self.subTest(proof=proof),self.assertRaisesRegex(RuntimeError,'guarded_adoption_not_ready'):
+                a.guarded_adoption_eligible(dict(issue_guard=guard),{},proof)
+        a.guarded_adoption_eligible(dict(issue_guard=guard),{},a._GUARDED_POLICY_PROOF)
+        a.guarded_adoption_eligible(dict(issue_guard=guard),dict(issue_guard=guard),a._GUARDED_POLICY_PROOF)
+        for new,old in (({},dict(issue_guard=guard)),
+                        (dict(issue_guard=dict(enabled=False)),dict(issue_guard=guard))):
+            with self.assertRaisesRegex(RuntimeError,'guarded_adoption_not_ready'):
+                a.guarded_adoption_eligible(new,old,a._GUARDED_POLICY_PROOF)
