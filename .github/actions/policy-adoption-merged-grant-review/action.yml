@@ -1,0 +1,57 @@
+name: Independently review a merged product policy grant
+description: Read-only exact-data review with a tool-free Claude process and authenticated log receipt.
+inputs:
+  grant-pr:
+    required: true
+    description: Merged AW pull request containing only the product grant data.
+  grant-head:
+    required: true
+    description: Exact merged AW pull request head to review.
+  claude-token:
+    required: true
+    description: Personal Claude Code OAuth credential, passed only to the review process.
+runs:
+  using: composite
+  steps:
+    - name: Prepare hash-locked metadata parser without credentials
+      id: runtime
+      shell: bash
+      env:
+        CLAUDE_CODE_OAUTH_TOKEN: ''
+        INPUT_CLAUDE_TOKEN: ''
+        GH_TOKEN: ''
+        GITHUB_TOKEN: ''
+        ANTHROPIC_API_KEY: ''
+      run: |
+        set -euo pipefail
+        runtime="$(mktemp -d "$RUNNER_TEMP/aw-grant-review-python-XXXXXX")"
+        python3 -I -m venv "$runtime"
+        "$runtime/bin/python" -I -m pip --isolated install --disable-pip-version-check --no-input \
+          --no-deps --only-binary=:all: --require-hashes --index-url https://pypi.org/simple \
+          -r "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/readiness-requirements.txt"
+        echo "python=$runtime/bin/python" >> "$GITHUB_OUTPUT"
+    - name: Verify fixed signed Claude without credentials
+      id: provision
+      shell: bash
+      env:
+        CLAUDE_CODE_OAUTH_TOKEN: ''
+        INPUT_CLAUDE_TOKEN: ''
+        GH_TOKEN: ''
+        GITHUB_TOKEN: ''
+        ANTHROPIC_API_KEY: ''
+      run: python3 -I -B "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/policy_adoption_provision.py"
+    - name: Install verified binary on this disposable runner
+      shell: bash
+      env:
+        VERIFIED_BINARY: ${{ steps.provision.outputs.binary }}
+      run: sudo install -m 0755 -- "$VERIFIED_BINARY" /usr/local/bin/claude
+    - name: Review exact grant data without running candidate code
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude-token }}
+        AW_ACTION_REF: ${{ github.action_ref }}
+        INPUT_GRANT_PR: ${{ inputs.grant-pr }}
+        INPUT_GRANT_HEAD: ${{ inputs.grant-head }}
+        GRANT_REVIEW_PYTHON: ${{ steps.runtime.outputs.python }}
+      run: exec "$GRANT_REVIEW_PYTHON" -I -B "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/policy_adoption_merged_grant.py"
