@@ -113,6 +113,14 @@ class GuardedAdoptionEnqueueTests(unittest.TestCase):
         self.assertEqual(events,[('merge','o/r',self.grant['pr'],self.grant['head']),
                                  ('close','o/r',self.grant['issue'])])
         self.assertEqual([row[2]['state'] for row in self.api.writes],['pending','success'])
+
+    def test_merged_data_grant_uses_the_same_guarded_direct_path(self):
+        self.grant.pop('grant_review')
+        result,events,queue,wake=self.direct_run()
+        self.assertEqual(result['state'],'closed')
+        self.assertEqual(events,[('merge','o/r',self.grant['pr'],self.grant['head']),
+                                 ('close','o/r',self.grant['issue'])])
+        queue.assert_not_called()
         queue.assert_not_called();wake.assert_not_called()
 
     def test_unknown_direct_adoption_never_closes_and_wakes_recovery(self):

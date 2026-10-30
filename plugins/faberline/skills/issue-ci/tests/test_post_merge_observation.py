@@ -288,7 +288,8 @@ class ObservationTests(unittest.TestCase):
         calls = []
         class Adoption:
             GRANTS_REPO = 'faberline/aw'
-            def choose_grant(self, config, repo, selected):
+            def choose_grant(self, config, repo, selected, allow_merged=False):
+                assert allow_merged is True
                 self.check(config, repo, selected)
                 return grant
             def check(self, config, repo, selected):

@@ -59,7 +59,7 @@ def record(document,grant,intent):
 def grant_from_default(api,document,repo,evaluator):
     """Bind the exact reviewed grant document to AW default history."""
     need(isinstance(document,dict) and review.sha(document.get('source_commit')),'adoption_guard_source')
-    grant=adoption.choose_grant(document.get('config'),repo,evaluator)
+    grant=adoption.choose_grant(document.get('config'),repo,evaluator,allow_merged=True)
     meta=api.api(f'repos/{adoption.GRANTS_REPO}');branch=meta.get('default_branch')
     need(meta.get('full_name')==adoption.GRANTS_REPO and review.text(branch,255),'adoption_guard_source')
     comparison=api.api(f"repos/{adoption.GRANTS_REPO}/compare/{document['source_commit']}...{quote(branch,safe='')}")

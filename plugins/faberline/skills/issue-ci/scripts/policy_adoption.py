@@ -92,12 +92,14 @@ def attestation_spec(value, repo):
     return value
 
 
-def choose_grant(document, repo, evaluator):
+def choose_grant(document, repo, evaluator, allow_merged=False):
+    need(type(allow_merged) is bool, 'grant_document')
     need(isinstance(document, dict) and set(document) == {'version','grants'}
          and type(document['version']) is int and document['version'] == 1
          and isinstance(document['grants'], list), 'grant_document')
     grants = [grant_spec(value) for value in document['grants']]
-    matches = [g for g in grants if g['repo'] == repo and g['evaluator'] == evaluator and 'grant_review' in g]
+    matches = [g for g in grants if g['repo'] == repo and g['evaluator'] == evaluator
+               and ('grant_review' in g or allow_merged)]
     need(len(matches) == 1, 'grant_missing_or_ambiguous')
     return matches[0]
 
@@ -538,6 +540,17 @@ def verify_grant_attestation(api, document, grant, evaluator, log_reader=r.job_l
     The reviewed proposal can precede attaching this receipt. Only the opaque
     attestation may change afterwards; every authorized grant field must match.
     """
+    if 'grant_review' not in grant:
+        need(require_merged is True, 'merged_grant_requires_default')
+        target=api.api(f"repos/{grant['repo']}/pulls/{grant['pr']}")
+        need(isinstance(target,dict) and target.get('state') in ('open','closed')
+             and type(target.get('merged')) is bool
+             and ((target['state']=='closed') == target['merged']), 'merged_grant_target_state')
+        merged_review=review.sibling('policy_adoption_merged_grant')
+        result=merged_review.authorize(api,grant['repo'],evaluator,log_reader,
+                                       grant_loader=load_grants,merged=target['merged'])
+        need(result['document']==document and result['grant']==grant, 'merged_grant_source_changed')
+        return result['evidence']
     att=attestation_spec(grant.get('grant_review'),grant['repo'])
     payload={k:v for k,v in grant.items() if k!='grant_review'}
     grant_spec(payload)
@@ -647,7 +660,9 @@ def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_gra
     need(not os.environ.get('CLAUDE_CODE_OAUTH_TOKEN'), 'model_credential_in_publisher')
     document=grant_loader()
     need(isinstance(document,dict) and review.sha(document.get('source_commit')), 'untrusted_grant_source')
-    grant=choose_grant(document['config'],grant_document,evaluator)
+    grant=choose_grant(document['config'],grant_document,evaluator,allow_merged=True)
+    # Refuse before acquiring a guard if the caller selected the legacy queue.
+    need('grant_review' in grant or direct_mode, 'merged_grant_direct_guard_required')
     attestation=verify_grant_attestation(api,document,grant,evaluator,log_reader)
     pub=grant['publisher']
     need(os.environ.get('GITHUB_REPOSITORY')==grant['repo']
@@ -666,6 +681,10 @@ def enqueue(api, grant_document, evaluator, run_id, event, grant_loader=load_gra
         guarded=guard_action.begin(api,document,grant,evaluator,run_id,log_reader,
                                    lambda line:print(line,flush=True))
         before=_evaluate_guarded(api,grant,log_reader)
+    # A newly merged data-only grant can only enter the verified direct path.
+    # Never let it fall back to the legacy auto-merge queue without a guard.
+    need('grant_review' in grant or (guarded is not None and direct_mode),
+         'merged_grant_direct_guard_required')
     repo,number,head=grant['repo'],grant['pr'],grant['head']
     context,p=before['context'],before['policy']
     headline,body=f'Merge PR #{number}',f"Closes #{grant['issue']}"

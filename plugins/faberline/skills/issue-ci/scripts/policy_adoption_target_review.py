@@ -214,6 +214,23 @@ def framework_sources(api,candidate_ref,evaluator_ref,include_recovery=False):
             raw=content.encode('utf-8')
             blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
             result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
+        adoption_sources=[row for row in result if row['role']==role and row['path']==FRAMEWORK_ROOT+'policy_adoption.py']
+        if adoption_sources:
+            try:
+                adoption_tree=ast.parse(adoption_sources[0]['content'])
+            except (SyntaxError,ValueError,TypeError):
+                raise RuntimeError('target_framework_source_parse') from None
+            uses_merged=any(isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute)
+                            and node.func.attr=='sibling' and node.args and isinstance(node.args[0],ast.Constant)
+                            and node.args[0].value=='policy_adoption_merged_grant' for node in ast.walk(adoption_tree))
+            if uses_merged:
+                add_recovery(role,ref)
+                for path in (FRAMEWORK_ROOT+'policy_adoption_merged_grant.py',
+                             '.github/actions/policy-adoption-merged-grant-review/action.yml'):
+                    content=a.review.blob(api,a.GRANTS_REPO,path,ref)
+                    raw=content.encode('utf-8')
+                    blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+                    result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
     if include_recovery:
         add_recovery('candidate',candidate_ref)
     framework_dependency_closure(result)

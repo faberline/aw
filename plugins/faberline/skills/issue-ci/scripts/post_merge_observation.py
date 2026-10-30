@@ -142,7 +142,7 @@ def authenticate_adoption_source(api, repo, document, evaluator, source_run, pr,
     adoption = review.sibling('policy_adoption')
     need(isinstance(document, dict) and review.sha(document.get('source_commit')),
          'close_grant_source_unknown')
-    grant = adoption.choose_grant(document.get('config'), repo, evaluator)
+    grant = adoption.choose_grant(document.get('config'), repo, evaluator, allow_merged=True)
     need(grant['pr'] == pr and grant['head'] == head, 'close_grant_target_changed')
     meta = api.api(f'repos/{adoption.GRANTS_REPO}')
     branch = meta.get('default_branch')

@@ -51,6 +51,14 @@ class GrantTests(unittest.TestCase):
             with self.subTest(doc=doc),self.assertRaises(RuntimeError):a.choose_grant(doc,'o/r',EVALUATOR)
         with self.assertRaises(RuntimeError):a.choose_grant(document,'x/r',EVALUATOR)
 
+    def test_merged_data_grant_is_only_selected_by_explicit_verification_path(self):
+        g=grant();g.pop('grant_review');document={'version':1,'grants':[g]}
+        with self.assertRaisesRegex(RuntimeError,'missing_or_ambiguous'):
+            a.choose_grant(document,'o/r',EVALUATOR)
+        self.assertEqual(a.choose_grant(document,'o/r',EVALUATOR,allow_merged=True),g)
+        with self.assertRaisesRegex(RuntimeError,'missing_or_ambiguous'):
+            a.choose_grant({'version':1,'grants':[g,grant()]},'o/r',EVALUATOR,allow_merged=True)
+
     def test_malformed_broad_or_incomplete_grants_are_rejected(self):
         edits=[lambda g:g.update(head='branch'),lambda g:g.update(pr=True),lambda g:g.update(base_ref='dev'),
                lambda g:g.update(protected_paths=[]),lambda g:g.update(protected_paths=['../gate']),
@@ -253,6 +261,16 @@ class MutationSafetyTests(unittest.TestCase):
                 a.enqueue(api,'o/r',EVALUATOR,333,'push',grant_loader=lambda:document)
         self.assertEqual(api.writes,[])
 
+    def test_merged_data_grant_never_uses_unguarded_queue(self):
+        g,document,state,env,api=self.setup_run();g.pop('grant_review')
+        for direct in (False,True):
+            with self.subTest(direct=direct),patch.dict(os.environ,env,clear=True), \
+                 patch.object(a,'verify_grant_attestation'),patch.object(a,'publisher_provenance'), \
+                 patch.object(a,'evaluate',return_value=state), \
+                 self.assertRaisesRegex(RuntimeError,'direct_guard_required'):
+                a.enqueue(api,'o/r',EVALUATOR,333,'push',grant_loader=lambda:document,direct_mode=direct)
+        self.assertEqual(api.writes,[])
+
     def test_evidence_drift_after_pending_never_writes_success(self):
         import os
         g,document,state,env,api=self.setup_run();changed=copy.deepcopy(state);changed['ci_jobs']=[{'id':2}]
@@ -297,6 +315,32 @@ class MutationSafetyTests(unittest.TestCase):
         self.assertIn('AW_POST_MERGE_CHECKPOINT_V1',out.getvalue())
 
 class AttestationTests(unittest.TestCase):
+    def test_merged_data_dispatch_authenticates_product_review_and_source(self):
+        g=grant();g.pop('grant_review')
+        doc=dict(config=dict(version=1,grants=[g]),source_commit='9'*40)
+        evidence=dict(receipt={'decision':'pass'})
+        result=dict(document=doc,grant=g,evidence=evidence)
+        class API:
+            def __init__(self,state,merged):self.target=dict(state=state,merged=merged)
+            def api(self,path):return self.target
+        class Verifier:
+            calls=[]
+            def authorize(self,*args,**kwargs):
+                self.calls.append(kwargs);return result
+        verifier=Verifier()
+        with patch.object(a.review,'sibling',return_value=verifier):
+            self.assertEqual(a.verify_grant_attestation(API('open',False),doc,g,EVALUATOR),evidence)
+            self.assertFalse(verifier.calls[-1]['merged'])
+            self.assertEqual(a.verify_grant_attestation(API('closed',True),doc,g,EVALUATOR),evidence)
+            self.assertTrue(verifier.calls[-1]['merged'])
+            with self.assertRaisesRegex(RuntimeError,'target_state'):
+                a.verify_grant_attestation(API('closed',False),doc,g,EVALUATOR)
+            with self.assertRaisesRegex(RuntimeError,'requires_default'):
+                a.verify_grant_attestation(API('open',False),doc,g,EVALUATOR,require_merged=False)
+            wrong=copy.deepcopy(doc);wrong['source_commit']='0'*40
+            with self.assertRaisesRegex(RuntimeError,'source_changed'):
+                a.verify_grant_attestation(API('open',False),wrong,g,EVALUATOR)
+
     def setup_attestation(self):
         g=grant();att=g['grant_review'];payload={k:v for k,v in g.items() if k!='grant_review'}
         doc=dict(config=dict(version=1,grants=[g]),source_commit='9'*40)

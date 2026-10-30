@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import yaml
@@ -119,6 +120,31 @@ class MergedGrantTests(unittest.TestCase):
                  patch.object(m.a, method, side_effect=RuntimeError('unverified')), \
                  self.subTest(method=method), self.assertRaisesRegex(RuntimeError, 'unverified'):
                 m.packet(f, 'o/r', 77, HEAD, adoption.EVALUATOR)
+
+    def test_guarded_candidate_requires_rollout_proof_before_review(self):
+        f = Fixture(); original = f.run()
+        data = {k: original[k] for k in ('grant', 'grant_pr', 'grant_issue')}
+        candidate = {'issue_guard': {'example': True}}
+        recovery = SimpleNamespace(verify_rollout=lambda *args: (_ for _ in ()).throw(RuntimeError('rollout held')))
+        with patch.object(m, 'merged_data', return_value=data), \
+             patch.object(m.a, 'evaluate', side_effect=m.a.review.Refused('guarded_adoption_not_ready')), \
+             patch.object(m.a.review, 'blob', return_value=json.dumps(candidate)), \
+             patch.object(m.a.review, 'sibling', return_value=recovery), \
+             patch.object(m.a, '_evaluate_guarded') as guarded, \
+             self.assertRaisesRegex(RuntimeError, 'rollout held'):
+            m.packet(f, 'o/r', 77, HEAD, adoption.EVALUATOR)
+        guarded.assert_not_called()
+        recovery.verify_rollout = lambda *args: None
+        with patch.object(m, 'merged_data', return_value=data), \
+             patch.object(m.a, 'evaluate', side_effect=m.a.review.Refused('guarded_adoption_not_ready')), \
+             patch.object(m.a.review, 'blob', return_value=json.dumps(candidate)), \
+             patch.object(m.a.review, 'sibling', return_value=recovery), \
+             patch.object(m.a, '_evaluate_guarded', return_value={'ci':'verified'}), \
+             patch.object(m.a, 'latest_target_review'), \
+             patch.object(m.a, 'candidate_policy', return_value={'policy':'verified'}) as policy:
+            packet = m.packet(f, 'o/r', 77, HEAD, adoption.EVALUATOR)
+        self.assertEqual(packet['verified_target'], {'ci':'verified'})
+        self.assertIs(policy.call_args.kwargs['proof'], m.a._GUARDED_POLICY_PROOF)
 
     def test_receipt_requires_a_pass_and_stable_inputs(self):
         f = Fixture(); before = f.run()
@@ -245,6 +271,9 @@ class MergedGrantTests(unittest.TestCase):
              self.assertRaisesRegex(RuntimeError, 'newer review failed'):
             m.discover(api, grant, adoption.EVALUATOR, lambda *args: '')
         api.runs = [row, dict(newer, workflow_id=10)]
+        with self.assertRaisesRegex(RuntimeError, 'discovery_runs'):
+            m.discover(api, grant, adoption.EVALUATOR, lambda *args: '')
+        api.runs = [row, dict(newer, head_repository=None)]
         with self.assertRaisesRegex(RuntimeError, 'discovery_runs'):
             m.discover(api, grant, adoption.EVALUATOR, lambda *args: '')
 

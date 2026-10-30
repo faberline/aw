@@ -92,9 +92,23 @@ def packet(api, repo, number, head, evaluator):
     """Bind merged grant data to the current, still-open product PR."""
     data = merged_data(api, repo, number, head, evaluator)
     grant = data['grant']
-    verified = a.evaluate(api, grant, a.r.job_log)
+    proof = None
+    try:
+        verified = a.evaluate(api, grant, a.r.job_log)
+    except a.review.Refused as error:
+        if str(error) != 'guarded_adoption_not_ready':
+            raise
+        # Reading a guarded candidate is allowed only after the same rollout
+        # proof required by the target review and the publisher. This performs
+        # no writes and does not grant the reviewer a guard or merge authority.
+        candidate = a.ci.strict_json_loads(a.review.blob(
+            api, repo, '.github/issue-ci-required-gates.json', grant['head'], grant['policy_blob']))
+        recovery = a.review.sibling('recovery_entry')
+        recovery.verify_rollout(api, repo, dict(config=candidate, source_commit=grant['head']))
+        proof = a._GUARDED_POLICY_PROOF
+        verified = a._evaluate_guarded(api, grant, a.r.job_log)
     a.latest_target_review(api, grant)
-    policy = a.candidate_policy(api, grant)
+    policy = a.candidate_policy(api, grant, proof=proof)
     target_issue = api.api(f"repos/{repo}/issues/{grant['issue']}")
     target_pull = api.api(f"repos/{repo}/pulls/{grant['pr']}")
     # Recheck AW data after product reads to avoid mixing two source states.
@@ -222,11 +236,14 @@ def discover(api, grant, evaluator, log_reader, merged=False):
     branch = f"codex/merged-grant-{grant['pr']}-{grant['head']}"
     path = '.github/workflows/review-merged-product-grant.yml'
     runs = api.pages(f"repos/{repo}/actions/runs?branch={quote(branch, safe='')}&event=push", 'workflow_runs')
-    need(isinstance(runs, list) and len(runs) <= 500, 'merged_grant_discovery_runs')
-    selected = [row for row in runs if isinstance(row, dict) and row.get('path') == path
-                and row.get('event') == 'push' and row.get('head_branch') == branch
-                and row.get('head_repository', {}).get('full_name') == repo]
-    need(selected and all(all(a.review.integer(row.get(k)) for k in ('id', 'workflow_id', 'run_number', 'run_attempt'))
+    need(isinstance(runs, list) and len(runs) <= 500
+         and all(isinstance(row, dict) and isinstance(row.get('path'), str) for row in runs),
+         'merged_grant_discovery_runs')
+    selected = [row for row in runs if row['path'] == path]
+    need(selected and all(row.get('event') == 'push' and row.get('head_branch') == branch
+                          and isinstance(row.get('head_repository'), dict)
+                          and row['head_repository'].get('full_name') == repo
+                          and all(a.review.integer(row.get(k)) for k in ('id', 'workflow_id', 'run_number', 'run_attempt'))
                           and a.review.sha(row.get('head_sha')) for row in selected)
          and len({row['id'] for row in selected}) == len(selected)
          and len({row['workflow_id'] for row in selected}) == 1
