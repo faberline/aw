@@ -556,6 +556,9 @@ def verify_product_authorization(api, document, grant, evaluator, log_reader, re
          and isinstance(document,dict) and review.sha(document.get('source_commit')),
          'product_grant_source')
     source=document['source_commit']
+    meta=api.api(f'repos/{GRANTS_REPO}')
+    need(meta.get('full_name')==GRANTS_REPO and meta.get('default_branch')=='main',
+         'product_grant_default_changed')
     pull=api.api(f"repos/{GRANTS_REPO}/pulls/{auth['pr']}")
     need(pull.get('number')==auth['pr'] and pull.get('state')=='closed' and pull.get('merged') is True
          and pull.get('base',{}).get('ref')=='main'

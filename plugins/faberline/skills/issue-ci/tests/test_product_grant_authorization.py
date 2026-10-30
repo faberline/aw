@@ -16,7 +16,7 @@ class ProductAuthorizationTests(unittest.TestCase):
         receipt=dict(decision='pass',findings=[],uncertainties=[])
         grant['review']['receipt_sha256']=a.r.digest(receipt)
         document=dict(source_commit='6'*40,config=dict(version=1,grants=[grant]))
-        state=dict(comparison='ahead',extra_file=False,changed_workflow=False,target_merged=False,
+        state=dict(comparison='ahead',extra_file=False,changed_workflow=False,target_merged=False,default='main',
                    jobs=[dict(id=900,name='complete isolated native merge controls',status='completed',conclusion='success',html_url='https://example.test/job')],
                    run=dict(id=899,run_number=1,run_attempt=1,status='completed',conclusion='success',html_url='https://example.test/run',
                             workflow_id=9,path='.github/workflows/native-auto-merge-controls.yml',head_sha='3'*40,event='pull_request',
@@ -26,6 +26,7 @@ class ProductAuthorizationTests(unittest.TestCase):
             queries=None
             def api(self,path,**kwargs):
                 if kwargs:self.writes.append((path,kwargs));raise AssertionError('authorization must be read-only')
+                if path=='repos/faberline/aw':return dict(full_name='faberline/aw',default_branch=state['default'])
                 if path.endswith('/pulls/77'):
                     return dict(number=77,state='closed',merged=True,merge_commit_sha='5'*40,changed_files=1,
                                 head=dict(sha='3'*40,repo={'full_name':'faberline/aw'}),
@@ -136,6 +137,10 @@ class ProductAuthorizationTests(unittest.TestCase):
         def later(g,doc,state,result):
             state['later_runs']=[dict(state['run'],id=901,run_number=2,conclusion='failure')]
         with self.assertRaisesRegex(RuntimeError,'controls_not_green'):self.verify(later)
+
+    def test_changed_aw_default_is_not_authority(self):
+        with self.assertRaisesRegex(RuntimeError,'default_changed'):
+            self.verify(lambda g,doc,state,result:state.update(default='other'))
 
     def test_new_authorization_never_changes_the_required_legacy_guard_refusal(self):
         # New proof has a separate marker. Bare data must still fail before a
