@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -161,11 +162,17 @@ class MergedRecoveryTests(unittest.TestCase):
         def source(api,repo,path,ref):
             self.assertEqual(repo,'faberline/aw');self.assertEqual(ref,adoption.EVALUATOR)
             return (root/path).read_text()
-        with patch.object(m.review,'blob',side_effect=source):
+        with patch.dict(os.environ,{'AW_ACTION_REF':adoption.EVALUATOR},clear=True), \
+             patch.object(m.review,'blob',side_effect=source):
             m.verify_trace_source(None,adoption.EVALUATOR)
-        with patch.object(m.review,'blob',return_value='different'), \
+        with patch.dict(os.environ,{'AW_ACTION_REF':adoption.EVALUATOR},clear=True), \
+             patch.object(m.review,'blob',return_value='different'), \
              self.assertRaisesRegex(RuntimeError,'trace_source'):
             m.verify_trace_source(None,adoption.EVALUATOR)
+        with patch.dict(os.environ,{'AW_ACTION_REF':'0'*40},clear=True), \
+             patch.object(m.review,'blob') as blob,self.assertRaisesRegex(RuntimeError,'trace_source'):
+            m.verify_trace_source(None,adoption.EVALUATOR)
+        blob.assert_not_called()
 
     def test_guard_release_requires_unchanged_applied_observation_and_safe_settlement(self):
         f=RecoveryFixture();head=f.f.grant['head'];owner=f.intent['payload']['owner']

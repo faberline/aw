@@ -4,6 +4,7 @@ This does not release a lock or change an issue.  A recovery writer must
 recheck all evidence and the same guard before attempting either operation.
 """
 import importlib.util
+import os
 from pathlib import Path
 import re
 
@@ -90,8 +91,10 @@ def authenticate(api,repo,policy,run,attempt,issue,head,owner,log_reader):
 
 
 def verify_trace_source(api,evaluator):
-    """Use trace semantics only when the historical action bytes match exactly."""
-    need(review.sha(evaluator),'merged_outcome_trace_source')
+    """Use trace semantics only for the same immutable action revision."""
+    runtime=os.environ.get('AW_ACTION_REF','')
+    need(review.sha(evaluator) and review.sha(runtime) and runtime==evaluator,
+         'merged_outcome_trace_source')
     root=Path(__file__).resolve().parents[5]
     paths=('plugins/faberline/skills/issue-ci/scripts/policy_adoption_merged_outcome.py',
            'plugins/faberline/skills/issue-ci/scripts/todo_mutation_trace.py',
