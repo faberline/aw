@@ -152,6 +152,78 @@
         "job": "grant-review",
         "job_id": 123628675928
       }
+    },
+    {
+      "version": 1,
+      "repo": "faberline/core",
+      "pr": 87,
+      "issue": 86,
+      "head": "a37727a2ffcdef93553573f3fb8115f94ddd76b4",
+      "base": "f38fd0d69b21a73822c3924e53045ef12e39984f",
+      "base_ref": "main",
+      "evaluator": "c929e87e50cd2c5e7d578c4b44e002182291031a",
+      "policy_blob": "1ccd9f23362c6f2497a17ca1c6087a4c15be30ac",
+      "base_policy_blob": "901ca0fe85d0adb519802e6ba0304967e08acb67",
+      "issue_sha256": "762ac860e1e0f44bcf81822f1bc1c0a636c114bf35a2c32899eae215d8394a75",
+      "pr_sha256": "341375531c769f82812f314374e4498dd4f6bb983532aee2c5249414389efd6b",
+      "files_sha256": "23c078381674e271abe66bf8100566bfdd813f5c35feb180531cf060ac73052e",
+      "protected_paths": [
+        ".github/development-test-batches.json",
+        ".github/issue-ci-required-gates.json",
+        ".github/workflows/ci.yml",
+        ".github/workflows/claude-final-review.yml",
+        ".github/workflows/development-ci.yml",
+        ".github/workflows/issue-ci.yml",
+        ".github/workflows/issue-recovery.yml",
+        "scripts/issue-ci/development_pipeline.py",
+        "scripts/issue-ci/handoff.py",
+        "scripts/issue-ci/qualification.py",
+        "scripts/issue-ci/readiness-requirements.txt",
+        "scripts/issue-ci/tests/test_handoff.py",
+        "scripts/pr-gates/batches.py",
+        "scripts/pr-gates/contracts.py",
+        "scripts/pr-gates/plan.py",
+        "scripts/pr-gates/tests/fixtures/pre-batch-checks.json",
+        "scripts/pr-gates/tests/test_batches.py",
+        "scripts/pr-gates/tests/test_completion_preparation.py",
+        "scripts/pr-gates/tests/test_contracts.py",
+        "scripts/pr-gates/tests/test_development_impact.py",
+        "scripts/pr-gates/tests/test_development_pipeline_contract.py",
+        "scripts/pr-gates/tests/test_plan.py",
+        "scripts/pr-gates/tests/test_qualification_policy.py"
+      ],
+      "ci": {
+        "run_id": 41139613639,
+        "attempt": 1,
+        "jobs_sha256": "beb288b3bfac6dea317bf465b615c3053115e3419302739d8212f7fe2be14fed"
+      },
+      "review": {
+        "workflow_path": ".github/workflows/core-policy-target-review.yml",
+        "workflow_id": 400225137,
+        "workflow_blob": "b9650a7c9b3b6fa854377c5a40e8bd0a9d25d0d6",
+        "runner_path": "plugins/faberline/skills/issue-ci/scripts/policy_adoption_target_review.py",
+        "runner_blob": "93637a82779311fffeea549a90db44c066616af4",
+        "source_commit": "a75034c14854134d34a608a407e24c97b528556c",
+        "branch": "codex/core87-policy-target-review",
+        "run_id": 41142104789,
+        "attempt": 1,
+        "job": "review",
+        "job_id": 124358585103,
+        "receipt_sha256": "6188ef7b766b0b285769b70cb86a6fe42f936a79fbbeedc6fbf5690266d951d7"
+      },
+      "publisher": {
+        "workflow_path": ".github/workflows/core-policy-publisher.yml",
+        "workflow_id": 400223632,
+        "workflow_blob": "063934e4e09fcae01cd53884ac1a80bfbf266244",
+        "source_commit": "17ee741a1df9a3504430dab48d2f2df70f715d7f",
+        "branch": "codex/core87-policy-publisher",
+        "job": "adopt"
+      },
+      "grant_authorization": {
+        "version": 1,
+        "kind": "product-evidence",
+        "pr": 139
+      }
     }
   ]
 }
