@@ -20,7 +20,10 @@ change. Do not copy these skills into a repository.
 | `/faberline:issue-loop` | Shows the issue loop ([below](#issue-loop)) and creates its labels. |
 | `/faberline:issue-plan` | Opens issues and sets their priority. |
 | `/faberline:issue-work` | Takes the next issue, implements it, and opens a PR. |
-| `/faberline:issue-review` | Tests the PR, then merges it or sends it back. |
+| `/faberline:issue-review` | Reads the PR and required CI, then records an independent review. |
+| `/faberline:issue-plan-loop 1h` | Repeats `issue-plan` every hour. |
+| `/faberline:issue-work-loop 15m` | Repeats `issue-work` every 15 minutes. |
+| `/faberline:issue-review-loop 15m` | Repeats `issue-review` every 15 minutes in a separate review conversation. |
 
 Each skill keeps its script next to it, in `skills/<skill>/scripts/`. The skill
 calls it as `${CLAUDE_SKILL_DIR}/scripts/<script>.sh`. Claude Code replaces
@@ -98,8 +101,7 @@ Remove an older copy in `~/.gemini/config/plugins/faberline` first, with
 
 ## Issue loop
 
-Three steps. Each step skill does one run and ends. The controller (the
-`issue-control` skill in the aw repository) sets a schedule that runs each
+Three steps. Each step skill does one run and ends. A controller can run each
 step in the repository:
 
 ```
@@ -108,19 +110,32 @@ step in the repository:
 /faberline:issue-review
 ```
 
-No skill starts a loop or a schedule. The schedules run side by side.
-Each run does one step and ends. A run with nothing to do ends at once.
+For repeated runs, use a companion in each step's own conversation:
 
-- **plan** (`/faberline:issue-plan`), every 10 minutes: read the
+```text
+/faberline:issue-plan-loop 1h
+/faberline:issue-work-loop 15m
+/faberline:issue-review-loop 15m
+```
+
+Codex also accepts these skills by their installed names, such as
+`$issue-plan-loop 1h`. Each companion runs its original skill once at a time.
+It starts with one immediate pass. It then uses the requested interval.
+The examples do not set global defaults or start any existing schedules.
+See the [interval loop rules](skills/issue-loop/INTERVAL-LOOPS.md) for timer
+support, session lifetime, ownership and stopping rules.
+The three original skills still run once and never start timers themselves.
+
+- **plan** (`/faberline:issue-plan`): read the
   repository's goals and status, triage and prioritize issues, and fill the
   `todo` queue from the backlog first, then with new issues,
   at most `ISSUE_TODO_MAX` (default 3) at once. Each issue has Goal,
   Acceptance, Never, and Gate (the exact unit-test commands) sections.
-- **work** (`/faberline:issue-work`), every 15 minutes: take the
+- **work** (`/faberline:issue-work`): take the
   already-planned `todo` issue by priority and age, implement it in its own
   worktree, run its
   unit-test gate, and open a PR with `Closes #<N>`. One issue at a time.
-- **review** (`/faberline:issue-review`), every 15 minutes: take the oldest
+- **review** (`/faberline:issue-review`): take the oldest
   `done` issue. Read the issue, the PR, its diff, and its CI checks, and
   look for bugs. Review runs no tests: the PR checks do, and each repository
   decides what its CI runs, also whether e2e goes to the shared GKE cluster.

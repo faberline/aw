@@ -10,11 +10,11 @@ allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/loop.sh) Bash(${CLAUDE_SKILL_DIR
 Three steps. Each runs on its own schedule, side by side. The issue label is
 the state:
 
-| Step | Skill | Moves | Every |
+| Step | Skill | Moves | Example interval |
 |---|---|---|---|
-| plan | `/faberline:issue-plan` | triages the backlog, fills `todo`, and progresses milestone releases | 10 min |
-| work | `/faberline:issue-work` | `todo` -> `doing` (submit PR, then wait for CI) | 15 min |
-| review | `/faberline:issue-review` | review `done`; no lifecycle writes or merge | 15 min |
+| plan | `/faberline:issue-plan` | triages the backlog, fills `todo`, and progresses milestone releases | 1h |
+| work | `/faberline:issue-work` | `todo` -> `doing` (submit PR, then wait for CI) | 15m |
+| review | `/faberline:issue-review` | review `done`; no lifecycle writes or merge | 15m |
 
 CI alone sets `done` after all required current-head gates pass or `todo`
 on failure; see the issue-ci skill for explicit consumer wiring. Work and
@@ -26,8 +26,11 @@ In Codex or AGY, use the absolute path of that folder instead.
 
 ## Schedules
 
-The skills never start a loop or a schedule. The controller sets one
-schedule per step and repository. A separate conversation for each step
+The three step skills never start a loop or a schedule. The controller sets one
+schedule per step and repository. The optional `issue-plan-loop`,
+`issue-work-loop` and `issue-review-loop` companions can set that timing when
+the user invokes them with an interval. See [interval loop rules](INTERVAL-LOOPS.md).
+A separate conversation for each step
 keeps the review apart from the work step's reasoning, and keeps each
 context small. Each run does one step and ends.
 A run with nothing to do ends at once.
@@ -44,7 +47,8 @@ ${CLAUDE_SKILL_DIR}/scripts/loop.sh status
 
 2. Report the counts and each `blocked` issue that waits for the user. When
    the user asked to start the loop, tell them to run each step skill in
-   its own conversation. Do not start the loops in this conversation.
+   its own conversation, using a `-loop` companion when repeated runs are
+   wanted. Do not start them merely by running this status skill.
 
 ## Labels
 
