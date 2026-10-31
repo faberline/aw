@@ -355,6 +355,112 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(self.writes, [])
 
 
+class LocalOwnerRetryTests(unittest.TestCase):
+    setUp = ApplyTests.setUp
+    api = ApplyTests.api
+    invoke = ApplyTests.invoke
+
+    def local(self):
+        self.config.write_text(json.dumps(dict(workflows=GATES, completion_owner='local')))
+
+    def rerun(self):
+        snapshots = evidence()
+        for run, _ in snapshots.values():
+            run['run_attempt'] = 2
+        return snapshots
+
+    def test_review_rejected_todo_is_not_resurrected_by_a_successful_rerun(self):
+        self.local(); self.invoke()
+        self.issue['labels'] = [{'name': 'todo'}, {'name': 'priority:p1'}]
+        self.writes.clear()
+        self.invoke(self.rerun()); self.invoke(self.rerun())
+        self.assertEqual(self.writes, [])
+        self.assertEqual({l['name'] for l in self.issue['labels']}, {'todo', 'priority:p1'})
+
+    def test_review_rejected_then_claimed_doing_is_not_completed_by_an_old_head(self):
+        self.local(); self.invoke()
+        self.issue['labels'] = [{'name': 'doing'}, {'name': 'priority:p1'}]
+        self.writes.clear()
+        self.invoke(self.rerun())
+        self.assertEqual(self.writes, [])
+        self.assertEqual({l['name'] for l in self.issue['labels']}, {'doing', 'priority:p1'})
+
+    def test_success_after_an_applied_failure_cannot_remove_a_new_doing_owner(self):
+        self.local(); failed = evidence(); failed[GATES[0]['path']][1][0]['conclusion'] = 'failure'
+        self.invoke(failed)
+        self.issue['labels'] = [{'name': 'doing'}, {'name': 'priority:p1'}]
+        self.writes.clear(); self.invoke(self.rerun())
+        self.assertEqual(self.writes, [])
+        self.assertEqual({l['name'] for l in self.issue['labels']}, {'doing', 'priority:p1'})
+
+    def test_unclaimed_infrastructure_retry_can_still_complete_the_same_head(self):
+        self.local(); failed = evidence(); failed[GATES[0]['path']][1][0]['conclusion'] = 'failure'
+        self.invoke(failed); self.writes.clear(); self.invoke(self.rerun())
+        self.assertEqual({l['name'] for l in self.issue['labels']}, {'done', 'priority:p1'})
+        self.assertIn(('repos/o/r/issues/7/labels', 'POST', {'labels': ['done']}), self.writes)
+
+    def test_a_new_submitted_head_can_complete_after_a_local_rejection(self):
+        self.local(); self.invoke()
+        self.issue['labels'] = [{'name': 'doing'}, {'name': 'priority:p1'}]
+        self.pr['head']['sha'] = 'b' * 40; self.trigger['head_sha'] = 'b' * 40
+        self.writes.clear()
+        with patch.object(sys.modules[__name__], 'SHA', 'b' * 40):
+            self.invoke(self.rerun())
+        self.assertEqual({l['name'] for l in self.issue['labels']}, {'done', 'priority:p1'})
+
+    def test_partial_done_checkpoint_still_finishes_without_an_applied_handoff(self):
+        self.local(); actual = self.api
+        def fail_delete(path, method='GET', data=None):
+            if method == 'DELETE': raise RuntimeError('lost delete response')
+            return actual(path, method, data)
+        self.api = fail_delete
+        with self.assertRaises(RuntimeError): self.invoke()
+        self.assertIn(':ready -->', self.comments[0]['body'])
+        self.api = actual; self.invoke()
+        self.assertEqual({l['name'] for l in self.issue['labels']}, {'done', 'priority:p1'})
+        self.assertIn(':applied -->', self.comments[0]['body'])
+
+    def test_real_regression_of_unconsumed_done_still_returns_todo(self):
+        self.local(); self.invoke(); failed = self.rerun()
+        failed[GATES[0]['path']][1][0]['conclusion'] = 'failure'
+        self.invoke(failed)
+        self.assertEqual({l['name'] for l in self.issue['labels']}, {'todo', 'priority:p1'})
+
+    def test_claim_during_snapshot_blocks_the_last_label_write(self):
+        self.local(); failed = evidence(); failed[GATES[0]['path']][1][0]['conclusion'] = 'failure'
+        self.invoke(failed); self.writes.clear(); calls = 0; rerun = self.rerun()
+        def progress(*args):
+            nonlocal calls
+            calls += 1
+            if calls == 2: self.issue['labels'] = [{'name': 'doing'}, {'name': 'priority:p1'}]
+            return rerun
+        with self.assertRaisesRegex(RuntimeError, 'local completion hold'):
+            self.invoke(rerun, snapshot_sequence=progress)
+        self.assertFalse(any('/labels' in path for path, _, _ in self.writes))
+        self.assertEqual({l['name'] for l in self.issue['labels']}, {'doing', 'priority:p1'})
+
+    def test_untrusted_applied_marker_cannot_claim_local_review_ownership(self):
+        self.local(); self.invoke(); self.comments[0]['user']['login'] = 'contributor'
+        self.issue['labels'] = [{'name': 'doing'}]; self.writes.clear(); self.invoke(self.rerun())
+        self.assertEqual({l['name'] for l in self.issue['labels']}, {'done'})
+
+    def test_runtime_update_cannot_revive_a_head_already_returned_by_review(self):
+        self.local(); self.invoke()
+        self.issue['labels'] = [{'name': 'todo'}]; self.writes.clear()
+        self.config.write_text(json.dumps(dict(workflows=GATES,completion_owner='local',aw_revision='b'*40)))
+        self.invoke(self.rerun())
+        self.assertEqual(self.writes, [])
+        self.assertEqual({l['name'] for l in self.issue['labels']}, {'todo'})
+
+    def test_runtime_update_cannot_replace_claimed_failed_work(self):
+        self.local(); failed=evidence(); failed[GATES[0]['path']][1][0]['conclusion']='failure'
+        self.invoke(failed); self.issue['labels']=[{'name':'doing'}];self.writes.clear()
+        self.config.write_text(json.dumps(dict(workflows=GATES,completion_owner='local',aw_revision='b'*40)))
+        self.invoke(self.rerun())
+        self.assertEqual(self.writes, [])
+        self.assertEqual({l['name'] for l in self.issue['labels']}, {'doing'})
+
+
 class FailureOnlyTests(unittest.TestCase):
     api = ApplyTests.api
     invoke = ApplyTests.invoke

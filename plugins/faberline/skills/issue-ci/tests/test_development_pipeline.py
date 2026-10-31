@@ -287,8 +287,8 @@ class DevelopmentHandoffTests(unittest.TestCase):
     setUp=legacy.ApplyTests.setUp
     api=legacy.ApplyTests.api
     invoke=legacy.ApplyTests.invoke
-    def invoke_development(self, data):
-        self.config.write_text(json.dumps(config()))
+    def invoke_development(self, data, settings=None):
+        self.config.write_text(json.dumps(config() if settings is None else settings))
         self.pr['base']={'sha':BASE}
         fake=dict(version=1,repo='o/r',pr=8,head=HEAD,base=BASE,issue=7,
                   status='success',reasons=[],checks=[])
@@ -309,6 +309,23 @@ class DevelopmentHandoffTests(unittest.TestCase):
         self.assertTrue(any('e2e' in c['body'] for c in records))
         self.assertFalse(any('/labels' in p for p,_,_ in self.writes))
         self.assertEqual({x['name'] for x in self.issue['labels']},{'doing','priority:p1'})
+
+    def test_late_failure_after_local_review_return_reports_without_replacing_owner(self):
+        settings=config();settings['completion_owner']='local'
+        self.invoke_development(evidence(),settings)
+        self.issue['labels']=[{'name':'doing'},{'name':'priority:p1'}]
+        self.writes=[];data=evidence()
+        for run,_ in data.values():run['run_attempt']=2
+        jobs=data[legacy.GATES[1]['path']][1];jobs[0]['conclusion']='failure'
+        self.invoke_development(data,settings)
+        jobs[1]['conclusion']='failure'
+        self.invoke_development(data,settings)
+        records=[c for c in self.comments if c['body'].startswith('<!-- aw-job-failure:')]
+        self.assertEqual(len(records),2)
+        self.assertTrue(all('/comments' in path for path,_,_ in self.writes))
+        self.assertEqual({x['name'] for x in self.issue['labels']},{'doing','priority:p1'})
+        self.writes=[];self.invoke_development(data,settings)
+        self.assertEqual(self.writes,[])
 
     def test_custom_branch_needs_exactly_one_canonical_issue(self):
         self.pr['head']['ref']='codex/repair'
