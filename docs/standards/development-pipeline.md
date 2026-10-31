@@ -183,6 +183,26 @@ the PR. Choose no issue and change no issue labels. An actual cloud quota
 failure includes the confirmed project, service, metric, region, available
 usage/limit and Console request link. The user submits any quota increase.
 
+### Reporting permissions
+
+Keep one trusted issue-label writer. Its token has issues write and
+contents/actions/pull-requests read. It writes canonical issue comments and
+labels only. It does not write to a PR.
+
+Source-PR link diagnostics use a separate helper job. Its token has
+pull-requests write and contents/actions/issues read. Its API boundary
+permits only an exact-source-PR comment after fresh head, link and default
+checks. It cannot write issue comments or labels, review, merge, close or
+write status. Both roles reject unrelated writes and execute no PR code.
+Neither job receives contents write; the [merge API requires that permission](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request).
+
+The default-branch reporting workflow keeps the same repository-wide mutex.
+Bind both `job` and `link_job` with the workflow ID, immutable definition and
+AW source. Bind the active role to the actual `GITHUB_JOB`. The label job
+waits for the helper with `always()` so a failed link report cannot suppress
+valid canonical-issue failure reporting. These are metadata reporting roles;
+product repositories still own their test jobs and batch counts.
+
 ## Local review and completion
 
 Independent Claude review starts locally only after all required CI for the

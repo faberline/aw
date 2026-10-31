@@ -27,7 +27,7 @@ class Provider:
         self.run=dict(id=100,run_attempt=1,workflow_id=55,path=PATH,event='workflow_run',head_sha=SOURCE,head_branch='main',head_repository={'full_name':REPO})
         self.issues={}
     def blob(self):return hashlib.sha1(b'blob '+str(len(self.raw.encode())).encode()+b'\0'+self.raw.encode()).hexdigest()
-    def config(self):return dict(completion_owner='local',workflows=copy.deepcopy(legacy.GATES),lifecycle_mode='failure-only',qualification_blockers=['fixture content hold'],development_reporter=dict(path=PATH,id=55,definition_sha=self.blob(),job='report'))
+    def config(self):return dict(completion_owner='local',workflows=copy.deepcopy(legacy.GATES),lifecycle_mode='failure-only',qualification_blockers=['fixture content hold'],development_reporter=dict(path=PATH,id=55,definition_sha=self.blob(),job='report',link_job='source-pr-links'))
     def api(self,path,method='GET',data=None):
         self.calls.append((path,method,data))
         if method!='GET':
@@ -52,10 +52,12 @@ class Provider:
 class ReporterTests(unittest.TestCase):
     def setUp(self):
         self.provider=Provider()
-        self.env=dict(GITHUB_ACTIONS='true',GITHUB_REPOSITORY=REPO,GITHUB_WORKFLOW_SHA=SOURCE,AW_ACTION_REF=EVALUATOR,GITHUB_EVENT_NAME='workflow_run',GITHUB_RUN_ATTEMPT='1')
-    def invoke(self,process=None,config=None):
+        self.env=dict(GITHUB_ACTIONS='true',GITHUB_REPOSITORY=REPO,GITHUB_WORKFLOW_SHA=SOURCE,AW_ACTION_REF=EVALUATOR,GITHUB_EVENT_NAME='workflow_run',GITHUB_RUN_ATTEMPT='1',GITHUB_JOB='report')
+    def invoke(self,process=None,config=None,links=False):
         p=self.provider
-        with patch.dict(os.environ,self.env,clear=True),patch.object(ci,'api',side_effect=p.api)as api,patch.object(ci,'pages',side_effect=p.pages),patch.object(ci,'process_head',side_effect=process)as run,contextlib.redirect_stdout(io.StringIO())as output:
+        env=dict(self.env)
+        if links:env['GITHUB_JOB']='source-pr-links'
+        with patch.dict(os.environ,env,clear=True),patch.object(ci,'api',side_effect=p.api)as api,patch.object(ci,'pages',side_effect=p.pages),patch.object(ci,'process_head',side_effect=process)as run,contextlib.redirect_stdout(io.StringIO())as output:
             result=ci.development_report(REPO,dict(source_commit=SOURCE,config=config or p.config()),EVALUATOR,100)
             self.assertIs(ci.api,api)
         return result,run,output.getvalue()
@@ -73,7 +75,7 @@ class ReporterTests(unittest.TestCase):
         p.api=read
         return reads
     def test_confirmed_missing_target_gets_only_deduplicated_source_pr_diagnostic(self):
-        reads=self.target_error();result,run,output=self.invoke()
+        reads=self.target_error();result,run,output=self.invoke(links=True)
         self.assertEqual(result,0);run.assert_not_called()
         self.assertGreaterEqual(len(reads),3)
         self.assertEqual(len(self.provider.writes),1)
@@ -81,7 +83,7 @@ class ReporterTests(unittest.TestCase):
         self.assertEqual((path,method),('repos/o/r/issues/8/comments','POST'))
         self.assertIn('requires exactly one canonical open issue',data['body'])
         self.assertIn(HEAD,data['body']);self.assertIn('processed',output)
-        self.invoke();self.assertEqual(len(self.provider.writes),1)
+        self.invoke(links=True);self.assertEqual(len(self.provider.writes),1)
     def test_unknown_target_errors_hold_without_any_mutation(self):
         command=['gh','api','--method','GET','repos/o/r/issues/7']
         errors=[subprocess.CalledProcessError(1,command,
@@ -98,12 +100,12 @@ class ReporterTests(unittest.TestCase):
                 self.assertEqual(self.provider.writes,[])
     def test_missing_target_becoming_valid_before_diagnostic_refuses(self):
         self.target_error(after_read=lambda count:count>1)
-        result,run,output=self.invoke();self.assertEqual(result,2)
+        result,run,output=self.invoke(links=True);self.assertEqual(result,2)
         run.assert_not_called();self.assertIn('now has a canonical open issue',output)
         self.assertEqual(self.provider.writes,[])
     def test_missing_target_becoming_valid_at_writer_boundary_refuses(self):
         self.target_error(after_read=lambda count:count>=4)
-        result,run,output=self.invoke();self.assertEqual(result,2)
+        result,run,output=self.invoke(links=True);self.assertEqual(result,2)
         run.assert_not_called();self.assertIn('canonical open issue',output)
         self.assertEqual(self.provider.writes,[])
     def test_missing_link_changed_at_writer_boundary_refuses_source_comment(self):
@@ -114,7 +116,7 @@ class ReporterTests(unittest.TestCase):
                 if len(reads)==3:p.pull['body']='Closes #9'
             return original(path,method,data)
         p.api=read
-        result,run,output=self.invoke();self.assertEqual(result,2)
+        result,run,output=self.invoke(links=True);self.assertEqual(result,2)
         run.assert_not_called();self.assertIn('linking metadata changed',output)
         self.assertEqual(p.writes,[])
     def test_missing_target_diagnostic_retains_source_head_and_default_guards(self):
@@ -127,7 +129,7 @@ class ReporterTests(unittest.TestCase):
                 return False
             self.target_error(after_read=change)
             with self.subTest(changed=changed):
-                result,run,_=self.invoke();self.assertEqual(result,2)
+                result,run,_=self.invoke(links=True);self.assertEqual(result,2)
                 run.assert_not_called();self.assertEqual(p.writes,[])
     def test_default_source_and_all_current_prs_are_read_without_completion_writes(self):
         p=self.provider;p.pulls.append(dict(p.pull,number=9,body='Closes #10',head=dict(sha='d'*40,repo={'full_name':REPO})))
@@ -146,7 +148,7 @@ class ReporterTests(unittest.TestCase):
         result,run,_=self.invoke();self.assertEqual(result,0);run.assert_not_called();self.assertFalse(p.writes)
     def test_no_canonical_issue_gets_only_a_deduplicated_pr_comment(self):
         p=self.provider;p.pull['body']='No canonical issue'
-        result,run,_=self.invoke();self.assertEqual(result,0);run.assert_not_called()
+        result,run,_=self.invoke(links=True);self.assertEqual(result,0);run.assert_not_called()
         self.assertEqual(len(p.writes),1);self.assertEqual(p.writes[0][:2],('repos/o/r/issues/8/comments','POST'))
     def test_invalid_pr_closed_and_foreign_links_only_diagnose_the_source_pr(self):
         for kind in ('pr','closed','foreign'):
@@ -157,10 +159,10 @@ class ReporterTests(unittest.TestCase):
             else:target['repository_url']='https://api.github.com/repos/x/r'
             p.issues[7]=target
             with self.subTest(kind=kind):
-                result,run,_=self.invoke();self.assertEqual(result,0);run.assert_not_called()
+                result,run,_=self.invoke(links=True);self.assertEqual(result,0);run.assert_not_called()
                 self.assertEqual(len(p.writes),1)
                 self.assertEqual(p.writes[0][:2],('repos/o/r/issues/8/comments','POST'))
-                self.invoke();self.assertEqual(len(p.writes),1)
+                self.invoke(links=True);self.assertEqual(len(p.writes),1)
     def test_writer_revalidates_issue_type_even_if_inner_processor_would_write(self):
         def process(*args,**kwargs):
             target=self.provider.api('repos/o/r/issues/7');target['pull_request']={}
@@ -177,6 +179,8 @@ class ReporterTests(unittest.TestCase):
         result,_,_=self.invoke(process);self.assertEqual(result,0);self.assertEqual(len(self.provider.writes),3)
     def test_merge_close_wrong_labels_status_and_wrong_issue_writes_never_reach_the_provider(self):
         requests=[('repos/o/r/pulls/8/merge','POST',{}),('repos/o/r/issues/7','PATCH',{'state':'closed'}),
+                  ('repos/o/r/pulls/8/merge','PUT',{}),('repos/o/r/pulls/8','PATCH',{'state':'closed'}),
+                  ('repos/o/r/pulls/8/reviews','POST',{'event':'APPROVE'}),
                   ('repos/o/r/issues/7/labels','POST',{'labels':['label:done']}),('repos/o/r/statuses/'+HEAD,'POST',{'state':'success'}),
                   ('repos/o/r/issues/99/labels','POST',{'labels':['todo']})]
         for path,method,data in requests:
