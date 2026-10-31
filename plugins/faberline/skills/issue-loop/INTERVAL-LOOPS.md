@@ -41,6 +41,10 @@ For Codex, find `automation_update` and use the supported chat heartbeat.
 For a client with a session timer, use that timer's exposed tools.
 Use the original skill's absolute installed path and the repository's exact
 path in the task prompt. Include the interval, start time and serial-run rule.
+For issue-plan, retain the parsed task list, role and existing milestone in
+every tick. Pass those options to the original skill; only the interval is
+consumed by the wrapper. Refuse invalid options before the immediate pass or
+any timer write. Other companions still accept only their documented inputs.
 The repeated prompt must call the original skill once, then end.
 It must not call the `-loop` companion or create another timer.
 

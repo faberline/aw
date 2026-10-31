@@ -18,7 +18,7 @@ change. Do not copy these skills into a repository.
 | `/faberline:gh-merge-pr` | Waits for checks, then squash-merges and verifies. |
 | `/faberline:git-land` | Runs all of the above in order. |
 | `/faberline:issue-loop` | Shows the issue loop ([below](#issue-loop)) and creates its labels. |
-| `/faberline:issue-plan` | Opens issues and sets their priority. |
+| `/faberline:issue-plan` | Selects planning tasks within an existing user-defined milestone and drives verified RC releases. |
 | `/faberline:issue-work` | Takes the next issue, implements it, and opens a PR. |
 | `/faberline:issue-review` | Reads the PR and required CI, then records an independent review. |
 | `/faberline:issue-plan-loop 1h` | Repeats `issue-plan` every hour. |

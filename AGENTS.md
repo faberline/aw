@@ -96,7 +96,17 @@ Keep all existing test coverage, feature matrices, nonzero test checks and numer
 Keep exact head/base, workflow, policy, run and attempt evidence requirements.
 Product coverage gaps belong in planner issues; do not weaken the framework to hide them.
 Release planning follows [release readiness](plugins/faberline/skills/issue-plan/RELEASE-READINESS.md).
-This file does not change release gates or release schedules.
+The user sets milestone goals and authorizes their creation. The planner
+does not invent product capability or create milestones. It selects its
+triage, queue, gaps, dependencies and release tasks from explicit input or
+repo defaults. Both default roles assess release. Core consumes app demand;
+cross-repo dependency issues link the source goal and acceptance.
+The [release standard](docs/standards/release-pipeline.md) uses the same test
+implementation with `all`, while PRs use reviewed `diff` selection. Every RC
+and formal tag needs full tests. Only verified final publication permits
+milestone closure. Keep immutable tags, guards, leases and current-input
+evidence. Loop companions retain their validated planning options.
+This file does not start a release or change a schedule.
 
 **AW changes do not require Claude review.**
 Keep applicable AW CI, functional acceptance and other safety checks.

@@ -20,6 +20,15 @@ def question_id(text):
     return 'planning-question-'+hashlib.sha256(text.encode()).hexdigest()
 
 
+def with_release_sources(rows,root):
+    existing={(row['role'],row['path']) for row in rows}
+    for role in ('candidate','evaluator'):
+        for path in m.RELEASE_FRAMEWORK_SOURCES:
+            if (role,path) not in existing:
+                rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+    return rows
+
+
 class SourceTextPacketTests(unittest.TestCase):
     def packet(self):
         same='完整來源\n' * 1000
@@ -357,7 +366,30 @@ class ReviewProtocolTests(unittest.TestCase):
             rows.append(dict(role=role,path=path,content=(root/path).read_text()))
             path=m.FRAMEWORK_ROOT+'todo_mutation_trace.py'
             rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+        with_release_sources(rows,root)
         m.framework_dependency_closure(rows)
+
+    def test_release_runtime_is_bound_only_when_that_revision_imports_it(self):
+        candidate,evaluator='c'*40,'e'*40
+        def blob(api,repo,path,ref):
+            if path.endswith('/action.py') and ref==candidate:
+                return "importlib.util.spec_from_file_location('release', Path(__file__).resolve().parents[2] / 'issue-plan/scripts/release.py')"
+            return 'pass'
+        with patch.object(m.a.review,'blob',side_effect=blob):
+            rows=m.framework_sources(None,candidate,evaluator)
+        selected={(r['role'],r['path']) for r in rows}
+        self.assertTrue(all(('candidate',path) in selected for path in m.RELEASE_FRAMEWORK_SOURCES))
+        self.assertFalse(any(('evaluator',path) in selected for path in m.RELEASE_FRAMEWORK_SOURCES))
+
+    def test_release_dependency_omission_is_still_rejected(self):
+        root=Path(m.__file__).resolve().parents[5]
+        selected=[dict(role=role,path=path,content=(root/path).read_text() if path==m.RELEASE_ENTRY else 'pass')
+                  for role in ('candidate','evaluator') for path in m.RELEASE_FRAMEWORK_SOURCES]
+        m.framework_dependency_closure(selected)
+        for role in ('candidate','evaluator'):
+            for omitted in m.RELEASE_FRAMEWORK_SOURCES[1:]:
+                with self.subTest(role=role,omitted=omitted),self.assertRaisesRegex(RuntimeError,'target_framework_dependency_missing'):
+                    m.framework_dependency_closure([row for row in selected if not (row['role']==role and row['path']==omitted)])
 
     def test_development_runtime_is_bound_only_when_that_revision_imports_it(self):
         candidate,evaluator='c'*40,'e'*40
@@ -469,6 +501,7 @@ class ReviewProtocolTests(unittest.TestCase):
             rows.append(dict(role=role,path=path,content=(root/path).read_text()))
             path=m.FRAMEWORK_ROOT+'todo_mutation_trace.py'
             rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+        with_release_sources(rows,root)
         m.framework_dependency_closure(rows)
         for omitted in ('plugins/faberline/skills/issue-work/scripts/worker_guard.py',
                         m.FRAMEWORK_ROOT+'guard_ledger.py',

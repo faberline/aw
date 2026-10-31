@@ -67,6 +67,9 @@ def adopt(client, n, value, number=None):
         raise ValueError('adopt requires a backlog issue without lifecycle labels')
     approved_spec = client.spec(issue, client.comments(n))
     sections(approved_spec)
+    if (issue.get('body', '').startswith('<!-- aw-release-failure:')
+            and approved_spec == issue.get('body')):
+        raise ValueError('release repair needs a planner spec with exact affected unit commands before todo')
     if number is not None:
         milestone(client, number)
         client.patch(n, milestone=int(number))
@@ -106,6 +109,17 @@ def adopt(client, n, value, number=None):
 
 def execute(client, args):
     command, *args = args
+    if command == 'options':
+        spec = importlib.util.spec_from_file_location('planner_options', Path(__file__).with_name('options.py'))
+        options = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(options)
+        print(json.dumps(options.resolve(args), sort_keys=True))
+        return 0
+    if command in ('release-status', 'release-advance'):
+        spec = importlib.util.spec_from_file_location('planner_release', Path(__file__).with_name('release.py'))
+        release = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(release)
+        return release.execute(client, command, args)
     if command == 'status' and not args:
         snapshot = client.snapshot()
         print(json.dumps(dict(snapshot['decision'], read_only_snapshot=True,
@@ -201,7 +215,7 @@ def execute(client, args):
             raise ValueError('lifecycle changed; comment retained, labels unchanged')
         client.patch(n, labels=sorted((queue.labels(fresh) - {'todo'}) | {'blocked'}))
         return 0
-    raise ValueError('usage: status | new TITLE FILE pN --milestone NUMBER | new-backlog TITLE FILE pN --milestone NUMBER | adopt N pN [--milestone NUMBER] | milestone N NUMBER | spec N FILE | prioritize N pN | block N FILE')
+    raise ValueError('usage: status | options [--tasks TASKS] [--milestone N] [--role product|shared] | release-status --milestone N | release-advance --milestone N --expected SHA256 | new TITLE FILE pN --milestone NUMBER | new-backlog TITLE FILE pN --milestone NUMBER | adopt N pN [--milestone NUMBER] | milestone N NUMBER | spec N FILE | prioritize N pN | block N FILE')
 
 
 def main():
@@ -210,6 +224,15 @@ def main():
     # its own current state; status is never an admission/ownership receipt.
     if sys.argv[1:] == ['status']:
         return execute(queue.Client(), ['status'])
+    if sys.argv[1:2] == ['options']:
+        return execute(None, sys.argv[1:])
+    if sys.argv[1:2] in (['release-status'], ['release-advance']):
+        spec = importlib.util.spec_from_file_location('planner_release_read', Path(__file__).with_name('release.py'))
+        release = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(release)
+        release.arguments(sys.argv[1], sys.argv[2:])
+        if sys.argv[1] == 'release-status':
+            return release.execute(queue.Client(), 'release-status', sys.argv[2:])
     common = Path(subprocess.check_output(['git', '-c', 'core.fsmonitor=false', 'rev-parse', '--git-common-dir'], text=True).strip()).resolve()
     with (common / 'issue-work.guard').open('a') as guard:
         try:

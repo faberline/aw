@@ -2,7 +2,7 @@ name: Trusted PR qualification and CI handoff
 description: Evaluate GitHub metadata with pinned aw logic and default-branch consumer policy.
 inputs:
   operation:
-    description: validate, qualify, handoff, readiness, verify-readiness, index, verify-index, development-preflight, development-plan, development-report, or assertion-library.
+    description: validate, qualify, handoff, readiness, verify-readiness, index, verify-index, development-preflight, development-plan, development-report, release-preflight, or assertion-library.
     default: handoff
   policy:
     description: Policy JSON path on the consumer default branch. PR policy is never loaded.
@@ -13,6 +13,10 @@ inputs:
     description: PR number for read-only qualification.
   head:
     description: Exact PR head SHA for read-only qualification.
+  tag:
+    description: Exact RC or formal tag for read-only release preflight.
+  milestone:
+    description: Existing release milestone number; otherwise resolve the unique reviewed version mapping.
   base:
     description: Frozen base SHA for development stages; main movement refuses.
   receipt:
@@ -46,7 +50,7 @@ runs:
       run: echo "path=$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/assertion_record.py" >> "$GITHUB_OUTPUT"
     - name: Prepare hash-locked readiness parser
       id: readiness-runtime
-      if: inputs.operation == 'readiness' || inputs.operation == 'verify-readiness' || inputs.operation == 'index' || inputs.operation == 'verify-index' || inputs.operation == 'qualify' || inputs.operation == 'handoff' || inputs.operation == 'validate' || inputs.operation == 'development-preflight' || inputs.operation == 'development-plan' || inputs.operation == 'development-report'
+      if: inputs.operation == 'readiness' || inputs.operation == 'verify-readiness' || inputs.operation == 'index' || inputs.operation == 'verify-index' || inputs.operation == 'qualify' || inputs.operation == 'handoff' || inputs.operation == 'validate' || inputs.operation == 'development-preflight' || inputs.operation == 'development-plan' || inputs.operation == 'development-report' || inputs.operation == 'release-preflight'
       shell: bash
       run: |
         set -euo pipefail
@@ -69,6 +73,8 @@ runs:
         INPUT_RUN_ID: ${{ inputs.run-id }}
         INPUT_PR: ${{ inputs.pr }}
         INPUT_HEAD: ${{ inputs.head }}
+        INPUT_TAG: ${{ inputs.tag }}
+        INPUT_MILESTONE: ${{ inputs.milestone }}
         INPUT_BASE: ${{ inputs.base }}
         INPUT_RECEIPT: ${{ inputs.receipt }}
       run: |

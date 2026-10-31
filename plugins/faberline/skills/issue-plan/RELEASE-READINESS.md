@@ -1,10 +1,27 @@
 # Milestone release lifecycle
 
 Progress each repository's current release milestone on each planning pass.
+The user defines the milestone goal. The planner never invents product
+capability or creates a milestone. `release` is included in both default
+planner profiles; an explicit task list can limit one pass.
 Use Semantic Versioning for the release version. The Git tags are
 `vMAJOR.MINOR.PATCH-rc.N` for a release candidate and `vMAJOR.MINOR.PATCH` for
 the final release. Start `N` at 1 and never move, overwrite or reuse a tag for a
 different commit. Reconcile existing tags and runs before creating anything.
+
+## Executable entry
+
+Use the shared [release pipeline standard](../../../../docs/standards/release-pipeline.md).
+`plan.sh release-status --milestone N` is read-only. It loads the reviewed
+default-branch `.github/aw-release.json` and CI policy. The release contract
+maps each approved goal to closed milestone issues and real full-plan checks.
+Unknown applicability, a changed goal or an incomplete inventory holds release.
+
+`plan.sh release-advance --milestone N --expected SHA256` uses the returned
+assessment fingerprint. The normal repository guard remains mandatory. It
+re-reads inputs before one write and reads back the result. It never executes
+candidate programs. Creating a tag, a repair issue, publishing GitHub release
+metadata and closing a milestone are separate, recoverable actions.
 
 ## Decide if the milestone goal is complete
 
@@ -63,6 +80,11 @@ results. Do not rebuild a different candidate and call it the tested release.
 
 Close the milestone only after the final tag and all required release results
 are verified. Read the milestone back and report the actual outcome.
+The formal tag runs the same complete test inventory again. A passing RC is
+not a substitute for that final-tag run. Final publication follows full tests.
+If the formal tag fails, preserve it and keep the milestone open. A code fix
+requires a new reviewed SemVer version and a new RC sequence; never repoint
+the existing final tag. A pending, cancelled or unknown run cannot promote.
 
 ## Safety and recovery
 
