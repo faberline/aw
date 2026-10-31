@@ -650,6 +650,7 @@ def development_report(repo, document, evaluator, run_id):
                 or pull.get('base',{}).get('ref')!=default):
             continue
         number,head=pull['number'],pull['head']['sha']
+        linking_metadata=(pull.get('title'),pull.get('body'))
         issue=qualification_module().linked_issue(pull)
         def failure_api(path,method='GET',data=None):
             if method!='GET':
@@ -677,17 +678,24 @@ def development_report(repo, document, evaluator, run_id):
                         or current.get('base',{}).get('ref')!=default):
                     raise RuntimeError('source PR moved before development handoff')
                 source_diagnostic=(method=='POST' and path==f'{root}/issues/{number}/comments')
-                if not source_diagnostic:
+                if source_diagnostic:
+                    if (current.get('title'),current.get('body'))!=linking_metadata:
+                        raise RuntimeError('source PR linking metadata changed before diagnostic')
+                    target=qualification_module().linked_issue(current)
+                    if target is not None and development_module().canonical_issue_target(repo,target,
+                            development_module().read_issue_target(SimpleNamespace(api=original_api),repo,target)):
+                        raise RuntimeError('source PR now has a canonical open issue; no diagnostic')
+                else:
                     if (qualification_module().linked_issue(current)!=issue
                             or not development_module().canonical_issue_target(repo,issue,
-                                original_api(f'{root}/issues/{issue}'))):
+                                development_module().read_issue_target(SimpleNamespace(api=original_api),repo,issue))):
                         raise RuntimeError('canonical issue changed before development handoff')
                 current_source()
             return original_api(path,method,data)
         try:
             globals()['api']=failure_api
             if issue is None or not development_module().canonical_issue_target(repo,issue,
-                    original_api(f'{root}/issues/{issue}')):
+                    development_module().read_issue_target(SimpleNamespace(api=original_api),repo,issue)):
                 development_module().report_missing_issue(SimpleNamespace(api=failure_api,pages=pages),repo,pull,current_source)
             else:
                 args=argparse.Namespace(repo=repo,pr=number,head=head,apply=True,run_id=None)

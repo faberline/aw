@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import subprocess
 from urllib.parse import quote
 
 STAGES = ('preflight', 'impact', 'unit', 'functional', 'performance')
@@ -223,6 +224,26 @@ def canonical_issue_target(repo, number, source):
             and source.get('url') == f'https://api.github.com/repos/{repo}/issues/{number}')
 
 
+def read_issue_target(api, repo, number):
+    """Only an exact gh GET 404 proves the linked target is unavailable."""
+    need(isinstance(repo, str) and re.fullmatch(r'[\w.-]+/[\w.-]+', repo)
+         and integer(number), 'invalid linked issue identity')
+    path = f'repos/{repo}/issues/{number}'
+    try:
+        return api.api(path)
+    except subprocess.CalledProcessError as error:
+        if (error.returncode == 1 and error.cmd == ['gh', 'api', '--method', 'GET', path]
+                and isinstance(error.output, str)):
+            try:
+                response = sibling('json_data').loads(error.output)
+            except (ValueError, TypeError):
+                response = None
+            if (isinstance(response, dict) and response.get('status') == '404'
+                    and response.get('message') == 'Not Found'):
+                return None
+        raise
+
+
 def preflight(api, repo, number, head, expected_base=None):
     """Read one explicit comparison; a query error never becomes a pass."""
     need(isinstance(repo, str) and re.fullmatch(r'[\w.-]+/[\w.-]+', repo)
@@ -253,7 +274,7 @@ def preflight(api, repo, number, head, expected_base=None):
     issue = sibling('qualification').linked_issue(pull)
     source = None
     if issue is not None:
-        source = api.api(f'{root}/issues/{issue}')
+        source = read_issue_target(api, repo, issue)
     valid = canonical_issue_target(repo, issue, source)
     checks.append(dict(check='one_canonical_issue', passed=valid,
                        reason='One canonical open issue is linked' if valid else
@@ -340,7 +361,7 @@ def report_missing_issue(api, repo, pull, before_mutation=None):
              and current.get('base', {}).get('ref') == api.api(root)['default_branch'],
              'unlinked PR changed before diagnostic')
         issue = sibling('qualification').linked_issue(current)
-        target = api.api(f'{root}/issues/{issue}') if issue is not None else None
+        target = read_issue_target(api, repo, issue) if issue is not None else None
         need(not canonical_issue_target(repo, issue, target), 'PR now has a canonical open issue')
         return current
     current = fresh()
