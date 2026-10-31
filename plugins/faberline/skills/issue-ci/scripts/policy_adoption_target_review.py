@@ -27,6 +27,10 @@ COMMON_FRAMEWORK_FILES=(
     'readiness.py','readiness_index.py','action.py','native_review_index.py','json_data.py',
 )
 SHARED_FRAMEWORK_DATA=('plugins/faberline/skills/issue-conformance/SKILL.md',)
+RELEASE_ENTRY='plugins/faberline/skills/issue-plan/scripts/release.py'
+RELEASE_FRAMEWORK_SOURCES=(RELEASE_ENTRY,
+    'plugins/faberline/skills/issue-plan/scripts/release_state.py',
+    FRAMEWORK_ROOT+'test_plan.py',FRAMEWORK_ROOT+'development_pipeline.py')
 RECOVERY_CANDIDATE_SOURCES=(
     '.github/actions/verified-issue-recovery/action.yml',
     *(FRAMEWORK_ROOT+name for name in (
@@ -135,6 +139,10 @@ def framework_dependency_closure(rows):
                 arg=node.args[0]
                 if not isinstance(arg,ast.Constant) or not isinstance(arg.value,str):
                     continue
+                if name=='load' and path==RELEASE_ENTRY:
+                    dependency=(local_source_path(node.args[1],path,roots) if len(node.args)>1
+                                else PurePosixPath(path).with_name(arg.value+'.py'))
+                    need(dependency is not None and str(dependency) in selected,'target_framework_dependency_missing')
                 if name in ('sibling','ci_module'):
                     dependency=arg.value+'.py'
                 elif name=='with_name' and arg.value.endswith(('.py','.json')):
@@ -194,6 +202,23 @@ def framework_sources(api,candidate_ref,evaluator_ref,include_recovery=False):
     # precisely when that immutable controller statically imports it. The
     # dependency-closure check below still rejects any unlisted dependency.
     for role,ref in refs.items():
+        uses_release=False
+        for row in list(result):
+            if row['role']!=role or not row['path'].endswith('.py'):
+                continue
+            for node in ast.walk(ast.parse(row['content'])):
+                if (isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute)
+                        and node.func.attr=='spec_from_file_location' and len(node.args)>1
+                        and local_source_path(node.args[1],row['path'],{})==PurePosixPath(RELEASE_ENTRY)):
+                    uses_release=True
+        if uses_release:
+            for path in RELEASE_FRAMEWORK_SOURCES:
+                if any(row['role']==role and row['path']==path for row in result):
+                    continue
+                content=a.review.blob(api,a.GRANTS_REPO,path,ref)
+                raw=content.encode('utf-8')
+                blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+                result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
         controllers=[row for row in result if row['role']==role and row['path']==FRAMEWORK_ROOT+'native_merge.py']
         need(len(controllers)==1,'target_framework_dependency_missing')
         try:

@@ -56,8 +56,30 @@ def main():
     repo = os.environ['GITHUB_REPOSITORY']
     operation = os.environ.get('INPUT_OPERATION', 'handoff')
     if operation not in ('validate', 'qualify', 'handoff', 'readiness', 'verify-readiness', 'index', 'verify-index',
-                         'development-preflight', 'development-plan', 'development-report'):
+                         'development-preflight', 'development-plan', 'development-report', 'release-preflight'):
         raise RuntimeError('unknown issue-ci operation')
+    if operation == 'release-preflight':
+        tag, head = os.environ.get('INPUT_TAG', ''), os.environ.get('INPUT_HEAD', '')
+        if (os.environ.get('GITHUB_EVENT_NAME') != 'push'
+                or os.environ.get('GITHUB_REF') != 'refs/tags/' + tag
+                or os.environ.get('GITHUB_SHA') != head):
+            raise RuntimeError('release preflight requires its actual tag push and exact commit')
+        spec = importlib.util.spec_from_file_location('aw_release_preflight',
+                Path(__file__).resolve().parents[2] / 'issue-plan/scripts/release.py')
+        release = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(release)
+        number = os.environ.get('INPUT_MILESTONE') or None
+        if number is not None and not re.fullmatch('[1-9][0-9]*', number):
+            raise RuntimeError('invalid release milestone')
+        result = release.preflight(release.Provider(repo), tag, head, int(number) if number else None)
+        encoded = json.dumps(result, sort_keys=True, separators=(',', ':'))
+        print('AW_RELEASE_PREFLIGHT_V1 ' + encoded, flush=True)
+        if os.environ.get('GITHUB_OUTPUT'):
+            with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                for key in ('base', 'head', 'status', 'plan_sha256'):
+                    output.write(f'{key}={result[key]}\n')
+                output.write('result=' + encoded + '\n')
+        return 0
     if operation == 'development-report':
         document=trusted_policy(ci,repo,os.environ.get('INPUT_POLICY','.github/issue-ci-required-gates.json'),metadata=True)
         run=os.environ.get('GITHUB_RUN_ID','')

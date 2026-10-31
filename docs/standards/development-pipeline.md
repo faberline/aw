@@ -28,6 +28,9 @@ retain independent Claude review after complete required CI, run locally.
 
 Release, RC tags, versions, full release matrices, publication, milestone
 closure, schedules, cloud resources and quota changes remain out of scope.
+The separate [release standard](release-pipeline.md) reuses these test stages
+with `all` selection. This PR contract keeps `diff` selection and CI-owned
+done/todo handoff. Tag outcomes do not relabel completed PR issues.
 This revision replaces the earlier six-stage cloud completion design. The
 historical guard-activation protocol is not a prerequisite for this pipeline.
 Preserve existing leases, ledger records and unrelated work during retirement.

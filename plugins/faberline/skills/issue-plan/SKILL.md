@@ -1,6 +1,6 @@
 ---
 name: issue-plan
-description: "Plan one repository's issues and drive its milestone release lifecycle. Triage and fill todo, create milestone gap issues, validate RC candidates, and promote a fully tested release. Use when the schedule or user asks to plan or progress a milestone."
+description: "Plan work within a user-defined milestone. Select triage, queue, gaps, dependencies and release tasks; assess goal completion, progress fully tested RCs and publish the exact passing release. Use when the user or schedule asks to plan or progress an existing milestone."
 user-invocable: true
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/plan.sh) Bash(${CLAUDE_SKILL_DIR}/scripts/plan.sh *)
 ---
@@ -19,13 +19,39 @@ Otherwise, use the absolute path of that folder.
 ## Runs
 
 Each run does one pass, then ends. This skill never starts a loop or a
-schedule. The controller sets the schedule outside the skill. Ignore any
-argument, such as `loop` or `once`.
+schedule. The controller sets the schedule outside the skill.
+
+## Inputs
+
+Accept `--tasks triage,queue,gaps,dependencies,release`, `--milestone N` and
+`--role product|shared`. These select work, not permission. An interval belongs
+to `issue-plan-loop`. Reject unknown, empty or duplicate task names.
+
+Read the text supplied with the skill. Claude supplies it as `$ARGUMENTS`;
+other clients use the invocation text. Pass the supported options as separate,
+quoted arguments to the parser. Never evaluate invocation text as shell code.
+
+```bash
+${CLAUDE_SKILL_DIR}/scripts/plan.sh options --tasks triage,queue,release --milestone 7 --role shared
+```
+
+Use the user's actual values. With no options, run `plan.sh options`.
+It reads optional repo-owned `.github/issue-plan.json` version 1 defaults:
+`role`, `tasks` and the existing `milestone` number. Product defaults select
+all five tasks. Shared defaults select triage, queue and release. Both include
+release assessment. An explicit task list replaces these defaults for one pass.
+Follow only the selected tasks below. Installing or parsing does not run them.
 
 ## Rules
 
-- New issues and specs stay inside the repository's stated goals and the
-  user's instructions.
+- The user sets milestone goals and asks the controller to create milestones.
+  This skill never creates a new milestone or invents product capability.
+  New issues and specs only fill the existing approved goal, test failures,
+  dependencies or scoped maintenance. Missing goals require a human answer.
+- In a shared repo such as Core, app planners originate product demand.
+  Link its source app issue and milestone in a Core dependency issue. Triage,
+  deduplicate, split and order that work; preserve compatibility. Intrinsic
+  bug, security and maintenance work still needs a defined goal and acceptance.
 - Milestone release is part of planning. Follow [RELEASE-READINESS.md](RELEASE-READINESS.md):
   create RC tags, verify the full release pipeline, then promote the exact
   passing candidate and close its milestone. Create milestone issues for
@@ -115,7 +141,7 @@ ${CLAUDE_SKILL_DIR}/scripts/plan.sh status
    roadmap, status or handoff docs), the complete open issue inventory from
    `status`, and the recent commits. Otherwise skip to step 6.
 
-3. Triage. Give each untriaged issue that `status` printed a priority:
+3. When `triage` is selected, give each untriaged issue that `status` printed a priority:
 
 ```bash
 ${CLAUDE_SKILL_DIR}/scripts/plan.sh prioritize <N> <p0-p3>
@@ -128,7 +154,7 @@ ${CLAUDE_SKILL_DIR}/scripts/plan.sh prioritize <N> <p0-p3>
 ${CLAUDE_SKILL_DIR}/scripts/plan.sh block <N> <question-file>
 ```
 
-4. Fill the queue, up to `room`. Take backlog from the earliest unresolved
+4. When `queue` is selected, fill the queue up to `room`. Take backlog from the earliest unresolved
    milestone first, then priority within that batch. Do not skip a blocked or
    awaiting-review batch to fill the queue from a later release:
    - A backlog issue without a spec: write the spec to a file, then
@@ -139,20 +165,29 @@ ${CLAUDE_SKILL_DIR}/scripts/plan.sh block <N> <question-file>
 ${CLAUDE_SKILL_DIR}/scripts/plan.sh adopt <N> <p0-p3> [--milestone <existing-number>]
 ```
 
-   - Only when no backlog issue fits, open new work. Write the body with the
+   - Only with `gaps` selected and no matching backlog issue, open work for an
+     evidenced gap in the approved goal. Write the body with the
      four spec sections, then:
 
 ```bash
 ${CLAUDE_SKILL_DIR}/scripts/plan.sh new "<title>" <body-file> <p0-p3> --milestone <existing-number>
 ```
 
-5. With `room=0`, prepare instead: write the spec of the top backlog issue
+5. With `queue` selected and `room=0`, prepare instead: write the spec of the top backlog issue
    that has none, at most one per run, so the next free place is quick to
    fill.
 
-6. Assess the current milestone's release readiness, including when the queue
+   With `dependencies` selected, inspect cross-repo prerequisites. An app may
+   create a scoped Core issue only within the authorized target repo and goal.
+   Link the source app issue/milestone, compatibility and acceptance. Reuse
+   existing dependency issues before creating any. A dependency wait alone is
+   not a human `blocked` decision and does not authorize stealing ownership.
+
+6. With `release` selected, assess the existing milestone's readiness, including when the queue
    is full or no issues changed. Follow [RELEASE-READINESS.md](RELEASE-READINESS.md).
-   Report its phase, exact milestone, candidate and evidence. A missing release
+   Use `plan.sh release-status --milestone N`. It reads protected default-branch
+   `.github/aw-release.json`, the full test policy, complete issue/PR/tag/run
+   inventories and exact goal evidence. Report its phase, exact milestone, candidate and evidence. A missing release
    contract or unknown result is a hold, not a pass. If the goal or a release
    test is unmet, create scoped issues in the same milestone. When the queue
    is full, create the issue without claiming it:
@@ -161,7 +196,18 @@ ${CLAUDE_SKILL_DIR}/scripts/plan.sh new "<title>" <body-file> <p0-p3> --mileston
 ${CLAUDE_SKILL_DIR}/scripts/plan.sh new-backlog "<title>" <body-file> <p0-p3> --milestone <existing-number>
 ```
 
-7. End the run. Report any issue changes and the milestone verdict. If no
+   Read the assessment and its fingerprint before `plan.sh release-advance
+   --milestone N --expected SHA256`. The mutation takes the original exclusive
+   repository guard, re-reads all inputs and performs at most one next action.
+   Reassess after each action; do not replay an unknown write. A repair issue is
+   created as backlog, even when todo is full. Normal guarded admission queues
+   it later. This preserves queue limits and active leases.
+   Before queueing an automatic release repair, inspect its failing code and
+   write a spec comment with the real affected unit commands. The generic
+   failure report is not an executable implementation spec. Stop advancing
+   after a pending/hold/work/no-change result; do not loop on the same action.
+
+7. End the run. Report selected tasks, issue changes and the milestone verdict. If no
    milestone can be identified, report `HOLD` and the missing information.
 
 ## Exit codes
