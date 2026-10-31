@@ -1,4 +1,4 @@
-"""Failure-only reporter controls. No GitHub requests, model calls or product execution."""
+"""CI label reporter controls. No GitHub requests, model calls or product execution."""
 import base64
 import contextlib
 import copy
@@ -10,6 +10,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 import test_lifecycle as legacy
+import test_qualification as qualification
 
 ci=legacy.ci
 SOURCE,EVALUATOR,HEAD='a'*40,'b'*40,'c'*40
@@ -76,15 +77,41 @@ class ReporterTests(unittest.TestCase):
             ci.api('repos/o/r/issues/7/labels','POST',{'labels':['todo']})
             ci.api('repos/o/r/issues/7/labels/doing','DELETE')
         result,_,_=self.invoke(process);self.assertEqual(result,0);self.assertEqual(len(self.provider.writes),3)
-    def test_merge_close_done_status_and_wrong_issue_writes_never_reach_the_provider(self):
+    def test_merge_close_wrong_labels_status_and_wrong_issue_writes_never_reach_the_provider(self):
         requests=[('repos/o/r/pulls/8/merge','POST',{}),('repos/o/r/issues/7','PATCH',{'state':'closed'}),
-                  ('repos/o/r/issues/7/labels','POST',{'labels':['done']}),('repos/o/r/statuses/'+HEAD,'POST',{'state':'success'}),
+                  ('repos/o/r/issues/7/labels','POST',{'labels':['label:done']}),('repos/o/r/statuses/'+HEAD,'POST',{'state':'success'}),
                   ('repos/o/r/issues/99/labels','POST',{'labels':['todo']})]
         for path,method,data in requests:
             self.provider.writes=[]
             def process(*args,**kwargs):ci.api(path,method,data)
             with self.subTest(path=path,data=data):
                 result,_,_=self.invoke(process);self.assertEqual(result,2);self.assertFalse(self.provider.writes)
+    def test_done_label_requires_fresh_complete_qualified_ci_but_never_closes(self):
+        cfg=qualification.config();cfg.update(completion_owner='local',development_reporter=self.provider.config()['development_reporter'])
+        scoped=qualification.scope(cfg)
+        def process(*args,**kwargs):
+            ci.api('repos/o/r/issues/7/labels','POST',{'labels':['done']})
+            ci.api('repos/o/r/issues/7/labels/todo','DELETE')
+        with patch.object(ci,'qualify_config',return_value=scoped),patch.object(ci,'snapshot',return_value=qualification.evidence(scoped)):
+            result,_,_=self.invoke(process,config=cfg)
+        self.assertEqual(result,0)
+        self.assertEqual(self.provider.writes,[('repos/o/r/issues/7/labels','POST',{'labels':['done']}),('repos/o/r/issues/7/labels/todo','DELETE',None)])
+    def test_done_label_refuses_missing_skipped_cancelled_failed_or_changed_ci(self):
+        cfg=qualification.config();cfg.update(completion_owner='local',development_reporter=self.provider.config()['development_reporter'])
+        scoped=qualification.scope(cfg)
+        def process(*args,**kwargs):ci.api('repos/o/r/issues/7/labels','POST',{'labels':['done']})
+        for conclusion in (None,'skipped','cancelled','failure','neutral'):
+            self.provider.writes=[];snapshots=qualification.evidence(scoped)
+            snapshots[qualification.WORKFLOW][1][0]['conclusion']=conclusion
+            with self.subTest(conclusion=conclusion),patch.object(ci,'qualify_config',return_value=scoped),patch.object(ci,'snapshot',return_value=snapshots):
+                result,_,_=self.invoke(process,config=cfg)
+                self.assertEqual(result,2);self.assertFalse(self.provider.writes)
+        def moved_process(*args,**kwargs):
+            self.provider.pull['head']['sha']='e'*40
+            ci.api('repos/o/r/issues/7/labels','POST',{'labels':['done']})
+        with patch.object(ci,'qualify_config',side_effect=AssertionError('stale head must refuse before qualification')):
+            result,_,_=self.invoke(moved_process,config=cfg)
+        self.assertEqual(result,2);self.assertFalse(self.provider.writes)
     def test_default_movement_holds_before_any_failure_write(self):
         self.provider.moved=True
         result,_,_=self.invoke(lambda *a,**k:ci.api('repos/o/r/issues/7/labels','POST',{'labels':['todo']}))

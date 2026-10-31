@@ -156,11 +156,22 @@ class ApplyTests(unittest.TestCase):
         self.assertIn(('repos/o/r/issues/7/labels/doing', 'DELETE', None), self.writes)
         self.assertFalse(any('/labels/priority' in w[0] for w in self.writes))
 
-    def test_local_completion_success_never_writes_done_merge_or_close(self):
+    def test_local_completion_success_labels_done_but_keeps_the_issue_open(self):
         self.config.write_text(json.dumps(dict(workflows=GATES,completion_owner='local')))
         self.assertEqual(self.invoke(),0)
-        self.assertEqual(self.writes,[])
-        self.assertEqual({l['name']for l in self.issue['labels']},{'doing','priority:p1'})
+        self.assertIn(('repos/o/r/issues/7/labels','POST',{'labels':['done']}),self.writes)
+        self.assertEqual({l['name']for l in self.issue['labels']},{'done','priority:p1'})
+        self.assertEqual(self.issue['state'],'open')
+        self.assertFalse(any('/merge'in path or (data and 'state'in data)for path,_,data in self.writes))
+
+    def test_local_completion_incomplete_or_non_success_ci_never_labels_done(self):
+        self.config.write_text(json.dumps(dict(workflows=GATES,completion_owner='local')))
+        for conclusion in (None,'cancelled','skipped','neutral','stale','failure'):
+            self.issue['labels']=[{'name':'doing'}];self.writes.clear();self.comments.clear()
+            snapshots=evidence();snapshots[GATES[0]['path']][1][0]['conclusion']=conclusion
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual(self.invoke(snapshots),0)
+                self.assertFalse(any(data=={'labels':['done']}for _,_,data in self.writes))
 
     def test_local_completion_keeps_success_readable_for_the_local_reviewer(self):
         args=ci.argparse.Namespace(repo='o/r',pr=8,head=SHA,apply=False,run_id=None)

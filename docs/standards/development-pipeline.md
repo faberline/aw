@@ -15,9 +15,12 @@ Deploy in this order: `faberline/core`, `faberline/lumen`, `faberline/keep`,
 `faberline/tape`, `faberline/defer`, `faberline/relay`.
 
 **CI ends after stage 4. Claude Code review runs locally.** Cloud CI must not
-start review, merge a PR, mark its issue done, or close its issue. Remove the
+start review, merge a PR or close its issue. Remove the
 old cloud review, native merge publisher and completion recovery entry points.
-A passing test run leaves delivery for the local review/controller flow.
+After all necessary current-input CI succeeds, add the `done` label and
+remove conflicting `todo`/`doing` labels. Keep the issue OPEN for local
+`issue-review`. `done` means CI passed and review is ready; it does not mean
+merged, accepted or closed. GitHub search `label:done` selects this label.
 
 **AW itself requires no Claude review**, locally or in cloud CI. Keep its
 applicable CI, acceptance and other review requirements. The six products
@@ -37,9 +40,10 @@ Preserve existing leases, ledger records and unrelated work during retirement.
   contract, reviewed selection policy, workflow definition, run and attempt.
 - Only completed successful required jobs count. Missing, skipped, cancelled,
   neutral, zero-test or unknown results never count as success.
-- Test jobs have no lifecycle or merge permission. One trusted failure writer
+- Test jobs have no lifecycle or merge permission. One trusted CI label writer
   posts job reasons and returns only the current failed work attempt to todo.
-  It has no merge, closure, success-to-done or review authority.
+  After full required CI succeeds, it labels the open issue `done` for local
+  review. It has no merge, closure or review authority.
 - Read selection rules from a reviewed protected source. A PR cannot approve
   its own weaker policy. Local review must inspect protected changes and full
   coverage retention before a controller publishes them.
@@ -64,12 +68,15 @@ flowchart TD
     T -. failed job .-> W
     W --> C[Post each reason on the canonical issue]
     C --> Q[Return the current attempt to todo once]
-    F -. complete CI evidence .-> L[Local independent Claude review]
-    T -. complete CI evidence .-> L
+    F --> V[Verify all necessary CI]
+    T --> V
+    V --> D[Add done label; keep issue open]
+    D -. ready for local review .-> L[Local independent Claude review]
 ```
 
 The local review box is outside GitHub Actions. Merge and issue closure are
-outside this DAG. A green workflow does not mean reviewed, merged or closed.
+outside this DAG. The `done` label requires all necessary current-input tests
+to pass. A green workflow or `done` label does not mean reviewed, merged or closed.
 
 ### 1. Preflight
 
@@ -175,7 +182,8 @@ It runs no candidate program, build or test with review credentials. Preserve
 an exact-head/base/issue/plan/CI-run receipt and the actual reviewer identity.
 A tool failure, negative decision, missing receipt or stale input cannot pass.
 
-Review failure records every reason. The authorized local controller returns
+A `done` label never bypasses the local reviewer's independent current-head
+CI check. Review failure records every reason. The authorized local controller returns
 only the current failed attempt to todo, with the same owner and retry checks.
 A later worker claim or newer head must not be reset.
 
@@ -200,7 +208,9 @@ state, never authority to trust its payload.
 
 Opt in with `completion_owner: "local"` in reviewed consumer policy. Remove
 cloud review, native merge and completion recovery producer configuration.
-CI failure reporting remains; passing CI cannot set done. Keep strict base
+CI success labels the open issue `done`; failure records reasons and returns
+only the current work attempt to `todo`. Keep all coverage blockers until
+actual required evidence resolves them. Keep strict base
 and the complete required test checks in branch rules. Retire the old
 `claude/verified-merge` cloud status requirement only with the test-check
 replacement and actual local review path ready. Never bypass failed tests.
@@ -213,7 +223,8 @@ Before calling a consumer adopted, retain executable evidence for:
 4. Every CI stage and expanded-job failure reason, issue comment and current-attempt todo return.
 5. Multiple/duplicate failures, reruns, stale inputs and later worker ownership.
 6. Partial writes and missing logs, without lost reasons or stolen work.
-7. Local exact-input review PASS/rejection/tool failure, and no cloud review or success-to-done action.
+7. Qualified CI labels the open issue `done`; local exact-input review handles
+   PASS/rejection/tool failure, with no cloud review.
 8. Local verified merge-before-close and close-only retry, with no cloud merge/closure entry point.
 
 Keep pending or failed states explicit. Green controller work or a standard

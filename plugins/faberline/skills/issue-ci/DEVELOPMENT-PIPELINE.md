@@ -6,7 +6,8 @@ Consumers opt in through their reviewed default-branch policy. Publishing the
 adapter does not activate a consumer or replace its product tests.
 
 The 2026-10-31 contract has four CI stages. Claude review runs locally.
-CI must not review, merge, mark an issue done or close it. Old cloud review,
+CI must not review, merge or close an issue. All necessary current-input CI
+success adds the `done` label to the OPEN issue for local `issue-review`. Old cloud review,
 merge and recovery adapters remain compatibility code, not activation work
 for the new normal-development design.
 
@@ -39,8 +40,10 @@ jobs in its earlier stages.
 
 The job IDs are examples, not an approved gate inventory. List every test job
 from that workflow exactly once. Keep the full required check inventory,
-feature expansion and issue contracts in the qualification policy. Independent review runs locally after complete necessary CI. One trusted
-cloud failure writer retains issue comments and current-attempt todo return.
+feature expansion and issue contracts in the qualification policy. Independent
+review runs locally after complete necessary CI. One trusted
+cloud CI label writer retains comments, qualified-success `done`, and
+current-attempt failure-to-`todo` handoff.
 
 For `completion_owner: "local"`, remove `claude_final_review`,
 `native_auto_merge`, `issue_recovery`, `issue_guard_cutover` and
@@ -49,7 +52,9 @@ mixed local/cloud completion configuration. Existing active ownership data
 and unrelated work must still be preserved during the reviewed transition.
 
 The CI handoff keeps full current-input test qualification readable to the
-local reviewer. Its apply path suppresses every success-to-done write.
+local reviewer. Its apply path adds `done` only after complete required
+current-input CI succeeds. The issue stays open. Missing, skipped, cancelled,
+stale, failed or unresolved qualification cannot produce `done`.
 Failures still use the existing durable comment/todo journal. Duplicate
 failure delivery cannot reset a later worker claim. The local reviewer and
 controller retain exact-input, negative-result and merge-before-close checks.
@@ -72,25 +77,26 @@ to the runner remain protected and need independent product review.
 An explicit `replaces` map can move one required workflow path to another.
 It cannot combine two old workflows or discard an old check. These mappings
 do not approve themselves. Protected policy adoption still authenticates the
-exact source, complete CI, independent review, and grant before publication.
+exact source, complete CI and local independent review before publication.
 
 AW does not require Claude review. The former product-evidence grant and
 cloud guarded publisher protocol is historical compatibility code. It is not
 a prerequisite for the new local-review normal-development pipeline.
 
-## Failure writer entry
+## CI label writer entry
 
-Use the [failure-only template](templates/development-report.yml.example) with
+Use the [CI label template](templates/development-report.yml.example) with
 real test workflow names, an immutable AW revision and the consumer's actual
 `development_reporter` identity (`path`, `id`, `definition_sha`, `job`). The
 `development-report` operation authenticates the current default source,
 actual run/attempt, exact workflow blob and single-writer permissions.
 
 Its token has read access plus `issues: write`. It has no contents, PR or
-status write permission. A request filter allows only failure comments,
-todo additions and removal of conflicting doing/done labels. It refuses
-merge, issue closure and success-to-done writes. Every wake scans the complete
-current PR queue. Main updates can therefore return stale PR work to todo
+status write permission. A request filter allows only CI comments,
+`todo`/`done` labels and removal of conflicting lifecycle labels. Before a
+`done` label write it rechecks the current PR and complete qualified CI. It
+refuses merge, issue closure and status publication. Every wake scans the
+complete current PR queue. Main updates can therefore return stale PR work to todo
 without launching tests or paid review. Reuse the existing failure journal.
 
 ## Read-only action operations
@@ -139,7 +145,7 @@ they explicitly adopt the development policy and matching producer source.
 
 Run the complete isolated control suite, then the consumer's unchanged
 required product tests and local independent review. Retain the protected policy,
-failure-writer identity, ownership and local merge/close checks. Use
+CI label-writer identity, ownership and local merge/close checks. Use
 [AW #129](https://github.com/faberline/aw/issues/129) for shared enforcement and
 the six linked adoption issues for live integration proof.
 
