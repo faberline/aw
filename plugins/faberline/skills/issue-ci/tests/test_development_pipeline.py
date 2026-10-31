@@ -287,9 +287,61 @@ class DevelopmentHandoffTests(unittest.TestCase):
     setUp=legacy.ApplyTests.setUp
     api=legacy.ApplyTests.api
     invoke=legacy.ApplyTests.invoke
+    def invoke_real_preflight(self, data, kind='valid', labels=None, behind=False, convert_on_read=None):
+        provider=PreflightProvider();self.pr=copy.deepcopy(provider.pull)
+        self.pr['head']['ref']='issue/7'
+        self.issue=dict(provider.issue,labels=[{'name':n}for n in (['doing']if labels is None else labels)])
+        if kind=='pr':self.issue['pull_request']={}
+        elif kind=='closed':self.issue['state']='closed'
+        elif kind=='foreign':self.issue['repository_url']='https://api.github.com/repos/x/r'
+        elif kind=='wrong_number':self.issue['number']=9
+        if behind:provider.comparison['behind_by']=1
+        reads=[]
+        def api(path,method='GET',data=None):
+            if method=='GET':
+                if path=='repos/o/r':return dict(default_branch='main')
+                if '/commits/'in path:return dict(sha=BASE)
+                if '/compare/'in path:return provider.comparison
+                if path=='repos/o/r/issues/7':
+                    reads.append(path)
+                    if len(reads)==convert_on_read:self.issue['pull_request']={}
+            return legacy.ApplyTests.api(self,path,method,data)
+        self.api=api;settings=config();settings['completion_owner']='local'
+        self.config.write_text(json.dumps(settings))
+        with patch.object(legacy.ci,'development_module',return_value=d), \
+             patch.object(d,'review_failure_snapshot',return_value={}):
+            return self.invoke(snapshots=data)
+
+    def test_real_preflight_pr_link_never_receives_failure_comments_or_labels(self):
+        for labels in ([],['doing']):
+            self.writes=[];self.comments=[];data=evidence();data[WORKFLOW][1][0]['conclusion']='failure'
+            with self.subTest(labels=labels),self.assertRaises(RuntimeError):
+                self.invoke_real_preflight(data,kind='pr',labels=labels)
+            self.assertEqual(self.writes,[])
+
+    def test_real_preflight_closed_foreign_and_wrong_issue_targets_never_receive_writes(self):
+        for kind in ('closed','foreign','wrong_number'):
+            self.writes=[];self.comments=[];data=evidence();data[WORKFLOW][1][0]['conclusion']='failure'
+            with self.subTest(kind=kind),self.assertRaises(RuntimeError):self.invoke_real_preflight(data,kind=kind)
+            self.assertEqual(self.writes,[])
+
+    def test_issue_converted_to_pr_after_preflight_refuses_before_any_failure_write(self):
+        for read in (2,3):
+            self.writes=[];self.comments=[];data=evidence();data[WORKFLOW][1][0]['conclusion']='failure'
+            with self.subTest(read=read),self.assertRaises(RuntimeError):
+                self.invoke_real_preflight(data,convert_on_read=read)
+            self.assertEqual(self.writes,[])
+
+    def test_real_preflight_valid_behind_issue_still_gets_diagnostic_and_todo(self):
+        data=evidence();data[WORKFLOW][1][0]['conclusion']='failure'
+        self.assertEqual(self.invoke_real_preflight(data,behind=True),0)
+        self.assertTrue(any('/issues/7/comments'in path for path,_,_ in self.writes))
+        self.assertEqual({l['name']for l in self.issue['labels']},{'todo'})
+
     def invoke_development(self, data, settings=None):
         self.config.write_text(json.dumps(config() if settings is None else settings))
         self.pr['base']={'sha':BASE}
+        for key,value in PreflightProvider().issue.items():self.issue.setdefault(key,value)
         fake=dict(version=1,repo='o/r',pr=8,head=HEAD,base=BASE,issue=7,
                   status='success',reasons=[],checks=[])
         with patch.object(legacy.ci,'development_module',return_value=d), \

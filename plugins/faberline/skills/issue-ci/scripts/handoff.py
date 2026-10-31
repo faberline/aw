@@ -372,6 +372,8 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
         from types import SimpleNamespace
         adapter = SimpleNamespace(api=api, pages=pages)
         preflight = development.preflight(adapter, args.repo, args.pr, args.head)
+        if preflight.get('issue') != issue:
+            raise RuntimeError('PR has no verified canonical open issue; no issue mutation')
         development_snapshots = development.review_failure_snapshot(adapter, args.repo, args.pr, args.head, review_config)
         failed_jobs = development.failure_records(args.repo, args.pr, args.head, preflight['base'],
             {**snapshots, **negative_snapshots, **development_snapshots}, config.get('_qualification_context'))
@@ -407,6 +409,9 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
     issue_path = f'{root}/issues/{issue}'
     current = api(issue_path)
     labels = {l['name'] for l in current['labels']}
+    if ('pull_request' in current or (development_policy is not None
+            and not development.canonical_issue_target(args.repo, issue, current))):
+        raise RuntimeError('target is not a verified canonical open issue; no mutation')
     if current['state'] != 'open' or 'blocked' in labels:
         raise RuntimeError('issue is closed or blocked; no mutation')
     failure_only = config.get('lifecycle_mode', 'full') == 'failure-only'
@@ -427,6 +432,9 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
             raise RuntimeError('PR base changed during handoff; no further mutation')
         current = api(issue_path)
         labels = {l['name'] for l in current['labels']}
+        if ('pull_request' in current or (development_policy is not None
+                and not development.canonical_issue_target(args.repo, issue, current))):
+            raise RuntimeError('issue is no longer the verified canonical target; no further mutation')
         if current['state'] != 'open' or 'blocked' in labels:
             raise RuntimeError('issue lifecycle changed during handoff')
         if require_managed and not labels & {'todo', 'doing', 'done'}:
@@ -663,11 +671,23 @@ def development_report(repo, document, evaluator, run_id):
                     allowed=True
                 allowed|=(method=='DELETE' and path in tuple(f'{root}/issues/{issue}/labels/{label}'for label in ('todo','doing','done')) and data is None)
                 if not allowed:raise RuntimeError('development CI writer cannot merge, close or write unrelated state')
+                current=original_api(f'{root}/pulls/{number}')
+                if (current.get('state')!='open' or current.get('head',{}).get('sha')!=head
+                        or (current.get('head',{}).get('repo')or{}).get('full_name')!=repo
+                        or current.get('base',{}).get('ref')!=default):
+                    raise RuntimeError('source PR moved before development handoff')
+                source_diagnostic=(method=='POST' and path==f'{root}/issues/{number}/comments')
+                if not source_diagnostic:
+                    if (qualification_module().linked_issue(current)!=issue
+                            or not development_module().canonical_issue_target(repo,issue,
+                                original_api(f'{root}/issues/{issue}'))):
+                        raise RuntimeError('canonical issue changed before development handoff')
                 current_source()
             return original_api(path,method,data)
         try:
             globals()['api']=failure_api
-            if issue is None:
+            if issue is None or not development_module().canonical_issue_target(repo,issue,
+                    original_api(f'{root}/issues/{issue}')):
                 development_module().report_missing_issue(SimpleNamespace(api=failure_api,pages=pages),repo,pull,current_source)
             else:
                 args=argparse.Namespace(repo=repo,pr=number,head=head,apply=True,run_id=None)

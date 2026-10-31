@@ -214,6 +214,15 @@ def workflow_contract(raw, config):
     return dict(version=1, workflow=policy['workflow'], stages=groups, sha256=digest(workflow))
 
 
+def canonical_issue_target(repo, number, source):
+    """A GitHub issues endpoint can also return a PR. Verify the real target."""
+    return (integer(number) and isinstance(source, dict) and integer(source.get('number'))
+            and source['number'] == number
+            and source.get('state') == 'open' and 'pull_request' not in source
+            and source.get('repository_url') == f'https://api.github.com/repos/{repo}'
+            and source.get('url') == f'https://api.github.com/repos/{repo}/issues/{number}')
+
+
 def preflight(api, repo, number, head, expected_base=None):
     """Read one explicit comparison; a query error never becomes a pass."""
     need(isinstance(repo, str) and re.fullmatch(r'[\w.-]+/[\w.-]+', repo)
@@ -245,10 +254,7 @@ def preflight(api, repo, number, head, expected_base=None):
     source = None
     if issue is not None:
         source = api.api(f'{root}/issues/{issue}')
-    valid = (isinstance(source, dict) and source.get('number') == issue
-             and source.get('state') == 'open' and 'pull_request' not in source
-             and source.get('repository_url') == f'https://api.github.com/repos/{repo}'
-             and source.get('url') == f'https://api.github.com/repos/{repo}/issues/{issue}')
+    valid = canonical_issue_target(repo, issue, source)
     checks.append(dict(check='one_canonical_issue', passed=valid,
                        reason='One canonical open issue is linked' if valid else
                        'PR requires exactly one canonical open issue'))
@@ -331,9 +337,11 @@ def report_missing_issue(api, repo, pull, before_mutation=None):
         current = api.api(f'{root}/pulls/{number}')
         need(current.get('state') == 'open' and current.get('head', {}).get('sha') == head
              and (current.get('head', {}).get('repo') or {}).get('full_name') == repo
-             and current.get('base', {}).get('ref') == api.api(root)['default_branch']
-             and sibling('qualification').linked_issue(current) is None,
+             and current.get('base', {}).get('ref') == api.api(root)['default_branch'],
              'unlinked PR changed before diagnostic')
+        issue = sibling('qualification').linked_issue(current)
+        target = api.api(f'{root}/issues/{issue}') if issue is not None else None
+        need(not canonical_issue_target(repo, issue, target), 'PR now has a canonical open issue')
         return current
     current = fresh()
     key = digest([repo, number, head, current.get('title'), current.get('body')])
