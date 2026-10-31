@@ -95,6 +95,11 @@ not prove delivery on the default branch.
    queued, pending or unknown, or to bypass a known failure.
 6. Promote only the exact passing RC commit to `vX.Y.Z`. The formal tag also
    runs all tests. Verify final publication before closing the milestone.
+   An unrelated main advance does not change this frozen release commit.
+   Verify that the candidate remains in main ancestry, contains every related
+   merged PR, and carries the current reviewed milestone/version contract.
+   New goal work or a changed contract requires another RC. Tag preflight and
+   plan evidence use the tagged source, not the newer default-branch tip.
 7. A formal-tag code failure keeps the tag and milestone intact. Repair the
    code and version contract, then use a new SemVer version and RC sequence.
    Never overwrite an immutable tag or published version.

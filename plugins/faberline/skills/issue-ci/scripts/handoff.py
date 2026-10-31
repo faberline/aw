@@ -407,12 +407,41 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
     issue_path = f'{root}/issues/{issue}'
     current = api(issue_path)
     labels = {l['name'] for l in current['labels']}
-    if current['state'] != 'open' or not labels & {'todo', 'doing', 'done'} or 'blocked' in labels:
-        raise RuntimeError('issue is closed, blocked, or unmanaged; no mutation')
+    if current['state'] != 'open' or 'blocked' in labels:
+        raise RuntimeError('issue is closed or blocked; no mutation')
     failure_only = config.get('lifecycle_mode', 'full') == 'failure-only'
     if failure_only and 'done' in labels:
         return 0  # This mode has no authority over already done issues.
     comments = pages(f'{issue_path}/comments')
+
+    def fresh_labels(require_managed=True):
+        fresh = api(pr_path)
+        if (fresh['state'] != 'open' or fresh['head']['sha'] != args.head
+                or fresh['head']['repo']['full_name'] != args.repo
+                or fresh['head']['ref'] != pr['head']['ref']
+                or not re.search(rf'(?im)^Closes #{issue}\s*$', fresh.get('body') or '')):
+            raise RuntimeError('PR moved during handoff; no further mutation')
+        context = config.get('_qualification_context')
+        expected_base = context['base'] if context else preflight['base'] if preflight else None
+        if expected_base is not None and fresh.get('base', {}).get('sha') != expected_base:
+            raise RuntimeError('PR base changed during handoff; no further mutation')
+        current = api(issue_path)
+        labels = {l['name'] for l in current['labels']}
+        if current['state'] != 'open' or 'blocked' in labels:
+            raise RuntimeError('issue lifecycle changed during handoff')
+        if require_managed and not labels & {'todo', 'doing', 'done'}:
+            raise RuntimeError('issue is unmanaged; diagnostics recorded; lifecycle handoff remains incomplete')
+        if failure_only and 'done' in labels:
+            raise RuntimeError('failure-only mode cannot touch a done issue')
+        return labels
+
+    if failed_jobs:
+        # Diagnostics have no ownership authority. An open canonical issue
+        # can receive them even when its lifecycle labels need reconciliation.
+        development.report_failures(args.repo, issue, failed_jobs, comments, write,
+                                    lambda: fresh_labels(require_managed=False))
+    if not labels & {'todo', 'doing', 'done'}:
+        raise RuntimeError('issue is unmanaged; diagnostics recorded; lifecycle handoff remains incomplete')
     policy = hashlib.sha256(json.dumps(source_config, sort_keys=True).encode()).hexdigest()
     # A failure hands a head back once per coding epoch, regardless of how
     # many more workflows fail while AGY is fixing it. A successfully APPLIED
@@ -460,24 +489,6 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
     def body(phase):
         return f'{prefix}{phase} -->\nCI: {state} for PR #{args.pr} head `{args.head}`.\nPolicy: {policy}\n{detail}\n{urls}'
 
-    def fresh_labels():
-        fresh = api(pr_path)
-        if (fresh['state'] != 'open' or fresh['head']['sha'] != args.head
-                or fresh['head']['repo']['full_name'] != args.repo
-                or fresh['head']['ref'] != pr['head']['ref']
-                or not re.search(rf'(?im)^Closes #{issue}\s*$', fresh.get('body') or '')):
-            raise RuntimeError('PR moved during handoff; no further label mutation')
-        context = config.get('_qualification_context')
-        if context and fresh.get('base', {}).get('sha') != context['base']:
-            raise RuntimeError('PR base changed during handoff; no further label mutation')
-        current = api(issue_path)
-        labels = {l['name'] for l in current['labels']}
-        if current['state'] != 'open' or 'blocked' in labels or not labels & {'todo', 'doing', 'done'}:
-            raise RuntimeError('issue lifecycle changed during handoff')
-        if failure_only and 'done' in labels:
-            raise RuntimeError('failure-only mode cannot touch a done issue')
-        return labels
-
     def writable_labels():
         labels = fresh_labels()
         hold = local_hold(labels)
@@ -485,10 +496,6 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
             raise RuntimeError(hold)
         return labels
 
-    if failed_jobs:
-        # Per-job diagnostics must precede the epoch dedupe. A later failed
-        # matrix row still gets its own comment, but cannot reset a new owner.
-        development.report_failures(args.repo, issue, failed_jobs, comments, write, fresh_labels)
     # Diagnostics still reach the issue. Only the lifecycle handoff is held.
     # Pending/ready journals are not completed receipts and retain recovery.
     if source_config.get('completion_owner') == 'local':

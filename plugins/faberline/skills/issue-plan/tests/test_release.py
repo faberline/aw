@@ -38,6 +38,39 @@ def tagged(final=False,status='success'):
 
 
 class StateControls(unittest.TestCase):
+    def advanced(self, final=False):
+        value=tagged(final=final);value['head']=OLD
+        value['release_commits']={HEAD:dict(landed=True,pulls=[2],contract_sha256=s.digest(value['contract']))}
+        return value
+
+    def test_passing_rc_with_complete_frozen_work_survives_unrelated_main_advance(self):
+        value=self.advanced();result=s.evaluate(value)
+        self.assertEqual((result['state'],result['tag'],result['release_head']),('ready_final',FINAL,HEAD))
+
+    def test_formal_full_tests_publication_and_close_survive_unrelated_main_advance(self):
+        value=self.advanced(final=True)
+        self.assertEqual(s.evaluate(value)['state'],'ready_publish')
+        value['publication']=dict(tag_name=FINAL,draft=False,prerelease=False,published_at='now')
+        self.assertEqual(s.evaluate(value)['state'],'ready_close')
+        value['milestone']['state']='closed'
+        self.assertEqual(s.evaluate(value)['state'],'complete')
+
+    def test_passing_old_rc_missing_current_work_contract_or_ancestry_needs_new_rc(self):
+        for change in ('missing','work','contract','ancestry'):
+            value=self.advanced();proof=value['release_commits'][HEAD]
+            if change=='missing':value['release_commits']={}
+            elif change=='work':proof['pulls']=[]
+            elif change=='contract':proof['contract_sha256']='0'*64
+            else:proof['landed']=False
+            with self.subTest(change=change):
+                result=s.evaluate(value)
+                self.assertEqual((result['state'],result['tag']),('ready_rc','v1.2.3-rc.2'))
+
+    def test_formal_tag_cannot_publish_without_current_work_and_contract(self):
+        for key,replacement in [('pulls',[]),('contract_sha256','0'*64),('landed',False)]:
+            value=self.advanced(final=True);value['release_commits'][HEAD][key]=replacement
+            with self.subTest(key=key),self.assertRaises(ValueError):s.evaluate(value)
+
     def test_complete_goal_work_creates_first_rc_not_a_formal_tag(self):
         result=s.evaluate(snapshot())
         self.assertEqual((result['state'],result['action'],result['tag']),('ready_rc','tag',TAG))
@@ -250,6 +283,19 @@ class MutationControls(unittest.TestCase):
         with patch.object(r,'collect',side_effect=lambda *args:copy.deepcopy(p.value)):
             return r.advance(p,7,expected or s.digest(p.value))
 
+    def test_promotion_tags_the_passing_rc_commit_after_main_advances(self):
+        p=WriteProvider(StateControls().advanced())
+        result=self.advance(p)
+        self.assertEqual(result['tag'],FINAL)
+        self.assertEqual(p.writes,[('repos/'+REPO+'/git/refs','POST',dict(ref='refs/tags/'+FINAL,sha=HEAD))])
+        self.assertEqual(p.value['tags'][FINAL],HEAD)
+
+    def test_new_rc_after_new_goal_work_still_uses_current_main(self):
+        value=StateControls().advanced();value['release_commits'][HEAD]['pulls']=[]
+        p=WriteProvider(value);result=self.advance(p)
+        self.assertEqual(result['tag'],'v1.2.3-rc.2')
+        self.assertEqual(p.writes[0][2]['sha'],OLD)
+
     def test_guarded_sequence_runs_full_rc_and_formal_before_publication_and_close(self):
         p=WriteProvider(snapshot());self.assertEqual(self.advance(p)['action'],'tag')
         self.assertEqual(self.advance(p)['state'],'testing');self.assertEqual(len(p.writes),1)
@@ -334,6 +380,81 @@ class InventoryProvider(EvidenceProvider):
 
 
 class InventoryControls(unittest.TestCase):
+    def advanced(self):
+        p=InventoryProvider();p.value['tags'][TAG]=HEAD
+        original=p.api
+        def api(path):
+            if '/commits/' in path:return dict(sha=OLD)
+            return original(path)
+        p.api=api
+        return p
+
+    def test_tag_preflight_uses_frozen_tag_plan_after_main_advances(self):
+        p=self.advanced()
+        result=r.preflight(p,TAG,HEAD,7)
+        expected=r.tests.select(p.policy,'all',REPO,HEAD,HEAD)
+        self.assertEqual((result['head'],result['base']),(HEAD,HEAD))
+        self.assertEqual(result['plan_sha256'],expected['sha256'])
+
+    def test_formal_tag_preflight_also_uses_its_frozen_commit(self):
+        p=self.advanced();p.value['tags'][FINAL]=HEAD
+        result=r.preflight(p,FINAL,HEAD,7)
+        self.assertEqual((result['head'],result['base'],result['tag']),(HEAD,HEAD,FINAL))
+
+    def test_newly_landed_milestone_pr_not_in_passing_rc_requires_another_rc(self):
+        p=self.advanced();p.value['issues'].append(dict(number=3,state='closed',body='Additional goal work'))
+        original_pages,original_api=p.pages,p.api
+        def pages(path,key=None):
+            rows=original_pages(path,key)
+            if '/pulls?' in path:
+                rows.append(dict(number=4,body='Closes #3',merged_at='now',base={'ref':'main'},merge_commit_sha=OLD))
+            return rows
+        def api(path):
+            if '/compare/'+OLD+'...'+HEAD in path:return dict(behind_by=1,merge_base_commit={'sha':'c'*40})
+            return original_api(path)
+        p.pages=pages;p.api=api
+        value=r.collect(p,7)
+        self.assertEqual(value['release_commits'][HEAD]['pulls'],[2])
+        result=s.evaluate(value)
+        self.assertEqual((result['tag'],result['release_head']),('v1.2.3-rc.2',OLD))
+        with self.assertRaises(ValueError):r.preflight(p,TAG,HEAD,7)
+
+    def test_changed_release_contract_cannot_be_satisfied_by_an_old_rc(self):
+        p=self.advanced();original=p.api
+        def api(path):
+            if '/contents/.github/aw-release.json?ref='+HEAD in path:
+                value=copy.deepcopy(p.release_config);value['milestones']['7']['acceptance'][0]['goal']='Old approval'
+                raw=json.dumps(value).encode();sha=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+                return dict(type='file',encoding='base64',size=len(raw),sha=sha,content=base64.b64encode(raw).decode())
+            return original(path)
+        p.api=api
+        self.assertEqual(s.evaluate(r.collect(p,7))['tag'],'v1.2.3-rc.2')
+        with self.assertRaises(ValueError):r.preflight(p,TAG,HEAD,7)
+
+    def test_rc_removed_from_main_ancestry_cannot_be_promoted(self):
+        p=self.advanced();original=p.api
+        def api(path):
+            if '/compare/'+HEAD+'...'+OLD in path:return dict(behind_by=1,merge_base_commit={'sha':'c'*40})
+            return original(path)
+        p.api=api
+        self.assertFalse(r.collect(p,7)['release_commits'][HEAD]['landed'])
+        self.assertEqual(s.evaluate(r.collect(p,7))['state'],'work')
+
+    def test_landed_child_pr_is_checked_even_when_its_original_base_is_a_parent(self):
+        p=self.advanced();p.value['tags']={};original=p.pages;comparisons=[];api=p.api
+        def pages(path,key=None):
+            values=original(path,key)
+            if '/pulls?' in path:values[0]['base']['ref']='parent'
+            return values
+        def checked(path):
+            if '/compare/' in path:comparisons.append(path)
+            return api(path)
+        p.pages=pages;p.api=checked
+        value=r.collect(p,7)
+        self.assertTrue(value['pulls'][0]['_landed'])
+        self.assertTrue(comparisons)
+        self.assertEqual(s.evaluate(value)['state'],'ready_rc')
+
     def test_real_collection_binds_goal_source_full_inventory_and_landed_work(self):
         p=InventoryProvider();value=r.collect(p,7)
         self.assertEqual(value['head'],HEAD);self.assertTrue(value['pulls'][0]['_landed'])
@@ -368,9 +489,15 @@ class InventoryControls(unittest.TestCase):
         original=p.pages
         def pages(path,key=None):
             values=original(path,key)
-            if '/pulls?' in path:values[0]['base']['ref']='dependency'
+            if '/pulls?' in path:
+                values[0]['base']['ref']='dependency'
+                values[0]['merge_commit_sha']=OLD
             return values
-        with patch.object(p,'pages',side_effect=pages):
+        original_api=p.api
+        def api(path):
+            if '/compare/' in path:return dict(behind_by=1,merge_base_commit={'sha':'c'*40})
+            return original_api(path)
+        with patch.object(p,'pages',side_effect=pages),patch.object(p,'api',side_effect=api):
             self.assertEqual(s.evaluate(r.collect(p,7))['state'],'work')
 
 

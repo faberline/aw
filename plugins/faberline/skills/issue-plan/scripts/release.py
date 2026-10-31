@@ -172,6 +172,16 @@ def collect(provider, number):
     rows = provider.pages(f'{root}/issues?state=all&milestone={number}')
     issues = [i for i in rows if 'pull_request' not in i]
     numbers = {i['number'] for i in issues}
+    comparisons = {}
+    def ancestor(commit, target):
+        require(isinstance(commit, str) and re.fullmatch('[0-9a-f]{40}', commit), 'merged PR has no exact commit')
+        if commit == target:
+            return True
+        if (commit, target) not in comparisons:
+            comparison = provider.api(f'{root}/compare/{commit}...{target}')
+            comparisons[commit, target] = (type(comparison.get('behind_by')) is int
+                and comparison['behind_by'] == 0 and comparison.get('merge_base_commit', {}).get('sha') == commit)
+        return comparisons[commit, target]
     pulls = []
     for pull in provider.pages(root + '/pulls?state=all'):
         related = set(map(int, re.findall(r'(?im)^\s*(?:closes|fixes|resolves)\s+#([1-9][0-9]*)\s*$', pull.get('body') or '')))
@@ -180,12 +190,9 @@ def collect(provider, number):
             continue
         pull['_issues'] = sorted(related)
         pull['_landed'] = False
-        if pull.get('merged_at') and pull.get('base', {}).get('ref') == meta['default_branch']:
+        if pull.get('merged_at'):
             sha = pull.get('merge_commit_sha')
-            require(isinstance(sha, str) and re.fullmatch('[0-9a-f]{40}', sha), 'merged PR has no exact commit')
-            comparison = provider.api(f'{root}/compare/{sha}...{head}')
-            pull['_landed'] = (type(comparison.get('behind_by')) is int and comparison['behind_by'] == 0
-                               and comparison.get('merge_base_commit', {}).get('sha') == sha)
+            pull['_landed'] = ancestor(sha, head)
         pulls.append(pull)
     tags = {}
     for row in provider.pages(root + '/tags'):
@@ -194,12 +201,22 @@ def collect(provider, number):
     final = 'v' + item['version']
     candidates = sorted((int(match.group(1)), name) for name in tags
                         if (match := re.fullmatch(re.escape(final) + r'-rc\.([1-9][0-9]*)', name)))
-    evidence = {}
+    evidence, release_commits = {}, {}
     for tag in ([candidates[-1][1]] if candidates else []) + ([final] if final in tags else []):
-        tagged_raw, _ = blob(provider, '.github/issue-ci-required-gates.json', tags[tag])
+        tagged_raw, tagged_policy_blob = blob(provider, '.github/issue-ci-required-gates.json', tags[tag])
         tagged_policy = strict_json(tagged_raw)
-        tests.select(tagged_policy, 'all', provider.repo, tags[tag], tags[tag])
+        tagged_plan = tests.select(tagged_policy, 'all', provider.repo, tags[tag], tags[tag])
         require(development.retains_workflows(tagged_policy, policy), 'current policy dropped or changed a prior release gate')
+        tagged_release, tagged_release_blob = blob(provider, '.github/aw-release.json', tags[tag])
+        tagged_config = strict_json(tagged_release)
+        require(isinstance(tagged_config, dict) and tagged_config.get('version') == 1
+                and tagged_config.get('repo') == provider.repo and isinstance(tagged_config.get('milestones'), dict),
+                'invalid tagged release configuration')
+        tagged_contract = tagged_config['milestones'].get(str(number))
+        release_commits[tags[tag]] = dict(landed=ancestor(tags[tag], head),
+            pulls=sorted(p['number'] for p in pulls if p.get('merged_at') and ancestor(p['merge_commit_sha'], tags[tag])),
+            contract_sha256=state.digest(tagged_contract), plan_sha256=tagged_plan['sha256'],
+            release_blob=tagged_release_blob, policy_blob=tagged_policy_blob)
         evidence[tag] = full_evidence(provider, tagged_policy, tag, tags[tag])
     if not candidates and final not in tags:
         # Validate the entry before creating a tag that cannot start full tests.
@@ -209,7 +226,7 @@ def collect(provider, number):
             workflow_accepts_tag(raw, final + '-rc.1')
     publication = provider.optional(root + '/releases/tags/' + quote(final, safe='')) if final in tags else None
     result = dict(repo=provider.repo, head=head, milestone=milestone, contract=item, issues=issues,
-                  pulls=pulls, tags=tags, evidence=evidence, publication=publication,
+                  pulls=pulls, tags=tags, evidence=evidence, publication=publication, release_commits=release_commits,
                   plan_sha256=plan['sha256'], release_blob=release_blob, policy_blob=policy_blob)
     require(provider.api(root + '/commits/' + quote(meta['default_branch'], safe=''))['sha'] == head,
             'default branch changed during release assessment')
@@ -281,12 +298,13 @@ def advance(provider, number, expected):
     fresh()
     if action == 'tag':
         tag = assessment['tag']
+        release_head = assessment['release_head']
         require(tag not in snapshot['tags'], 'tag exists; never overwrite')
-        response = provider.write(root + '/git/refs', 'POST', dict(ref='refs/tags/' + tag, sha=snapshot['head']))
-        require(response.get('ref') == 'refs/tags/' + tag and response.get('object', {}).get('sha') == snapshot['head'],
+        response = provider.write(root + '/git/refs', 'POST', dict(ref='refs/tags/' + tag, sha=release_head))
+        require(response.get('ref') == 'refs/tags/' + tag and response.get('object', {}).get('sha') == release_head,
                 'tag write outcome unknown; inspect before retry')
         actual = provider.api(root + '/git/ref/tags/' + quote(tag, safe=''))
-        require(actual.get('object', {}).get('sha') == snapshot['head'], 'tag readback differs')
+        require(actual.get('object', {}).get('sha') == release_head, 'tag readback differs')
     elif action == 'publish':
         response = provider.write(root + '/releases', 'POST', dict(tag_name=assessment['tag'],
                                   draft=False, prerelease=False, generate_release_notes=True))
@@ -301,7 +319,8 @@ def advance(provider, number, expected):
                 'milestone closure outcome unknown')
     else:
         raise ValueError('unknown release action')
-    return dict(action=action, milestone=number, head=snapshot['head'], tag=assessment.get('tag'), verified=True)
+    return dict(action=action, milestone=number, head=snapshot['head'], release_head=assessment['release_head'],
+                tag=assessment.get('tag'), verified=True)
 
 
 def preflight(provider, tag, head, number=None):
@@ -318,16 +337,17 @@ def preflight(provider, tag, head, number=None):
         require(len(candidates) == 1, 'release version has no unique existing milestone')
         number = candidates[0]
     snapshot = collect(provider, number)
-    require(snapshot['head'] == head and snapshot['tags'].get(tag) == head,
-            'tag, default source or candidate changed')
+    require(snapshot['tags'].get(tag) == head and state.covers_release(snapshot, head),
+            'tag or frozen goal delivery changed')
     assessment = state.evaluate(dict(snapshot, milestone=dict(snapshot['milestone'], state='open')))
     require(assessment['state'] in ('testing', 'ready_final', 'ready_publish', 'ready_close')
             and assessment.get('tag') in (tag, 'v' + snapshot['contract']['version']),
             'milestone work or release inputs are not ready: ' + '; '.join(assessment['reasons']))
+    source = snapshot['release_commits'][head]
     return dict(schema='AW_RELEASE_PREFLIGHT_V1', status='success', mode='all', repo=provider.repo,
                 head=head, base=head, tag=tag, milestone=number,
-                plan_sha256=snapshot['plan_sha256'], release_blob=snapshot['release_blob'],
-                policy_blob=snapshot['policy_blob'], qualification='not_evaluated')
+                plan_sha256=source['plan_sha256'], release_blob=source['release_blob'],
+                policy_blob=source['policy_blob'], qualification='not_evaluated')
 
 
 def arguments(command, args):
