@@ -393,11 +393,6 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
                 or final_pr.get('base', {}).get('sha') != config['_qualification_context']['base']
                 or not re.search(rf'(?im)^Closes #{issue}\s*$', final_pr.get('body') or '')):
             raise RuntimeError('PR moved during read-only qualification')
-    if args.apply and source_config.get('completion_owner') == 'local' and state == 'done':
-        # Full test qualification remains readable by the local reviewer.
-        # The cloud writer has failure authority only, even in full mode.
-        state = 'pending'
-        reasons.append('CI passed; local review and completion remain pending')
     print(json.dumps(dict(state=state, head=args.head, evidence=evidence, reasons=reasons)))
     if not args.apply:
         return 0 if state == 'done' else 2
@@ -549,7 +544,7 @@ def reconcile(args, config):
 
 
 def development_report(repo, document, evaluator, run_id):
-    """Default-branch failure writer. Has no review, merge or close operation."""
+    """Default-branch CI label writer. Has no review, merge or close operation."""
     from types import SimpleNamespace
     import base64
     import os
@@ -596,7 +591,7 @@ def development_report(repo, document, evaluator, run_id):
     if (workflow.get('permissions')!={} or set(workflow.get('jobs',{}))!={spec['job']}
             or set(job)!={'runs-on','timeout-minutes','permissions','steps'}
             or job.get('permissions')!=permissions or job.get('steps')!=[expected]):
-        raise RuntimeError('development reporter may only report failures with issue permission')
+        raise RuntimeError('development reporter may only report CI labels with issue permission')
     if workflow.get('concurrency')!={'group':'issue-ci-handoff','cancel-in-progress':'false'}:
         raise RuntimeError('development reporter must retain the single-writer mutex')
     results=[];original_api=globals()['api']
@@ -618,8 +613,19 @@ def development_report(repo, document, evaluator, run_id):
                 allowed|=(method=='PATCH' and bool(re.fullmatch(re.escape(root)+r'/issues/comments/[1-9][0-9]*',path))
                           and isinstance(data,dict) and set(data)=={'body'})
                 allowed|=(method=='POST' and path==f'{root}/issues/{issue}/labels' and data=={'labels':['todo']})
-                allowed|=(method=='DELETE' and path in (f'{root}/issues/{issue}/labels/doing',f'{root}/issues/{issue}/labels/done') and data is None)
-                if not allowed:raise RuntimeError('development failure writer cannot mark done, merge or close')
+                if method=='POST' and path==f'{root}/issues/{issue}/labels' and data=={'labels':['done']}:
+                    # done is only a review-ready label. Recheck all necessary
+                    # current-input CI before allowing even this label write.
+                    current=original_api(f'{root}/pulls/{number}')
+                    if (current.get('state')!='open' or current.get('head',{}).get('sha')!=head
+                            or qualification_module().linked_issue(current)!=issue):
+                        raise RuntimeError('PR moved before the done label handoff')
+                    scoped=qualify_config(repo,current,config)
+                    if evaluate_policy(scoped,snapshot(repo,head,scoped))[0]!='done':
+                        raise RuntimeError('all necessary current-input CI must pass before the done label')
+                    allowed=True
+                allowed|=(method=='DELETE' and path in tuple(f'{root}/issues/{issue}/labels/{label}'for label in ('todo','doing','done')) and data is None)
+                if not allowed:raise RuntimeError('development CI writer cannot merge, close or write unrelated state')
                 current_source()
             return original_api(path,method,data)
         try:

@@ -1,6 +1,6 @@
 # Use the consumer's real test workflow names and an immutable reviewed AW ref.
 # Bind this actual workflow ID, Git blob and report job in development_reporter.
-name: Development CI failure handoff
+name: Development CI label handoff
 on:
   push:
     branches: [main]
