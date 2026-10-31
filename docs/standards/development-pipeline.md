@@ -22,6 +22,12 @@ remove conflicting `todo`/`doing` labels. Keep the issue OPEN for local
 `issue-review`. `done` means CI passed and review is ready; it does not mean
 merged, accepted or closed. GitHub search `label:done` selects this label.
 
+After local review returns that submitted head, a CI rerun cannot restore its
+`done` label. If an agent has claimed returned work as `doing`, later runs of
+the old head keep that owner. They still report each failed job. A new
+submitted head can qualify normally. An unclaimed infrastructure retry can
+still pass; unfinished label journals retain safe recovery.
+
 **AW itself requires no Claude review**, locally or in cloud CI. Keep its
 applicable CI, acceptance and other review requirements. The six products
 retain independent Claude review after complete required CI, run locally.

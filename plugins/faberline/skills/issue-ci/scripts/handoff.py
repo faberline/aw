@@ -417,12 +417,28 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
     # A failure hands a head back once per coding epoch, regardless of how
     # many more workflows fail while AGY is fixing it. A successfully APPLIED
     # done receipt begins a new epoch, allowing a later done -> todo regression.
-    qualified = [c for c in comments
-                 if c['user']['login'] == 'github-actions[bot]'
-                 and c['body'].startswith('<!-- issue-ci:')
-                 and c['body'].splitlines()[0].endswith(':applied -->')
-                 and f'\nCI: done for PR #{args.pr} head `{args.head}`.\n' in c['body']
-                 and f'\nPolicy: {policy}\n' in c['body']]
+    def applied(outcome, current_policy=True):
+        return [c for c in comments
+                if c['user']['login'] == 'github-actions[bot]'
+                and c['body'].startswith('<!-- issue-ci:')
+                and c['body'].splitlines()[0].endswith(':applied -->')
+                and f'\nCI: {outcome} for PR #{args.pr} head `{args.head}`.\n' in c['body']
+                and (f'\nPolicy: {policy}\n' in c['body'] if current_policy
+                     else re.search(r'(?m)^Policy: [0-9a-f]{64}$', c['body']))]
+    qualified = applied('done')
+    # Old policy receipts establish a handoff, never current qualification.
+    # An upgraded runtime cannot grant itself a worker's existing ownership.
+    local_qualified, local_returned = applied('done', False), applied('todo', False)
+
+    def local_hold(labels):
+        if source_config.get('completion_owner') != 'local':
+            return None
+        lifecycle = labels & {'todo', 'doing', 'done'}
+        if state == 'done' and 'done' not in lifecycle and local_qualified:
+            return 'local completion hold: this head was already handed to local review; preserve its returned state'
+        if lifecycle == {'doing'} and (local_qualified or local_returned):
+            return 'local completion hold: returned work was claimed; a CI rerun cannot replace that owner'
+        return None
     epoch = qualified[-1]['id'] if qualified else 0
     receipt_key = evidence if state == 'done' else ['coding-epoch', epoch]
     # A success receipt binds the current base/files/applicability fingerprint.
@@ -462,20 +478,34 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
             raise RuntimeError('failure-only mode cannot touch a done issue')
         return labels
 
+    def writable_labels():
+        labels = fresh_labels()
+        hold = local_hold(labels)
+        if hold:
+            raise RuntimeError(hold)
+        return labels
+
     if failed_jobs:
         # Per-job diagnostics must precede the epoch dedupe. A later failed
         # matrix row still gets its own comment, but cannot reset a new owner.
         development.report_failures(args.repo, issue, failed_jobs, comments, write, fresh_labels)
+    # Diagnostics still reach the issue. Only the lifecycle handoff is held.
+    # Pending/ready journals are not completed receipts and retain recovery.
+    if source_config.get('completion_owner') == 'local':
+        hold = local_hold(fresh_labels())
+        if hold:
+            print(hold)
+            return 0
     if phase == 'applied':
         print('duplicate applied head/run handoff; no lifecycle mutation')
         return 0
-    labels = fresh_labels()
+    labels = writable_labels()
     if journal is None:
         phase = 'ready' if state in labels else 'pending'
         journal = write(f'{issue_path}/comments', 'POST', {'body': body(phase)})
     comment_path = f'{root}/issues/comments/{journal["id"]}'
     # A pending intent never suppresses a retry after head/snapshot/API failures.
-    labels = fresh_labels()
+    labels = writable_labels()
     if snapshot(args.repo, args.head, config) != snapshots:
         raise RuntimeError('CI runs changed during evaluation; pending intent is retryable')
     if untrusted_failure_snapshots(args.repo, args.head, config) != negative_snapshots:
@@ -494,17 +524,17 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
     if phase == 'pending':
         # Snapshot pagination can outlast a lifecycle transition. Recheck after
         # that read, immediately before adding the target label.
-        labels = fresh_labels()
+        labels = writable_labels()
         if state not in labels:
             write(f'{issue_path}/labels', 'POST', {'labels': [state]})
         # Durable proof that the desired label was added BEFORE deleting old
         # labels. Workers refuse mixed states, so they cannot claim between
         # the add and this checkpoint, even if the controller crashes.
         write(comment_path, 'PATCH', {'body': body('ready')})
-    labels = fresh_labels()
+    labels = writable_labels()
     if state in labels:
         for old in sorted((labels & {'todo', 'doing', 'done'}) - {state}):
-            live = fresh_labels()
+            live = writable_labels()
             if state not in live:
                 break
             if old in live:
