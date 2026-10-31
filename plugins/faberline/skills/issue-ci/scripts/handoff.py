@@ -46,6 +46,13 @@ def validate_config(config):
         raise RuntimeError('gate config must be an object')
     if '_qualification_context' in config:
         raise RuntimeError('computed qualification context cannot be supplied by config')
+    if 'completion_owner' in config:
+        if config['completion_owner'] != 'local':
+            raise RuntimeError('completion_owner must be local when explicitly configured')
+        retired = {'claude_final_review', 'native_auto_merge', 'issue_recovery',
+                   'issue_guard_rollout', 'issue_guard_cutover'}
+        if retired.intersection(config):
+            raise RuntimeError('local completion cannot retain cloud review or completion producers')
     mode = config.get('lifecycle_mode', 'full')
     if mode not in ('full', 'failure-only'):
         raise RuntimeError('lifecycle_mode must be full or failure-only')
@@ -386,6 +393,11 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
                 or final_pr.get('base', {}).get('sha') != config['_qualification_context']['base']
                 or not re.search(rf'(?im)^Closes #{issue}\s*$', final_pr.get('body') or '')):
             raise RuntimeError('PR moved during read-only qualification')
+    if args.apply and source_config.get('completion_owner') == 'local' and state == 'done':
+        # Full test qualification remains readable by the local reviewer.
+        # The cloud writer has failure authority only, even in full mode.
+        state = 'pending'
+        reasons.append('CI passed; local review and completion remain pending')
     print(json.dumps(dict(state=state, head=args.head, evidence=evidence, reasons=reasons)))
     if not args.apply:
         return 0 if state == 'done' else 2

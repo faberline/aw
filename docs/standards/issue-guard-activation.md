@@ -1,3 +1,10 @@
+# Historical cloud completion protocol
+
+The 2026-10-31 revision of [DEV-PIPELINE-1](development-pipeline.md) moves
+review and completion out of cloud CI. This file records the retired cloud
+activation design. Do not enable it for the normal-development pipeline.
+Preserve existing owners, leases, ledger records and historical evidence.
+
 # Guard activation for normal development
 
 This document supports [DEV-PIPELINE-1](development-pipeline.md).

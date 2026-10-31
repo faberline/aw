@@ -1,59 +1,55 @@
 # Normal development pipeline
 
 Standard ID: **DEV-PIPELINE-1**. Owner: **faberline/aw**.
-Design approved: **2026-10-30**. State: **candidate; enforcement and consumer
-adoption pending**. A document, a green writer job, or an adoption issue does
-not prove that a repository conforms.
+Revision: **2026-10-31**. Consumer adoption remains pending until deployed
+behavior and exact-input evidence prove this contract.
 
 ## Scope
 
-This standard defines the pull request pipeline for normal development.
-AW owns the stage contract and shared control code. Product repositories own
-their job count, job names, matrix size, batch layout, test commands, test
-content, and acceptance criteria. AW sets no fixed job count or batch count.
-They link to this file
-at the reviewed AW revision used by their pipeline. They do not maintain a
-second copy of this standard.
+This standard defines normal development PR tests. AW owns the stages, their
+order and shared controls. Each product owns its job count, names, matrices,
+batch layout, commands, test content and acceptance criteria. AW sets no fixed
+job or batch count.
 
-The first adoption set is `faberline/core`, `faberline/lumen`,
-`faberline/keep`, `faberline/tape`, `faberline/defer`, and `faberline/relay`,
-in that order. Other Faberline product repositories adopt the same contract
-through a repository-specific issue and verified configuration.
+Deploy in this order: `faberline/core`, `faberline/lumen`, `faberline/keep`,
+`faberline/tape`, `faberline/defer`, `faberline/relay`.
 
-**AW itself does not require Claude Code review.** Do not add a Claude check
-to AW's CI or branch requirements because of this standard. Keep AW's other
-applicable CI and review requirements. Claude review in stage 5 is required
-for the six product repositories listed above.
+**CI ends after stage 4. Claude Code review runs locally.** Cloud CI must not
+start review, merge a PR, mark its issue done, or close its issue. Remove the
+old cloud review, native merge publisher and completion recovery entry points.
+A passing test run leaves delivery for the local review/controller flow.
 
-Release, RC tags, version selection, release-wide test matrices, publication,
-and milestone closure are out of scope. This standard changes no release
-workflow, schedule, cloud resource, or quota. Merging a development PR proves
-only that PR's acceptance. It does not prove a release or milestone complete.
+**AW itself requires no Claude review**, locally or in cloud CI. Keep its
+applicable CI, acceptance and other review requirements. The six products
+retain independent Claude review after complete required CI, run locally.
+
+Release, RC tags, versions, full release matrices, publication, milestone
+closure, schedules, cloud resources and quota changes remain out of scope.
+This revision replaces the earlier six-stage cloud completion design. The
+historical guard-activation protocol is not a prerequisite for this pipeline.
+Preserve existing leases, ledger records and unrelated work during retirement.
 
 ## Invariants
 
-- Keep every existing applicable test, feature row, functional/E2E assertion,
-  performance workload, and numeric threshold. Do not weaken a gate to make
-  adoption pass.
-- All evidence binds the repository, PR, exact PR commit, exact base commit,
-  issue contract, reviewed selection policy, workflow identity, and run
-  attempt. A result for another input is historical evidence.
-- Only completed successful required jobs count as passed. Missing, skipped,
-  cancelled, neutral, zero-test, or unknown evidence does not count.
-- The ordinary test jobs have no issue, merge, or policy-writing permission.
-  A single trusted result writer owns issue comments, lifecycle changes, and
-  merge decisions. Its work is not evidence that product tests passed.
-- Read the selection and completion rules from a reviewed, protected version.
-  A PR cannot authorize its own weaker rules. Preserve the separate adoption
-  checks for protected workflow and policy changes.
-- Preserve active owners, leases, worktrees, and unrelated work. An agent
-  repairs the existing PR and branch after it receives a returned issue.
+- Keep every existing applicable test, package/feature row, functional/E2E
+  assertion, performance workload and numeric threshold.
+- Bind evidence to the repository, PR, exact head and base, canonical issue
+  contract, reviewed selection policy, workflow definition, run and attempt.
+- Only completed successful required jobs count. Missing, skipped, cancelled,
+  neutral, zero-test or unknown results never count as success.
+- Test jobs have no lifecycle or merge permission. One trusted failure writer
+  posts job reasons and returns only the current failed work attempt to todo.
+  It has no merge, closure, success-to-done or review authority.
+- Read selection rules from a reviewed protected source. A PR cannot approve
+  its own weaker policy. Local review must inspect protected changes and full
+  coverage retention before a controller publishes them.
+- Preserve active owners, leases, worktrees and WIP. A repair reuses the same
+  PR and branch. Never reset another owner's work or infer ownership from age.
 
-## Six stages
+## Four CI stages
 
-Stages run in order. A stage starts only after every applicable required
-job in the previous stage passes. A stage can contain a matrix of jobs.
-The stage names do not limit coverage or the number of feature rows.
+A stage starts only after all applicable required jobs in earlier stages pass.
+Each stage may contain several jobs or batches.
 
 ```mermaid
 flowchart TD
@@ -61,286 +57,165 @@ flowchart TD
     A --> U[3. Unit and static checks]
     U --> F[4a. Integration, functional and E2E]
     U --> T[4b. Performance]
-    F --> R[5. Claude Code review]
-    T --> R
-    R --> M[6. Recheck, merge, verify, close issue]
-    P -. failed job .-> O[Trusted result writer]
-    A -. failed job .-> O
-    U -. failed job .-> O
-    F -. failed job .-> O
-    T -. failed job .-> O
-    R -. failed job .-> O
-    O --> C[Record each failure on the linked issue]
-    C --> Q[Return the current work attempt to todo]
+    P -. failed job .-> W[Trusted failure writer]
+    A -. failed job .-> W
+    U -. failed job .-> W
+    F -. failed job .-> W
+    T -. failed job .-> W
+    W --> C[Post each reason on the canonical issue]
+    C --> Q[Return the current attempt to todo once]
+    F -. complete CI evidence .-> L[Local independent Claude review]
+    T -. complete CI evidence .-> L
 ```
+
+The local review box is outside GitHub Actions. Merge and issue closure are
+outside this DAG. A green workflow does not mean reviewed, merged or closed.
 
 ### 1. Preflight
 
-Cover all three checks in one or more repository-defined jobs. Read one PR
-snapshot and freeze the exact PR
-and current `main` commits for the run.
+Read one PR snapshot. Freeze its exact head and current default target commit.
+The initial consumers use `main`.
 
-1. Check whether the PR includes the frozen current `main` commit. A PR
-   behind `main` fails and returns its linked issue to `todo`.
-2. Check whether the PR can merge without a conflict. A confirmed conflict
-   fails and returns its linked issue to `todo`.
-3. Require exactly one canonical linked issue. It must be a real open issue,
-   not a PR number or an incidental text reference. Bind its repository,
-   number, and current acceptance contract. Reject zero or ambiguous links.
+1. Require the head to include that current main commit. Behind main fails.
+2. Require a conflict-free merge. A confirmed merge conflict fails.
+3. Require exactly one canonical real open issue and its acceptance contract.
+   Incidental references, a PR number, no link or ambiguous links fail.
 
-Use the configured default target branch; the first adoption set uses
-`main`. A draft, closed PR, unsupported source, wrong target, unreadable
-issue, or missing acceptance contract cannot advance. Keep the existing
-supported-source and protected-change restrictions.
-
-An API error or unresolved mergeability is not proof of a conflict or a
-fresh branch. Retry bounded read errors. If the job ends in failure, report
-the actual query failure through the failure contract below.
+Reject a draft, closed PR, unsupported source, wrong target or unreadable
+contract. Retry read errors only within a bounded policy. Unknown mergeability
+is not proof of a conflict or freshness. Report the actual failed query when
+it remains unknown. Main or PR movement invalidates the old snapshot.
 
 ### 2. Impact and test plan
 
-Use repository-defined planning jobs. Calculate the PR's changes between its merge base and
-the frozen PR commit. Use immutable commits, not a new lookup of the moving
-`main` name in each job. Retain file additions, deletions, and both paths of
-a rename. Read every page of changed files; never silently truncate a plan.
+Compare the frozen merge base and head. Retain additions, deletions and both
+rename paths. Read every changed-file page. Never truncate a plan.
 
-Produce a machine-readable plan with:
+Produce a machine-readable plan with exact commits, changed paths, affected
+packages and their transitive users, issue-required checks, all required
+unit/static/docs/functional/E2E/performance targets and feature rows, expected
+nonzero rosters, applicability reasons and a stable digest.
 
-- Changed paths and the exact comparison commits.
-- Affected packages and their transitive users inside the repository.
-- Required unit, static, documentation, integration, functional/E2E, and
-  performance checks, including every required target and feature row.
-- The source issue's acceptance checks, added to the path-selected checks.
-- Expected nonzero test rosters and the reason for each applicability choice.
-- A stable digest that every later job includes in its evidence.
+Shared libraries, dependencies, build configuration, workflows, selection or
+policy changes can require broader coverage. Preserve existing broader gates
+until a separately reviewed complete replacement proves retention. Unknown
+paths or dependencies use the approved full fallback or fail with the missing
+mapping. Never silently select zero tests. A reviewed explicit not-applicable
+receipt names the category and reason and cannot remove another required check.
 
-Changes to shared libraries, dependencies, build configuration, test
-selection, workflows, or policies can require a wider scope. Existing
-broader required gates remain required until a separately reviewed complete
-replacement proves coverage. A smaller path list alone does not permit a
-smaller test set.
-
-An unmapped path or unknown dependency cannot silently select no tests.
-Use the already approved full fallback, or fail with the missing decision.
-An explicit not-applicable decision must come from reviewed policy, name
-the category, and explain the reason. It never removes another applicable
-check. An unplanned skip is not a not-applicable decision.
-
-Missing test content remains an issue-planner task. Record the exact gap
-and its acceptance need so the planner can create a bounded follow-up.
-The pipeline does not invent a passing test, hide the failure, or waive the
-original requirement while it waits for that content.
+Missing test content belongs to the issue planner. Record the exact gap and
+required acceptance. Do not invent a passing test, hide a failure or waive its
+requirement while waiting for the planner.
 
 ### 3. Unit and static checks
 
-Execute the required unit tests and static checks from the plan. For Rust,
-retain applicable formatting, Clippy, compilation, documentation examples,
-package targets, and feature checks. One logical stage can expand into
-several jobs to keep failures separate and bound runtime.
+Execute all planned unit and static work. For Rust, retain applicable format,
+Clippy, compilation, documentation examples, package targets and features.
+Jobs may run in parallel where safe. Verify selected and executed test names
+against the expected roster. Zero executed tests fail. Compilation alone is
+not execution. Keep all assertions and original thresholds.
 
-Check the actual selected and executed test names against the expected
-roster. A command that exits zero with zero selected tests is a failure.
-Compilation without execution does not prove test success. Do not drop
-existing tests, ignore failures, or change thresholds to pass this stage.
+### 4. Integration, functional/E2E and performance
 
-### 4. Integration, functional/E2E, and performance
+After every stage 3 job passes, run two logical groups:
 
-Use two logical job groups after stage 3:
+1. Selected integration, functional and E2E tests.
+2. Selected performance workloads with their original thresholds.
 
-1. Run the selected integration, functional, and E2E checks.
-2. Run the selected performance checks with their original workloads and
-   thresholds.
+Run the groups in parallel only when resources and fixtures are isolated.
+Otherwise serialize them. Keep approved runtime, topology and required cloud
+acceptance. A local smoke test cannot replace required cloud evidence. Any
+not-applicable decision follows the reviewed stage 2 rules.
 
-The two groups can run in parallel only with resource isolation that keeps
-one from changing the other's measurements or fixtures. Otherwise serialize
-them. Keep the approved cloud runtime and required topology for each test.
-Do not substitute a local result or an empty smoke test for required cloud
-acceptance. A stage can be not applicable only under the reviewed plan rules
-above, with an explicit passing applicability receipt.
+## Every failed CI job reports to the issue
 
-### 5. Claude Code review
+Every failed job in stages 1 to 4 posts its observed reason and evidence on
+the canonical issue. Then the writer returns the current attempt to todo.
+Include preflight, planning, every matrix row/batch, setup, checkout,
+dependencies, provisioning, timeout and infrastructure failures.
 
-Start paid review only after stages 1 to 4 have complete required success
-evidence for the same inputs. Check the current PR again before review.
-
-The independent reviewer checks the implementation, source issue acceptance,
-and test evidence. It returns an authenticated decision bound to the exact
-PR/base commits and plan. A successful workflow with no valid review result
-is not a PASS. A negative review and a review setup/tool failure must remain
-different failure reasons; both use the failed-job reporting contract.
-
-Keep review read-only. Never execute PR programs or scripts in a runner that
-holds review credentials or lifecycle-write credentials. The reviewer does
-not merge, close issues, or change lifecycle labels.
-
-### 6. Recheck, merge, verify, close issue
-
-The trusted completion job must perform these steps in order:
-
-1. Read the current PR, current base, issue contract, plan, required test
-   results, and authenticated review. Require the same reviewed inputs.
-2. Recheck freshness, mergeability, source/target, and provider requirements.
-   Main or PR movement invalidates evidence for the old input. A PR now
-   behind or in conflict returns to `todo`; it does not bypass preflight.
-3. Request merge of that exact PR commit through the protected provider
-   path. Retain strict branch rules and the required verified-merge check.
-4. Read back the actual merge. An accepted auto-merge request or queue entry
-   is not a completed merge.
-5. Close only the canonical issue after the merge is confirmed, unless the
-   provider already closed it. Read back the issue's closed state.
-
-Do not close an issue before its PR merges. Keep a recovery record across
-partial writes. If merge succeeded and issue closure failed, retry closure
-only. Never return an already merged delivery to `todo`. An unknown merge
-outcome requires a fresh read before any retry or lifecycle change.
-
-Stage 6 is exempt from the blanket failed-job-to-todo rule below. It still
-records its error and recovery state. A completion API outage is not a new
-product defect, and cannot undo a confirmed merge.
-
-The shared guarded completion path requires a verified deployment.
-See [guard activation](issue-guard-activation.md) for its exact drain, actor,
-runtime and control evidence. An empty registry cannot enable completion.
-This activation process adds no stage and sets no product job count.
-
-## Every failed job reports to the issue
-
-**Every failed job in stages 1 to 5 must record its failure, post a comment
-to the canonical issue, and return the current work attempt to `todo`.**
-This includes preflight, planning, static, unit, every expanded matrix job,
-integration, functional/E2E, performance, review admission, and Claude review
-jobs. Setup, checkout, provisioning, dependency, timeout, and infrastructure
-failures are included. Do not wait for the final merge stage to do this.
-
-The reporting path runs even when upstream jobs fail or are skipped. A final
-job that runs only after success cannot be the only failure reporter. Use
-trusted job/run metadata and reconcile completed failed jobs when a runner
-cannot upload its own receipt. A log upload failure must not erase the
-original job failure.
-
-### Failure record and comment
-
-Retain one record per failed expanded job and run attempt. Include:
+Run reporting despite failed or skipped upstream jobs. Reconcile trusted
+GitHub job/run metadata when a failed runner cannot upload a receipt. Retain
+one record for every distinct expanded job and run attempt. Include:
 
 | Field | Required content |
-|---|---|
-| Identity | Repository, PR number, canonical issue, PR commit and frozen base commit |
-| Producer | Workflow path and trusted revision, run ID, attempt, job ID, stage and matrix values |
-| Failure | Failed step/check, category, concise reason, actual observed result and required result |
-| Evidence | Direct run/job links, retained diagnostic location, and plan digest if planning completed |
-| Follow-up | What the repairing agent must do, or the exact missing test content for the planner |
-| State | Whether this is the current work attempt, a historical failure, or a pending write recovery |
+| --- | --- |
+| Identity | Repo, PR, canonical issue, exact head and frozen base |
+| Producer | Workflow path/revision, run, attempt, job, stage, matrix/case identity |
+| Failure | Failed step, category, concise reason, actual and required result |
+| Evidence | Direct run/job links, retained diagnostics and plan digest when available |
+| Follow-up | Repair needed or exact missing content for the issue planner |
+| State | Current attempt, historical failure or pending write recovery |
 
-Do not claim a root cause when the available evidence only shows a symptom.
-If logs cannot be read, say so and retain the known failed step and job link.
-Remove secrets and sensitive output before posting excerpts. A structured
-receipt by itself is insufficient: the human-readable issue comment must
-contain the reason and evidence links.
+Do not call a symptom a proven root cause. If logs are unavailable, retain
+that fact, the failed step and job link. Remove secrets from excerpts. A
+structured receipt without a readable reason comment is insufficient.
 
-Post each distinct failed job once. Repeated delivery of the same event must
-not repeat its comment. A different matrix row, job, or run attempt retains
-its own failure record; one failure must not hide another. A suitable comment
-identity binds repository, PR, head, run ID, attempt, and expanded job ID.
+Deduplicate by repo, PR, head, run, attempt and expanded job. Different failed
+jobs each retain a reason. Return one coding attempt only once. If a worker
+already claimed returned todo, later failures add context and preserve its
+new doing state and lease. Old-head failures cannot reset a newer submission.
+Recheck head, contract, attempt and issue before each write. Preserve unrelated
+labels and read back all writes. Partial or unknown writes stay retryable.
 
-The result writer then adds `todo`, removes conflicting lifecycle labels
-only after it verifies the desired state, and reads back the result. Keep
-unrelated labels. A comment or label API failure remains retryable; it must
-not be reported as a completed handoff.
+A superseded cancelled run or an upstream-induced skip is not a new failed
+job. It never counts as success. An unexpected cancellation keeps necessary
+evidence incomplete.
 
-### Ownership and retries
+If no canonical issue exists or several match, post the exact link error on
+the PR. Choose no issue and change no issue labels. An actual cloud quota
+failure includes the confirmed project, service, metric, region, available
+usage/limit and Console request link. The user submits any quota increase.
 
-Many jobs can fail for the same submitted work. Record every failure, but
-return that work attempt only once. If an agent has already claimed the
-returned `todo`, later failures from the old attempt must not change that
-agent's new `doing` state, release its lease, or create another worktree.
-Record those failures as historical context instead. Likewise, an old head's
-failure must not reset a newer submission. Recheck head, contract, work
-attempt, and issue state before every lifecycle write.
+## Local review and completion
 
-This is an idempotent handoff: retrying it completes the original action
-without creating a second assignment. Keep the existing serialized writer,
-ownership guard, and durable comment/label recovery journal. Do not add a
-second privileged writer just to attach per-job comments.
+Independent Claude review starts locally only after all required CI for the
+current inputs succeeds. It reads the issue, diff, source and CI evidence.
+It runs no candidate program, build or test with review credentials. Preserve
+an exact-head/base/issue/plan/CI-run receipt and the actual reviewer identity.
+A tool failure, negative decision, missing receipt or stale input cannot pass.
 
-A cancelled superseded run and a job skipped because an earlier job failed
-are not new failed jobs. They never count as success. Explain the upstream
-failure without creating a false independent test failure. An unexpected
-cancellation that leaves required evidence incomplete blocks completion.
+Review failure records every reason. The authorized local controller returns
+only the current failed attempt to todo, with the same owner and retry checks.
+A later worker claim or newer head must not be reset.
 
-If preflight finds no canonical issue, or several possible issues, it cannot
-safely post to an issue. Post the exact linking error on the PR instead,
-block later stages, and ask for the link to be fixed. Do not choose a random
-issue, mutate all possible issues, or create a replacement issue automatically.
+Only the authorized local controller may finish delivery. It rechecks current
+head, main, issue contract, complete required CI, local independent review and
+provider rules. It confirms the actual exact-head merge before closing only
+the canonical issue. Read back closure. If merge succeeded and closure failed,
+retry closure only. Never return a confirmed merged delivery to todo.
 
-An actual cloud quota failure is an infrastructure failure. Identify its
-project, service, quota metric and region from the real error. Read available
-usage and limits, then include the corresponding Cloud Console request link.
-The user submits any increase; the pipeline does not submit it for them.
+This standard does not start a local schedule or grant a reviewer new merge
+permission. Use existing user authorization and role boundaries. Cloud CI
+must not perform these completion steps or publish a review/merge gate.
 
-## Wakes and trust
+## Wakes and adoption proof
 
-PR updates start a new frozen-input run. A change to the source issue's
-acceptance contract also invalidates evidence for the old contract. A main
-update must trigger a bounded recheck of open PR freshness, so a quiet stale
-PR does not retain a misleading approval forever. This recheck need not
-start expensive tests or paid review for an ineligible PR.
+PR changes start new frozen-input tests. Issue contract changes invalidate old
+evidence. Main updates trigger a bounded freshness recheck of the full open
+queue. It does not start paid review for stale or otherwise ineligible work.
+The failure writer serializes per repo, reads complete pages and current run
+attempts, and reconciles displaced wakes. An event is a hint to read current
+state, never authority to trust its payload.
 
-Result writers serialize per repository and reconcile the full paginated
-managed queue. Inspect current run attempts and all expanded jobs; a replaced
-pending wake must not lose another PR's failure. Every job/run event is a
-hint to read current evidence, not permission to trust its old payload.
+Opt in with `completion_owner: "local"` in reviewed consumer policy. Remove
+cloud review, native merge and completion recovery producer configuration.
+CI failure reporting remains; passing CI cannot set done. Keep strict base
+and the complete required test checks in branch rules. Retire the old
+`claude/verified-merge` cloud status requirement only with the test-check
+replacement and actual local review path ready. Never bypass failed tests.
 
-Publish a stable completion gate from the trusted writer for branch rules.
-It passes only after the required stages and independent review qualify the
-current inputs. The test or review job cannot forge this gate. Do not grant
-branch-protection bypass to work around an incomplete rollout.
+Before calling a consumer adopted, retain executable evidence for:
 
-## Adoption and proof
+1. Fresh/behind/conflicting PRs, canonical-link errors, read errors and main movement.
+2. Complete renamed/deleted/changed paths, dependency users, fallback, issue checks and nonzero rosters.
+3. Real stage order, full matrices, original bounds and isolated expensive tests.
+4. Every CI stage and expanded-job failure reason, issue comment and current-attempt todo return.
+5. Multiple/duplicate failures, reruns, stale inputs and later worker ownership.
+6. Partial writes and missing logs, without lost reasons or stolen work.
+7. Local exact-input review PASS/rejection/tool failure, and no cloud review or success-to-done action.
+8. Local verified merge-before-close and close-only retry, with no cloud merge/closure entry point.
 
-The [development adapter](../../plugins/faberline/skills/issue-ci/DEVELOPMENT-PIPELINE.md)
-documents the shared metadata/DAG checks and per-job failure reporting.
-Its publication does not activate a consumer or waive its adoption proof.
-
-Shared enforcement is tracked in
-[faberline/aw#129](https://github.com/faberline/aw/issues/129). The issue remains
-open until its implementation and conformance evidence pass; publishing this
-document does not complete it.
-
-AW first publishes this specification and shared implementation changes.
-Each consumer then adopts an immutable reviewed AW revision through its own
-issue. A documentation PR is not a deployed pipeline.
-
-Before activation, retain executable conformance evidence for at least:
-
-1. Fresh/behind/conflicting PRs; zero/one/multiple linked issues; unreadable
-   metadata; and main movement during a run.
-2. Changed, deleted and renamed paths; shared dependency users; full fallback;
-   missing mappings; issue-required checks; and nonzero roster enforcement.
-3. Actual stage ordering, required matrix expansion, original thresholds,
-   and isolated functional/performance environments.
-4. A failure in **each** stage 1 to 5 and in an expanded matrix row: reason
-   retained, issue comment posted, and current attempt returned to `todo`.
-5. Multiple failures, duplicate events, reruns, stale heads, and an agent
-   claiming returned work: no lost reason, duplicate handoff, or stolen owner.
-6. Partial comment/label writes and missing uploaded logs: recovery completes
-   without assuming success or resetting a newer work attempt.
-7. Exact-input authenticated Claude PASS/rejection/tool failure; required
-   skipped/missing/cancelled evidence; and protected-policy changes.
-8. Confirmed merge before closure; denied/unknown merge; duplicate completion;
-   and a close failure after merge: retry closes only the correct issue.
-
-The conformance checker and immutable workflow identities must be reviewed
-with the consumer. Until the checker exists and that consumer's exact inputs
-pass, report **adoption pending**, with the concrete remaining gap. Do not
-claim active enforcement or clear existing holds from this document alone.
-
-The exception path is the consumer's reviewed per-category applicability
-policy, with explicit reasons and evidence. It cannot exempt stage order,
-failure reporting, nonzero selected tests, existing applicable thresholds,
-current-input review, ownership, or merge-before-close. Product gaps go to
-the issue planner; they are not policy exceptions.
-
-The per-repository rollout record must link the adoption issue, exact PR and
-base commits, pinned AW revision, CI and review results, conformance evidence,
-actual merge, and actual issue closure. Record pending and failed states
-truthfully. Stage 5 remains excluded for AW itself.
+Keep pending or failed states explicit. Green controller work or a standard
+document does not prove product acceptance. AW #129 tracks shared enforcement;
+the six repository-specific adoption issues track deployed acceptance.

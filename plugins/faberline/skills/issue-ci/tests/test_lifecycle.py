@@ -40,6 +40,17 @@ def evidence():
 
 
 class GateTests(unittest.TestCase):
+    def test_local_completion_rejects_cloud_producers_and_unknown_owners(self):
+        local=dict(workflows=GATES,completion_owner='local')
+        self.assertEqual(ci.validate_config(local),local)
+        for key in ('claude_final_review','native_auto_merge','issue_recovery',
+                    'issue_guard_rollout','issue_guard_cutover'):
+            with self.subTest(key=key),self.assertRaises(RuntimeError):
+                ci.validate_config(dict(local,**{key:{}}))
+        for value in ('cloud','',True,None):
+            with self.subTest(value=value),self.assertRaises(RuntimeError):
+                ci.validate_config(dict(local,completion_owner=value))
+
     def test_all_workflows_required(self):
         snapshots = evidence()
         self.assertEqual(ci.evaluate(GATES, snapshots)[0], 'done')
@@ -144,6 +155,33 @@ class ApplyTests(unittest.TestCase):
         self.assertIn(('repos/o/r/issues/7/labels', 'POST', {'labels': ['done']}), self.writes)
         self.assertIn(('repos/o/r/issues/7/labels/doing', 'DELETE', None), self.writes)
         self.assertFalse(any('/labels/priority' in w[0] for w in self.writes))
+
+    def test_local_completion_success_never_writes_done_merge_or_close(self):
+        self.config.write_text(json.dumps(dict(workflows=GATES,completion_owner='local')))
+        self.assertEqual(self.invoke(),0)
+        self.assertEqual(self.writes,[])
+        self.assertEqual({l['name']for l in self.issue['labels']},{'doing','priority:p1'})
+
+    def test_local_completion_keeps_success_readable_for_the_local_reviewer(self):
+        args=ci.argparse.Namespace(repo='o/r',pr=8,head=SHA,apply=False,run_id=None)
+        with patch.object(ci,'api',side_effect=self.api), \
+             patch.object(ci,'snapshot',return_value=evidence()), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            result=ci.process_head(args,dict(workflows=GATES,completion_owner='local'),check_event=False)
+        self.assertEqual(result,0)
+        self.assertEqual(json.loads(output.getvalue())['state'],'done')
+        self.assertEqual(self.writes,[])
+
+    def test_local_completion_keeps_failure_handoff_and_preserves_a_later_claim(self):
+        self.config.write_text(json.dumps(dict(workflows=GATES,completion_owner='local')))
+        snapshots=evidence();snapshots[GATES[0]['path']][1][0]['conclusion']='failure'
+        self.assertEqual(self.invoke(snapshots),0)
+        self.assertIn(('repos/o/r/issues/7/labels','POST',{'labels':['todo']}),self.writes)
+        self.assertFalse(any(method=='PATCH' and data and data.get('state')=='closed'
+                             for _,method,data in self.writes))
+        self.writes.clear();self.issue['labels']=[{'name':'doing'}]
+        self.assertEqual(self.invoke(snapshots),0)
+        self.assertEqual(self.writes,[])
 
     def test_handoff_marks_before_first_provider_write(self):
         args=ci.argparse.Namespace(repo='o/r',pr=8,head=SHA,apply=True,run_id=None)
