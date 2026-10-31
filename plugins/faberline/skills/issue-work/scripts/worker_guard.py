@@ -30,8 +30,9 @@ class Api:
         self.client=client
 
     def api(self,path,method='GET',data=None):
+        root=f'repos/{self.client.repo}'
         need(method in ('GET','POST','PATCH') and isinstance(path,str)
-             and (path=='graphql' or path.startswith(f'repos/{self.client.repo}/'))
+             and (path=='graphql' or (path==root and method=='GET') or path.startswith(root+'/'))
              and '://' not in path, 'worker_guard_api_path')
         if '..' in path:
             relative=path.removeprefix(f'repos/{self.client.repo}/')

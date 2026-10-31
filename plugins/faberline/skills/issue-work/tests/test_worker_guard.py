@@ -165,6 +165,57 @@ class WorkerGuardTests(unittest.TestCase):
                 api.api(path,method,data)
         self.assertEqual(len(client.calls),3)
 
+    def test_real_adapter_reads_default_policy_in_legacy_drain_and_guarded_modes(self):
+        # Exercise the production adapter used by an installed worker. A
+        # SourceAPI fixture alone misses its repository-root path admission.
+        guard=policy();del guard['policy_source']
+        marker=dict(version=1,phase='drain',nonce='a'*32)
+        for document,expected in (({},None),
+                                  (dict(issue_guard_cutover=marker),dict(cutover=marker,policy_source=SOURCE)),
+                                  (dict(issue_guard=guard),policy())):
+            raw=json.dumps(document).encode()
+            class Client:
+                repo=REPO
+                def __init__(self):self.calls=[]
+                def command(self,*args,payload=None):
+                    self.calls.append((args,payload))
+                    command,option,method,path=args
+                    if (command,option)!=('api','--method'):
+                        raise AssertionError(args)
+                    if path==f'repos/{REPO}' and method=='GET':
+                        self.assert_no_payload(payload)
+                        return dict(full_name=REPO,default_branch='main')
+                    if path==f'repos/{REPO}/commits/main' and method=='GET':
+                        self.assert_no_payload(payload)
+                        return dict(sha=SOURCE)
+                    if path=='graphql' and method=='POST' and payload['query']==w.POLICY_BLOB:
+                        oid=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+                        return dict(data=dict(repository=dict(nameWithOwner=REPO,object=dict(
+                            __typename='Blob',isBinary=False,byteSize=len(raw),text=raw.decode(),oid=oid))))
+                    raise AssertionError((args,payload))
+                @staticmethod
+                def assert_no_payload(payload):
+                    if payload is not None:raise AssertionError('GET cannot carry a mutation payload')
+            client=Client()
+            with self.subTest(document=document):
+                self.assertEqual(w.read_policy(w.Api(client),REPO),expected)
+                self.assertEqual(len(client.calls),5)
+                self.assertEqual(sum(args[-1]==f'repos/{REPO}' for args,_ in client.calls),2)
+
+    def test_repository_root_admission_never_allows_writes_foreign_roots_or_payloads(self):
+        class Client:
+            repo=REPO
+            def command(self,*args,payload=None):
+                raise AssertionError('refused metadata request reached the client')
+        api=w.Api(Client())
+        requests=[(f'repos/{REPO}','POST',{}),(f'repos/{REPO}','PATCH',{}),
+                  (f'repos/{REPO}','GET',{}),('repos/other/repo','GET',None),
+                  (f'repos/{REPO}?extra=1','GET',None),
+                  (f'repos/{REPO}/../other','GET',None)]
+        for path,method,data in requests:
+            with self.subTest(path=path,method=method),self.assertRaises(w.provider.Refused):
+                api.api(path,method,data)
+
     def test_legacy_mode_never_ignores_an_existing_issue_guard(self):
         w.require_no_legacy_guard(self.api,REPO,9)
         with self.assertRaisesRegex(w.provider.Refused,'worker_guard_policy_missing'):
