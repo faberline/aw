@@ -24,12 +24,15 @@ class Provider:
         self.pull=dict(number=8,state='open',title='Fix',body='Closes #7',head=dict(sha=HEAD,repo={'full_name':REPO}),base=dict(ref='main'))
         self.pulls=[self.pull]
         self.run=dict(id=100,run_attempt=1,workflow_id=55,path=PATH,event='workflow_run',head_sha=SOURCE,head_branch='main',head_repository={'full_name':REPO})
+        self.issues={}
     def blob(self):return hashlib.sha1(b'blob '+str(len(self.raw.encode())).encode()+b'\0'+self.raw.encode()).hexdigest()
     def config(self):return dict(completion_owner='local',workflows=copy.deepcopy(legacy.GATES),lifecycle_mode='failure-only',qualification_blockers=['fixture content hold'],development_reporter=dict(path=PATH,id=55,definition_sha=self.blob(),job='report'))
     def api(self,path,method='GET',data=None):
         self.calls.append((path,method,data))
         if method!='GET':
-            self.writes.append((path,method,data));return dict(id=1,body=data.get('body','') if data else'',user={'login':'github-actions[bot]'})
+            self.writes.append((path,method,data));result=dict(id=len(self.comments)+1,body=data.get('body','') if data else'',user={'login':'github-actions[bot]'})
+            if method=='POST'and path.endswith('/comments'):self.comments.append(result)
+            return result
         if path==f'repos/{REPO}':return dict(default_branch='main')
         if path==f'repos/{REPO}/actions/runs/100':return self.run
         if '/contents/'in path:return dict(type='file',encoding='base64',sha='0'*40 if self.bad_blob else self.blob(),content=base64.b64encode(self.raw.encode()).decode())
@@ -37,6 +40,10 @@ class Provider:
             self.reads+=1
             return dict(sha='d'*40 if self.moved and self.reads>1 else SOURCE)
         if '/pulls/'in path:return copy.deepcopy(next(p for p in self.pulls if p['number']==int(path.rsplit('/',1)[1])))
+        if '/issues/'in path:
+            n=int(path.rsplit('/',1)[1])
+            return copy.deepcopy(self.issues.get(n,dict(number=n,state='open',labels=[dict(name='doing')],
+                repository_url=f'https://api.github.com/repos/{REPO}',url=f'https://api.github.com/repos/{REPO}/issues/{n}')))
         raise AssertionError((path,method,data))
     def pages(self,path,*args):return self.comments if path.endswith('/comments')else self.pulls
 
@@ -70,6 +77,26 @@ class ReporterTests(unittest.TestCase):
         p=self.provider;p.pull['body']='No canonical issue'
         result,run,_=self.invoke();self.assertEqual(result,0);run.assert_not_called()
         self.assertEqual(len(p.writes),1);self.assertEqual(p.writes[0][:2],('repos/o/r/issues/8/comments','POST'))
+    def test_invalid_pr_closed_and_foreign_links_only_diagnose_the_source_pr(self):
+        for kind in ('pr','closed','foreign'):
+            self.provider=Provider();p=self.provider
+            target=p.api('repos/o/r/issues/7')
+            if kind=='pr':target['pull_request']={}
+            elif kind=='closed':target['state']='closed'
+            else:target['repository_url']='https://api.github.com/repos/x/r'
+            p.issues[7]=target
+            with self.subTest(kind=kind):
+                result,run,_=self.invoke();self.assertEqual(result,0);run.assert_not_called()
+                self.assertEqual(len(p.writes),1)
+                self.assertEqual(p.writes[0][:2],('repos/o/r/issues/8/comments','POST'))
+                self.invoke();self.assertEqual(len(p.writes),1)
+    def test_writer_revalidates_issue_type_even_if_inner_processor_would_write(self):
+        def process(*args,**kwargs):
+            target=self.provider.api('repos/o/r/issues/7');target['pull_request']={}
+            self.provider.issues[7]=target
+            ci.api('repos/o/r/issues/7/comments','POST',dict(body='must not reach the wrong PR'))
+        result,_,_=self.invoke(process)
+        self.assertEqual(result,2);self.assertEqual(self.provider.writes,[])
     def test_failure_comment_and_todo_are_allowed_with_current_source(self):
         def process(args,*_,**kwargs):
             kwargs['before_mutation']()
