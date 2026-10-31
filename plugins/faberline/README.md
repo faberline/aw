@@ -89,15 +89,32 @@ codex plugin add faberline@faberline
 
 Codex keeps a copy. Get changes with `codex plugin marketplace upgrade`.
 
-AGY reads `.antigravity-plugin/plugin.json`. To follow a local aw checkout
-without a copy, list its `plugins` folder in `~/.gemini/config/plugins.json`:
+Antigravity reads `.antigravity-plugin/plugin.json`. Its plugin loader can
+install a GitHub source or a local plugin directory. For a local AW checkout:
 
-```json
-{ "entries": [ { "path": "~/faberlines/aw/plugins" } ] }
+```bash
+agy plugin install /absolute/path/to/aw/plugins/faberline
+agy plugin list --json
+agy plugin validate --strict /absolute/path/to/installed/faberline
 ```
 
-Remove an older copy in `~/.gemini/config/plugins/faberline` first, with
-`agy plugin uninstall faberline`.
+Use the path that `list` reports for the final command. Verify the installed
+revision and enabled state. Check the installed client's help before using
+an update command. Do not assume it accepts a custom marketplace name.
+The [Antigravity plugin guide](https://antigravity.google/docs/plugins)
+documents its supported loaders and validation.
+
+Antigravity also loads global plugin directories from
+`~/.gemini/config/plugins/`. If its CLI is unavailable, an authorized file
+sync can update that installed directory from a verified AW commit.
+Keep a full backup, refuse concurrent file changes, and verify file hashes,
+script permissions and references. Do not overwrite a dirty source checkout.
+Report native CLI validation and runtime activation as unrun when unavailable.
+
+All installed copies remain outputs of the same AW source. They are not
+independent skill implementations. See the repository's
+[AGENTS.md](https://github.com/faberline/aw/blob/main/AGENTS.md) for update,
+ownership and acceptance rules. An install or update never starts a loop.
 
 ## Issue loop
 

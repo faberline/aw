@@ -4,6 +4,15 @@
 Their `-loop` companions repeat that same pass on request.
 Creating or installing a companion does not start it.
 
+## Shared source and deployment
+
+All three clients use the same loop definitions from AW.
+Installed client copies are generated from a recorded AW revision.
+Follow the repository's [update rules](https://github.com/faberline/aw/blob/main/AGENTS.md)
+when syncing them.
+Keep support files and executable entrypoints with each original skill.
+A file sync does not prove that the client loaded or ran the loop.
+
 ## Interval and scope
 
 Accept one positive whole number followed by `s`, `m`, `h` or `d`.
