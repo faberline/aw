@@ -4,6 +4,19 @@ AW is the shared source for Faberline standards and agent skills.
 Codex, Claude Code and Antigravity use the same skill logic from this repository.
 Client-specific files control discovery and installation only.
 
+## Infrastructure ownership
+
+AW also keeps Terraform that provisions GCP resources and the shared GKE cluster.
+GKE is Google Kubernetes Engine, the managed Kubernetes service.
+Keep Terraform inputs that the current provisioning code still requires.
+Each product repository owns its Kubernetes manifests and Kustomize overlays.
+Kustomize combines Kubernetes configuration files for a deployment.
+Each product repository also owns workload deployment and test orchestration.
+Do not add product deployment configuration to AW as a shared requirement.
+Existing shared GKE execution scripts and workflows are migration candidates.
+Inventory and switch their consumers before removal; preserve all test gates.
+This boundary does not authorize deletion, infrastructure apply or schedule changes.
+
 ## Output style
 
 Use the repository's ELI5 style for ordinary user updates and answers.
