@@ -2,7 +2,7 @@ name: Trusted PR qualification and CI handoff
 description: Evaluate GitHub metadata with pinned aw logic and default-branch consumer policy.
 inputs:
   operation:
-    description: validate, qualify, handoff, readiness, verify-readiness, index, verify-index, development-preflight, development-plan, or assertion-library.
+    description: validate, qualify, handoff, readiness, verify-readiness, index, verify-index, development-preflight, development-plan, development-report, or assertion-library.
     default: handoff
   policy:
     description: Policy JSON path on the consumer default branch. PR policy is never loaded.
@@ -46,7 +46,7 @@ runs:
       run: echo "path=$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/assertion_record.py" >> "$GITHUB_OUTPUT"
     - name: Prepare hash-locked readiness parser
       id: readiness-runtime
-      if: inputs.operation == 'readiness' || inputs.operation == 'verify-readiness' || inputs.operation == 'index' || inputs.operation == 'verify-index' || inputs.operation == 'qualify' || inputs.operation == 'handoff' || inputs.operation == 'validate' || inputs.operation == 'development-preflight' || inputs.operation == 'development-plan'
+      if: inputs.operation == 'readiness' || inputs.operation == 'verify-readiness' || inputs.operation == 'index' || inputs.operation == 'verify-index' || inputs.operation == 'qualify' || inputs.operation == 'handoff' || inputs.operation == 'validate' || inputs.operation == 'development-preflight' || inputs.operation == 'development-plan' || inputs.operation == 'development-report'
       shell: bash
       run: |
         set -euo pipefail

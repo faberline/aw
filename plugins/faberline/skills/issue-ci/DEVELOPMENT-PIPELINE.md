@@ -5,6 +5,11 @@ This adapter implements metadata and stage-order checks for
 Consumers opt in through their reviewed default-branch policy. Publishing the
 adapter does not activate a consumer or replace its product tests.
 
+The 2026-10-31 contract has four CI stages. Claude review runs locally.
+CI must not review, merge, mark an issue done or close it. Old cloud review,
+merge and recovery adapters remain compatibility code, not activation work
+for the new normal-development design.
+
 ## Policy
 
 Add `development_pipeline` to `.github/issue-ci-required-gates.json` through
@@ -12,6 +17,7 @@ the existing protected policy adoption path. For example:
 
 ```json
 {
+  "completion_owner": "local",
   "development_pipeline": {
     "version": 1,
     "workflow": ".github/workflows/ci.yml",
@@ -33,20 +39,20 @@ jobs in its earlier stages.
 
 The job IDs are examples, not an approved gate inventory. List every test job
 from that workflow exactly once. Keep the full required check inventory,
-feature expansion and issue contracts in the qualification policy. The final
-review and result writer remain separate trusted workflows.
+feature expansion and issue contracts in the qualification policy. Independent review runs locally after complete necessary CI. One trusted
+cloud failure writer retains issue comments and current-attempt todo return.
 
-An authenticated `fail` or `block` review also needs a readable issue comment.
-The result writer includes every finding, uncertainty, and unmet requirement,
-with the exact head, base, run, attempt, job, and receipt link. A successful
-workflow that records a negative review is still a failed review stage.
-Long reasons use numbered comments. No reason is silently truncated.
+For `completion_owner: "local"`, remove `claude_final_review`,
+`native_auto_merge`, `issue_recovery`, `issue_guard_cutover` and
+`issue_guard_rollout` producer configuration. The shared validator refuses
+mixed local/cloud completion configuration. Existing active ownership data
+and unrelated work must still be preserved during the reviewed transition.
 
-Reason comments are separate from the durable `todo` recovery journal.
-Existing journal identities and pending/ready/applied bodies stay unchanged.
-A retry can add the missing reason to an old journal without resetting an
-agent's later `doing` claim. Duplicate delivery reuses each bot reason comment.
-Unknown comment writes remain retryable before any new label change.
+The CI handoff keeps full current-input test qualification readable to the
+local reviewer. Its apply path suppresses every success-to-done write.
+Failures still use the existing durable comment/todo journal. Duplicate
+failure delivery cannot reset a later worker claim. The local reviewer and
+controller retain exact-input, negative-result and merge-before-close checks.
 
 The checker verifies transitive `needs` dependencies. Every unit/static job
 waits for impact and preflight. Both expensive groups wait for every unit
@@ -68,17 +74,24 @@ It cannot combine two old workflows or discard an old check. These mappings
 do not approve themselves. Protected policy adoption still authenticates the
 exact source, complete CI, independent review, and grant before publication.
 
-AW does not require Claude review, including a PR that only changes product
-adoption grant data. A new grant can use `grant_authorization` with exactly
-`{"version":1,"kind":"product-evidence","pr":<AW grant PR number>}`.
-The verifier requires that AW PR to have merged into main, change only the
-grant data file, retain its full control workflow, and pass the complete AW
-controls at its exact head. It authenticates the grant's current default
-source and verifies the product's full CI and latest independent Claude PASS
-again. No new AW model call is involved. The legacy attestation paths remain
-available for historical evidence. An unmarked grant remains held. This mode
-does not waive guarded actor/recovery rollout, protected adoption, or provider
-requirements. Its product scope is Core, Lumen, Keep, Tape, Defer, and Relay.
+AW does not require Claude review. The former product-evidence grant and
+cloud guarded publisher protocol is historical compatibility code. It is not
+a prerequisite for the new local-review normal-development pipeline.
+
+## Failure writer entry
+
+Use the [failure-only template](templates/development-report.yml.example) with
+real test workflow names, an immutable AW revision and the consumer's actual
+`development_reporter` identity (`path`, `id`, `definition_sha`, `job`). The
+`development-report` operation authenticates the current default source,
+actual run/attempt, exact workflow blob and single-writer permissions.
+
+Its token has read access plus `issues: write`. It has no contents, PR or
+status write permission. A request filter allows only failure comments,
+todo additions and removal of conflicting doing/done labels. It refuses
+merge, issue closure and success-to-done writes. Every wake scans the complete
+current PR queue. Main updates can therefore return stale PR work to todo
+without launching tests or paid review. Reuse the existing failure journal.
 
 ## Read-only action operations
 
@@ -102,7 +115,7 @@ thresholds cannot be converted into a success by the metadata adapter.
 ## Single-writer failure reporting
 
 For opted-in consumers the existing unified writer also observes individual
-failed expanded jobs, including authenticated failed review setup jobs.
+failed expanded jobs, without invoking a review producer.
 Each job/run attempt gets one `aw-job-failure` issue comment with the failed
 step, observed conclusion, exact commits, workflow/run/attempt/job identity,
 and direct evidence links. No PR logs or artifacts are executed. A missing
@@ -111,9 +124,8 @@ failed-step detail is reported as missing, not invented as a root cause.
 These comments do not own lifecycle state. The existing coding-epoch journal
 returns work to `todo` once. A later matrix failure can add its comment after
 that handoff, while preserving a worker that already claimed `todo`. Unknown
-comment responses remain retryable through a fresh comment read. Old/new
-review producer metadata is passed separately from any preserved CI journal
-policy, so adding review observation does not silently alter journal identity.
+comment responses remain retryable through a fresh comment read. Local completion configuration contains no cloud review producer. Retain old
+journal identities where their verified deployed semantics are unchanged.
 
 An unlinked or ambiguous PR gets a deduplicated PR comment instead of a guess
 at an issue. No issue label is changed by that diagnostic.
@@ -126,8 +138,8 @@ they explicitly adopt the development policy and matching producer source.
 ## Rollout
 
 Run the complete isolated control suite, then the consumer's unchanged
-required product tests and independent review. Retain the protected policy,
-writer identity, ownership and merge/close checks. Use
+required product tests and local independent review. Retain the protected policy,
+failure-writer identity, ownership and local merge/close checks. Use
 [AW #129](https://github.com/faberline/aw/issues/129) for shared enforcement and
 the six linked adoption issues for live integration proof.
 
