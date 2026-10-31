@@ -601,18 +601,19 @@ def development_report(repo, document, evaluator, run_id):
     if config.get('completion_owner')!='local':
         raise RuntimeError('development reporter requires explicit local completion')
     source=document['source_commit'];spec=config.get('development_reporter',{})
-    if (not isinstance(spec,dict) or set(spec)!= {'path','id','definition_sha','job'}
+    if (not isinstance(spec,dict) or set(spec)!= {'path','id','definition_sha','job','link_job'}
             or type(spec['id'])is not int or spec['id']<=0
             or not isinstance(spec['path'],str) or not re.fullmatch(r'\.github/workflows/[\w.-]+\.ya?ml',spec['path'])
             or not isinstance(spec['definition_sha'],str) or not re.fullmatch('[0-9a-f]{40}',spec['definition_sha'])
-            or not isinstance(spec['job'],str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]*',spec['job'])):
+            or any(not isinstance(spec[key],str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]*',spec[key])
+                   for key in ('job','link_job')) or spec['job']==spec['link_job']):
         raise RuntimeError('development reporter identity is missing or invalid')
-    event=os.environ.get('GITHUB_EVENT_NAME')
+    event=os.environ.get('GITHUB_EVENT_NAME');role=os.environ.get('GITHUB_JOB')
     if (event not in ('workflow_run','push','issues','repository_dispatch')
             or os.environ.get('GITHUB_ACTIONS')!='true'
             or os.environ.get('GITHUB_REPOSITORY')!=repo
             or os.environ.get('GITHUB_WORKFLOW_SHA')!=source
-            or os.environ.get('AW_ACTION_REF')!=evaluator):
+            or os.environ.get('AW_ACTION_REF')!=evaluator or role not in (spec['job'],spec['link_job'])):
         raise RuntimeError('development reporter must use its current trusted default source')
     root=f'repos/{repo}';default=api(root)['default_branch']
     run=api(f'{root}/actions/runs/{run_id}')
@@ -631,12 +632,18 @@ def development_report(repo, document, evaluator, run_id):
     workflow=development_module().yaml_document(raw.decode())
     permissions={'actions':'read','contents':'read','pull-requests':'read','issues':'write'}
     job=workflow.get('jobs',{}).get(spec['job'],{})
+    link_job=workflow.get('jobs',{}).get(spec['link_job'],{})
+    link_permissions={'actions':'read','contents':'read','pull-requests':'write','issues':'read'}
+    links_only=role==spec['link_job']
     expected={'uses':f'faberline/aw/.github/actions/issue-ci@{evaluator}',
               'with':{'operation':'development-report'}}
-    if (workflow.get('permissions')!={} or set(workflow.get('jobs',{}))!={spec['job']}
-            or set(job)!={'runs-on','timeout-minutes','permissions','steps'}
-            or job.get('permissions')!=permissions or job.get('steps')!=[expected]):
-        raise RuntimeError('development reporter may only report CI labels with issue permission')
+    if (workflow.get('permissions')!={} or set(workflow.get('jobs',{}))!={spec['job'],spec['link_job']}
+            or set(job)!={'runs-on','timeout-minutes','permissions','steps','needs','if'}
+            or job.get('permissions')!=permissions or job.get('steps')!=[expected]
+            or job.get('needs')!=spec['link_job'] or job.get('if')!='${{ always() }}'
+            or set(link_job)!={'runs-on','timeout-minutes','permissions','steps'}
+            or link_job.get('permissions')!=link_permissions or link_job.get('steps')!=[expected]):
+        raise RuntimeError('development reporter requires separate source-PR-comment and issue-label permissions')
     if workflow.get('concurrency')!={'group':'issue-ci-handoff','cancel-in-progress':'false'}:
         raise RuntimeError('development reporter must retain the single-writer mutex')
     results=[];original_api=globals()['api']
@@ -654,12 +661,17 @@ def development_report(repo, document, evaluator, run_id):
         issue=qualification_module().linked_issue(pull)
         def failure_api(path,method='GET',data=None):
             if method!='GET':
-                allowed=(method=='POST' and path in (f'{root}/issues/{issue}/comments',f'{root}/issues/{number}/comments')
-                         and isinstance(data,dict) and set(data)=={'body'})
-                allowed|=(method=='PATCH' and bool(re.fullmatch(re.escape(root)+r'/issues/comments/[1-9][0-9]*',path))
-                          and isinstance(data,dict) and set(data)=={'body'})
-                allowed|=(method=='POST' and path==f'{root}/issues/{issue}/labels' and data=={'labels':['todo']})
-                if method=='POST' and path==f'{root}/issues/{issue}/labels' and data=={'labels':['done']}:
+                source_diagnostic=(links_only and method=='POST' and path==f'{root}/issues/{number}/comments'
+                                   and isinstance(data,dict) and set(data)=={'body'})
+                allowed=source_diagnostic
+                if not links_only:
+                    allowed|=(method=='POST' and path==f'{root}/issues/{issue}/comments'
+                              and isinstance(data,dict) and set(data)=={'body'})
+                    allowed|=(method=='PATCH' and bool(re.fullmatch(re.escape(root)+r'/issues/comments/[1-9][0-9]*',path))
+                              and isinstance(data,dict) and set(data)=={'body'})
+                    allowed|=(method=='POST' and path==f'{root}/issues/{issue}/labels' and data=={'labels':['todo']})
+                    allowed|=(method=='DELETE' and path in tuple(f'{root}/issues/{issue}/labels/{label}'for label in ('todo','doing','done')) and data is None)
+                if not links_only and method=='POST' and path==f'{root}/issues/{issue}/labels' and data=={'labels':['done']}:
                     # done is only a review-ready label. Recheck all necessary
                     # current-input CI before allowing even this label write.
                     current=original_api(f'{root}/pulls/{number}')
@@ -670,14 +682,12 @@ def development_report(repo, document, evaluator, run_id):
                     if evaluate_policy(scoped,snapshot(repo,head,scoped))[0]!='done':
                         raise RuntimeError('all necessary current-input CI must pass before the done label')
                     allowed=True
-                allowed|=(method=='DELETE' and path in tuple(f'{root}/issues/{issue}/labels/{label}'for label in ('todo','doing','done')) and data is None)
                 if not allowed:raise RuntimeError('development CI writer cannot merge, close or write unrelated state')
                 current=original_api(f'{root}/pulls/{number}')
                 if (current.get('state')!='open' or current.get('head',{}).get('sha')!=head
                         or (current.get('head',{}).get('repo')or{}).get('full_name')!=repo
                         or current.get('base',{}).get('ref')!=default):
                     raise RuntimeError('source PR moved before development handoff')
-                source_diagnostic=(method=='POST' and path==f'{root}/issues/{number}/comments')
                 if source_diagnostic:
                     if (current.get('title'),current.get('body'))!=linking_metadata:
                         raise RuntimeError('source PR linking metadata changed before diagnostic')
@@ -696,8 +706,9 @@ def development_report(repo, document, evaluator, run_id):
             globals()['api']=failure_api
             if issue is None or not development_module().canonical_issue_target(repo,issue,
                     development_module().read_issue_target(SimpleNamespace(api=original_api),repo,issue)):
-                development_module().report_missing_issue(SimpleNamespace(api=failure_api,pages=pages),repo,pull,current_source)
-            else:
+                if links_only:
+                    development_module().report_missing_issue(SimpleNamespace(api=failure_api,pages=pages),repo,pull,current_source)
+            elif not links_only:
                 args=argparse.Namespace(repo=repo,pr=number,head=head,apply=True,run_id=None)
                 process_head(args,config,check_event=False,before_mutation=current_source)
             results.append(dict(pr=number,head=head,state='processed'))
@@ -705,7 +716,7 @@ def development_report(repo, document, evaluator, run_id):
             results.append(dict(pr=number,head=head,state='held',reason=str(error)))
         finally:
             globals()['api']=original_api
-    print('AW_DEVELOPMENT_FAILURE_REPORT_V1 '+json.dumps(dict(repo=repo,source=source,run=run_id,results=results),sort_keys=True))
+    print('AW_DEVELOPMENT_FAILURE_REPORT_V1 '+json.dumps(dict(repo=repo,source=source,run=run_id,role=role,results=results),sort_keys=True))
     return 2 if any(row['state']=='held'for row in results)else 0
 
 
