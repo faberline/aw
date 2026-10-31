@@ -78,6 +78,21 @@ AW does not require Claude review. The former product-evidence grant and
 cloud guarded publisher protocol is historical compatibility code. It is not
 a prerequisite for the new local-review normal-development pipeline.
 
+## Failure writer entry
+
+Use the [failure-only template](templates/development-report.yml.example) with
+real test workflow names, an immutable AW revision and the consumer's actual
+`development_reporter` identity (`path`, `id`, `definition_sha`, `job`). The
+`development-report` operation authenticates the current default source,
+actual run/attempt, exact workflow blob and single-writer permissions.
+
+Its token has read access plus `issues: write`. It has no contents, PR or
+status write permission. A request filter allows only failure comments,
+todo additions and removal of conflicting doing/done labels. It refuses
+merge, issue closure and success-to-done writes. Every wake scans the complete
+current PR queue. Main updates can therefore return stale PR work to todo
+without launching tests or paid review. Reuse the existing failure journal.
+
 ## Read-only action operations
 
 The pinned `.github/actions/issue-ci` action supports:

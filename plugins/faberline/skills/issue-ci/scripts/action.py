@@ -56,8 +56,14 @@ def main():
     repo = os.environ['GITHUB_REPOSITORY']
     operation = os.environ.get('INPUT_OPERATION', 'handoff')
     if operation not in ('validate', 'qualify', 'handoff', 'readiness', 'verify-readiness', 'index', 'verify-index',
-                         'development-preflight', 'development-plan'):
+                         'development-preflight', 'development-plan', 'development-report'):
         raise RuntimeError('unknown issue-ci operation')
+    if operation == 'development-report':
+        document=trusted_policy(ci,repo,os.environ.get('INPUT_POLICY','.github/issue-ci-required-gates.json'),metadata=True)
+        run=os.environ.get('GITHUB_RUN_ID','')
+        if not re.fullmatch('[1-9][0-9]*',run):
+            raise RuntimeError('development reporting requires its actual producer run')
+        return ci.development_report(repo,document,os.environ['AW_ACTION_REF'],int(run))
     if operation in ('development-preflight', 'development-plan'):
         from types import SimpleNamespace
         development = ci_module('development_pipeline')

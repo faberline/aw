@@ -548,6 +548,96 @@ def reconcile(args, config):
     return 0
 
 
+def development_report(repo, document, evaluator, run_id):
+    """Default-branch failure writer. Has no review, merge or close operation."""
+    from types import SimpleNamespace
+    import base64
+    import os
+    if (not isinstance(repo,str) or not re.fullmatch(r'[\w.-]+/[\w.-]+',repo)
+            or type(run_id)is not int or run_id<=0
+            or not isinstance(evaluator,str) or not re.fullmatch('[0-9a-f]{40}',evaluator)):
+        raise RuntimeError('invalid development reporter input')
+    config=validate_adoption(validate_config(document['config']))
+    if config.get('completion_owner')!='local':
+        raise RuntimeError('development reporter requires explicit local completion')
+    source=document['source_commit'];spec=config.get('development_reporter',{})
+    if (not isinstance(spec,dict) or set(spec)!= {'path','id','definition_sha','job'}
+            or type(spec['id'])is not int or spec['id']<=0
+            or not isinstance(spec['path'],str) or not re.fullmatch(r'\.github/workflows/[\w.-]+\.ya?ml',spec['path'])
+            or not isinstance(spec['definition_sha'],str) or not re.fullmatch('[0-9a-f]{40}',spec['definition_sha'])
+            or not isinstance(spec['job'],str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]*',spec['job'])):
+        raise RuntimeError('development reporter identity is missing or invalid')
+    event=os.environ.get('GITHUB_EVENT_NAME')
+    if (event not in ('workflow_run','push','issues','repository_dispatch')
+            or os.environ.get('GITHUB_ACTIONS')!='true'
+            or os.environ.get('GITHUB_REPOSITORY')!=repo
+            or os.environ.get('GITHUB_WORKFLOW_SHA')!=source
+            or os.environ.get('AW_ACTION_REF')!=evaluator):
+        raise RuntimeError('development reporter must use its current trusted default source')
+    root=f'repos/{repo}';default=api(root)['default_branch']
+    run=api(f'{root}/actions/runs/{run_id}')
+    if (run.get('id')!=run_id or run.get('workflow_id')!=spec['id'] or run.get('path')!=spec['path']
+            or run.get('event')!=event or run.get('head_sha')!=source
+            or run.get('head_branch')!=default or run.get('head_repository',{}).get('full_name')!=repo
+            or str(run.get('run_attempt'))!=os.environ.get('GITHUB_RUN_ATTEMPT')):
+        raise RuntimeError('development reporter run does not match its deployed identity')
+    data=api(f'{root}/contents/{spec["path"]}?ref={source}')
+    if data.get('type')!='file' or data.get('encoding')!='base64':
+        raise RuntimeError('development reporter source is not a file')
+    raw=base64.b64decode(''.join(data['content'].split()),validate=True)
+    if (len(raw)>262144 or data.get('sha')!=spec['definition_sha']
+            or hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()!=spec['definition_sha']):
+        raise RuntimeError('development reporter source changed')
+    workflow=development_module().yaml_document(raw.decode())
+    permissions={'actions':'read','contents':'read','pull-requests':'read','issues':'write'}
+    job=workflow.get('jobs',{}).get(spec['job'],{})
+    expected={'uses':f'faberline/aw/.github/actions/issue-ci@{evaluator}',
+              'with':{'operation':'development-report'}}
+    if (workflow.get('permissions')!={} or set(workflow.get('jobs',{}))!={spec['job']}
+            or set(job)!={'runs-on','timeout-minutes','permissions','steps'}
+            or job.get('permissions')!=permissions or job.get('steps')!=[expected]):
+        raise RuntimeError('development reporter may only report failures with issue permission')
+    if workflow.get('concurrency')!={'group':'issue-ci-handoff','cancel-in-progress':'false'}:
+        raise RuntimeError('development reporter must retain the single-writer mutex')
+    results=[];original_api=globals()['api']
+    def current_source():
+        if original_api(f'{root}/commits/{quote(default,safe="")}').get('sha')!=source:
+            raise RuntimeError('default source moved before failure reporting')
+    current_source()
+    pulls=pages(f'{root}/pulls?state=open')
+    for pull in pulls:
+        if ((pull.get('head',{}).get('repo')or{}).get('full_name')!=repo
+                or pull.get('base',{}).get('ref')!=default):
+            continue
+        number,head=pull['number'],pull['head']['sha']
+        issue=qualification_module().linked_issue(pull)
+        def failure_api(path,method='GET',data=None):
+            if method!='GET':
+                allowed=(method=='POST' and path in (f'{root}/issues/{issue}/comments',f'{root}/issues/{number}/comments')
+                         and isinstance(data,dict) and set(data)=={'body'})
+                allowed|=(method=='PATCH' and bool(re.fullmatch(re.escape(root)+r'/issues/comments/[1-9][0-9]*',path))
+                          and isinstance(data,dict) and set(data)=={'body'})
+                allowed|=(method=='POST' and path==f'{root}/issues/{issue}/labels' and data=={'labels':['todo']})
+                allowed|=(method=='DELETE' and path in (f'{root}/issues/{issue}/labels/doing',f'{root}/issues/{issue}/labels/done') and data is None)
+                if not allowed:raise RuntimeError('development failure writer cannot mark done, merge or close')
+                current_source()
+            return original_api(path,method,data)
+        try:
+            globals()['api']=failure_api
+            if issue is None:
+                development_module().report_missing_issue(SimpleNamespace(api=failure_api,pages=pages),repo,pull,current_source)
+            else:
+                args=argparse.Namespace(repo=repo,pr=number,head=head,apply=True,run_id=None)
+                process_head(args,config,check_event=False,before_mutation=current_source)
+            results.append(dict(pr=number,head=head,state='processed'))
+        except (RuntimeError,subprocess.CalledProcessError,OSError,ValueError,KeyError,TypeError)as error:
+            results.append(dict(pr=number,head=head,state='held',reason=str(error)))
+        finally:
+            globals()['api']=original_api
+    print('AW_DEVELOPMENT_FAILURE_REPORT_V1 '+json.dumps(dict(repo=repo,source=source,run=run_id,results=results),sort_keys=True))
+    return 2 if any(row['state']=='held'for row in results)else 0
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--repo', required=True)
