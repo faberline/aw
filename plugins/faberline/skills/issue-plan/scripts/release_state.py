@@ -54,11 +54,22 @@ def contract(config, repo, milestone, checks):
     return item
 
 
+def covers_release(snapshot, head):
+    """The frozen commit must still contain all currently approved goal work."""
+    if head == snapshot['head']:
+        return True  # Current-main delivery and contract were verified above.
+    proof = snapshot.get('release_commits', {}).get(head, {})
+    return (proof.get('landed') is True
+            and proof.get('pulls') == sorted(p['number'] for p in snapshot['pulls'])
+            and proof.get('contract_sha256') == digest(snapshot['contract']))
+
+
 def evaluate(snapshot):
     """One next action. Provider adapter must authenticate and recheck inputs."""
     result = dict(schema='AW_RELEASE_ASSESSMENT_V1', repo=snapshot['repo'],
                   milestone=snapshot['milestone']['number'], head=snapshot['head'],
-                  version=snapshot['contract']['version'], state='hold', action=None, reasons=[])
+                  version=snapshot['contract']['version'], release_head=snapshot['head'],
+                  state='hold', action=None, reasons=[])
     result['fingerprint'] = digest(snapshot)
     milestone, item = snapshot['milestone'], snapshot['contract']
     if milestone.get('state') == 'closed':
@@ -93,7 +104,7 @@ def evaluate(snapshot):
     rc = candidates[-1] if candidates else None
     if final in tags:
         require(rc is not None and tags[final] == rc[2], 'formal tag is not the latest RC commit')
-        require(snapshot['head'] == rc[2], 'default branch moved after formal tag; reconcile release candidate')
+        require(covers_release(snapshot, rc[2]), 'formal commit lacks current landed goal work or release contract')
         require(snapshot['evidence'].get(rc[1], {}).get('status') == 'success', 'formal tag lacks passing RC evidence')
         active = final
     else:
@@ -101,6 +112,7 @@ def evaluate(snapshot):
     if active is None:
         result.update(state='ready_rc', action='tag', tag=final + '-rc.1')
         return result
+    result['release_head'] = tags[active]
     evidence = snapshot['evidence'].get(active, {'status': 'pending', 'reasons': ['full test run is missing']})
     require(evidence.get('status') in ('pending', 'failure', 'success'), 'unknown full-test verdict')
     if evidence['status'] == 'pending':
@@ -110,15 +122,17 @@ def evaluate(snapshot):
         repairs = [i for i in snapshot['issues'] if (i.get('body') or '').startswith(marker)]
         repaired = bool(repairs) and all(i['state'] == 'closed' and i['number'] in represented for i in repairs)
         if active != final and rc[2] != snapshot['head'] and repaired:
-            result.update(state='ready_rc', action='tag', tag=final + f'-rc.{rc[0] + 1}')
+            result.update(state='ready_rc', action='tag', tag=final + f'-rc.{rc[0] + 1}',
+                          release_head=snapshot['head'])
         else:
             result.update(state='repair', action='failure_issue', tag=active,
                           reasons=evidence.get('reasons', []), failures=evidence.get('failures', []))
             if active == final:
                 result['reasons'] = result['reasons'] + ['Keep the formal tag. A code fix needs a new reviewed SemVer version.']
     elif active != final:
-        if rc[2] != snapshot['head']:
-            result.update(state='ready_rc', action='tag', tag=final + f'-rc.{rc[0] + 1}')
+        if not covers_release(snapshot, rc[2]):
+            result.update(state='ready_rc', action='tag', tag=final + f'-rc.{rc[0] + 1}',
+                          release_head=snapshot['head'])
         else:
             result.update(state='ready_final', action='tag', tag=final)
     elif not snapshot.get('publication'):

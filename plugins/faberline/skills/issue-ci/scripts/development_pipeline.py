@@ -312,7 +312,8 @@ def report_failures(repo, issue, records, comments, write, revalidate):
                 f'- Failed step: {reason}\n- Head: `{record["head"]}`; base: `{record["base"]}`.\n'
                 f'- Workflow: {text(record["workflow"])}; run {record["run"]}, attempt {record["attempt"]}, job {record["job"]}.\n'
                 f'- Evidence: [job]({record["job_url"]}), [run]({record["run_url"]}).\n\n'
-                'Repair this failure in the existing PR. The lifecycle handoff returns the current work attempt to todo once; '
+                'Repair this failure in the existing PR. The lifecycle handoff returns eligible current work to todo once. '
+                'It must verify ownership and lifecycle state first; otherwise that handoff remains incomplete. '
                 'later failures do not reset an agent that already claimed it. This is an observed job failure, not a verified root-cause claim.')
         response = write(f'repos/{repo}/issues/{issue}/comments', 'POST', {'body':body})
         need(isinstance(response, dict) and integer(response.get('id')), 'failure comment write outcome unknown')

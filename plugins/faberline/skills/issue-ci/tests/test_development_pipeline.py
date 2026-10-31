@@ -297,6 +297,69 @@ class DevelopmentHandoffTests(unittest.TestCase):
              patch.object(d,'review_failure_snapshot',return_value={}):
             return self.invoke(snapshots=data)
 
+    def test_unmanaged_open_issue_keeps_job_diagnostics_without_unsafe_label_handoff(self):
+        self.issue['labels']=[];data=evidence()
+        data[WORKFLOW][1][0]['conclusion']='failure'
+        with self.assertRaisesRegex(RuntimeError,'unmanaged|lifecycle'):
+            self.invoke_development(data)
+        records=[c for c in self.comments if c['body'].startswith('<!-- aw-job-failure:')]
+        self.assertEqual(len(records),1)
+        self.assertTrue(all('/comments' in path for path,_,_ in self.writes))
+        self.assertEqual(self.issue['labels'],[])
+
+    def test_unmanaged_retries_dedupe_each_job_and_keep_distinct_failure_reasons(self):
+        self.issue['labels']=[];data=evidence()
+        jobs=data[legacy.GATES[1]['path']][1];jobs[0]['conclusion']='failure'
+        for _ in range(2):
+            with self.assertRaisesRegex(RuntimeError,'unmanaged|lifecycle'):
+                self.invoke_development(data)
+        self.assertEqual(len(self.comments),1)
+        jobs[1]['conclusion']='failure'
+        with self.assertRaisesRegex(RuntimeError,'unmanaged|lifecycle'):
+            self.invoke_development(data)
+        self.assertEqual(len(self.comments),2)
+        self.assertTrue(all('/comments' in path for path,_,_ in self.writes))
+
+    def test_closed_or_blocked_issue_still_refuses_diagnostic_writes(self):
+        for change in ('closed','blocked'):
+            with self.subTest(change=change):
+                self.issue['state']='closed' if change=='closed' else 'open'
+                self.issue['labels']=[{'name':'blocked'}] if change=='blocked' else []
+                data=evidence();data[WORKFLOW][1][0]['conclusion']='failure'
+                with self.assertRaises(RuntimeError):self.invoke_development(data)
+                self.assertEqual(self.writes,[])
+
+    def test_unmanaged_issue_stale_head_refuses_before_diagnostic_write(self):
+        self.issue['labels']=[];self.move_on=2
+        data=evidence();data[WORKFLOW][1][0]['conclusion']='failure'
+        with self.assertRaises(RuntimeError):self.invoke_development(data)
+        self.assertEqual(self.writes,[])
+
+    def test_unmanaged_issue_base_change_refuses_before_diagnostic_write(self):
+        self.issue['labels']=[];original=self.api;reads=[]
+        def api(path,method='GET',data=None):
+            value=original(path,method,data)
+            if method=='GET' and '/pulls/' in path:
+                reads.append(path)
+                if len(reads)>1:return dict(value,base={'sha':'c'*40})
+            return value
+        self.api=api;data=evidence();data[WORKFLOW][1][0]['conclusion']='failure'
+        with self.assertRaisesRegex(RuntimeError,'base changed'):self.invoke_development(data)
+        self.assertEqual(self.writes,[])
+
+    def test_unmanaged_issue_lost_diagnostic_response_recovers_without_duplicate(self):
+        self.issue['labels']=[];original=self.api
+        def api(path,method='GET',data=None):
+            result=original(path,method,data)
+            if method=='POST' and path.endswith('/comments'):raise TimeoutError('response lost')
+            return result
+        self.api=api;data=evidence();data[WORKFLOW][1][0]['conclusion']='failure'
+        with self.assertRaises(TimeoutError):self.invoke_development(data)
+        self.api=original
+        with self.assertRaisesRegex(RuntimeError,'unmanaged'):self.invoke_development(data)
+        self.assertEqual(len(self.comments),1)
+        self.assertEqual(len(self.writes),1)
+
     def test_later_matrix_failure_is_commented_after_todo_is_claimed(self):
         data=evidence();jobs=data[legacy.GATES[1]['path']][1];jobs[0]['conclusion']='failure'
         self.invoke_development(data)
