@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -58,6 +59,76 @@ class ReporterTests(unittest.TestCase):
             result=ci.development_report(REPO,dict(source_commit=SOURCE,config=config or p.config()),EVALUATOR,100)
             self.assertIs(ci.api,api)
         return result,run,output.getvalue()
+    def target_error(self, error=None, after_read=None):
+        p=self.provider;original=p.api;path='repos/o/r/issues/7';reads=[]
+        failure=error or subprocess.CalledProcessError(1,['gh','api','--method','GET',path],
+            output=json.dumps(dict(message='Not Found',status='404')))
+        def read(current,method='GET',data=None):
+            if method=='GET' and current==path:
+                reads.append(current)
+                if after_read is not None and after_read(len(reads)):
+                    return original(current,method,data)
+                raise failure
+            return original(current,method,data)
+        p.api=read
+        return reads
+    def test_confirmed_missing_target_gets_only_deduplicated_source_pr_diagnostic(self):
+        reads=self.target_error();result,run,output=self.invoke()
+        self.assertEqual(result,0);run.assert_not_called()
+        self.assertGreaterEqual(len(reads),3)
+        self.assertEqual(len(self.provider.writes),1)
+        path,method,data=self.provider.writes[0]
+        self.assertEqual((path,method),('repos/o/r/issues/8/comments','POST'))
+        self.assertIn('requires exactly one canonical open issue',data['body'])
+        self.assertIn(HEAD,data['body']);self.assertIn('processed',output)
+        self.invoke();self.assertEqual(len(self.provider.writes),1)
+    def test_unknown_target_errors_hold_without_any_mutation(self):
+        command=['gh','api','--method','GET','repos/o/r/issues/7']
+        errors=[subprocess.CalledProcessError(1,command,
+            output=json.dumps(dict(message='Unknown',status=status)))for status in ('403','429','500')]
+        errors += [OSError('network unavailable'),subprocess.CalledProcessError(1,command,output='not JSON'),
+                   subprocess.CalledProcessError(1,command,output='{"message":"Not Found"}'),
+                   subprocess.CalledProcessError(1,command,output='{"message":"Unknown","status":"404"}'),
+                   subprocess.CalledProcessError(1,command,output='{"message":"Not Found","status":"403","status":"404"}')]
+        for error in errors:
+            self.provider=Provider();self.target_error(error)
+            with self.subTest(error=str(error)):
+                result,run,output=self.invoke();self.assertEqual(result,2)
+                run.assert_not_called();self.assertIn('held',output)
+                self.assertEqual(self.provider.writes,[])
+    def test_missing_target_becoming_valid_before_diagnostic_refuses(self):
+        self.target_error(after_read=lambda count:count>1)
+        result,run,output=self.invoke();self.assertEqual(result,2)
+        run.assert_not_called();self.assertIn('now has a canonical open issue',output)
+        self.assertEqual(self.provider.writes,[])
+    def test_missing_target_becoming_valid_at_writer_boundary_refuses(self):
+        self.target_error(after_read=lambda count:count>=4)
+        result,run,output=self.invoke();self.assertEqual(result,2)
+        run.assert_not_called();self.assertIn('canonical open issue',output)
+        self.assertEqual(self.provider.writes,[])
+    def test_missing_link_changed_at_writer_boundary_refuses_source_comment(self):
+        self.target_error();p=self.provider;original=p.api;reads=[]
+        def read(path,method='GET',data=None):
+            if path=='repos/o/r/pulls/8' and method=='GET':
+                reads.append(path)
+                if len(reads)==3:p.pull['body']='Closes #9'
+            return original(path,method,data)
+        p.api=read
+        result,run,output=self.invoke();self.assertEqual(result,2)
+        run.assert_not_called();self.assertIn('linking metadata changed',output)
+        self.assertEqual(p.writes,[])
+    def test_missing_target_diagnostic_retains_source_head_and_default_guards(self):
+        for changed in ('head','default'):
+            self.provider=Provider();p=self.provider
+            def change(count):
+                if count==1:
+                    if changed=='head':p.pull['head']['sha']='e'*40
+                    else:p.moved=True
+                return False
+            self.target_error(after_read=change)
+            with self.subTest(changed=changed):
+                result,run,_=self.invoke();self.assertEqual(result,2)
+                run.assert_not_called();self.assertEqual(p.writes,[])
     def test_default_source_and_all_current_prs_are_read_without_completion_writes(self):
         p=self.provider;p.pulls.append(dict(p.pull,number=9,body='Closes #10',head=dict(sha='d'*40,repo={'full_name':REPO})))
         result,run,output=self.invoke()

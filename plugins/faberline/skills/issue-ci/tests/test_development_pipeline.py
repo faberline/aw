@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -65,6 +66,42 @@ class PreflightProvider:
 
 
 class PreflightTests(unittest.TestCase):
+    def missing_target_provider(self, error=None):
+        provider = PreflightProvider()
+        original = provider.api
+        path = 'repos/o/r/issues/7'
+        failure = error or subprocess.CalledProcessError(1, ['gh', 'api', '--method', 'GET', path],
+            output=json.dumps(dict(message='Not Found', status='404')))
+        def read(current):
+            if current == path:
+                raise failure
+            return original(current)
+        provider.api = read
+        return provider
+
+    def test_confirmed_missing_issue_fails_preflight_with_no_selected_issue(self):
+        result = d.preflight(self.missing_target_provider(), 'o/r', 8, HEAD, BASE)
+        self.assertEqual(result['status'], 'failure')
+        self.assertIsNone(result['issue'])
+        self.assertTrue(result['checks'][0]['passed'])
+        self.assertTrue(result['checks'][1]['passed'])
+        self.assertFalse(result['checks'][2]['passed'])
+
+    def test_unknown_issue_read_errors_never_become_missing_or_pass(self):
+        command = ['gh', 'api', '--method', 'GET', 'repos/o/r/issues/7']
+        errors = [subprocess.CalledProcessError(1, command,
+            output=json.dumps(dict(message='Unknown', status=status))) for status in ('403', '429', '500')]
+        errors += [OSError('network unavailable'),
+                   subprocess.CalledProcessError(1, command, output='not JSON'),
+                   subprocess.CalledProcessError(1, command, output='{"message":"Not Found"}'),
+                   subprocess.CalledProcessError(1, command, output='{"message":"Unknown","status":"404"}'),
+                   subprocess.CalledProcessError(1, command, output='{"message":"Not Found","status":"403","status":"404"}'),
+                   subprocess.CalledProcessError(2, command, output='{"status":"404"}'),
+                   subprocess.CalledProcessError(1, command[:-1] + ['repos/o/r/issues/9'], output='{"status":"404"}')]
+        for error in errors:
+            with self.subTest(error=str(error)), self.assertRaises(type(error)):
+                d.preflight(self.missing_target_provider(error), 'o/r', 8, HEAD, BASE)
+
     def test_fresh_branch_one_issue_and_no_conflict_pass(self):
         p=PreflightProvider();result=d.preflight(p,'o/r',8,HEAD,BASE)
         self.assertEqual(result['status'],'success')
