@@ -56,8 +56,9 @@ issue label or takes a live guard.
    When `next` reclaims a `todo` issue with an existing PR, use only its exact
    `retry_evidence` as the reason for this retry. Do not act on older failure comments. A
    `ci_failure` identifies the workflow, run, attempt and job. A `request`
-   identifies the exact request comment and todo event. If the evidence is
+   identifies the todo event and its account; it is not a CI failure. If the evidence is
    missing or no longer matches the current PR, stop and run `next` again.
+   A todo label remains a request for the current PR version until it is claimed.
    A session continuing its existing `doing` work does not need retry evidence.
 3. Write only in the printed worktree. Keep scope bounded. Run affected unit
    and static checks only. Do not run local full suites, e2e/integration,

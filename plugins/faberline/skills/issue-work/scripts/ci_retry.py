@@ -88,6 +88,49 @@ def complete_checks(client, head):
     return checks
 
 
+def completed_workflows(client, pr_number, head, base):
+    trusted = trusted_policy(client, base)
+    if not isinstance(trusted, dict) or not trusted:
+        return False
+    completed = {}
+    for path, identity in trusted.items():
+        if not trusted_workflow(client, identity, path, base, head):
+            return False
+        runs, total = [], None
+        for page in range(1, 1001):
+            payload = client.api(f"repos/{client.repo}/actions/workflows/{identity['id']}/runs?event=pull_request&head_sha={head}&per_page=100&page={page}")
+            if (not isinstance(payload, dict) or type(payload.get('total_count')) is not int
+                    or not isinstance(payload.get('workflow_runs'), list)):
+                return False
+            if total is None:
+                total = payload['total_count']
+            if payload['total_count'] != total:
+                return False
+            batch = payload['workflow_runs']; runs.extend(batch)
+            if len(batch) < 100:
+                break
+        else:
+            return False
+        if len(runs) != total or not runs:
+            return False
+        for run in runs:
+            if (not isinstance(run, dict) or type(run.get('id')) is not int
+                    or type(run.get('run_number')) is not int or type(run.get('run_attempt')) is not int):
+                return False
+        if len({run['id'] for run in runs}) != len(runs):
+            return False
+        latest = max(runs, key=lambda run: (run['run_number'], run['run_attempt'], run['id']))
+        if (latest.get('workflow_id') != identity['id'] or latest.get('path') != path
+                or latest.get('head_sha') != head or latest.get('event') != 'pull_request'
+                or not isinstance(latest.get('pull_requests'), list) or not any(isinstance(pr, dict)
+                    and pr.get('number') == pr_number and pr.get('head', {}).get('sha') == head
+                    and pr.get('base', {}).get('sha') == base for pr in latest['pull_requests'])
+                or latest.get('status') != 'completed' or not isinstance(latest.get('conclusion'), str)):
+            return False
+        completed[path] = {'run': latest['id'], 'attempt': latest['run_attempt']}
+    return completed
+
+
 def manual_retry_ready(client, issue_number, pr_number, head, base, comments, journals):
     events = client.pages(f'repos/{client.repo}/issues/{issue_number}/events')
     if not isinstance(events, list):
@@ -103,17 +146,11 @@ def manual_retry_ready(client, issue_number, pr_number, head, base, comments, jo
     if (last['event'] != 'labeled' or actor.get('type') != 'User' or not isinstance(actor.get('login'), str)
             or (journals and last['created_at'] <= max(journals)[0])):
         return False
-    exact = f'Work requested for PR #{pr_number} head `{head}` base `{base}`.'
-    matches = [comment for comment in comments if isinstance(comment, dict) and type(comment.get('id')) is int
-               and (comment.get('user') or {}).get('login') == actor['login']
-               and comment.get('body') == exact and isinstance(comment.get('created_at'), str)
-               and comment['created_at'] >= last['created_at']]
-    if not matches:
-        return False
     checks = complete_checks(client, head)
-    if checks is None or not all(check.get('status') == 'completed' for check in checks):
+    workflows = completed_workflows(client, pr_number, head, base)
+    if (checks is None or not all(check.get('status') == 'completed' for check in checks) or not workflows):
         return False
-    return {'kind': 'request', 'event': last['id'], 'comment': max(comment['id'] for comment in matches)}
+    return {'kind': 'request', 'event': last['id'], 'actor': actor['login'], 'workflows': workflows}
 
 
 def retry_ready(client, issue_number, pr_number):
@@ -206,6 +243,9 @@ def retry_ready(client, issue_number, pr_number):
             valid_jobs[int(job_id)] = (identity['id'], job['name'], run['run_number'], int(attempt), int(run_id), path)
     if not valid_jobs:
         return False
+    workflows = completed_workflows(client, pr_number, head, base)
+    if not workflows:
+        return False
     checks = complete_checks(client, head)
     if checks is None:
         return False
@@ -213,6 +253,8 @@ def retry_ready(client, issue_number, pr_number):
         if check.get('status') != 'completed':
             return False
     for job_id, (workflow_id, name, run_number, attempt, run_id, path) in sorted(valid_jobs.items()):
+        if workflows.get(path) != {'run': run_id, 'attempt': attempt}:
+            continue
         candidates = []
         for check in checks:
             if check['name'] != name or (check.get('app') or {}).get('id') != GITHUB_ACTIONS_APP_ID:
@@ -231,5 +273,5 @@ def retry_ready(client, issue_number, pr_number):
         if (candidates and max(candidates) == (run_number, attempt, job_id)
                 and any(check['id'] == job_id and check.get('conclusion') in failure for check in checks)):
             return {'kind': 'ci_failure', 'workflow': path, 'run': run_id, 'attempt': attempt,
-                    'job': job_id, 'name': name, 'journal': max(journals)[1]}
+                    'job': job_id, 'name': name, 'journal': max(journals)[1], 'workflows': workflows}
     return False

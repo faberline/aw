@@ -27,6 +27,11 @@ class Client:
     def pages(self, path): return []
     def api(self, path):
         if '/pulls/' in path: return self.pull
+        if '/actions/workflows/' in path:
+            return {'total_count':1, 'workflow_runs':[{'id':10, 'workflow_id':77,
+                    'path':'.github/workflows/ci.yml','head_sha':HEAD,'event':'pull_request',
+                    'run_number':1,'run_attempt':1,'status':'completed','conclusion':'success',
+                    'pull_requests':[{'number':9,'head':{'sha':HEAD},'base':{'sha':BASE}}]}]}
         if '/contents/.github/workflows/' in path: return {'sha':'c'*40}
         if '/contents/' in path:
             raw=json.dumps({'qualification':{'trusted_workflows':{'.github/workflows/ci.yml':{'id':77,'definition_sha':'c'*40}}}}).encode()
@@ -102,15 +107,34 @@ class RetryTests(unittest.TestCase):
 
     def test_explicit_request_waits_for_current_ci_but_needs_no_ci_failure(self):
         c = Client(); c.checks[0]['conclusion'] = 'success'
-        c.rows = [dict(id=10, created_at='2026-11-03T01:00:01Z', user={'login':'alice'},
-                       body=f'Work requested for PR #9 head `{HEAD}` base `{BASE}`.')]
+        c.rows = []
         c.pages = lambda path: [dict(id=9, created_at='2026-11-03T01:00:00Z', event='labeled',
                                     label={'name':'todo'}, actor={'type':'User','login':'alice'})]
         self.assertTrue(retry.retry_ready(c, 7, 9))
-        c.rows[0]['body'] = c.rows[0]['body'].replace(BASE, 'f'*40)
-        self.assertFalse(retry.retry_ready(c, 7, 9))
-        c.rows[0]['body'] = f'Work requested for PR #9 head `{HEAD}` base `{BASE}`.'
         c.checks[0].update(status='in_progress', conclusion=None)
+        self.assertFalse(retry.retry_ready(c, 7, 9))
+
+    def test_todo_waits_while_workflow_runs_between_jobs(self):
+        c = Client(); c.rows = []; c.checks[0]['conclusion'] = 'success'
+        c.pages = lambda path: [dict(id=9, created_at='2026-11-03T01:00:00Z', event='labeled',
+                                    label={'name':'todo'}, actor={'type':'User','login':'alice'})]
+        original = c.api
+        def api(path):
+            result = original(path)
+            if '/actions/workflows/' in path:
+                result['workflow_runs'][0]['status'] = 'in_progress'
+            return result
+        c.api = api
+        self.assertFalse(retry.retry_ready(c, 7, 9))
+
+    def test_ci_retry_waits_for_new_workflow_even_between_jobs(self):
+        c = Client(); original = c.api
+        def api(path):
+            result = original(path)
+            if '/actions/workflows/' in path:
+                result['workflow_runs'][0]['status'] = 'in_progress'
+            return result
+        c.api = api
         self.assertFalse(retry.retry_ready(c, 7, 9))
 
     def test_wrong_head_foreign_incomplete_checks_refuse(self):
