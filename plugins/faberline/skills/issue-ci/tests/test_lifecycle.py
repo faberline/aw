@@ -751,7 +751,7 @@ class WorkTests(unittest.TestCase):
 
 
 class ReviewerTests(unittest.TestCase):
-    def invoke_many(self, commands, ci_status='0', moved=False):
+    def invoke_many(self, commands, ci_status='0', moved=False, empty=False, api_error=False):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             log = root / 'calls'
@@ -765,7 +765,12 @@ with (root / 'calls').open('a') as f:
 if args[:2] == ['issue', 'view']:
     print('done')
 elif args[0] == 'api':
-    print('7\n9')
+    if '--slurp' in args and ('--jq' in args or '-q' in args):
+        print('the --slurp option is not supported with --jq', file=sys.stderr)
+        sys.exit(1)
+    if os.environ.get('API_ERROR') == '1':
+        sys.exit(7)
+    print('[]' if os.environ.get('EMPTY') == '1' else '[[{"number":9,"updated_at":"2026-01-02"}],[{"number":7,"updated_at":"2026-01-01"},{"number":4,"pull_request":{},"updated_at":"2026-01-01"}]]')
 elif args[:2] == ['pr', 'list']:
     print('10' if 'issue/9' in args else '8')
 elif args[:2] == ['repo', 'view']:
@@ -780,13 +785,15 @@ elif args[:2] == ['pr', 'view']:
         changed = (count and os.environ.get('MOVED') == '1') or ('8' in args and (root / 'newhead').exists())
         print(('b' if changed else 'a') * 40)
 ''')
-            (root / 'git').write_text('#!/bin/bash\nif [[ "$*" == *rev-parse* ]]; then echo "$REVIEW_TEST_ROOT"; elif [[ "$*" == *merge-base* ]]; then echo aaaa; fi\n')
+            (root / 'git').write_text('#!/bin/bash\necho "GIT $*" >> "$REVIEW_TEST_ROOT/calls"\nif [[ "$*" == *rev-parse* ]]; then echo "$REVIEW_TEST_ROOT"; elif [[ "$*" == *merge-base* ]]; then echo aaaa; fi\n')
             (root / 'python3').write_text('#!' + sys.executable + "\n" + r'''import json, os, sys
 from pathlib import Path
 root = Path(os.environ['REVIEW_TEST_ROOT'])
 args = sys.argv[1:]
 with (root / 'calls').open('a') as f:
     f.write('PY ' + ' '.join(args) + '\n')
+if args[0] == '-c':
+    os.execv(sys.executable, [sys.executable, *args])
 if args[0].endswith('receipt.py'):
     saved = root / 'receipts'
     receipts = json.loads(saved.read_text()) if saved.exists() else []
@@ -803,7 +810,7 @@ sys.exit(int(os.environ['CI_STATUS']))
                 executable.chmod(0o755)
             report = root / 'review.md'
             report.write_text('specific review evidence')
-            env = dict(os.environ, PATH=str(root) + ':' + os.environ['PATH'], REVIEW_TEST_ROOT=str(root), ISSUE_CI_CONFIG='/trusted/gates.json', CI_STATUS=ci_status, MOVED='1' if moved else '0')
+            env = dict(os.environ, PATH=str(root) + ':' + os.environ['PATH'], REVIEW_TEST_ROOT=str(root), ISSUE_CI_CONFIG='/trusted/gates.json', CI_STATUS=ci_status, MOVED='1' if moved else '0', EMPTY='1' if empty else '0', API_ERROR='1' if api_error else '0')
             results = []
             for command in commands:
                 if command == 'move':
@@ -857,6 +864,19 @@ sys.exit(int(os.environ['CI_STATUS']))
         self.assertIn('issue=9', results[2].stdout)
         self.assertIn('issue=7', results[3].stdout)
         self.assertIn('head=' + 'b' * 40, results[3].stdout)
+
+    def test_next_empty_queue_does_not_fetch(self):
+        result, calls = self.invoke('next', empty=True)
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn('idle: no unreviewed current-head qualified done issue', result.stdout)
+        self.assertNotIn(' fetch ', calls)
+
+    def test_next_api_failure_does_not_look_idle_or_fetch(self):
+        result, calls = self.invoke('next', api_error=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotEqual(result.returncode, 3)
+        self.assertNotIn('idle:', result.stdout)
+        self.assertNotIn(' fetch ', calls)
 
 
 class ReviewReceiptTests(unittest.TestCase):
