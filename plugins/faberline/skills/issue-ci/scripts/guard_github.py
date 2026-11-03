@@ -123,7 +123,7 @@ def read_chain(api,repo,genesis,ruleset_id,issue):
     head=ref_head(api,repo,issue)
     origin=verified_genesis(api,repo,genesis)
     state=dict(version=1,repo=repo,sequence=0,locks={});parent=genesis;tree=origin['tree']['sha'];operations=set()
-    seen=set();total=None;depth=0;last_operation=None
+    seen=set();total=None;depth=0;last_operation=None;transitions={}
     for page in range(1,MAX_DEPTH//PAGE_SIZE+2):
         comparison=api.api(f'repos/{repo}/compare/{genesis}...{head}?per_page={PAGE_SIZE}&page={page}')
         need(isinstance(comparison,dict) and comparison.get('status') in ('identical','ahead')
@@ -145,9 +145,11 @@ def read_chain(api,repo,genesis,ruleset_id,issue):
                         message=row['commit'].get('message'))
             need(commit['sha'] not in seen,'guard_history_limit_or_cycle')
             state=ledger.verify_commit(state,repo,parent,commit['sha'],tree,commit)
-            operation=json.loads(commit['message'][len(ledger.MARKER):])['payload']['operation']
+            payload=json.loads(commit['message'][len(ledger.MARKER):])['payload']
+            operation=payload['operation']
             need(operation not in operations,'guard_operation_replayed')
             operations.add(operation);last_operation=operation;seen.add(commit['sha']);depth+=1
+            transitions[operation]=dict(action=payload['action'],claim=payload['claim'],sequence=depth)
             need(set(state['locks']) <= {str(issue)},'guard_foreign_issue')
             need(depth<=total,'guard_history_unknown')
             parent=commit['sha']
@@ -158,7 +160,7 @@ def read_chain(api,repo,genesis,ruleset_id,issue):
     need(parent==head,'guard_history_unknown')
     # A concurrent move means this read is not an authority to write.
     need(ref_head(api,repo,issue)==head,'guard_ref_changed')
-    return dict(head=head,tree=tree,state=state,depth=depth,operations=sorted(operations),last_operation=last_operation)
+    return dict(head=head,tree=tree,state=state,depth=depth,operations=sorted(operations),last_operation=last_operation,transitions=transitions)
 
 
 def ensure_ref(api,repo,genesis,ruleset_id,issue):

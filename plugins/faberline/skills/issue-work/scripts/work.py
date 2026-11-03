@@ -33,6 +33,10 @@ _guard_spec = importlib.util.spec_from_file_location('worker_guard', Path(__file
 worker_guard = importlib.util.module_from_spec(_guard_spec)
 _guard_spec.loader.exec_module(worker_guard)
 
+_retry_spec = importlib.util.spec_from_file_location('worker_ci_retry', Path(__file__).resolve().parent / 'ci_retry.py')
+ci_retry = importlib.util.module_from_spec(_retry_spec)
+_retry_spec.loader.exec_module(ci_retry)
+
 
 def run(*args):
     return subprocess.check_output(args, text=True).strip()
@@ -165,6 +169,107 @@ def planned_identity(snapshot):
     return [work_identity(i) for i in snapshot['issues']]
 
 
+def eligible_snapshot(client, snapshot, association):
+    """Keep queue order, but skip stale or still-running CI retry candidates."""
+    result = dict(snapshot, selected=None, retry_binding=None)
+    for issue in snapshot['issues']:
+        number = issue['number']
+        _, pr = association(number)
+        if pr is None:
+            result['selected'] = number
+            break
+        before = client.api(f'repos/{client.repo}/pulls/{pr}')
+        ready = ci_retry.retry_ready(client, number, pr)
+        after = client.api(f'repos/{client.repo}/pulls/{pr}')
+        identity = lambda pull: (pull.get('head', {}).get('sha'), pull.get('base', {}).get('sha'))
+        if ready and identity(before) == identity(after):
+            result.update(selected=number, retry_binding=(pr, *identity(after), ready))
+            break
+    return result
+
+
+def recover_wait_release(checkout, common, lease_path, lease):
+    """Replay only the already-persisted clean submitted-work intent."""
+    prefix = 'guard' if lease.get('phase') == 'guard_release' else 'wait'
+    n, branch, pr, head, owner = (lease.get(k) for k in
+        ('issue', prefix + '_branch', prefix + '_pr', prefix + '_head', 'owner'))
+    base = lease.get('wait_base')
+    if (type(n) is not int or n <= 0 or type(pr) is not int or pr <= 0
+            or not isinstance(branch, str) or branch not in (f'issue/{n}', f'agy/issue-{n}')
+            or not isinstance(head, str) or not re.fullmatch('[0-9a-f]{40}', head)
+            or (prefix == 'wait' and (not isinstance(base, str) or not re.fullmatch('[0-9a-f]{40}', base)))):
+        refuse('invalid durable wait release; preserve lease')
+    intent = lease.get('guard_intent')
+    if intent is not None:
+        client = queue.Client(); guard_api = worker_guard.Api(client)
+        policy = worker_guard.read_policy(guard_api, client.repo)
+        if policy is None or worker_guard.draining(policy):
+            refuse('guard policy unavailable; preserve wait release intent')
+        if worker_guard.confirmed_release(guard_api, client.repo, policy, intent, policy['policy_source']):
+            worker_guard.dispatch_wake(guard_api, client.repo)
+            lease_path.unlink()
+            print(f'pr={pr}; prior guard already released; worktree preserved')
+            return
+    records = git('worktree', 'list', '--porcelain').split('\n\n')
+    matches = [Path(row.splitlines()[0].removeprefix('worktree ')) for row in records
+               if f'branch refs/heads/{branch}' in row.splitlines()]
+    if len(matches) != 1 or matches[0] == checkout:
+        refuse('wait release needs its existing issue worktree')
+    wt = matches[0]
+    index = index_safety.inspect(wt)
+    main_head = git('-C', str(wt), 'rev-parse', '--verify', 'refs/remotes/origin/main^{commit}')
+    filters = main_filters.inspect(wt, main_head)
+    if git('-C', str(wt), 'status', '--porcelain') or git('-C', str(wt), 'rev-parse', 'HEAD') != head:
+        refuse('wait release preserves changed or dirty worktree')
+    if index_safety.inspect(wt) != index or main_filters.inspect(wt, main_head) != filters:
+        refuse('wait release worktree visibility changed')
+    tree_state.update(checkout, n, branch, wt, owner, pr=pr, submitted=True)
+    if intent is not None:
+        worker_guard.reconcile_release(guard_api, client.repo, policy, intent, policy['policy_source'])
+        worker_guard.dispatch_wake(guard_api, client.repo)
+    lease_path.unlink()
+    print(f'pr={pr}; issue #{n} lifecycle unchanged; work lease released')
+
+
+def recover_retry_release(checkout, lease_path, lease, client):
+    n, branch, pr, head = (lease.get(k) for k in ('issue', 'retry_branch', 'retry_pr', 'retry_head'))
+    if (type(n) is not int or branch not in (f'issue/{n}', f'agy/issue-{n}')
+            or type(pr) is not int or pr <= 0 or not isinstance(head, str)
+            or not re.fullmatch('[0-9a-f]{40}', head) or lease.get('guard_intent') is None):
+        refuse('invalid retry release intent; preserve work')
+    guard_api = worker_guard.Api(client)
+    policy = worker_guard.read_policy(guard_api, client.repo)
+    if policy is None or worker_guard.draining(policy):
+        refuse('guard policy unavailable; preserve old owner and worktree')
+    if worker_guard.confirmed_release(guard_api, client.repo, policy, lease['guard_intent'], policy['policy_source']):
+        worker_guard.dispatch_wake(guard_api, client.repo)
+        lease_path.unlink()
+        print('prior worker guard already released; worktree preserved')
+        return
+    records = git('worktree', 'list', '--porcelain').split('\n\n')
+    matches = [Path(row.splitlines()[0].removeprefix('worktree ')) for row in records
+               if f'branch refs/heads/{branch}' in row.splitlines()]
+    if len(matches) != 1 or matches[0] == checkout:
+        refuse('retry release needs its existing worktree')
+    wt = matches[0]
+    index = index_safety.inspect(wt)
+    main_head = git('-C', str(wt), 'rev-parse', '--verify', 'refs/remotes/origin/main^{commit}')
+    filters = main_filters.inspect(wt, main_head)
+    if (git('-C', str(wt), 'status', '--porcelain')
+            or git('-C', str(wt), 'rev-parse', 'HEAD') != head
+            or git('-C', str(wt), 'rev-parse', '--verify', f'refs/remotes/origin/{branch}^{{commit}}') != head):
+        refuse('retry release preserves uncommitted or unpushed work')
+    pull = client.api(f'repos/{client.repo}/pulls/{pr}')
+    if pull.get('head', {}).get('sha') != head or pull.get('head', {}).get('ref') != branch:
+        refuse('retry release PR changed; preserve work')
+    if index_safety.inspect(wt) != index or main_filters.inspect(wt, main_head) != filters:
+        refuse('retry release worktree visibility changed')
+    worker_guard.reconcile_release(guard_api, client.repo, policy, lease['guard_intent'], policy['policy_source'])
+    worker_guard.dispatch_wake(guard_api, client.repo)
+    lease_path.unlink()
+    print('expired worker guard released; issue and worktree preserved for next claim')
+
+
 def sync_main(checkout, owner, fetched):
     """Best-effort FF-only primary checkout maintenance, under the caller guard.
 
@@ -225,8 +330,8 @@ def sync_main(checkout, owner, fetched):
 
 def main():
     command = sys.argv[1] if len(sys.argv) > 1 else ''
-    if command not in ('next', 'finish', 'block'):
-        refuse('usage: work.sh next [--mine] | finish N summary-file | block N evidence-file')
+    if command not in ('next', 'finish', 'block', 'wait-ci'):
+        refuse('usage: work.sh next [--mine] | finish N summary-file | block N evidence-file | wait-ci N')
     common = Path(git('rev-parse', '--git-common-dir')).resolve()
     checkout = common.parent
     lease_path = common / 'issue-work.lock'
@@ -253,6 +358,37 @@ def main():
             except (ValueError, TypeError):
                 refuse('legacy/invalid issue-work.lock: verify old session ended before manual recovery; preserve its worktree')
         if command == 'next':
+            if lease and lease.get('phase') == 'retry_release':
+                same_owner = sys.argv[2:] == ['--mine'] and lease.get('owner') == owner
+                expired_owner = (sys.argv[2:] in ([], ['--mine']) and lease.get('owner') != owner
+                                 and lease_available(lease, owner, False, int(time.time())))
+                if not (same_owner or expired_owner):
+                    refuse('retry release requires its owner or a proven expired dead local owner')
+                recover_retry_release(checkout, lease_path, lease, queue.Client())
+                return 3
+            if lease and lease.get('phase') in ('wait_release', 'guard_release'):
+                same_owner = sys.argv[2:] == ['--mine'] and lease.get('owner') == owner
+                expired_owner = (sys.argv[2:] in ([], ['--mine']) and lease.get('owner') != owner
+                                 and lease_available(lease, owner, False, int(time.time())))
+                if not (same_owner or expired_owner):
+                    refuse('complete the prior guarded submission: release requires its owner or a proven expired dead local owner')
+                recover_wait_release(checkout, common, lease_path, lease)
+                return 3
+            if lease and lease.get('phase') == 'guard_cancel':
+                same_owner = sys.argv[2:] == ['--mine'] and lease.get('owner') == owner
+                expired_owner = (sys.argv[2:] in ([], ['--mine']) and lease.get('owner') != owner
+                                 and lease_available(lease, owner, False, int(time.time())))
+                if not (same_owner or expired_owner) or lease.get('guard_intent') is None:
+                    refuse('guard cancellation requires its owner or a proven expired dead local owner')
+                client = queue.Client(); guard_api = worker_guard.Api(client)
+                policy = worker_guard.read_policy(guard_api, client.repo)
+                if policy is None or worker_guard.draining(policy):
+                    refuse('guard policy unavailable; preserve cancellation intent')
+                worker_guard.reconcile_release(guard_api, client.repo, policy, lease['guard_intent'], policy['policy_source'])
+                worker_guard.dispatch_wake(guard_api, client.repo)
+                lease_path.unlink()
+                print('prior unclaimed guard safely released; no issue label changed')
+                return 3
             if lease and lease.get('guard_intent') is not None and lease.get('phase') not in ('coding','claiming'):
                 refuse('complete the prior guarded submission before selecting another issue')
             mine = sys.argv[2:] == ['--mine']
@@ -294,14 +430,14 @@ def main():
                             # An unexecuted initial claim is not already coding.
                             # Revalidate the planned todo ordering instead of granting a retry
                             # a new continuity exemption. Never switch its issue.
-                            snapshot = planned_snapshot(client)
+                            snapshot = eligible_snapshot(client, planned_snapshot(client), association)
                             if snapshot['selected'] != prior['number']:
                                 refuse('pending initial claim no longer eligible; preserve intent/worktree')
                             selected = next(i for i in snapshot['issues'] if i['number'] == prior['number'])
                     if selected is None:
                         refuse('owned issue paused by lifecycle change; preserve lease/worktree')
             if selected is None:
-                snapshot = planned_snapshot(client)
+                snapshot = eligible_snapshot(client, planned_snapshot(client), association)
                 if snapshot['selected'] is None:
                     if lease and lease.get('phase') not in ('coding', 'claiming'):
                         lease_path.unlink()
@@ -310,6 +446,24 @@ def main():
                 selected = next(i for i in snapshot['issues'] if i['number'] == snapshot['selected'])
             n = selected['number']
             branch, pr = association(n)
+            if continuation and pr is not None and queue.labels(prior) & queue.STATES == {'todo'}:
+                snapshot = eligible_snapshot(client, dict(issues=[prior]), lambda issue: association(issue, fresh=True))
+                if snapshot['selected'] != n:
+                    print('busy: preserved prior lease; current PR has no matching completed CI failure')
+                    return 3
+            if continuation and lease.get('owner') != owner and lease.get('guard_intent') is not None:
+                if pr is None or queue.labels(prior) & queue.STATES != {'todo'}:
+                    refuse('expired guarded work is not a CI retry; preserve old owner and worktree')
+                # lease_available has already proved the old local process dead
+                # and its lease expired. Release its exact remote intent before
+                # a later invocation creates a new owner; do not rewrite labels.
+                pull = client.api(f'repos/{client.repo}/pulls/{pr}')
+                head = pull.get('head', {}).get('sha')
+                lease.update(phase='retry_release', retry_pr=pr, retry_branch=branch, retry_head=head)
+                temp_lease = common / 'issue-work.lock.new'
+                temp_lease.write_text(json.dumps(lease)); temp_lease.replace(lease_path)
+                recover_retry_release(checkout, lease_path, lease, client)
+                return 3
             wt = prepare(checkout, n, branch, pr)
             if continuation:
                 # Recheck lifecycle after potentially long prepare; planning policy
@@ -318,8 +472,10 @@ def main():
                 if work_identity(fresh) != work_identity(selected):
                     refuse('owned/repair issue changed during preparation; preserve worktree and retry')
             else:
-                fresh_snapshot = planned_snapshot(client)
-                if planned_identity(fresh_snapshot) != planned_identity(snapshot):
+                fresh_snapshot = eligible_snapshot(client, planned_snapshot(client), lambda issue: association(issue, fresh=True))
+                if (planned_identity(fresh_snapshot) != planned_identity(snapshot)
+                        or fresh_snapshot['selected'] != snapshot['selected']
+                        or fresh_snapshot['retry_binding'] != snapshot['retry_binding']):
                     refuse('planned todo/spec changed during preparation; no claim made')
                 fresh = next(i for i in fresh_snapshot['issues'] if i['number'] == n)
             # Last read immediately precedes intent/label write, under repository
@@ -329,6 +485,10 @@ def main():
                 refuse('PR/branch association changed before claim; preserve worktree')
             if work_identity(client.issue(n)) != work_identity(fresh):
                 refuse('issue changed immediately before claim; no label write')
+            if snapshot is not None and snapshot.get('retry_binding') is not None:
+                latest = eligible_snapshot(client, dict(issues=[fresh]), lambda issue: association(issue, fresh=True))
+                if latest['selected'] != n or latest['retry_binding'] != snapshot['retry_binding']:
+                    refuse('current-head CI changed before claim; no label write')
             guard_api = worker_guard.Api(client)
             guard_policy = worker_guard.read_policy(guard_api, client.repo)
             guard_intent = None
@@ -364,6 +524,20 @@ def main():
                 worker_guard.require_no_legacy_guard(guard_api,client.repo,n)
                 if association(n, fresh=True) != (branch, pr) or work_identity(client.issue(n)) != work_identity(fresh):
                     refuse('issue changed during claim; preserve the lease and worktree')
+            if snapshot is not None and snapshot.get('retry_binding') is not None:
+                latest = eligible_snapshot(client, dict(issues=[fresh]), lambda issue: association(issue, fresh=True))
+                if latest['selected'] != n or latest['retry_binding'] != snapshot['retry_binding']:
+                    if continuation:
+                        claimed['phase'] = 'coding'
+                        temp_lease.write_text(json.dumps(claimed)); temp_lease.replace(lease_path)
+                        refuse('current-head CI changed; preserve existing lease and guard')
+                    if guard_intent is not None:
+                        claimed['phase'] = 'guard_cancel'
+                        temp_lease.write_text(json.dumps(claimed)); temp_lease.replace(lease_path)
+                        worker_guard.release(guard_api, client.repo, guard_policy, guard_intent, guard_policy['policy_source'])
+                        worker_guard.dispatch_wake(guard_api, client.repo)
+                    lease_path.unlink()
+                    refuse('current-head CI changed under guard; no label write')
             if 'todo' in queue.labels(fresh):
                 client.patch(n, labels=sorted((queue.labels(fresh) - {'todo'}) | {'doing'}))
                 confirmed = client.issue(n)
@@ -374,6 +548,75 @@ def main():
             temp_lease.replace(lease_path)
             tree_state.update(checkout, n, branch, wt, owner)
             print(f'issue={n}\nbranch={branch}\nworktree={wt}\npr={pr or "none"}')
+            if snapshot is not None and snapshot.get('retry_binding') is not None:
+                print('retry_evidence=' + json.dumps(snapshot['retry_binding'][3], sort_keys=True))
+            return 0
+        if command == 'wait-ci':
+            if len(sys.argv) != 3 or not sys.argv[2].isdigit():
+                refuse('wait-ci requires one issue number')
+            n = int(sys.argv[2])
+            if not lease or lease.get('issue') != n or lease.get('owner') != owner or lease.get('phase') not in ('coding', 'wait_release'):
+                refuse('only the coding lease owner can wait for CI')
+            if lease['phase'] == 'wait_release':
+                recover_wait_release(checkout, common, lease_path, lease)
+                return 0
+            client = queue.Client()
+            branch, pr = branch_of(n, client=client)
+            if pr is None:
+                refuse('wait-ci requires an existing PR')
+            pull = client.api(f'repos/{client.repo}/pulls/{pr}')
+            head = pull.get('head', {}).get('sha')
+            base = pull.get('base', {}).get('sha')
+            if (not isinstance(head, str) or not re.fullmatch('[0-9a-f]{40}', head)
+                    or not isinstance(base, str) or not re.fullmatch('[0-9a-f]{40}', base)):
+                refuse('wait-ci requires an exact submitted head')
+            guarded_submission(client, n, branch, pr, head)
+            allowed_states = ({'doing'},)
+            if queue.labels(client.issue(n)) & queue.STATES not in allowed_states:
+                refuse('wait-ci requires the issue to remain doing')
+            records = git('worktree', 'list', '--porcelain').split('\n\n')
+            matches = [Path(row.splitlines()[0].removeprefix('worktree ')) for row in records
+                       if f'branch refs/heads/{branch}' in row.splitlines()]
+            if len(matches) != 1 or matches[0] == checkout:
+                refuse('wait-ci needs the existing issue worktree')
+            wt = matches[0]
+            index = index_safety.inspect(wt)
+            main_head = git('-C', str(wt), 'rev-parse', '--verify', 'refs/remotes/origin/main^{commit}')
+            filters = main_filters.inspect(wt, main_head)
+            if git('-C', str(wt), 'status', '--porcelain'):
+                refuse('wait-ci preserves uncommitted work')
+            local = git('-C', str(wt), 'rev-parse', 'HEAD')
+            remote = git('-C', str(wt), 'rev-parse', '--verify', f'refs/remotes/origin/{branch}^{{commit}}')
+            if remote != head or local != head:
+                refuse('wait-ci requires local and remote worktree at the exact current PR head')
+            checks = ci_retry.complete_checks(client, head)
+            if checks is None or not ci_retry.active_required(client, pull, checks):
+                refuse('wait-ci needs an actual current-head CI run in progress')
+            guard_api = worker_guard.Api(client)
+            guard_policy = worker_guard.read_policy(guard_api, client.repo)
+            intent = lease.get('guard_intent')
+            if intent is None:
+                if guard_policy is not None and not worker_guard.draining(guard_policy):
+                    refuse('existing work predates the shared guard')
+                worker_guard.require_no_legacy_guard(guard_api, client.repo, n)
+            else:
+                if guard_policy is None or worker_guard.draining(guard_policy):
+                    refuse('guard policy changed; preserve the issue guard')
+                worker_guard.require_owned(guard_api, client.repo, guard_policy, intent, guard_policy['policy_source'])
+            guarded_submission(client, n, branch, pr, head)
+            if queue.labels(client.issue(n)) & queue.STATES not in allowed_states:
+                refuse('issue state changed during wait-ci')
+            fresh_pull = client.api(f'repos/{client.repo}/pulls/{pr}')
+            if (fresh_pull.get('head', {}).get('sha') != head or fresh_pull.get('base', {}).get('sha') != base
+                    or fresh_pull.get('base', {}).get('ref') != pull.get('base', {}).get('ref')):
+                refuse('PR base or head changed during wait-ci')
+            if index_safety.inspect(wt) != index or main_filters.inspect(wt, main_head) != filters:
+                refuse('worktree visibility changed during wait-ci')
+            if git('-C', str(wt), 'status', '--porcelain') or git('-C', str(wt), 'rev-parse', 'HEAD') != local:
+                refuse('worktree changed during wait-ci; preserve ownership')
+            lease.update(phase='wait_release', wait_pr=pr, wait_branch=branch, wait_head=head, wait_base=base)
+            temp = common / 'issue-work.lock.new'; temp.write_text(json.dumps(lease)); temp.replace(lease_path)
+            recover_wait_release(checkout, common, lease_path, lease)
             return 0
         if len(sys.argv) != 4 or not sys.argv[2].isdigit():
             refuse('expected N and a nonempty evidence/summary file')
@@ -401,19 +644,7 @@ def main():
             if lease.get('phase')!='guard_release':
                 worker_guard.require_owned(guard_api,client.repo,guard_policy,guard_intent,guard_policy['policy_source'])
         if guard_intent is not None and lease.get('phase')=='guard_release':
-            pr,branch,head=lease.get('guard_pr'),lease.get('guard_branch'),lease.get('guard_head')
-            if (type(pr) is not int or pr<=0 or not isinstance(branch,str)
-                    or not isinstance(head,str) or not re.fullmatch(r'[0-9a-f]{40}',head)):
-                refuse('invalid guarded submission intent; preserve the issue guard and worktree')
-            wt=prepare(checkout,n,branch,pr)
-            if git('-C',str(wt),'status','--porcelain') or git('-C',str(wt),'rev-parse','HEAD')!=head:
-                refuse('guarded submission worktree changed; preserve it')
-            guarded_submission(client,n,branch,pr,head)
-            tree_state.update(checkout,n,branch,wt,owner,pr=pr,submitted=True)
-            worker_guard.release(guard_api,client.repo,guard_policy,guard_intent,guard_policy['policy_source'])
-            worker_guard.dispatch_wake(guard_api,client.repo)
-            lease_path.unlink()
-            print(f'pr={pr}; guarded submission recovered; waiting for required CI')
+            recover_wait_release(checkout, common, lease_path, lease)
             return 0
         issue = gh('issue', 'view', str(n), '--json', 'state,labels')
         if issue['state'] != 'OPEN' or {l['name'] for l in issue['labels']} & {'todo', 'done', 'blocked'} or 'doing' not in {l['name'] for l in issue['labels']}:
