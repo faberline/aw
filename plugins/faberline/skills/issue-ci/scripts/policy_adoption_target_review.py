@@ -38,7 +38,7 @@ RECOVERY_CANDIDATE_SOURCES=(
         'prepared_status.py','per_pr_checkpoint.py','guard_discovery.py','guard_github.py','guard_ledger.py','post_merge_observation.py','policy_adoption.py',
         'readiness-requirements.txt')),
     *(f'plugins/faberline/skills/issue-work/scripts/{name}' for name in (
-        'work.py','worker_guard.py','worktree_state.py','index_safety.py','main_filter_safety.py','ci_retry.py')),
+        'work.py','worker_guard.py','worktree_state.py','index_safety.py','main_filter_safety.py','ci_retry.py','issue_snapshot.py')),
     'plugins/faberline/skills/issue-work/SKILL.md',
     'plugins/faberline/skills/issue-loop/scripts/milestone_queue.py',
 )

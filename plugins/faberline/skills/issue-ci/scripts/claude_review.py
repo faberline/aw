@@ -422,6 +422,10 @@ def _collect(api, repo, number, head, load_document, evaluator, include_sources,
          and text(issue.get("updated_at"), 100), "issue_contract_missing")
     issue = {key: issue[key] for key in ("number", "title", "body", "updated_at")}
     qualification_v2 = None
+    # This legacy paid-review producer does not support snapshot qualification.
+    # Never let an unknown version bypass the existing qualification checks.
+    need(document["config"].get("qualification", {}).get("version") != 3,
+         "issue_qualification_version_unsupported")
     if document["config"].get("qualification", {}).get("version") == 2:
         # Enforce v2 here as well as in the surrounding workflow. Calling the
         # review action directly must never reach a paid model on a held issue.
