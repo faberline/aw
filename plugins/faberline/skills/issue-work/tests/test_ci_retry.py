@@ -22,7 +22,7 @@ class Client:
         self.rows.append({'id':2,'updated_at':'2026-11-03T00:00:01Z','user':{'login':'github-actions[bot]'},
             'body':'<!-- aw-job-failure:' + 'e'*64 + ' -->\nCI job failed for PR #9.\n\n- Head: `'+HEAD+'`; base: `'+BASE+'`.\n- Workflow: .github/workflows/ci.yml; run 10, attempt 1, job 20.'})
         self.checks = [{'id': 20, 'head_sha': HEAD, 'name': 'test', 'status': 'completed',
-                        'conclusion': 'failure', 'app': {'id': 1}}]
+                        'conclusion': 'failure', 'app': {'id': 15368}}]
     def comments(self, number): return self.rows
     def pages(self, path): return []
     def api(self, path):
@@ -67,6 +67,17 @@ class RetryTests(unittest.TestCase):
                     return {'id':11,'workflow_id':78,'head_sha':HEAD,'run_number':99,'run_attempt':1}
                 return super().api(path)
         c=TwoWorkflows(); c.checks.append(dict(c.checks[0], id=21, conclusion='success'))
+        self.assertTrue(retry.retry_ready(c, 7, 9))
+
+    def test_third_party_same_name_is_not_an_actions_job(self):
+        c = Client()
+        c.checks.insert(0, dict(c.checks[0], id=99, app={'id':999}, conclusion='success'))
+        original = c.api
+        def api(path):
+            if path.endswith('/actions/jobs/99'):
+                raise AssertionError('third-party check must not be queried as an Actions job')
+            return original(path)
+        c.api = api
         self.assertTrue(retry.retry_ready(c, 7, 9))
 
     def test_report_must_match_current_base_and_run_attempt(self):
@@ -121,6 +132,13 @@ class RetryTests(unittest.TestCase):
                             'pull_requests':[{'number':9,'head':{'sha':HEAD},'base':{'sha':BASE}}]}
                 return super().api(path)
         c = Active(); c.checks[0]['status'] = 'in_progress'
+        c.checks.insert(0, dict(c.checks[0], id=99, app={'id':999}))
+        original = c.api
+        def api(path):
+            if path.endswith('/actions/jobs/99'):
+                raise AssertionError('third-party check must not be queried as an Actions job')
+            return original(path)
+        c.api = api
         self.assertTrue(retry.active_required(c, c.pull, c.checks))
         c.pull['base']['sha'] = 'c' * 40
         self.assertFalse(retry.active_required(c, c.pull, c.checks))

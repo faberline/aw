@@ -3,6 +3,8 @@ import base64
 import json
 import re
 
+GITHUB_ACTIONS_APP_ID = 15368
+
 
 def trusted_policy(client, base):
     meta = client.api(f'repos/{client.repo}/contents/.github/issue-ci-required-gates.json?ref={base}')
@@ -32,6 +34,8 @@ def active_required(client, pull, checks):
         return False
     for check in checks:
         if check.get('status') not in ('queued', 'in_progress', 'waiting', 'pending', 'requested'):
+            continue
+        if (check.get('app') or {}).get('id') != GITHUB_ACTIONS_APP_ID:
             continue
         job = client.api(f"repos/{client.repo}/actions/jobs/{check['id']}")
         run_id = job.get('run_id')
@@ -207,7 +211,7 @@ def retry_ready(client, issue_number, pr_number):
     for job_id, (workflow_id, name, run_number, attempt, run_id, path) in sorted(valid_jobs.items()):
         candidates = []
         for check in checks:
-            if check['name'] != name:
+            if check['name'] != name or (check.get('app') or {}).get('id') != GITHUB_ACTIONS_APP_ID:
                 continue
             job = client.api(f"repos/{client.repo}/actions/jobs/{check['id']}")
             if (job.get('id') != check['id'] or type(job.get('run_id')) is not int

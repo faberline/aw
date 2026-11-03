@@ -53,11 +53,12 @@ issue label or takes a live guard.
 1. Run `scripts/work.sh next`; read `issue=`, `branch=`, `worktree=`, `pr=`.
 2. Read `gh issue view N --comments` and the associated PR comments/check
    failures. The issue's Goal, Acceptance and Never sections are the contract.
-   For an existing PR, use only the exact `retry_evidence` returned by `next`
-   as the reason for this retry. Do not act on older failure comments. A
+   When `next` reclaims a `todo` issue with an existing PR, use only its exact
+   `retry_evidence` as the reason for this retry. Do not act on older failure comments. A
    `ci_failure` identifies the workflow, run, attempt and job. A `request`
    identifies the exact request comment and todo event. If the evidence is
    missing or no longer matches the current PR, stop and run `next` again.
+   A session continuing its existing `doing` work does not need retry evidence.
 3. Write only in the printed worktree. Keep scope bounded. Run affected unit
    and static checks only. Do not run local full suites, e2e/integration,
    cluster commands, or workflow dispatch. Report cloud validation still
