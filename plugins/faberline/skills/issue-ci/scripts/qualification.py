@@ -92,7 +92,7 @@ def validate(config):
     if policy['version'] == 2:
         validate_contracts(policy, checks)
     if policy['version'] == 3:
-        require(policy.get('issue_snapshot_path') == '.github/issue-contract-snapshot.json',
+        require(policy.get('issue_snapshot_path') == '.github/issue-contract-snapshots/{issue}.json',
                 'v3 requires the fixed issue snapshot path')
         require(CATEGORIES <= {check['kind'] for check in checks.values()},
                 'v3 requires all test categories')
@@ -171,7 +171,7 @@ def issue_contract(policy, pr, issue):
                         applicability={kind: dict(status='required',
                             checks=sorted(name for name, check in policy['checks'].items() if check['kind'] == kind),
                             reason='Complete trusted test roster for every issue') for kind in CATEGORIES},
-                        additional=[], unresolved=[])
+                        additional=[], unresolved=['planner requirements have no independently verified coverage mapping'])
         elif any(snapshot[key] != case[key] for key in ('title_sha256', 'body_sha256')):
             return context, ['issue snapshot differs from existing reviewed contract'], selected
     if case is None:

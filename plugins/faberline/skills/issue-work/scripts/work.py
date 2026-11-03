@@ -70,12 +70,15 @@ def commit_issue_snapshot(wt, client, number):
     qualification = policy.get('qualification', {})
     if qualification.get('version') != 3:
         return
-    name = '.github/issue-contract-snapshot.json'
-    if qualification.get('issue_snapshot_path') != name:
+    name = f'.github/issue-contract-snapshots/{number}.json'
+    if qualification.get('issue_snapshot_path') != '.github/issue-contract-snapshots/{issue}.json':
         refuse('unknown issue snapshot policy')
-    directory, target = wt / '.github', wt / name
-    if directory.is_symlink() or not directory.is_dir() or target.is_symlink():
+    github, directory, target = wt / '.github', wt / '.github/issue-contract-snapshots', wt / name
+    if github.is_symlink() or not github.is_dir() or directory.is_symlink() or target.is_symlink():
         refuse('unsafe issue snapshot path')
+    if directory.exists() and not directory.is_dir():
+        refuse('issue snapshot directory is not a directory')
+    directory.mkdir(exist_ok=True)
     attributes = git('-C', str(wt), 'check-attr', '-z', 'filter', '--', name).split('\0')
     if len(attributes) != 4 or attributes[:2] != [name, 'filter'] or attributes[2] not in ('unspecified', 'unset') or attributes[3] != '':
         refuse('issue snapshot has a configured or unknown clean filter')

@@ -41,7 +41,7 @@ class IssueSnapshotTests(unittest.TestCase):
             git('init', '-q'); git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.invalid')
             (root / '.github').mkdir()
             (root / '.github/issue-ci-required-gates.json').write_text(json.dumps({'qualification': {'version': 3,
-                'issue_snapshot_path': '.github/issue-contract-snapshot.json'}}))
+                'issue_snapshot_path': '.github/issue-contract-snapshots/{issue}.json'}}))
             git('add', '.'); git('commit', '-qm', 'base')
             git('update-ref', 'refs/remotes/origin/main', 'HEAD')
             (root / 'code').write_text('work'); git('add', 'code'); git('commit', '-qm', 'work')
@@ -49,18 +49,18 @@ class IssueSnapshotTests(unittest.TestCase):
             work.commit_issue_snapshot(root, Client(), 7)
             after = git('rev-parse', 'HEAD')
             self.assertNotEqual(before, after)
-            self.assertEqual(git('diff', '--name-only', before, after), '.github/issue-contract-snapshot.json')
-            self.assertEqual((root / '.github/issue-contract-snapshot.json').read_text(), module.encoded('o/r', 7, issue, issue['body']))
+            self.assertEqual(git('diff', '--name-only', before, after), '.github/issue-contract-snapshots/7.json')
+            self.assertEqual((root / '.github/issue-contract-snapshots/7.json').read_text(), module.encoded('o/r', 7, issue, issue['body']))
             work.commit_issue_snapshot(root, Client(), 7)
             self.assertEqual(git('rev-parse', 'HEAD'), after)
             attributes = root / '.git/info/attributes'
-            attributes.write_text('.github/issue-contract-snapshot.json filter=unsafe\n')
+            attributes.write_text('.github/issue-contract-snapshots/7.json filter=unsafe\n')
             with self.assertRaisesRegex(RuntimeError, 'clean filter'):
                 work.commit_issue_snapshot(root, Client(), 7)
             attributes.unlink()
             (root / 'valuable').write_text('preserve')
-            (root / '.github/issue-contract-snapshot.json').unlink()
-            (root / '.github/issue-contract-snapshot.json').hardlink_to(root / 'valuable')
+            (root / '.github/issue-contract-snapshots/7.json').unlink()
+            (root / '.github/issue-contract-snapshots/7.json').hardlink_to(root / 'valuable')
             with self.assertRaisesRegex(RuntimeError, 'hard links'):
                 work.commit_issue_snapshot(root, Client(), 7)
             self.assertEqual((root / 'valuable').read_text(), 'preserve')

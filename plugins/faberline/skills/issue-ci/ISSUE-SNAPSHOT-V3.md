@@ -1,7 +1,7 @@
 # Automatic issue snapshots
 
 Qualification v3 is opt-in in the reviewed default-branch policy. It uses the
-fixed `.github/issue-contract-snapshot.json` data file in each PR's exact head.
+fixed `.github/issue-contract-snapshots/{issue}.json` data path in each PR's exact head.
 The issue-work finish step creates and commits this file automatically.
 
 The snapshot records the repository, issue number, and SHA-256 of the live
@@ -11,7 +11,8 @@ no such comment. The trusted controller reads the file from the exact PR commit
 and compares it with the live issue and complete comment inventory. Missing,
 malformed, foreign, blocked, closed, or changed inputs cannot qualify.
 
-V3 selects every check in the trusted policy. It preserves existing reviewed
+V3 selects every check in the trusted policy. A new issue remains blocked until
+its individual requirements have independently verified coverage mapping. It preserves existing reviewed
 issue contracts, including their unresolved blockers and pinned content. This
 does not prove that the issue's own acceptance criteria are met. Independent
 issue review remains required. Existing v1 and v2 behavior stays unchanged.

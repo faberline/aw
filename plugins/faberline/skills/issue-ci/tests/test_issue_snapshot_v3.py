@@ -14,7 +14,7 @@ ci = previous.ci
 def fixture():
     config = previous.policy()
     config['qualification']['version'] = 3
-    config['qualification']['issue_snapshot_path'] = '.github/issue-contract-snapshot.json'
+    config['qualification']['issue_snapshot_path'] = '.github/issue-contract-snapshots/{issue}.json'
     config['qualification']['contracts']['6'] = config['qualification']['contracts'].pop('7')
     issue = previous.issue()
     issue['_aw_issue_spec'] = issue['body']
@@ -28,7 +28,7 @@ class SnapshotTests(unittest.TestCase):
     def test_full_roster_even_for_docs(self):
         config, issue = fixture()
         plan = q.select(config, previous.pull(), previous.base.files('docs/guide.md'), issue)
-        self.assertEqual(plan['issues'], [])
+        self.assertIn('linked issue has unresolved required gates', plan['issues'])
         self.assertEqual(set(plan['selected']), set(config['qualification']['checks']))
 
     def test_changed_foreign_missing_and_blocked_never_qualify(self):
@@ -72,15 +72,16 @@ class SnapshotTests(unittest.TestCase):
         def api(path):
             calls.append(path)
             if '/issues/7' in path: return issue
-            if '/contents/.github/issue-contract-snapshot.json' in path: return metadata
+            if '/contents/.github/issue-contract-snapshots/7.json' in path: return metadata
             return {'sha': previous.base.BLOB}
         with patch.object(ci, 'api', side_effect=api), patch.object(ci, 'pages', return_value=[]):
             scoped = ci.qualify_config('o/r', previous.pull(), config, previous.base.files())
-        self.assertEqual(scoped['_qualification_context']['issues'], [])
-        self.assertTrue(any('issue-contract-snapshot.json?ref=' + previous.base.HEAD in path for path in calls))
+        self.assertIn('linked issue has unresolved required gates', scoped['_qualification_context']['issues'])
+        self.assertTrue(any('issue-contract-snapshots/7.json?ref=' + previous.base.HEAD in path for path in calls))
         metadata['sha'] = '0' * 40
-        with patch.object(ci, 'api', side_effect=api), patch.object(ci, 'pages', return_value=[]), self.assertRaisesRegex(RuntimeError, 'blob'):
-            ci.qualify_config('o/r', previous.pull(), config, previous.base.files())
+        with patch.object(ci, 'api', side_effect=api), patch.object(ci, 'pages', return_value=[]):
+            scoped = ci.qualify_config('o/r', previous.pull(), config, previous.base.files())
+        self.assertIn('linked issue snapshot is missing or invalid', scoped['_qualification_context']['issues'])
 
     def test_latest_planner_comment_changes_snapshot_requirement(self):
         config, issue = fixture()

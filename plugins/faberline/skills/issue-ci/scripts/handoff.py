@@ -144,11 +144,12 @@ def qualify_merged_config(repo, pr, config, files=None):
     return _qualify_config(repo,pr,config,files,merged=True)
 
 
-def issue_snapshot_at_head(repo, head):
+def issue_snapshot_at_head(repo, head, number):
     """Read only the fixed data file from the exact immutable PR commit."""
-    if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo or '') or not re.fullmatch(r'[0-9a-f]{40}', head or ''):
+    if (not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo or '')
+            or not re.fullmatch(r'[0-9a-f]{40}', head or '') or type(number) is not int or number <= 0):
         raise RuntimeError('invalid snapshot repository or head')
-    item = api(f'repos/{repo}/contents/.github/issue-contract-snapshot.json?ref={head}')
+    item = api(f'repos/{repo}/contents/.github/issue-contract-snapshots/{number}.json?ref={head}')
     if (not isinstance(item, dict) or item.get('type') != 'file' or item.get('encoding') != 'base64'
             or type(item.get('size')) is not int or not 0 < item['size'] <= 4096
             or not isinstance(item.get('sha'), str) or not re.fullmatch('[0-9a-f]{40}', item['sha'])
@@ -179,9 +180,15 @@ def _qualify_config(repo, pr, config, files=None, merged=False):
                     raise RuntimeError('invalid live issue')
                 if '_aw_issue_spec' in issue:
                     raise RuntimeError('invalid live issue')
-                comments = pages(f'repos/{repo}/issues/{number}/comments')
-                issue = dict(issue, _aw_issue_snapshot=issue_snapshot_at_head(repo, pr['head']['sha']),
-                             _aw_issue_spec=module.planner_spec(issue, comments))
+                try:
+                    comments = pages(f'repos/{repo}/issues/{number}/comments')
+                    snapshot = issue_snapshot_at_head(repo, pr['head']['sha'], number)
+                    spec = module.planner_spec(issue, comments)
+                except (RuntimeError, subprocess.CalledProcessError, ValueError, KeyError, TypeError):
+                    # Unknown snapshot is never positive evidence. Keep the
+                    # independently authenticated job-failure reporting path.
+                    snapshot, spec = None, None
+                issue = dict(issue, _aw_issue_snapshot=snapshot, _aw_issue_spec=spec)
             if merged and issue.get('state')=='closed':
                 # Reconstruct historical applicability only after actual
                 # merged-PR authentication. Never change the provider issue.
