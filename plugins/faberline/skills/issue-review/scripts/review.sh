@@ -56,7 +56,18 @@ drop_review_tree() { # <N>
 cmd_next() {
   candidates=$(gh api --paginate --slurp \
     'repos/{owner}/{repo}/issues?state=open&labels=done&per_page=100' \
-    --jq 'add | map(select(has("pull_request") | not)) | sort_by(.updated_at) | .[].number')
+    | python3 -c 'import json, sys
+pages = json.load(sys.stdin)
+if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+    raise ValueError("expected complete paginated issue arrays")
+issues = [issue for page in pages for issue in page if "pull_request" not in issue]
+for issue in sorted(issues, key=lambda issue: issue["updated_at"]):
+    print(issue["number"])
+')
+  if [ -z "$candidates" ]; then
+    echo "idle: no unreviewed current-head qualified done issue"
+    exit 3
+  fi
   "${GIT[@]}" fetch -q origin
   selected=false
   for n in $candidates; do
