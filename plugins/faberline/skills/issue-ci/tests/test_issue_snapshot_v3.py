@@ -1,8 +1,11 @@
 """A full roster and an exact issue snapshot are mandatory for v3."""
 import copy
 import base64
+import contextlib
 import hashlib
+import io
 import json
+import subprocess
 import unittest
 from unittest.mock import patch
 import test_issue_contract_v2 as previous
@@ -88,6 +91,40 @@ class SnapshotTests(unittest.TestCase):
         issue['_aw_issue_spec'] = q.planner_spec(issue, [{'body': '<!-- issue-plan:spec -->\nnew acceptance'}])
         self.assertIn('linked issue planner specification changed or is missing',
                       q.select(config, previous.pull(), previous.base.files(), issue)['issues'])
+
+    def test_missing_snapshot_still_reports_failed_ci_and_returns_todo(self):
+        lifecycle = previous.base.legacy
+        harness = lifecycle.ApplyTests('test_current_head_success_preserves_other_labels')
+        harness.setUp()
+        self.addCleanup(harness.doCleanups)
+        config, issue = fixture()
+        issue.pop('_aw_issue_snapshot'); issue.pop('_aw_issue_spec')
+        issue['labels'] = [{'name': 'doing'}, {'name': 'priority:p1'}]
+        harness.issue = issue
+        harness.pr = previous.pull()
+        snapshots = previous.base.evidence(config)
+        snapshots[previous.base.WORKFLOW][1][1]['conclusion'] = 'failure'
+        failure = [RuntimeError('snapshot unavailable')]
+        def api(path, method='GET', data=None):
+            if method == 'GET' and '/contents/.github/issue-contract-snapshots/' in path:
+                raise failure[0]
+            if method == 'GET' and '/contents/.github/workflows/' in path:
+                return {'sha': previous.base.BLOB}
+            return harness.api(path, method, data)
+        def pages(path, *args):
+            return previous.base.files() if '/pulls/8/files' in path else harness.comments
+        args = ci.argparse.Namespace(repo='o/r', pr=8, head=previous.base.HEAD, apply=True, run_id=None)
+        for error in (RuntimeError('missing'), RuntimeError('invalid blob'), subprocess.CalledProcessError(1, 'gh')):
+            failure[0] = error
+            harness.issue['labels'] = [{'name': 'doing'}, {'name': 'priority:p1'}]
+            harness.writes.clear(); harness.comments.clear()
+            with self.subTest(error=error), patch.object(ci, 'api', side_effect=api), patch.object(ci, 'pages', side_effect=pages), \
+                 patch.object(ci, 'snapshot', return_value=snapshots), \
+                 patch.object(ci, 'untrusted_failure_snapshots', return_value={}), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(ci.process_head(args, config, check_event=False), 0)
+            self.assertIn(('repos/o/r/issues/7/labels', 'POST', {'labels': ['todo']}), harness.writes)
+            self.assertTrue(any(method == 'POST' and path.endswith('/comments') for path, method, _ in harness.writes))
 
 
 if __name__ == '__main__':
