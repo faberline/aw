@@ -703,7 +703,8 @@ class WorkTests(unittest.TestCase):
         self.assertEqual(json.loads((self.common / 'issue-work.lock').read_text())['phase'], 'coding')
 
     def test_ci_failed_todo_reuses_pr_and_branch(self):
-        self.assertEqual(self.invoke(['next'], lambda *a: self.todo), 0)
+        with patch.object(work.ci_retry, 'retry_ready', return_value=True):
+            self.assertEqual(self.invoke(['next'], lambda *a: self.todo), 0)
         lease = json.loads((self.common / 'issue-work.lock').read_text())
         self.assertEqual(lease['issue'], 7)
         self.assertIn(('PATCH', 7, ('doing',)), self.calls)

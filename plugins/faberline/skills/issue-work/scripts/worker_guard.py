@@ -249,3 +249,31 @@ def release(api,repo,policy,value,current_source):
     updated=provider.update(api,repo,policy['genesis'],policy['ruleset_id'],issue,'release',claim,value['release_op'])
     need(str(issue) not in updated['state']['locks'],'worker_guard_release_unknown')
     return dict(state='released',head=updated['head'])
+
+
+def confirmed_release(api,repo,policy,value,current_source):
+    """Read proof of this exact release without changing a later owner."""
+    intent(value,policy,current_source)
+    policy_ancestry(api,repo,value,current_source)
+    chain=provider.read_chain(api,repo,policy['genesis'],policy['ruleset_id'],value['issue'])
+    operations=chain['operations']
+    if value['release_op'] in operations:
+        entries=chain.get('transitions',{})
+        claim=entries.get(value['claim_op'],{});released=entries.get(value['release_op'],{})
+        need(value['claim_op'] in operations and claim.get('action')=='claim'
+             and released.get('action')=='release'
+             and claim.get('claim')==descriptor(value) and released.get('claim')==descriptor(value)
+             and type(claim.get('sequence')) is int and type(released.get('sequence')) is int
+             and claim['sequence'] < released['sequence']
+             and chain['state']['locks'].get(str(value['issue'])) != descriptor(value),
+             'worker_guard_release_unknown')
+        return dict(state='released',head=chain['head'])
+    return None
+
+
+def reconcile_release(api,repo,policy,value,current_source):
+    """Confirm an exact prior release without touching any later owner."""
+    confirmed=confirmed_release(api,repo,policy,value,current_source)
+    if confirmed is not None:
+        return confirmed
+    return release(api,repo,policy,value,current_source)

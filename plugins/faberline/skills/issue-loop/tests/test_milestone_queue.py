@@ -491,7 +491,9 @@ class WorkerTests(unittest.TestCase):
     def test_selected_ci_retry_reuses_same_pr_without_milestone_policy(self):
         self.c.issues[0]['milestone'] = None
         self.pr = 9
-        self.assertEqual(self.invoke(), 0)
+        with patch.object(work.ci_retry, 'retry_ready', return_value=True), \
+             patch.object(self.c, 'api', return_value=dict(head=dict(sha='a'*40),base=dict(sha='b'*40))):
+            self.assertEqual(self.invoke(), 0)
         self.assertEqual(self.c.snapshots, 0)
         self.assertEqual(self.c.writes[0][1]['labels'], ['doing'])
 

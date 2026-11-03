@@ -40,12 +40,24 @@ branch and registered worktree, including local commits and uncommitted
 work. Multiple matching PRs refuse. No branch reset, forced push, destructive
 cleanup, or unrequested rebase. If remote/local history diverges, report it
 and resolve deliberately while preserving both writers' work.
+When CI returned an issue to `todo`, check the journal against the PR's current
+head. Do not claim the issue from an older failure or while current-head checks
+are still running. Continue to the next eligible issue instead.
+If guard cancellation has an unknown result, the same owner retries
+`next --mine`. A later owner may reconcile it only after the lease expires and
+the recorded local process is confirmed dead. Reconciliation never changes an
+issue label or takes a live guard.
 
 ## Work
 
 1. Run `scripts/work.sh next`; read `issue=`, `branch=`, `worktree=`, `pr=`.
 2. Read `gh issue view N --comments` and the associated PR comments/check
    failures. The issue's Goal, Acceptance and Never sections are the contract.
+   For an existing PR, use only the exact `retry_evidence` returned by `next`
+   as the reason for this retry. Do not act on older failure comments. A
+   `ci_failure` identifies the workflow, run, attempt and job. A `request`
+   identifies the exact request comment and todo event. If the evidence is
+   missing or no longer matches the current PR, stop and run `next` again.
 3. Write only in the printed worktree. Keep scope bounded. Run affected unit
    and static checks only. Do not run local full suites, e2e/integration,
    cluster commands, or workflow dispatch. Report cloud validation still
@@ -66,7 +78,12 @@ and resolve deliberately while preserving both writers' work.
    updates the same PR with `Closes #N`, releases the lease, and leaves doing.
    CI alone marks done after required current-head gates pass, or todo on
    failure. Finish never calls a lifecycle-writing push helper.
-5. If blocked by a decision or repeat failure, write evidence/a clear question
+5. If this session owns a clean submitted PR and its exact head has CI running,
+   call `scripts/work.sh wait-ci N`. It verifies the current PR, clean worktree,
+   exact local and remote head, running checks, and guard ownership. It releases
+   this session's lease without changing the `doing` label. If any proof is
+   missing, preserve the lease and worktree and report the reason.
+6. If blocked by a decision or repeat failure, write evidence/a clear question
    to a file and call `scripts/work.sh block N evidence-file`. This compatibility
    command comments only: state and lease stay unchanged. Stop and report;
    never mark blocked, done, or todo yourself.

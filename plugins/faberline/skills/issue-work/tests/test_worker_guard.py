@@ -66,6 +66,17 @@ class WorkerGuardTests(unittest.TestCase):
             self.acquire()
         self.assertEqual(len(self.api.writes),writes)
 
+    def test_reconcile_proves_exact_ordered_claim_and_release(self):
+        self.acquire(); self.release(); other=make(characters='def')
+        w.acquire(self.api,REPO,policy(),other,SOURCE)
+        writes=len(self.api.writes)
+        self.assertEqual(w.reconcile_release(self.api,REPO,policy(),self.intent,SOURCE)['state'],'released')
+        self.assertEqual(len(self.api.writes),writes)
+        bad=copy.deepcopy(self.intent); bad['claim_op']=other['claim_op']
+        with self.assertRaisesRegex(w.provider.Refused,'worker_guard_release_unknown'):
+            w.reconcile_release(self.api,REPO,policy(),bad,SOURCE)
+        self.assertEqual(len(self.api.writes),writes)
+
     def test_consumed_claim_does_not_reopen_after_release(self):
         self.acquire();self.release();writes=len(self.api.writes)
         with self.assertRaisesRegex(w.provider.Refused,'worker_guard_held_or_consumed'):
