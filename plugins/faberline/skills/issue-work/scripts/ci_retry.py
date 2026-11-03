@@ -138,7 +138,7 @@ def retry_ready(client, issue_number, pr_number):
     comments = client.comments(issue_number)
     if not isinstance(comments, list):
         return False
-    pattern = re.compile(r'\A<!-- issue-ci:[0-9a-f]{64}:applied -->\s*\nCI: todo for PR #([1-9][0-9]*) head `([0-9a-f]{40})`\.')
+    pattern = re.compile(r'\A<!-- issue-ci:[0-9a-f]{64}:(pending|ready|applied) -->\s*\nCI: todo for PR #([1-9][0-9]*) head `([0-9a-f]{40})`\.')
     journals = []
     for comment in comments:
         if not isinstance(comment, dict) or (comment.get('user') or {}).get('login') != 'github-actions[bot]':
@@ -148,10 +148,14 @@ def retry_ready(client, issue_number, pr_number):
         if (isinstance(body, str) and 'issue-ci:' in body
                 and re.search(rf'\bCI: todo for PR #{pr_number}\b', body) and match is None):
             return False
-        if match and int(match[1]) == pr_number:
+        if match and int(match[2]) == pr_number:
+            if match[1] != 'applied':
+                if match[3] == head:
+                    return False
+                continue
             if type(comment.get('id')) is not int or not isinstance(comment.get('updated_at'), str):
                 return False
-            journals.append((comment['updated_at'], comment['id'], match[2], body))
+            journals.append((comment['updated_at'], comment['id'], match[3], body))
     request = manual_retry_ready(client, issue_number, pr_number, head, base, comments, journals)
     if request:
         return request

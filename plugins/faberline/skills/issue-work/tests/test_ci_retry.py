@@ -86,6 +86,14 @@ class RetryTests(unittest.TestCase):
         c=Client(); c.rows[1]['body']=c.rows[1]['body'].replace('attempt 1','attempt 2')
         self.assertFalse(retry.retry_ready(c, 7, 9))
 
+    def test_old_pending_journal_does_not_block_current_applied_failure(self):
+        c = Client()
+        old = dict(c.rows[0], id=3, body=c.rows[0]['body'].replace(':applied', ':pending').replace(HEAD, 'f'*40))
+        c.rows.insert(0, old)
+        self.assertTrue(retry.retry_ready(c, 7, 9))
+        old['body'] = old['body'].replace('f'*40, HEAD)
+        self.assertFalse(retry.retry_ready(c, 7, 9))
+
     def test_untrusted_or_missing_journal_without_human_todo_waits(self):
         c = Client(); c.rows[0]['user']['login'] = 'someone-else'
         self.assertFalse(retry.retry_ready(c, 7, 9))

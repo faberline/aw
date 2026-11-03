@@ -644,19 +644,7 @@ def main():
             if lease.get('phase')!='guard_release':
                 worker_guard.require_owned(guard_api,client.repo,guard_policy,guard_intent,guard_policy['policy_source'])
         if guard_intent is not None and lease.get('phase')=='guard_release':
-            pr,branch,head=lease.get('guard_pr'),lease.get('guard_branch'),lease.get('guard_head')
-            if (type(pr) is not int or pr<=0 or not isinstance(branch,str)
-                    or not isinstance(head,str) or not re.fullmatch(r'[0-9a-f]{40}',head)):
-                refuse('invalid guarded submission intent; preserve the issue guard and worktree')
-            wt=prepare(checkout,n,branch,pr)
-            if git('-C',str(wt),'status','--porcelain') or git('-C',str(wt),'rev-parse','HEAD')!=head:
-                refuse('guarded submission worktree changed; preserve it')
-            guarded_submission(client,n,branch,pr,head)
-            tree_state.update(checkout,n,branch,wt,owner,pr=pr,submitted=True)
-            worker_guard.release(guard_api,client.repo,guard_policy,guard_intent,guard_policy['policy_source'])
-            worker_guard.dispatch_wake(guard_api,client.repo)
-            lease_path.unlink()
-            print(f'pr={pr}; guarded submission recovered; waiting for required CI')
+            recover_wait_release(checkout, common, lease_path, lease)
             return 0
         issue = gh('issue', 'view', str(n), '--json', 'state,labels')
         if issue['state'] != 'OPEN' or {l['name'] for l in issue['labels']} & {'todo', 'done', 'blocked'} or 'doing' not in {l['name'] for l in issue['labels']}:

@@ -107,11 +107,11 @@ class GuardedHandoffTests(unittest.TestCase):
                 new_claim=dict(owner='f'*32,kind='merge',head='a'*40)
                 work.worker_guard.provider.update(provider,'o/r',policy['genesis'],policy['ruleset_id'],
                                                    7,'claim',new_claim,'e'*32)
-                with self.assertRaisesRegex(RuntimeError,'worker_guard_not_owner'):
-                    invoke(['finish','7',str(summary)])
+                self.assertEqual(invoke(['finish','7',str(summary)]),0)
                 current=work.worker_guard.provider.read_chain(provider,'o/r',policy['genesis'],policy['ruleset_id'],7)
                 self.assertEqual(current['state']['locks']['7'],new_claim)
-                self.assertTrue(lease_path.exists())
+                self.assertFalse(lease_path.exists())
+                self.assertEqual(sum(1 for call in calls if call[:3] in (('gh','issue','comment'),('gh','pr','comment'))), comments_before)
                 return
             self.assertEqual(invoke(['finish','7',str(summary)]),0)
             comments_after=sum(1 for call in calls if call[:3] in (('gh','issue','comment'),('gh','pr','comment')))
