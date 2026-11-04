@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import stat
 import subprocess
 import threading
 import time
@@ -99,30 +100,57 @@ def main():
     parser.add_argument('--listen-port', required=True, type=int)
     parser.add_argument('--forward-port', required=True, type=int)
     parser.add_argument('--remote-port', required=True, type=int)
+    parser.add_argument('--challenge-file', choices=['/run/aw-barrier/challenge'])
     args = parser.parse_args()
     argv = command(args.namespace, args.service, args.forward_port, args.remote_port)
     if args.listen_port == args.forward_port:
         raise ValueError('gateway and port-forward ports must differ')
     stopped = threading.Event()
+    requested = False
     def stop(_signal, _frame): stopped.set()
+    def request_barrier(_signal, _frame):
+        nonlocal requested
+        requested = True
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
+    challenge_fd = None
+    writer = None
+    if args.challenge_file:
+        challenge_fd = os.open(args.challenge_file, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+        info = os.fstat(challenge_fd)
+        if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o444 or info.st_nlink != 1:
+            os.close(challenge_fd)
+            raise ValueError('protected readonly challenge file required')
+        try:
+            writer_spec = importlib.util.spec_from_file_location('aw_report_writer', Path(__file__).with_name('trusted_report_writer.py'))
+            writer_module = importlib.util.module_from_spec(writer_spec); writer_spec.loader.exec_module(writer_module)
+            writer = writer_module.ReportWriter(challenge_fd)
+            signal.signal(signal.SIGUSR1, request_barrier)
+        except BaseException:
+            os.close(challenge_fd)
+            raise
     gateway_spec = importlib.util.spec_from_file_location('aw_trusted_gateway', Path(__file__).with_name('trusted_gateway.py'))
     gateway = importlib.util.module_from_spec(gateway_spec)
     gateway_spec.loader.exec_module(gateway)
 
     async def run():
+        nonlocal requested
         # The caller must provide a dedicated private container network and
         # must not publish this port to the GitHub runner host.
         server = await gateway.start_gateway(args.listen_port, args.forward_port, listen_host='0.0.0.0')
         if not owns_listener(os.getpid(), args.listen_port, address='0.0.0.0'):
             server.close(); await server.wait_closed()
             raise RuntimeError('gateway listener ownership is unverified')
-        print('AW_GKE_GATEWAY_V1 ' + json.dumps({'state': 'ready', 'pid': os.getpid(),
-                                                'address': '0.0.0.0', 'port': args.listen_port}, sort_keys=True), flush=True)
+        gateway_report = {'state': 'ready', 'pid': os.getpid(), 'address': '0.0.0.0', 'port': args.listen_port}
+        if writer is None:
+            print('AW_GKE_GATEWAY_V1 ' + json.dumps(gateway_report, sort_keys=True), flush=True)
+        else:
+            writer.emit('AW_GKE_GATEWAY_V1', gateway_report)
         failures = []
         def worker():
-            try: supervise(argv, args.forward_port, stopped.is_set)
+            try:
+                report = None if writer is None else lambda event: writer.emit('AW_GKE_PROXY_V1', event)
+                supervise(argv, args.forward_port, stopped.is_set, report=report)
             except BaseException as exc: failures.append(exc)
         thread = threading.Thread(target=worker, daemon=False)
         thread.start()
@@ -131,6 +159,9 @@ def main():
                 if not thread.is_alive(): raise RuntimeError('port-forward supervisor stopped unexpectedly')
                 if not owns_listener(os.getpid(), args.listen_port, address='0.0.0.0'):
                     raise RuntimeError('gateway listener ownership was lost')
+                if requested:
+                    requested = False
+                    writer.acknowledge()
                 await asyncio.sleep(0.2)
         finally:
             stopped.set()
@@ -139,7 +170,9 @@ def main():
             if thread.is_alive(): raise RuntimeError('port-forward supervisor did not stop')
         if failures: raise RuntimeError('port-forward supervisor failed') from failures[0]
 
-    asyncio.run(run())
+    try: asyncio.run(run())
+    finally:
+        if challenge_fd is not None: os.close(challenge_fd)
 
 
 if __name__ == '__main__':

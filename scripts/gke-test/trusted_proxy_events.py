@@ -4,6 +4,7 @@ The caller must authenticate the sidecar image, source, Docker log stream and
 process. Port-forward restarts are allowed; the gateway must remain protected.
 """
 import json
+import re
 
 
 def _unique(pairs):
@@ -24,6 +25,8 @@ class ProxyReports:
         self.proxy = None
         self.last_pid = None
         self.poisoned = False
+        self.barriers = set()
+        self.latest_barrier = None
 
     def ingest(self, raw):
         if self.poisoned: raise ValueError('sidecar reports are unavailable')
@@ -50,6 +53,16 @@ class ProxyReports:
                     or report['address'] != '0.0.0.0' or type(report['port']) is not int or report['port'] != self.port):
                 raise ValueError('gateway report differs')
             self.gateway = report['pid']
+            return
+        if prefix == b'AW_GKE_BARRIER_V1':
+            challenge = report.get('challenge')
+            if (self.gateway is None or set(report) != {'pid', 'challenge'} or type(report['pid']) is not int
+                    or report['pid'] != self.gateway or not isinstance(challenge, str)
+                    or not re.fullmatch(r'[0-9a-f]{32}', challenge) or challenge in self.barriers
+                    or len(self.barriers) >= 4096):
+                raise ValueError('invalid sidecar barrier')
+            self.barriers.add(challenge)
+            self.latest_barrier = challenge
             return
         if prefix != b'AW_GKE_PROXY_V1' or self.gateway is None or set(report) != {'state', 'generation', 'pid'}:
             raise ValueError('unexpected sidecar report')

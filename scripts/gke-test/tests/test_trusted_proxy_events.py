@@ -37,6 +37,17 @@ class ProxyReportsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.reports.ingest(line('AW_GKE_PROXY_V1', state='ready', generation=1, pid=9))
 
+    def test_barrier_is_bound_to_gateway_pid_and_never_replayed(self):
+        self.gateway()
+        challenge = 'a' * 32
+        report = line('AW_GKE_BARRIER_V1', pid=7, challenge=challenge)
+        self.reports.ingest(report)
+        self.assertEqual(self.reports.latest_barrier, challenge)
+        with self.assertRaises(ValueError): self.reports.ingest(report)
+        self.setUp(); self.gateway()
+        with self.assertRaises(ValueError):
+            self.reports.ingest(line('AW_GKE_BARRIER_V1', pid=8, challenge=challenge))
+
     def test_malformed_forged_or_out_of_order_reports_fail(self):
         invalid = [b'', b'other {}\n', b'AW_GKE_GATEWAY_V1 {"pid":1,"pid":2}\n',
                    line('AW_GKE_PROXY_V1', state='ready', generation=1, pid=8),

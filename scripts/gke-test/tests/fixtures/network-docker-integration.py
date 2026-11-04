@@ -115,23 +115,40 @@ try:
     call('network', 'disconnect', network_id, marker); stream.wait_count(6, 15)
     stream.finish()
     stream.close(); stream = None
-    # Exercise Docker's actual log transport with a synthetic reporter.
-    reporter_code = ('import time;'
-        'print(\'AW_GKE_GATEWAY_V1 {"state":"ready","pid":7,"address":"0.0.0.0","port":7373}\',flush=True);'
-        'print(\'AW_GKE_PROXY_V1 {"state":"ready","generation":1,"pid":8}\',flush=True);'
-        'time.sleep(120)')
+    # Exercise the real proxy/report stream against a synthetic upstream.
+    challenge_file = context / 'proxy-challenge'
+    challenge_file.write_bytes(b'a' * 32 + b'\n'); challenge_file.chmod(0o444)
     try:
         reporter = identifier(call('create', '--pull=never', '--init', '--read-only', '--user=65532:65532',
             '--cap-drop=ALL', '--security-opt=no-new-privileges', '--ipc=private', '--cgroupns=private',
             '--network=none', '--name=' + name + '-reporter',
             '--label=faberline.dev/protected-network=' + nonce, '--label=faberline.dev/protected-role=reporter',
-            '--entrypoint=python', IMAGE, '-c', reporter_code))
+            '--mount=type=bind,source=' + str(ROOT / 'trusted_proxy.py') + ',target=/trusted/trusted_proxy.py,readonly',
+            '--mount=type=bind,source=' + str(ROOT / 'trusted_gateway.py') + ',target=/trusted/trusted_gateway.py,readonly',
+            '--mount=type=bind,source=' + str(ROOT / 'trusted_report_writer.py') + ',target=/trusted/trusted_report_writer.py,readonly',
+            '--mount=type=bind,source=' + str(ROOT / 'tests/fixtures/fake-kubectl') + ',target=/usr/local/bin/kubectl,readonly',
+            '--mount=type=bind,source=' + str(challenge_file) + ',target=/run/aw-barrier/challenge,readonly',
+            '--entrypoint=python', IMAGE, '-I', '-S', '/trusted/trusted_proxy.py', '--namespace', 'lumen',
+            '--service', 'lumen-http', '--listen-port', '57373', '--forward-port', '57374',
+            '--remote-port', '7373', '--challenge-file', '/run/aw-barrier/challenge'))
         resources.append((reporter, 'reporter'))
     except BaseException as error:
         raise RuntimeError('reporter creation is uncertain; discard runner') from error
     call('start', reporter)
-    proxy_stream = load('trusted_proxy_stream').ProxyStream(reporter, 7373)
-    try: proxy_stream.wait_observed_ready(15)
+    proxy_stream = load('trusted_proxy_stream').ProxyStream(reporter, 57373)
+    try:
+        proxy_stream.wait_observed_ready(15)
+        proxy_stream.arm_barrier('a' * 32)
+        call('kill', '--signal=USR1', reporter)
+        proxy_stream.wait_barrier('a' * 32, 15)
+        proxy_stream.arm_barrier('b' * 32)
+        call('kill', '--signal=USR1', reporter)
+        try:
+            proxy_stream.wait_barrier('b' * 32, 15)
+        except ValueError:
+            pass
+        else:
+            raise RuntimeError('sidecar accepted an unacknowledged challenge')
     finally: proxy_stream.close()
     # Exercise the production executor against a synthetic, non-product image.
     # Patching the image regex is confined to this fixture and never affects CI

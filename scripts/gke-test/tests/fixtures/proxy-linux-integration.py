@@ -13,7 +13,8 @@ reports = reports_module.ProxyReports(57373)
 
 p = subprocess.Popen(['/usr/local/bin/python3', '-I', '-S', '/trusted/trusted_proxy.py',
     '--namespace', 'lumen', '--service', 'lumen-http', '--listen-port', '57373',
-    '--forward-port', '57374', '--remote-port', '7373'], stdout=subprocess.PIPE, bufsize=0)
+    '--forward-port', '57374', '--remote-port', '7373',
+    '--challenge-file', '/run/aw-barrier/challenge'], stdout=subprocess.PIPE, bufsize=0)
 try:
     deadline = time.monotonic() + 10
     pending = [b'']
@@ -24,7 +25,7 @@ try:
             if not block: raise RuntimeError('proxy closed before the complete response')
             result.extend(block)
         return bytes(result)
-    def read_ready(target):
+    def read_report():
         while time.monotonic() < deadline:
             if b'\n' not in pending[0]:
                 if not select.select([p.stdout], [], [], 1)[0]: continue
@@ -35,6 +36,11 @@ try:
                 continue
             line, pending[0] = pending[0].split(b'\n', 1)
             reports.ingest(line + b'\n')
+            return line
+        raise RuntimeError('proxy report did not arrive')
+    def read_ready(target):
+        while time.monotonic() < deadline:
+            line = read_report()
             if line.startswith(b'AW_GKE_PROXY_V1 '):
                 event = json.loads(line.split(b' ', 1)[1])
                 if event['state'] == 'ready' and event['generation'] == target:
@@ -42,6 +48,10 @@ try:
                     return event
         raise RuntimeError('proxy did not become ready')
     first = read_ready(1)
+    os.kill(p.pid, signal.SIGUSR1)
+    while reports.latest_barrier != 'a' * 32:
+        read_report()
+    reports.require_ready()
     with socket.create_connection(('127.0.0.1', 57373), timeout=2) as s:
         s.sendall(b'abc'); assert read_exact(s, 3) == b'ABC'
     os.kill(first['pid'], signal.SIGTERM)

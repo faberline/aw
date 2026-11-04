@@ -63,3 +63,24 @@ class ProxyStreamTests(unittest.TestCase):
                 module.ProxyStream('b' * 64, 7373, launch=lambda *args, **kwargs: process)
         self.assertFalse(process.running)
         self.assertTrue(process.stdout.closed)
+
+    def test_barrier_is_armed_before_ack_and_cannot_be_reused(self):
+        self.process.send('AW_GKE_GATEWAY_V1', state='ready', pid=7, address='0.0.0.0', port=7373)
+        self.ready(1, 8); self.stream.wait_observed_ready(2)
+        challenge = 'c' * 32
+        self.stream.arm_barrier(challenge)
+        self.process.send('AW_GKE_BARRIER_V1', pid=7, challenge=challenge)
+        self.stream.wait_barrier(challenge, 2)
+        with self.assertRaises(ValueError): self.stream.arm_barrier(challenge)
+
+    def test_unsolicited_or_wrong_barrier_poisons_stream(self):
+        self.process.send('AW_GKE_GATEWAY_V1', state='ready', pid=7, address='0.0.0.0', port=7373)
+        self.ready(1, 8); self.stream.wait_observed_ready(2)
+        self.stream.arm_barrier('d' * 32)
+        self.process.send('AW_GKE_BARRIER_V1', pid=7, challenge='e' * 32)
+        with self.assertRaises(ValueError): self.stream.wait_barrier('d' * 32, 2)
+
+    def test_barrier_timeout_is_permanent(self):
+        self.stream.arm_barrier('f' * 32)
+        with self.assertRaises(TimeoutError): self.stream.wait_barrier('f' * 32, 0.01)
+        with self.assertRaises(ValueError): self.stream.arm_barrier('a' * 32)

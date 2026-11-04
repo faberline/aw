@@ -25,6 +25,9 @@ class ProxyStream:
         self.stopping = False
         self.count = 0
         self.total = 0
+        self.expected_barrier = None
+        self.acknowledged_barrier = None
+        self.used_barriers = set()
         self.process = launch(['/usr/bin/docker', 'logs', '--follow', container_id],
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0,
             env={'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'LC_ALL': 'C'})
@@ -55,6 +58,12 @@ class ProxyStream:
                     if self.count > 4096 or self.total > 1024 * 1024:
                         raise ValueError('sidecar report stream exceeds limit')
                     self.reports.ingest(line)
+                    if line.startswith(b'AW_GKE_BARRIER_V1 '):
+                        challenge = self.reports.latest_barrier
+                        if self.expected_barrier != challenge:
+                            raise ValueError('unexpected sidecar barrier')
+                        self.acknowledged_barrier = challenge
+                        self.expected_barrier = None
                     self.condition.notify_all()
         except BaseException as exc:
             with self.condition:
@@ -81,6 +90,43 @@ class ProxyStream:
                         self.error = TimeoutError('sidecar readiness timed out')
                         raise self.error
                     self.condition.wait(remaining)
+
+    def arm_barrier(self, challenge):
+        with self.condition:
+            if (self.error is not None or self.stopping or self.process.poll() is not None
+                    or not isinstance(challenge, str) or not re.fullmatch(r'[0-9a-f]{32}', challenge)
+                    or self.expected_barrier is not None or self.acknowledged_barrier is not None
+                    or challenge in self.used_barriers or len(self.used_barriers) >= 4096):
+                self.error = ValueError('sidecar barrier cannot be armed')
+                raise self.error
+            self.used_barriers.add(challenge)
+            self.expected_barrier = challenge
+            self.acknowledged_barrier = None
+
+    def wait_barrier(self, challenge, timeout):
+        if (not isinstance(challenge, str) or not re.fullmatch(r'[0-9a-f]{32}', challenge)
+                or type(timeout) not in (int, float) or not 0 < timeout <= 5400):
+            with self.condition:
+                self.error = ValueError('valid barrier timeout required')
+                raise self.error
+        deadline = time.monotonic() + timeout
+        with self.condition:
+            while True:
+                if (self.error is not None or self.stopping or self.process.poll() is not None
+                        or challenge not in self.used_barriers):
+                    raise ValueError('sidecar barrier stream is not live') from self.error
+                if self.acknowledged_barrier == challenge:
+                    self.acknowledged_barrier = None
+                    self.reports.require_ready()
+                    return
+                if self.expected_barrier != challenge:
+                    self.error = ValueError('sidecar barrier does not match')
+                    raise self.error
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.error = TimeoutError('sidecar barrier timed out')
+                    raise self.error
+                self.condition.wait(remaining)
 
     def close(self):
         with self.condition: self.stopping = True
