@@ -98,8 +98,6 @@ def validate_contract(ci, config):
              and ci.qualification_module().path_valid(source.get('path'))
              and HEX.fullmatch(source.get('blob_sha', '')),
              'invalid_pin', 'every transitive source needs repo/path/immutable ref/blob')
-    identities = [(c['workflow'], c['job']) for c in config['qualification']['checks'].values()]
-    need(len(set(identities)) == len(identities), 'ambiguous_check', 'each check needs a distinct job identity')
     assertions = contract['assertions']
     need(isinstance(assertions, dict) and bool(assertions), 'missing_assertion_contract', 'declare nonzero gate assertions')
     for key, rule in assertions.items():
@@ -295,27 +293,37 @@ def producer_identity(ci, repo, config, run_id, completed=False):
                 job_id=job['id'], job=spec['job'], event='workflow_run', url=run['html_url'])
 
 
-def assertion_evidence(repo, pr, run, job, check, rule):
+def assertion_evidence(repo, pr, run, job, check, rule, job_rules=None):
     log = job_log(repo, job['id'])
-    found = [(1, value) for value in records(log, ASSERTION_MARKER)]
-    found += [(2, value) for value in records(log, ASSERTION_V2_MARKER)]
+    rules = {check: rule} if job_rules is None else job_rules
+    need(isinstance(rules, dict) and check in rules and rules[check] == rule,
+         'invalid_assertion_contract', 'job check inventory is invalid')
+    all_records = [(1, value) for value in records(log, ASSERTION_MARKER)]
+    all_records += [(2, value) for value in records(log, ASSERTION_V2_MARKER)]
+    need(all(isinstance(value, dict) and isinstance(value.get('check'), str) and value['check'] in rules
+             for _, value in all_records), 'untrusted_assertions', 'job emitted an unknown assertion record')
+    names = [value['check'] for _, value in all_records]
+    need(len(names) == len(set(names)), 'missing_assertions', 'duplicate check assertion record')
+    found = [(version, value) for version, value in all_records if value['check'] == check]
     need(len(found) == 1, 'missing_assertions', 'exactly one trusted assertion record required for ' + check)
-    wire_version, record = found[0]
-    need(isinstance(record, dict) and type(record.get('version')) is int and record['version'] == wire_version,
-         'untrusted_assertions', 'unsupported assertion protocol version')
-    expected = dict(version=record['version'], repo=repo, pr=pr['number'], head=pr['head']['sha'], base=pr['base']['sha'],
-                    run_id=run['id'], run_attempt=run['run_attempt'], check=check)
-    if record['version'] == 1:
-        expected['job_id'] = job['id']
-    # V2 binds numeric job identity through the authenticated exact-attempt API
-    # transport, not a self-reported field requiring extra permissions in tests.
-    need(isinstance(record, dict) and set(record) == set(expected) | {'assertions'}
-         and all(type(record.get(k)) is type(v) and record[k] == v for k, v in expected.items()),
-         'untrusted_assertions', 'assertion identity does not bind this exact execution')
+    for wire_version, record in all_records:
+        need(type(record.get('version')) is int and record['version'] == wire_version,
+             'untrusted_assertions', 'unsupported assertion protocol version')
+        expected = dict(version=record['version'], repo=repo, pr=pr['number'], head=pr['head']['sha'],
+                        base=pr['base']['sha'], run_id=run['id'], run_attempt=run['run_attempt'], check=record['check'])
+        if record['version'] == 1:
+            expected['job_id'] = job['id']
+        # V2 binds job identity through the authenticated exact-attempt API.
+        need(set(record) == set(expected) | {'assertions'}
+             and all(type(record.get(k)) is type(v) and record[k] == v for k, v in expected.items()),
+             'untrusted_assertions', 'assertion identity does not bind this exact execution')
+        assertions = record['assertions']
+        need(isinstance(assertions, dict) and bool(assertions)
+             and set(assertions) == set(rules[record['check']]['names'])
+             and all(v == 'passed' for v in assertions.values()),
+             'zero_or_failed_assertions', 'all declared nonzero assertions must actually pass')
+    record = found[0][1]
     assertions = record['assertions']
-    need(isinstance(assertions, dict) and bool(assertions) and set(assertions) == set(rule['names'])
-         and all(v == 'passed' for v in assertions.values()),
-         'zero_or_failed_assertions', 'all declared nonzero assertions must actually pass')
     return dict(check=check, count=len(assertions), assertions=assertions, record_sha256=digest(record))
 
 
@@ -411,8 +419,12 @@ def collect_once(ci, repo, number, head, document, evaluator_sha, producer_run_i
                     spec = config['qualification']['checks'][check]
                     if spec['workflow'] == path and spec['job'] == name:
                         try:
+                            job_rules = {key: config['review_readiness']['assertions'][key]
+                                         for key, value in config['qualification']['checks'].items()
+                                         if value['workflow'] == path and value['job'] == name
+                                         and key in config['review_readiness']['assertions']}
                             assertions.append(assertion_evidence(repo, pull, run, job, check,
-                                              config['review_readiness']['assertions'][check]))
+                                              config['review_readiness']['assertions'][check], job_rules))
                         except Refused as exc:
                             reason(exc.code, str(exc), [job['html_url']])
     waiting_codes = {'missing_run', 'missing_job', 'run_pending', 'job_pending'}
