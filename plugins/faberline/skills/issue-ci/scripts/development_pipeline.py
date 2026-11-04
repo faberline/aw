@@ -407,3 +407,61 @@ def review_failure_snapshot(api, repo, number, head, config):
          'review attempt changed')
     jobs = api.pages(f'repos/{repo}/actions/runs/{latest["id"]}/attempts/{latest["run_attempt"]}/jobs', 'jobs')
     return {producer['path']:(current, jobs)}
+
+
+def local_review_reviewers(config):
+    settings = config.get('local_review_feedback')
+    if settings is None:
+        return None
+    need(isinstance(settings, dict) and set(settings) == {'version', 'reviewer_ids'}
+         and type(settings['version']) is int and settings['version'] == 1,
+         'invalid local review feedback policy')
+    reviewers = settings['reviewer_ids']
+    need(isinstance(reviewers, list) and bool(reviewers)
+         and all(type(x) is int and x > 0 for x in reviewers)
+         and len(reviewers) == len(set(reviewers)), 'invalid local reviewer identities')
+    return reviewers
+
+
+def local_review_failure(repo, issue, pr, head, base, comments, config):
+    """Find an authenticated local failure for this exact issue, head and base.
+
+    The caller supplies complete provider comments and the trusted base policy.
+    This does not establish reviewer independence or mutate lifecycle labels.
+    """
+    reviewers = local_review_reviewers(config)
+    if reviewers is None:
+        return None
+    need(isinstance(repo, str) and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo)
+         and type(issue) is int and issue > 0 and type(pr) is int and pr > 0
+         and all(isinstance(x, str) and re.fullmatch('[0-9a-f]{40}', x) for x in (head, base)),
+         'invalid local review target')
+    need(isinstance(comments, list), 'local review comment inventory missing')
+    marker = f'<!-- issue-review:{issue}:{head}:{base} -->'
+    latest_failure, previous = None, 0
+    for row in comments:
+        need(isinstance(row, dict) and type(row.get('id')) is int and row['id'] > previous
+             and isinstance(row.get('body'), str), 'local review comments malformed or unordered')
+        previous = row['id']
+        if row['body'].startswith(marker):
+            author = row.get('user')
+            if not isinstance(author, dict) or type(author.get('id')) is not int or author['id'] not in reviewers:
+                continue
+            body = row['body']
+            suffix = '\nLifecycle unchanged; no merge.'
+            prefixes = {outcome: marker + f'\nReview: {outcome} head {head} base {base}.\n'
+                        for outcome in ('pass', 'fail', 'block')}
+            matches = [outcome for outcome, prefix in prefixes.items() if body.startswith(prefix)]
+            need(len(matches) == 1 and body.endswith(suffix)
+                 and bool(body[len(prefixes[matches[0]]):-len(suffix)].strip()),
+                 'local review receipt is malformed or lacks evidence')
+            if matches[0] == 'fail':
+                latest_failure = row
+    if latest_failure is None:
+        return None
+    updated = latest_failure.get('updated_at')
+    need(isinstance(updated, str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', updated),
+         'local review receipt update time is missing')
+    url = f'https://github.com/{repo}/pull/{pr}#issuecomment-{latest_failure["id"]}'
+    return dict(comment_id=latest_failure['id'], author_id=latest_failure['user']['id'], url=url,
+                body_sha256=hashlib.sha256(latest_failure['body'].encode('utf-8')).hexdigest(), updated_at=updated)

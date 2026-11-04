@@ -7,10 +7,21 @@ here=$(cd "$(dirname "$0")" && pwd -P)
 receipt_py="$here/receipt.py"
 ci_py=$(cd "$here/../.." && pwd -P)/issue-ci/scripts/handoff.py
 verify_ci() {
-  local repo
+  local repo review_policy_dir review_policy_file
   repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
   [ -n "${ISSUE_CI_CONFIG:-}" ] || { echo "refused: set ISSUE_CI_CONFIG to trusted gate config" >&2; exit 2; }
-  python3 "$ci_py" --repo "$repo" --config "$ISSUE_CI_CONFIG" --pr "$1" --head "$2"
+  review_policy_dir=$(mktemp -d "${TMPDIR:-/tmp}/aw-review-policy.XXXXXX")
+  review_policy_file="$review_policy_dir/gates.json"
+  if ! python3 "$receipt_py" verify-policy "$repo" "$3" "$ISSUE_CI_CONFIG" > "$review_policy_file"; then
+    rm -f "$review_policy_file"; rmdir "$review_policy_dir"; return 2
+  fi
+  if ! python3 "$ci_py" --repo "$repo" --config "$review_policy_file" --pr "$1" --head "$2"; then
+    rm -f "$review_policy_file"; rmdir "$review_policy_dir"; return 2
+  fi
+  if ! python3 "$receipt_py" verify-policy "$repo" "$3" "$ISSUE_CI_CONFIG" > /dev/null; then
+    rm -f "$review_policy_file"; rmdir "$review_policy_dir"; return 2
+  fi
+  rm -f "$review_policy_file"; rmdir "$review_policy_dir"
 }
 
 common=$(cd "$("${GIT[@]}" rev-parse --git-common-dir)" && pwd)
@@ -77,15 +88,29 @@ for issue in sorted(issues, key=lambda issue: issue["updated_at"]):
       continue
     fi
     head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
-    if python3 "$receipt_py" seen "$n" "$pr" "$head"; then
+    base=$(gh pr view "$pr" --json baseRefOid --jq .baseRefOid)
+    if python3 "$receipt_py" notify "$n" "$pr" "$head" "$base"; then
+      :
+    else
+      notify_status=$?
+      if [ "$notify_status" != 3 ]; then
+        echo "skip: could not wake CI for issue #$n; retry on the next run" >&2
+      fi
+    fi
+    if python3 "$receipt_py" seen "$n" "$pr" "$head" "$base"; then
       continue
     else
       status=$?
       [ "$status" = 1 ] || return "$status"
     fi
     # A pending/invalid CI head must not starve other qualified done issues.
-    if ! verify_ci "$pr" "$head"; then
+    if ! verify_ci "$pr" "$head" "$base"; then
       echo "skip: issue #$n current head is not qualified" >&2
+      continue
+    fi
+    if [ "$(gh pr view "$pr" --json headRefOid --jq .headRefOid)" != "$head" ] || \
+       [ "$(gh pr view "$pr" --json baseRefOid --jq .baseRefOid)" != "$base" ]; then
+      echo "skip: issue #$n PR head or base changed during CI verification" >&2
       continue
     fi
     selected=true
@@ -113,37 +138,52 @@ for issue in sorted(issues, key=lambda issue: issue["updated_at"]):
   echo "head=$head"
   echo "worktree=$wt"
   echo "checks=$(checks_of "$pr")"
-  echo "base=$("${GIT[@]}" merge-base origin/main "$head")"
+  echo "base=$base"
 }
 
 cmd_pass() {
-  n=${1:?usage: pass <N> <head-sha>}
-  reviewed=${2:?usage: pass <N> <head-sha>}
+  n=${1:?usage: pass <N> <head-sha> <base-sha>}
+  reviewed=${2:?usage: pass <N> <head-sha> <base-sha>}
+  reviewed_base=${3:?usage: pass <N> <head-sha> <base-sha>}
   need_done "$n"
   read -r pr branch <<<"$(pr_and_branch_of "$n")" || true
   [ -n "${pr:-}" ] || { echo "refused: issue #$n has no open PR from issue/$n" >&2; exit 2; }
   head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
   [ "$head" = "$reviewed" ] \
     || { echo "refused: PR #$pr moved to $head after the review of $reviewed; review again" >&2; exit 2; }
+  [ "$(gh pr view "$pr" --json baseRefOid --jq .baseRefOid)" = "$reviewed_base" ] \
+    || { echo "refused: PR base moved; review again" >&2; exit 2; }
 
-  verify_ci "$pr" "$reviewed"
+  verify_ci "$pr" "$reviewed" "$reviewed_base"
   # Verify one more time after CI collection before recording acceptance.
   [ "$(gh pr view "$pr" --json headRefOid --jq .headRefOid)" = "$reviewed" ] \
     || { echo "refused: PR head moved" >&2; exit 2; }
-  python3 "$receipt_py" record "$n" "$pr" "$reviewed" pass
+  [ "$(gh pr view "$pr" --json baseRefOid --jq .baseRefOid)" = "$reviewed_base" ] \
+    || { echo "refused: PR base moved" >&2; exit 2; }
+  python3 "$receipt_py" record "$n" "$pr" "$reviewed" "$reviewed_base" pass
   echo "accepted PR #$pr at $reviewed; lifecycle unchanged; no merge"
 }
 
 cmd_report() {
   outcome=$1
-  n=${2:?usage: fail|block <N> <head-sha> <evidence-file>}
-  reviewed=${3:?usage: fail|block <N> <head-sha> <evidence-file>}
-  evidence=${4:?usage: fail|block <N> <head-sha> <evidence-file>}
+  n=${2:?usage: fail|block <N> <head-sha> <base-sha> <evidence-file>}
+  reviewed=${3:?usage: fail|block <N> <head-sha> <base-sha> <evidence-file>}
+  reviewed_base=${4:?usage: fail|block <N> <head-sha> <base-sha> <evidence-file>}
+  evidence=${5:?usage: fail|block <N> <head-sha> <base-sha> <evidence-file>}
   need_file "$evidence" evidence
   need_done "$n"
   read -r pr _ <<<"$(pr_and_branch_of "$n")" || true
   [ -n "${pr:-}" ] || { echo "refused: issue #$n has no open PR" >&2; exit 2; }
-  python3 "$receipt_py" record "$n" "$pr" "$reviewed" "$outcome" "$evidence"
+  python3 "$receipt_py" record "$n" "$pr" "$reviewed" "$reviewed_base" "$outcome" "$evidence"
+  if [ "$outcome" = fail ]; then
+    if python3 "$receipt_py" notify-required "$n" "$pr" "$reviewed" "$reviewed_base" "$evidence"; then
+      :
+    else
+      notify_status=$?
+      [ "$notify_status" = 3 ] || return "$notify_status"
+      echo "review evidence saved; CI feedback is not enabled and the issue was not returned to todo" >&2
+    fi
+  fi
   drop_review_tree "$n"
   echo "review evidence reported for #$n at $reviewed; lifecycle unchanged"
 }
@@ -153,5 +193,5 @@ case "${1:-}" in
   pass) shift; cmd_pass "$@" ;;
   fail) shift; cmd_report fail "$@" ;;
   block) shift; cmd_report block "$@" ;;
-  *) echo "usage: review.sh next | pass <N> <head-sha> | fail <N> <head-sha> <review-file> | block <N> <head-sha> <question-file>" >&2; exit 2 ;;
+  *) echo "usage: review.sh next | pass <N> <head-sha> <base-sha> | fail <N> <head-sha> <base-sha> <review-file> | block <N> <head-sha> <base-sha> <question-file>" >&2; exit 2 ;;
 esac

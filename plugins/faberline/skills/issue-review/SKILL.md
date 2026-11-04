@@ -21,10 +21,10 @@ schedule. The controller sets the schedule outside the skill. Ignore any
 argument, such as `loop` or `once`.
 
 Each run reviews one issue and ends its turn. Durable PR comments contain
-a per-issue/head receipt authenticated against the reviewer's current `gh`
-user identity. `next` skips that identity's already-reviewed heads (pass,
-fail or block), scans the next done issue, and considers changed heads again.
-Recording the same head twice is idempotent under a local repository guard;
+a per-issue/head/base receipt authenticated against the reviewer's current `gh`
+user identity. `next` skips that identity's already-reviewed head/base pairs
+(pass, fail or block), scans the next done issue, and considers changed pairs again.
+Recording the same pair twice is idempotent under a local repository guard;
 keep one reviewer controller per repository across hosts. Missing/pending CI
 or an orphan done issue is reported and skipped so it cannot starve others.
 
@@ -33,8 +33,10 @@ conversation, report evidence with that reason; leave lifecycle unchanged. Do no
 
 ## Rules
 
-- One issue per run. Read the Goal, Acceptance, and Never sections of the
-  issue's spec first: they are the contract the PR must meet.
+- One issue per run. Read the original issue body and the latest planner spec.
+  Check every original acceptance item and boundary as well as the spec.
+  A planner comment does not silently replace a human requirement. If they
+  conflict, stop and ask for the required decision.
 - Review reads; CI tests. Read the issue, the PR, its diff, and its checks.
   Do not run tests, builds, or e2e yourself. The PR checks run them, and
   each repository decides what its CI runs, also whether e2e goes to the
@@ -70,9 +72,13 @@ gh pr checks <pr>
 git -C <worktree> diff <base>..<head>
 ```
 
-   - Check every Acceptance item and every Never item against the diff.
+   - Check every Acceptance item and every Never item from the original issue
+     and the current spec against the diff.
    - Check that the PR adds or changes tests for the Acceptance items. A
      green check proves only what a test covers.
+   - If there is a planner acceptance mapping, independently check each
+     mapping against the actual tests and their current-head CI results.
+     A valid mapping alone does not prove the acceptance item is met.
    - Hunt for bugs the tests miss: edge cases, error paths, wrong defaults,
      changes outside the issue's scope, and files the repository protects.
    - A failed check is a failed review. Name the check and quote the
@@ -83,24 +89,26 @@ git -C <worktree> diff <base>..<head>
      failed, and no bug was found. Then record acceptance (no merge):
 
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/review.sh pass <N> <head>
+${CLAUDE_SKILL_DIR}/scripts/review.sh pass <N> <head> <base>
 ```
 
    - Fail: write the review to a file outside the worktree. List each
      problem with where it is and what done looks like. Then:
 
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/review.sh fail <N> <head> <review-file>
+${CLAUDE_SKILL_DIR}/scripts/review.sh fail <N> <head> <base> <review-file>
 ```
 
-     This reports evidence only. A human decides any next coding action;
-     CI lifecycle labels remain unchanged.
+     This records the evidence. Where the reviewed default-branch policy
+     enables `local_review_feedback`, it also wakes the CI writer. CI checks
+     the current issue, head, base and review receipt before returning the
+     issue to `todo`. If the wake fails, the next review run retries it.
 
    - Blocked: the decision needs a human (a frozen contract, a release, a
      paid service, deleting data). Write the question to a file, then:
 
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/review.sh block <N> <head> <question-file>
+${CLAUDE_SKILL_DIR}/scripts/review.sh block <N> <head> <base> <question-file>
 ```
 
 ## Exit codes

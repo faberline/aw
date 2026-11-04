@@ -22,7 +22,7 @@ class Provider:
     def __init__(self):
         self.raw=(Path(__file__).parents[1]/'templates/development-report.yml.example').read_text().replace('REVIEWED_AW_COMMIT',EVALUATOR)
         self.bad_blob=False;self.moved=False;self.reads=0;self.calls=[];self.writes=[];self.comments=[]
-        self.pull=dict(number=8,state='open',title='Fix',body='Closes #7',head=dict(sha=HEAD,repo={'full_name':REPO}),base=dict(ref='main'))
+        self.pull=dict(number=8,state='open',title='Fix',body='Closes #7',head=dict(sha=HEAD,repo={'full_name':REPO}),base=dict(ref='main',sha=SOURCE))
         self.pulls=[self.pull]
         self.run=dict(id=100,run_attempt=1,workflow_id=55,path=PATH,event='workflow_run',head_sha=SOURCE,head_branch='main',head_repository={'full_name':REPO})
         self.issues={}
@@ -84,6 +84,15 @@ class ReporterTests(unittest.TestCase):
         self.assertIn('requires exactly one canonical open issue',data['body'])
         self.assertIn(HEAD,data['body']);self.assertIn('processed',output)
         self.invoke(links=True);self.assertEqual(len(self.provider.writes),1)
+
+    def test_pr_base_change_before_label_write_is_held(self):
+        def process(*args, **kwargs):
+            self.provider.pull['base']['sha']='d'*40
+            ci.api('repos/o/r/issues/7/labels','POST',{'labels':['todo']})
+        result,_,output=self.invoke(process=process)
+        self.assertEqual(result,2)
+        self.assertIn('source PR moved',output)
+        self.assertEqual(self.provider.writes,[])
     def test_unknown_target_errors_hold_without_any_mutation(self):
         command=['gh','api','--method','GET','repos/o/r/issues/7']
         errors=[subprocess.CalledProcessError(1,command,
