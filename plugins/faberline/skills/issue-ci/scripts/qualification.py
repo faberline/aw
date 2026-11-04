@@ -49,8 +49,8 @@ def matches(path, pattern):
 
 def validate(config):
     policy = config['qualification']
-    require(isinstance(policy, dict) and policy.get('version') in (1, 2)
-            and type(policy.get('version')) is int, 'version must be 1 or 2')
+    require(isinstance(policy, dict) and policy.get('version') in (1, 2, 3)
+            and type(policy.get('version')) is int, 'version must be 1, 2 or 3')
     checks = policy.get('checks')
     require(isinstance(checks, dict) and bool(checks), 'checks must be nonempty')
     allowed = {w['path']: set(w['jobs']) for w in config['workflows']}
@@ -91,6 +91,12 @@ def validate(config):
         require(not kinds & set(exempt), 'same rule cannot require and exempt a category')
     if policy['version'] == 2:
         validate_contracts(policy, checks)
+    if policy['version'] == 3:
+        require(policy.get('issue_snapshot_path') == '.github/issue-contract-snapshots/{issue}.json',
+                'v3 requires the fixed issue snapshot path')
+        require(CATEGORIES <= {check['kind'] for check in checks.values()},
+                'v3 requires all test categories')
+        validate_contracts(policy, checks)
     return policy
 
 
@@ -99,8 +105,10 @@ def validate_contracts(policy, checks):
     require(isinstance(contracts, dict) and bool(contracts), 'v2 requires a nonempty issue contract registry')
     for number, case in contracts.items():
         require(isinstance(number, str) and re.fullmatch(r'[1-9][0-9]*', number), 'invalid issue contract number')
-        require(isinstance(case, dict) and set(case) == {'title_sha256', 'body_sha256', 'applicability', 'additional', 'unresolved'}, 'invalid issue contract fields')
-        for name in ('title_sha256', 'body_sha256'):
+        required = {'title_sha256', 'body_sha256', 'applicability', 'additional', 'unresolved'}
+        allowed = required | ({'spec_sha256'} if policy['version'] == 3 else set())
+        require(isinstance(case, dict) and required <= set(case) <= allowed, 'invalid issue contract fields')
+        for name in ('title_sha256', 'body_sha256') + (('spec_sha256',) if 'spec_sha256' in case else ()):
             require(isinstance(case[name], str) and re.fullmatch('[0-9a-f]{64}', case[name]), 'invalid issue contract hash')
         decisions = case['applicability']
         require(isinstance(decisions, dict) and set(decisions) == CATEGORIES, 'issue contract needs every category')
@@ -131,13 +139,44 @@ def linked_issue(pr):
     return int(lines[0])
 
 
+def planner_spec(issue, comments):
+    if (not isinstance(issue, dict) or not isinstance(issue.get('body'), str)
+            or not isinstance(comments, list)
+            or any(not isinstance(comment, dict) or not isinstance(comment.get('body'), str) for comment in comments)):
+        raise RuntimeError('invalid issue specification inventory')
+    return next((comment['body'] for comment in reversed(comments)
+                 if comment['body'].startswith('<!-- issue-plan:spec -->')), issue['body'])
+
+
 def issue_contract(policy, pr, issue):
     """Bind trusted issue metadata; absence or uncertainty cannot authorize review."""
     number = linked_issue(pr)
     issues, selected, context = [], set(), {'issue': number}
     if number is None:
         return context, ['one canonical linked issue is required'], selected
-    case = policy['contracts'].get(str(number))
+    case = policy.get('contracts', {}).get(str(number))
+    reviewed_case = case is not None
+    if policy['version'] == 3:
+        snapshot = issue.get('_aw_issue_snapshot') if isinstance(issue, dict) else None
+        if (not isinstance(snapshot, dict) or set(snapshot) != {'schema', 'repository', 'issue', 'title_sha256', 'body_sha256', 'spec_sha256'}
+                or snapshot.get('schema') != 'AW_ISSUE_SNAPSHOT_V1'
+                or snapshot.get('repository') != pr.get('base', {}).get('repo', {}).get('full_name')
+                or type(snapshot.get('issue')) is not int or snapshot['issue'] != number
+                or any(not isinstance(snapshot.get(k), str) or not re.fullmatch('[0-9a-f]{64}', snapshot[k])
+                       for k in ('title_sha256', 'body_sha256', 'spec_sha256'))):
+            return context, ['linked issue snapshot is missing or invalid'], selected
+        spec = issue.get('_aw_issue_spec')
+        if (not isinstance(spec, str) or not spec.strip()
+                or hashlib.sha256(spec.encode('utf-8')).hexdigest() != snapshot['spec_sha256']):
+            return context, ['linked issue planner specification changed or is missing'], selected
+        if case is None:
+            case = dict(title_sha256=snapshot['title_sha256'], body_sha256=snapshot['body_sha256'],
+                        applicability={kind: dict(status='required',
+                            checks=sorted(name for name, check in policy['checks'].items() if check['kind'] == kind),
+                            reason='Complete trusted test roster for every issue') for kind in CATEGORIES},
+                        additional=[], unresolved=['planner requirements have no independently verified coverage mapping'])
+        elif any(snapshot[key] != case[key] for key in ('title_sha256', 'body_sha256')):
+            return context, ['issue snapshot differs from existing reviewed contract'], selected
     if case is None:
         return context, ['linked issue has no reviewed contract'], selected
     repo = pr.get('base', {}).get('repo', {}).get('full_name')
@@ -163,6 +202,12 @@ def issue_contract(policy, pr, issue):
         if digest != case[name + '_sha256']:
             issues.append('linked issue ' + name + ' differs from reviewed contract')
     context['contract_sha256'] = hashlib.sha256(json.dumps(case, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')).hexdigest()
+    if policy['version'] == 3:
+        context['spec_sha256'] = snapshot['spec_sha256']
+        if reviewed_case and 'spec_sha256' not in case:
+            issues.append('linked issue planner spec has no reviewed binding')
+        elif reviewed_case and case['spec_sha256'] != snapshot['spec_sha256']:
+            issues.append('linked issue planner spec differs from reviewed binding')
     for kind, decision in case['applicability'].items():
         if decision['status'] == 'unknown':
             issues.append('linked issue has unknown ' + kind + ' applicability')
@@ -222,10 +267,12 @@ def select(config, pr, files, issue=None):
             issues.append(path + ': no applicability decision for ' + ', '.join(sorted(missing)))
         exemptions[path] = {kind: reason for kind, reason in exempt.items() if kind not in covered}
     contract = None
-    if policy['version'] == 2:
+    if policy['version'] in (2, 3):
         contract, contract_issues, additional = issue_contract(policy, pr, issue)
         issues.extend(contract_issues)
         selected.update(additional)
+        if policy['version'] == 3:
+            selected.update(policy['checks'])
     wanted = {}
     for name in sorted(selected):
         check = policy['checks'][name]

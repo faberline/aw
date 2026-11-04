@@ -59,7 +59,7 @@ def execute_unregistered_issue(config, repo, head, base, *, pull, files, issue, 
     """Plan the full trusted roster without granting an issue qualification."""
     q = qualification()
     policy = q.validate(config)
-    require(policy['version'] == 2, 'unregistered execution requires reviewed v2 policy')
+    require(policy['version'] in (2, 3), 'unregistered execution requires reviewed v2 or v3 policy')
     require(isinstance(pull, dict) and pull.get('state') == 'open' and pull.get('draft') is False
             and pull.get('head', {}).get('sha') == head and pull.get('base', {}).get('sha') == base
             and all(pull.get(side, {}).get('repo', {}).get('full_name') == repo for side in ('head', 'base')),
@@ -80,8 +80,11 @@ def execute_unregistered_issue(config, repo, head, base, *, pull, files, issue, 
     protected = [reason for reason in scope['issues']
                  if reason.startswith('gate infrastructure change requires reviewed policy update: ')]
     remaining = [reason for reason in scope['issues'] if reason not in protected]
-    require(remaining == ['linked issue has no reviewed contract'],
-            'execution-only fallback requires an unregistered contract and no other blockers')
+    allowed = ({'linked issue has no reviewed contract'} if policy['version'] == 2 else
+               {'linked issue has unresolved required gates', 'linked issue planner spec has no reviewed binding',
+                'linked issue planner spec differs from reviewed binding'})
+    require(bool(remaining) and set(remaining) <= allowed,
+            'execution-only fallback requires an unregistered or unresolved contract and no other blockers')
     require(isinstance(definitions, dict), 'trusted workflow definitions required')
     for path, identity in policy['trusted_workflows'].items():
         require(all(definitions.get((path, ref), {}).get('sha') == identity['definition_sha']

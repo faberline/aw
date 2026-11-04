@@ -78,6 +78,12 @@ issue label or takes a live guard.
    changes, tests passed and tests not run. Call
    `scripts/work.sh finish N summary-file`. It pushes normally and opens or
    updates the same PR with `Closes #N`, releases the lease, and leaves doing.
+   When the trusted base explicitly adopts qualification v3, `finish` also
+   commits a data-only snapshot of the current issue title, body, and latest
+   planner specification. CI checks that snapshot against the live issue and
+   requires the full trusted test roster. An issue or specification edit
+   requires a fresh snapshot and fresh CI. Existing
+   issue-specific blockers and independent review remain in force.
    CI alone marks done after required current-head gates pass, or todo on
    failure. Finish never calls a lifecycle-writing push helper.
 5. If this session owns a clean submitted PR and its exact head has CI running,

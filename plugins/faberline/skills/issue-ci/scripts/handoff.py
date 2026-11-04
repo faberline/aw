@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Trusted CI controller. Reads GitHub metadata, never executes PR code/artifacts."""
 import argparse
+import base64
+import binascii
 import hashlib
 import importlib.util
 import json
@@ -142,17 +144,51 @@ def qualify_merged_config(repo, pr, config, files=None):
     return _qualify_config(repo,pr,config,files,merged=True)
 
 
+def issue_snapshot_at_head(repo, head, number):
+    """Read only the fixed data file from the exact immutable PR commit."""
+    if (not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo or '')
+            or not re.fullmatch(r'[0-9a-f]{40}', head or '') or type(number) is not int or number <= 0):
+        raise RuntimeError('invalid snapshot repository or head')
+    item = api(f'repos/{repo}/contents/.github/issue-contract-snapshots/{number}.json?ref={head}')
+    if (not isinstance(item, dict) or item.get('type') != 'file' or item.get('encoding') != 'base64'
+            or type(item.get('size')) is not int or not 0 < item['size'] <= 4096
+            or not isinstance(item.get('sha'), str) or not re.fullmatch('[0-9a-f]{40}', item['sha'])
+            or not isinstance(item.get('content'), str)):
+        raise RuntimeError('invalid issue snapshot blob metadata')
+    try:
+        raw = base64.b64decode(''.join(item['content'].split()), validate=True)
+        if len(raw) != item['size'] or hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() != item['sha']:
+            raise RuntimeError('issue snapshot blob does not match metadata')
+        return strict_json_loads(raw.decode('utf-8'))
+    except (ValueError, UnicodeError, binascii.Error) as exc:
+        raise RuntimeError('invalid issue snapshot encoding') from exc
+
+
 def _qualify_config(repo, pr, config, files=None, merged=False):
     module = qualification_module()
     if files is None:
         files = pages(f'repos/{repo}/pulls/{pr["number"]}/files')
     issue = None
-    if config['qualification'].get('version') == 2:
+    if config['qualification'].get('version') in (2, 3):
         number = module.linked_issue(pr)
-        if number is not None and str(number) in config['qualification'].get('contracts', {}):
+        if number is not None and (config['qualification']['version'] == 3 or str(number) in config['qualification'].get('contracts', {})):
             if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo):
                 raise RuntimeError('invalid issue repository')
             issue = api(f'repos/{repo}/issues/{number}')
+            if config['qualification']['version'] == 3:
+                if not isinstance(issue, dict) or '_aw_issue_snapshot' in issue:
+                    raise RuntimeError('invalid live issue')
+                if '_aw_issue_spec' in issue:
+                    raise RuntimeError('invalid live issue')
+                try:
+                    comments = pages(f'repos/{repo}/issues/{number}/comments')
+                    snapshot = issue_snapshot_at_head(repo, pr['head']['sha'], number)
+                    spec = module.planner_spec(issue, comments)
+                except (RuntimeError, subprocess.CalledProcessError, ValueError, KeyError, TypeError):
+                    # Unknown snapshot is never positive evidence. Keep the
+                    # independently authenticated job-failure reporting path.
+                    snapshot, spec = None, None
+                issue = dict(issue, _aw_issue_snapshot=snapshot, _aw_issue_spec=spec)
             if merged and issue.get('state')=='closed':
                 # Reconstruct historical applicability only after actual
                 # merged-PR authentication. Never change the provider issue.

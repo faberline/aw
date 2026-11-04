@@ -37,6 +37,10 @@ _retry_spec = importlib.util.spec_from_file_location('worker_ci_retry', Path(__f
 ci_retry = importlib.util.module_from_spec(_retry_spec)
 _retry_spec.loader.exec_module(ci_retry)
 
+_snapshot_spec = importlib.util.spec_from_file_location('work_issue_snapshot', Path(__file__).resolve().parent / 'issue_snapshot.py')
+issue_snapshot = importlib.util.module_from_spec(_snapshot_spec)
+_snapshot_spec.loader.exec_module(issue_snapshot)
+
 
 def run(*args):
     return subprocess.check_output(args, text=True).strip()
@@ -52,6 +56,50 @@ def gh(*args):
 
 def refuse(message):
     raise RuntimeError(message)
+
+
+def commit_issue_snapshot(wt, client, number):
+    """Opt-in only: commit a data-only binding from the current trusted issue."""
+    policy_path = '.github/issue-ci-required-gates.json'
+    listed = git('-C', str(wt), 'ls-tree', '--name-only', 'origin/main', '--', policy_path)
+    if not listed:
+        return
+    if listed != policy_path:
+        refuse('unexpected baseline policy path')
+    policy = json.loads(git('-C', str(wt), 'show', 'origin/main:' + policy_path))
+    qualification = policy.get('qualification', {})
+    if qualification.get('version') != 3:
+        return
+    name = f'.github/issue-contract-snapshots/{number}.json'
+    if qualification.get('issue_snapshot_path') != '.github/issue-contract-snapshots/{issue}.json':
+        refuse('unknown issue snapshot policy')
+    github, directory, target = wt / '.github', wt / '.github/issue-contract-snapshots', wt / name
+    if github.is_symlink() or not github.is_dir() or directory.is_symlink() or target.is_symlink():
+        refuse('unsafe issue snapshot path')
+    if directory.exists() and not directory.is_dir():
+        refuse('issue snapshot directory is not a directory')
+    directory.mkdir(exist_ok=True)
+    attributes = git('-C', str(wt), 'check-attr', '-z', 'filter', '--', name).split('\0')
+    if len(attributes) != 4 or attributes[:2] != [name, 'filter'] or attributes[2] not in ('unspecified', 'unset') or attributes[3] != '':
+        refuse('issue snapshot has a configured or unknown clean filter')
+    first = client.issue(number)
+    data = issue_snapshot.encoded(client.repo, number, first, client.spec(first, client.comments(number)))
+    if target.exists() and not target.is_file():
+        refuse('issue snapshot is not a regular file')
+    if target.exists():
+        if target.stat().st_nlink != 1:
+            refuse('issue snapshot has unexpected hard links')
+        tracked = git('-C', str(wt), 'ls-files', '--', name)
+        if tracked != name:
+            refuse('untracked issue snapshot; preserve existing data')
+    if target.exists() and target.read_text(encoding='utf-8') == data:
+        return
+    target.write_text(data, encoding='utf-8')
+    git('-C', str(wt), 'add', '--', name)
+    git('-C', str(wt), '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'ci: bind current issue snapshot', '--', name)
+    final = client.issue(number)
+    if issue_snapshot.encoded(client.repo, number, final, client.spec(final, client.comments(number))) != data:
+        refuse('issue changed while committing snapshot; retain commit and retry')
 
 
 def branch_exists(ref):
@@ -655,6 +703,7 @@ def main():
             refuse(f'uncommitted changes in {wt}; preserve and commit them first')
         if int(git('-C', str(wt), 'rev-list', '--count', 'origin/main..HEAD')) == 0:
             refuse('no implementation commits over origin/main')
+        commit_issue_snapshot(wt, client, n)
         # Normal push only: CI retries must never overwrite another writer.
         git('-C', str(wt), 'push', '-u', 'origin', f'HEAD:refs/heads/{branch}')
         if pr is None:
