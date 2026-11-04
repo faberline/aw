@@ -65,6 +65,20 @@ jobs:
         env:
           CONTROL_PYTHON: ${{ runner.temp }}/native-merge-controls/bin/python
         run: |
-          "$CONTROL_PYTHON" -c 'import sys,unittest; s=unittest.TestSuite([unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-ci/tests"), unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-work/tests"), unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-loop/tests"), unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-plan/tests"), unittest.defaultTestLoader.discover("scripts/security/tests", top_level_dir="scripts/security/tests")]); n=s.countTestCases(); r=unittest.TextTestRunner(verbosity=2).run(s); sys.exit(0 if n > 0 and r.wasSuccessful() and not r.skipped else 1)'
+          "$CONTROL_PYTHON" -c 'import sys,unittest; s=unittest.TestSuite([unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-ci/tests"), unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-work/tests"), unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-loop/tests"), unittest.defaultTestLoader.discover("plugins/faberline/skills/issue-plan/tests"), unittest.defaultTestLoader.discover("scripts/security/tests", top_level_dir="scripts/security/tests"), unittest.defaultTestLoader.discover("scripts/gke-test/tests", top_level_dir="scripts/gke-test/tests")]); n=s.countTestCases(); r=unittest.TextTestRunner(verbosity=2).run(s); sys.exit(0 if n > 0 and r.wasSuccessful() and not r.skipped else 1)'
+      - name: Verify protected gateway and reconnect on Linux
+        run: |
+          docker run --rm --pull=always --network=none --read-only --init \
+            --user=65532:65532 --cap-drop=ALL --security-opt=no-new-privileges \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/scripts/gke-test/trusted_proxy.py,dst=/trusted/trusted_proxy.py,readonly" \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/scripts/gke-test/trusted_gateway.py,dst=/trusted/trusted_gateway.py,readonly" \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/scripts/gke-test/tests/fixtures/fake-kubectl,dst=/usr/local/bin/kubectl,readonly" \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/scripts/gke-test/tests/fixtures/proxy-linux-integration.py,dst=/trusted/integration.py,readonly" \
+            --entrypoint python docker.io/library/python@sha256:7bec7ddcddeff7975d6ba9b4be7dd6f6b2f55e7491539145e2978f7f97ce9144 \
+            -I -S /trusted/integration.py
+      - name: Verify dedicated network and live event barriers
+        env:
+          CONTROL_PYTHON: ${{ runner.temp }}/native-merge-controls/bin/python
+        run: '"$CONTROL_PYTHON" -B scripts/gke-test/tests/fixtures/network-docker-integration.py'
       - name: Record the actual clean tested source
         run: python3 plugins/faberline/skills/issue-ci/scripts/control_source.py

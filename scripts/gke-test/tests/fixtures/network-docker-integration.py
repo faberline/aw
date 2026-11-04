@@ -1,0 +1,114 @@
+"""Exercise protected Docker network barriers on an ephemeral CI runner."""
+import importlib.util
+import json
+from pathlib import Path
+import re
+import secrets
+import subprocess
+
+ROOT = Path(__file__).resolve().parents[2]
+DOCKER = '/usr/bin/docker'
+IMAGE = 'docker.io/library/python@sha256:7bec7ddcddeff7975d6ba9b4be7dd6f6b2f55e7491539145e2978f7f97ce9144'
+nonce = secrets.token_hex(16)
+name = 'aw-protected-' + nonce
+resources = []
+network_id = None
+stream = None
+
+
+def call(*args):
+    return subprocess.run([DOCKER, *args], check=True, capture_output=True, text=True, timeout=60).stdout.strip()
+
+
+def identifier(value):
+    if not re.fullmatch(r'[0-9a-f]{64}', value): raise ValueError('invalid Docker identity')
+    return value
+
+
+def load(module):
+    spec = importlib.util.spec_from_file_location('integration_' + module, ROOT / (module + '.py'))
+    result = importlib.util.module_from_spec(spec); spec.loader.exec_module(result)
+    return result
+
+
+def inspect_container(container_id):
+    return json.loads(call('inspect', container_id))[0]
+
+
+def create(role, network):
+    try:
+        container_id = identifier(call('create', '--pull=never', '--init', '--read-only',
+            '--user=65532:65532', '--cap-drop=ALL', '--security-opt=no-new-privileges',
+            '--ipc=private', '--cgroupns=private', '--network=' + network,
+            '--name=' + name + '-' + role, '--label=faberline.dev/protected-network=' + nonce,
+            '--label=faberline.dev/protected-role=' + role, '--entrypoint=python', IMAGE,
+            '-c', 'import time; time.sleep(120)'))
+        resources.append((container_id, role))
+        return container_id
+    except BaseException as error:
+        raise RuntimeError('container creation is uncertain; discard runner') from error
+
+
+try:
+    try:
+        network_id = identifier(call('network', 'create', '--driver=bridge',
+                                     '--label=faberline.dev/protected-network=' + nonce, name))
+    except BaseException as error:
+        raise RuntimeError('network creation is uncertain; discard runner') from error
+    sidecar = create('sidecar', name); call('start', sidecar)
+    test = create('test', name)
+    events = load('trusted_event_stream')
+    # A process start does not prove Docker subscribed. Retry the setup only,
+    # each time with a fresh marker identity, until its connect is observed.
+    for attempt in range(3):
+        marker = create('marker' + str(attempt), 'bridge'); call('start', marker)
+        stream = events.NetworkEventStream(DOCKER, network_id, marker, test)
+        call('network', 'connect', network_id, marker)
+        try:
+            stream.wait_count(1, 10)
+        except TimeoutError:
+            stream.close(); stream = None
+            call('network', 'disconnect', network_id, marker)
+            continue
+        call('network', 'disconnect', network_id, marker); stream.wait_count(2, 15)
+        break
+    else:
+        raise RuntimeError('Docker event subscription barrier did not establish')
+    call('start', test); stream.wait_count(3, 15)
+    topology = load('trusted_network')
+    network = json.loads(call('network', 'inspect', network_id))[0]
+    snapshot = topology.verify_topology(network, inspect_container(sidecar), inspect_container(test),
+        name=name, network_id=network_id, nonce=nonce, sidecar_id=sidecar, test_id=test,
+        sidecar_image=IMAGE, test_image=IMAGE)
+    if snapshot['sidecar']['ip'] == snapshot['test']['ip']: raise ValueError('network namespaces are not isolated')
+    call('stop', '--time=5', test); stream.wait_count(4, 15)
+    call('network', 'connect', network_id, marker); stream.wait_count(5, 15)
+    call('network', 'disconnect', network_id, marker); stream.wait_count(6, 15)
+    stream.finish()
+finally:
+    errors = []
+    if stream is not None:
+        try: stream.close()
+        except Exception as error: errors.append(error)
+    for container_id, role in reversed(resources):
+        try:
+            detail = inspect_container(container_id)
+            labels = detail.get('Config', {}).get('Labels') or {}
+            if (detail.get('Id') != container_id or detail.get('Name') != '/' + name + '-' + role
+                    or labels.get('faberline.dev/protected-network') != nonce
+                    or labels.get('faberline.dev/protected-role') != role):
+                raise RuntimeError('refuse to remove a foreign container')
+            call('rm', '--force', container_id)
+        except Exception as error: errors.append(error)
+    if network_id is not None:
+        try:
+            detail = json.loads(call('network', 'inspect', network_id))[0]
+            if (detail.get('Id') != network_id or detail.get('Name') != name
+                    or (detail.get('Labels') or {}).get('faberline.dev/protected-network') != nonce
+                    or detail.get('Containers')):
+                raise RuntimeError('refuse to remove a foreign or occupied network')
+            call('network', 'rm', network_id)
+        except Exception as error: errors.append(error)
+    if errors: raise RuntimeError('isolated Docker fixture cleanup failed; discard runner') from errors[0]
+
+print('isolated Docker network topology and live event barriers: PASS')
