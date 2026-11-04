@@ -56,7 +56,7 @@ def main():
     repo = os.environ['GITHUB_REPOSITORY']
     operation = os.environ.get('INPUT_OPERATION', 'handoff')
     if operation not in ('validate', 'qualify', 'handoff', 'readiness', 'verify-readiness', 'index', 'verify-index',
-                         'planned-execution', 'verify-planned-execution',
+                         'planned-execution', 'verify-planned-execution', 'planned-produce',
                          'development-preflight', 'development-plan', 'development-report', 'release-preflight'):
         raise RuntimeError('unknown issue-ci operation')
     if operation == 'release-preflight':
@@ -145,6 +145,20 @@ def main():
         if not re.fullmatch('[1-9][0-9]*', run_id):
             raise RuntimeError('index must run in its configured GitHub producer')
         index.emit(index.produce(ci, repo, load_document, os.environ['AW_ACTION_REF'], int(run_id)))
+        return 0
+    if operation == 'planned-produce':
+        planned=ci_module('planned_producer')
+        load_document=lambda: trusted_policy(ci,repo,os.environ.get('INPUT_POLICY','.github/issue-ci-required-gates.json'),metadata=True)
+        document=load_document();run_id=os.environ.get('GITHUB_RUN_ID','');kind=os.environ.get('GITHUB_EVENT_NAME','')
+        if not re.fullmatch('[1-9][0-9]*',run_id) or kind not in ('workflow_run','workflow_dispatch'):
+            raise RuntimeError('planned producer requires its actual configured run')
+        event=ci.strict_json_loads(Path(os.environ.get('GITHUB_EVENT_PATH','')).read_bytes())
+        if kind=='workflow_dispatch':
+            branch=ci.api(f'repos/{repo}').get('default_branch')
+            if (not isinstance(branch,str) or os.environ.get('GITHUB_REF')!='refs/heads/'+branch
+                    or os.environ.get('GITHUB_SHA')!=document['source_commit']):
+                raise RuntimeError('reconciliation requires current default branch')
+        planned.emit(planned.produce(ci,repo,load_document,os.environ['AW_ACTION_REF'],int(run_id),kind,event))
         return 0
     if operation in ('planned-execution', 'verify-planned-execution'):
         readiness = ci_module('readiness')

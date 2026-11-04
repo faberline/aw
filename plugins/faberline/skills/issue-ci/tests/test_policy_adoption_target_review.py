@@ -24,7 +24,7 @@ def with_release_sources(rows,root):
     existing={(row['role'],row['path']) for row in rows}
     for role in ('candidate','evaluator'):
         for path in m.RELEASE_FRAMEWORK_SOURCES+tuple(m.FRAMEWORK_ROOT+name for name in
-                ('planned_readiness.py','test_plan.py','acceptance_plan.py')):
+                ('planned_readiness.py','planned_handoff.py','planned_producer.py','test_plan.py','acceptance_plan.py')):
             if (role,path) not in existing:
                 rows.append(dict(role=role,path=path,content=(root/path).read_text()))
                 existing.add((role,path))

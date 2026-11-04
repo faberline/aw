@@ -265,13 +265,16 @@ def pin_proof(ci, repo, pr, config, producer_ref, evaluator_sha, producer_only=F
     return [proof[key] for key in sorted(proof)]
 
 
-def producer_identity(ci, repo, config, run_id, completed=False):
+def producer_identity(ci, repo, config, run_id, completed=False, *, allowed_events=('workflow_run',)):
     spec = config['review_readiness']['producer']
+    need(isinstance(allowed_events,tuple) and bool(allowed_events)
+         and set(allowed_events)<={'workflow_run','workflow_dispatch'},
+         'untrusted_producer','explicit trusted producer events required')
     meta = ci.api(f'repos/{repo}')
     run = ci.api(f'repos/{repo}/actions/runs/{run_id}')
     need(type(run_id) is int and run_id > 0 and run.get('id') == run_id
          and run.get('workflow_id') == spec['id'] and run.get('path') == spec['path']
-         and run.get('event') == 'workflow_run'
+         and run.get('event') in allowed_events
          and run.get('head_repository', {}).get('full_name') == repo
          and run.get('head_branch') == meta['default_branch']
          and HEX.fullmatch(run.get('head_sha', ''))
@@ -290,11 +293,11 @@ def producer_identity(ci, repo, config, run_id, completed=False):
              'producer_not_success', 'producer job must finish successfully')
     return dict(repo=repo, workflow_id=spec['id'], path=spec['path'], definition_sha=spec['definition_sha'],
                 run_id=run_id, run_attempt=run['run_attempt'], head=run['head_sha'],
-                job_id=job['id'], job=spec['job'], event='workflow_run', url=run['html_url'])
+                job_id=job['id'], job=spec['job'], event=run['event'], url=run['html_url'])
 
 
-def assertion_evidence(repo, pr, run, job, check, rule, job_rules=None):
-    log = job_log(repo, job['id'])
+def assertion_evidence(repo, pr, run, job, check, rule, job_rules=None, *, authenticated_log=None):
+    log = job_log(repo, job['id']) if authenticated_log is None else authenticated_log
     rules = {check: rule} if job_rules is None else job_rules
     need(isinstance(rules, dict) and check in rules and rules[check] == rule,
          'invalid_assertion_contract', 'job check inventory is invalid')

@@ -83,6 +83,12 @@ def validate_config(config):
         if config.get('completion_owner') != 'local' or development_policy is None:
             raise RuntimeError('local review feedback requires local completion and development pipeline')
         development.local_review_reviewers(config)
+    if 'planned_ci_qualification' in config:
+        if (config['planned_ci_qualification'] != {'version': 1}
+                or type(config['planned_ci_qualification'].get('version')) is not int
+                or config.get('completion_owner') != 'local' or config.get('lifecycle_mode') != 'full'
+                or 'planner_acceptance_mapping' not in config or 'review_readiness' not in config):
+            raise RuntimeError('planned CI qualification requires explicit full local planner and readiness contracts')
     return config
 
 
@@ -330,8 +336,9 @@ def untrusted_failure_snapshots(repo, sha, config):
     return results
 
 
-def process_head(args, config, check_event=True, before_mutation=None, development_config=None):
+def process_head(args, config, check_event=True, before_mutation=None, development_config=None, qualifier=None):
     source_config = config
+    qualify_current = qualifier or qualify_config
     review_config = development_config if development_config is not None else config
     if development_config is not None:
         validate_config(development_config)
@@ -363,7 +370,7 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
     if not re.search(rf'(?im)^Closes #{issue}\s*$', pr.get('body') or ''):
         raise RuntimeError('PR body must explicitly link its branch issue with Closes #N')
     if 'qualification' in config:
-        config = qualify_config(args.repo, pr, config)
+        config = qualify_current(args.repo, pr, config)
     snapshots = snapshot(args.repo, args.head, config)
     state, reasons, evidence = evaluate_policy(config, snapshots)
     negative_snapshots = untrusted_failure_snapshots(args.repo, args.head, config)
@@ -398,7 +405,7 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
         if snapshot(args.repo, args.head, config) != snapshots:
             raise RuntimeError('CI runs changed during read-only qualification')
         current_pr = api(pr_path)
-        if qualify_config(args.repo, current_pr, source_config) != config:
+        if qualify_current(args.repo, current_pr, source_config) != config:
             raise RuntimeError('PR applicability changed during read-only qualification')
         final_pr = api(pr_path)
         if (final_pr['state'] != 'open' or final_pr['head']['sha'] != args.head
@@ -550,7 +557,7 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
     if 'qualification' in source_config:
         current_pr = api(pr_path)
         if (current_pr['state'] != 'open' or current_pr['head']['sha'] != args.head
-                or qualify_config(args.repo, current_pr, source_config) != config):
+                or qualify_current(args.repo, current_pr, source_config) != config):
             raise RuntimeError('PR applicability changed during evaluation; no label mutation')
     if phase == 'pending':
         # Snapshot pagination can outlast a lifecycle transition. Recheck after
@@ -602,6 +609,37 @@ def reconcile(args, config):
     if errors:
         raise RuntimeError('; '.join(errors))
     return 0
+
+
+def planned_handoff_module():
+    spec=importlib.util.spec_from_file_location('issue_ci_planned_handoff',Path(__file__).with_name('planned_handoff.py'))
+    value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);return value
+
+
+def planned_aware_qualify(repo,pr,config,load_document,evaluator,producer_wake,job_log_cache=None):
+    """Retain ordinary holds when this wake lacks exact verified evidence."""
+    from types import SimpleNamespace
+    ordinary=qualify_config(repo,pr,config)
+    valid_wake=(producer_wake=='discover' or isinstance(producer_wake,tuple) and len(producer_wake)==2
+                and all(type(value) is int and value>0 for value in producer_wake))
+    if (config.get('planned_ci_qualification')!={'version':1} or not valid_wake
+            or ordinary.get('_qualification_context',{}).get('issues')!=['linked issue has no reviewed contract']):
+        return ordinary
+    planned=planned_handoff_module()
+    adapter=SimpleNamespace(api=api,pages=pages,qualify_config=qualify_config,validate_config=validate_config,
+                            qualification_module=qualification_module,development_module=development_module,
+                            snapshot=snapshot,evaluate_evidence=evaluate_evidence,
+                            _planned_job_log_cache={} if job_log_cache is None else job_log_cache)
+    try:
+        if producer_wake=='discover':
+            receipt=planned.discover(adapter,repo,pr['number'],pr['head']['sha'],load_document,evaluator)
+        else:
+            receipt=planned.receipt_for(adapter,repo,pr['number'],pr['head']['sha'],load_document,evaluator,producer_wake[0])
+        if producer_wake!='discover' and receipt['payload']['producer']['run_attempt']!=producer_wake[1]:
+            raise RuntimeError('producer wake attempt moved')
+        return planned.qualify(adapter,repo,pr['number'],pr['head']['sha'],load_document,evaluator,receipt)
+    except (RuntimeError,subprocess.CalledProcessError,OSError,ValueError,KeyError,TypeError):
+        return ordinary
 
 
 def development_report(repo, document, evaluator, run_id):
@@ -662,10 +700,40 @@ def development_report(repo, document, evaluator, run_id):
         raise RuntimeError('development reporter requires separate source-PR-comment and issue-label permissions')
     if workflow.get('concurrency')!={'group':'issue-ci-handoff','cancel-in-progress':'false'}:
         raise RuntimeError('development reporter must retain the single-writer mutex')
+    if config.get('planned_ci_qualification')=={'version':1}:
+        import importlib.util
+        module_spec=importlib.util.spec_from_file_location('reporter_readiness',Path(__file__).with_name('readiness.py'))
+        readiness=importlib.util.module_from_spec(module_spec);module_spec.loader.exec_module(readiness)
+        producer_spec=config['review_readiness']['producer']
+        producer_source=readiness.source_bytes(SimpleNamespace(api=api),repo,producer_spec['path'],source,
+                                               producer_spec['definition_sha'])
+        producer_name=development_module().yaml_document(producer_source).get('name')
+        trigger=workflow.get('on',{}).get('workflow_run',{})
+        if (not isinstance(producer_name,str) or not producer_name.strip() or not isinstance(trigger,dict)
+                or not isinstance(trigger.get('workflows'),list) or producer_name not in trigger['workflows']
+                or 'completed' not in trigger.get('types',[])):
+            raise RuntimeError('development reporter must subscribe to the planned producer completion')
     results=[];original_api=globals()['api']
     def current_source():
         if original_api(f'{root}/commits/{quote(default,safe="")}').get('sha')!=source:
             raise RuntimeError('default source moved before failure reporting')
+    producer_wake=None
+    if config.get('planned_ci_qualification')=={'version':1} and event=='workflow_run':
+        wake=strict_json_loads(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())
+        origin=wake.get('workflow_run',{})
+        if (wake.get('action')=='completed' and origin.get('status')=='completed'
+                and origin.get('conclusion')=='success' and type(origin.get('id')) is int and origin['id']>0
+                and type(origin.get('run_attempt')) is int and origin['run_attempt']>0
+                and origin.get('path')==config['review_readiness']['producer']['path']
+                and origin.get('head_repository',{}).get('full_name')==repo):
+            producer_wake=(origin['id'],origin['run_attempt'])
+    def load_document():
+        import copy
+        current_source()
+        return copy.deepcopy(document)
+    job_log_cache={}
+    def qualify_current(target_repo,pull,target_config):
+        return planned_aware_qualify(target_repo,pull,target_config,load_document,evaluator,producer_wake,job_log_cache)
     current_source()
     pulls=pages(f'{root}/pulls?state=open')
     for pull in pulls:
@@ -698,7 +766,7 @@ def development_report(repo, document, evaluator, run_id):
                     if (current.get('state')!='open' or current.get('head',{}).get('sha')!=head
                             or qualification_module().linked_issue(current)!=issue):
                         raise RuntimeError('PR moved before the done label handoff')
-                    scoped=qualify_config(repo,current,config)
+                    scoped=qualify_current(repo,current,config)
                     if evaluate_policy(scoped,snapshot(repo,head,scoped))[0]!='done':
                         raise RuntimeError('all necessary current-input CI must pass before the done label')
                     if 'local_review_feedback' in config:
@@ -726,6 +794,9 @@ def development_report(repo, document, evaluator, run_id):
                                 development_module().read_issue_target(SimpleNamespace(api=original_api),repo,issue))):
                         raise RuntimeError('canonical issue changed before development handoff')
                 current_source()
+                if (not links_only and method=='POST' and path==f'{root}/issues/{issue}/labels'
+                        and data=={'labels':['done']} and qualify_current(repo,current,config)!=scoped):
+                    raise RuntimeError('planned or ordinary qualification changed immediately before done')
             return original_api(path,method,data)
         try:
             globals()['api']=failure_api
@@ -735,7 +806,7 @@ def development_report(repo, document, evaluator, run_id):
                     development_module().report_missing_issue(SimpleNamespace(api=failure_api,pages=pages),repo,pull,current_source)
             elif not links_only:
                 args=argparse.Namespace(repo=repo,pr=number,head=head,apply=True,run_id=None)
-                process_head(args,config,check_event=False,before_mutation=current_source)
+                process_head(args,config,check_event=False,before_mutation=current_source,qualifier=qualify_current)
             results.append(dict(pr=number,head=head,state='processed'))
         except (RuntimeError,subprocess.CalledProcessError,OSError,ValueError,KeyError,TypeError)as error:
             results.append(dict(pr=number,head=head,state='held',reason=str(error)))
@@ -753,18 +824,38 @@ def main():
     parser.add_argument('--head')
     parser.add_argument('--run-id', type=int)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--planned-review', action='store_true', help='read-only planned evidence discovery')
     parser.add_argument('--reconcile', action='store_true', help='trusted wake: reconcile every managed current PR head')
     args = parser.parse_args()
     if not re.fullmatch(r'[\w.-]+/[\w.-]+', args.repo):
         raise RuntimeError('invalid repository')
     config = load_config(args.config)
+    qualifier = None
+    if args.planned_review:
+        if args.apply or args.reconcile or args.run_id is not None:
+            raise RuntimeError('planned review is read-only')
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('review_trusted_action',Path(__file__).with_name('action.py'))
+        action=importlib.util.module_from_spec(spec);spec.loader.exec_module(action)
+        from types import SimpleNamespace
+        adapter=SimpleNamespace(api=api,strict_json_loads=strict_json_loads)
+        document=lambda:action.trusted_policy(adapter,args.repo,'.github/issue-ci-required-gates.json',metadata=True)
+        trusted=document()
+        if trusted['config']!=config or config.get('planned_ci_qualification')!={'version':1}:
+            raise RuntimeError('planned review requires the exact opted-in trusted policy')
+        sources=config['review_readiness']['sources'].values()
+        refs={source['ref'] for source in sources if source['repo']=='faberline/aw'
+              and source['path']=='.github/actions/issue-ci/action.yml'}
+        if len(refs)!=1:raise RuntimeError('one reviewed AW evaluator is required')
+        evaluator=refs.pop();cache={}
+        qualifier=lambda repo,pr,policy:planned_aware_qualify(repo,pr,policy,document,evaluator,'discover',cache)
     if args.reconcile:
         if args.run_id is None or args.pr is not None or args.head is not None:
             raise RuntimeError('--reconcile requires --run-id and scans PRs itself')
         return reconcile(args, config)
     if args.pr is None or not re.fullmatch('[0-9a-f]{40}', args.head or ''):
         raise RuntimeError('--pr and valid --head required')
-    return process_head(args, config)
+    return process_head(args, config, qualifier=qualifier)
 
 
 if __name__ == '__main__':

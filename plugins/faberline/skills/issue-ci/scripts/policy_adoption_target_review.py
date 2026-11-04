@@ -249,6 +249,24 @@ def framework_sources(api,candidate_ref,evaluator_ref,include_recovery=False):
                 raw=content.encode('utf-8')
                 blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
                 result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
+        # Newer immutable revisions add these modules. Older refs need no file.
+        handoff=next(row for row in result if row['role']==role and row['path']==FRAMEWORK_ROOT+'handoff.py')
+        handoff_tree=ast.parse(handoff['content'])
+        optional=[]
+        if any(isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute)
+               and node.func.attr=='with_name' and node.args and isinstance(node.args[0],ast.Constant)
+               and node.args[0].value=='planned_handoff.py' for node in ast.walk(handoff_tree)):
+            optional.append('planned_handoff.py')
+        if any(isinstance(node,ast.Call) and isinstance(node.func,ast.Name)
+               and node.func.id=='ci_module' and node.args and isinstance(node.args[0],ast.Constant)
+               and node.args[0].value=='planned_producer' for node in ast.walk(action_tree)):
+            optional.append('planned_producer.py')
+        for name in optional:
+            path=FRAMEWORK_ROOT+name
+            content=a.review.blob(api,a.GRANTS_REPO,path,ref)
+            raw=content.encode('utf-8')
+            blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+            result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
         controllers=[row for row in result if row['role']==role and row['path']==FRAMEWORK_ROOT+'native_merge.py']
         need(len(controllers)==1,'target_framework_dependency_missing')
         try:
