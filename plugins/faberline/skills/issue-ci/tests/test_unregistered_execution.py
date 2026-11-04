@@ -61,7 +61,10 @@ class UnregisteredExecutionTests(unittest.TestCase):
         self.assertEqual(result['qualification'], 'not_evaluated')
         self.assertEqual(result['plan']['selected'], sorted(self.policy['qualification']['checks']))
         scoped = fixtures.q.scoped_config(self.policy, self.pull, self.files, self.definitions, self.issue)
-        self.assertNotEqual(fixtures.ci.evaluate_policy(scoped, fixtures.base.evidence(scoped))[0], 'done')
+        status, reasons, _ = fixtures.ci.evaluate_policy(scoped, fixtures.base.evidence(scoped))
+        self.assertEqual(status, 'pending')
+        self.assertTrue(any('linked issue has no reviewed contract' in reason for reason in reasons))
+        self.assertTrue(any('gate infrastructure change requires reviewed policy update:' in reason for reason in reasons))
 
 
 if __name__ == '__main__': unittest.main()
