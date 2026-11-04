@@ -1,11 +1,13 @@
 """Exercise protected Docker network barriers on an ephemeral CI runner."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import secrets
 import select
 import subprocess
+import sys
 import tempfile
 from unittest.mock import patch
 
@@ -161,6 +163,15 @@ try:
     topology.verify_topology(network, inspect_container(sidecar), inspect_container(test),
         name=name, network_id=network_id, nonce=nonce, sidecar_id=sidecar, test_id=test,
         sidecar_image=IMAGE, test_image=IMAGE)
+    pid = inspect_container(test).get('State', {}).get('Pid')
+    if type(pid) is not int or pid <= 1: raise ValueError('fixture container host PID is invalid')
+    probe = [sys.executable, str(ROOT / 'tests/fixtures/check-root-mounts.py'), str(pid),
+             str(wrapper), str(gate), fixture_kubeconfig]
+    if os.geteuid() != 0: probe = ['sudo', '-n'] + probe
+    subprocess.run(probe, check=True, timeout=30,
+                   env={'PATH': '/usr/bin:/bin', 'HOME': str(context), 'LC_ALL': 'C'})
+    if inspect_container(test).get('State', {}).get('Pid') != pid:
+        raise ValueError('fixture container host PID changed')
     if started.poll() is not None or select.select([started.stdout], [], [], 1)[0]:
         raise RuntimeError('suite produced output or stopped before protected release')
     start_gate.release()

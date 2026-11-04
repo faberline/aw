@@ -18,6 +18,7 @@ on:
       - "plugins/faberline/skills/issue-loop/**"
       - "plugins/faberline/skills/issue-plan/**"
       - "scripts/security/tests/**"
+      - "scripts/gke-test/**"
   push:
     branches: [codex/claude-native-automerge]
     paths:
@@ -37,6 +38,7 @@ on:
       - "plugins/faberline/skills/issue-loop/**"
       - "plugins/faberline/skills/issue-plan/**"
       - "scripts/security/tests/**"
+      - "scripts/gke-test/**"
 permissions:
   contents: read
 concurrency:
