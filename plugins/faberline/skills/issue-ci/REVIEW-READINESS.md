@@ -114,7 +114,8 @@ required before activation.
 ## Nonzero assertions are evidence, not a green check name
 
 After actually running and verifying the declared assertions, the immutable/
-protected gate enforcer emits exactly one log record in the selected job:
+protected gate enforcer emits exactly one log record per selected check in its
+job. Several checks can share a job; each keeps its own roster and record:
 
 ```text
 AW_ASSERTIONS_V1 {"version":1,"repo":"owner/repo","pr":123,"head":"<40 hex>","base":"<40 hex>","run_id":456,"run_attempt":1,"job_id":789,"check":"docs-copy","assertions":{"section-copy":"passed","links":"passed"}}
@@ -132,9 +133,13 @@ fixtures must be independently reviewed in the consumer pilot. This change
 provides no six-test execution result for Tape and no generic shell-test runner.
 
 The collector downloads only the authenticated current-attempt job's GitHub
-logs, accepts GitHub timestamp prefixes, requires one bound record with the
-exact configured roster, and checks every value is passed. Zero/missing/duplicate
-or mismatched records refuse ready. Jobs must also be completed success. There
+logs, accepts GitHub timestamp prefixes, requires one bound record per check
+with its exact configured roster, and checks every value is passed. Duplicate
+check records or records for checks outside that job refuse ready, including
+when the records use different protocol versions. Every record the job emits,
+including one for an unselected check, must have a reviewed roster, match the
+current run and pass every assertion. Zero/missing/duplicate or
+mismatched records refuse ready. Jobs must also be completed success. There
 is no artifact input, log URL override, PR config, PR code execution, or new
 credential. A PR artifact cannot supply assertion authority. Correct trusted
 enforcement must prevent PR test output spoofing (e.g. extra markers make the

@@ -102,6 +102,51 @@ class Harness:
 
 
 class ReadinessTests(unittest.TestCase):
+    def grouped(self):
+        h=Harness()
+        h.config['qualification']['checks']['unit']['job']='policy'
+        docs=h.config['qualification']['rules'][1]
+        docs['require']=['unit'];docs['exempt'].pop('unit')
+        policy=h.assertion()
+        unit={**policy,'check':'unit','assertions':{'unit-assertion':'passed'}}
+        h.logs[101]=r.ASSERTION_MARKER+json.dumps(policy)+'\n'+r.ASSERTION_MARKER+json.dumps(unit)
+        return h,policy,unit
+
+    def test_grouped_job_proves_each_selected_check_with_its_own_roster(self):
+        h,_,_=self.grouped()
+        payload=h.produce()['payload']
+        self.assertEqual(payload['status'],'ready')
+        self.assertEqual({item['check'] for item in payload['assertions']},{'policy','unit'})
+        self.assertEqual(h.writes,[])
+
+    def test_grouped_job_missing_duplicate_foreign_or_failed_record_never_passes(self):
+        for problem in ('missing','duplicate','mixed-version-duplicate','foreign','failed','stale'):
+            h,policy,unit=self.grouped()
+            if problem=='missing': log=r.ASSERTION_MARKER+json.dumps(policy)
+            elif problem=='duplicate': log=h.logs[101]+'\n'+r.ASSERTION_MARKER+json.dumps(unit)
+            elif problem=='mixed-version-duplicate':
+                value={k:v for k,v in unit.items() if k!='job_id'};value['version']=2
+                log=h.logs[101]+'\n'+r.ASSERTION_V2_MARKER+json.dumps(value)
+            elif problem=='foreign': log=h.logs[101]+'\n'+r.ASSERTION_MARKER+json.dumps({**unit,'check':'not-in-job'})
+            else:
+                if problem=='failed': unit['assertions']['unit-assertion']='failed'
+                if problem=='stale': unit['run_attempt']=1
+                log=r.ASSERTION_MARKER+json.dumps(policy)+'\n'+r.ASSERTION_MARKER+json.dumps(unit)
+            h.logs[101]=log
+            with self.subTest(problem=problem): self.assertEqual(h.produce()['payload']['status'],'fail')
+
+    def test_unselected_grouped_records_cannot_hide_failed_stale_or_unknown_evidence(self):
+        for problem in ('failed','stale','empty','unreviewed'):
+            h,policy,unit=self.grouped()
+            docs=h.config['qualification']['rules'][1]
+            docs['require']=[];docs['exempt']['unit']='reviewed docs-only path'
+            if problem=='failed': unit['assertions']['unit-assertion']='failed'
+            if problem=='stale': unit['run_attempt']=1
+            if problem=='empty': unit['assertions']={}
+            if problem=='unreviewed': del h.config['review_readiness']['assertions']['unit']
+            h.logs[101]=r.ASSERTION_MARKER+json.dumps(policy)+'\n'+r.ASSERTION_MARKER+json.dumps(unit)
+            with self.subTest(problem=problem): self.assertEqual(h.produce()['payload']['status'],'fail')
+
     def test_ready_in_failure_only_is_read_only_and_never_done_or_review_pass(self):
         h = Harness(); receipt = h.produce()
         self.assertEqual(receipt['payload']['status'], 'ready')
