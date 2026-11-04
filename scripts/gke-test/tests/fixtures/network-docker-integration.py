@@ -115,6 +115,24 @@ try:
     call('network', 'disconnect', network_id, marker); stream.wait_count(6, 15)
     stream.finish()
     stream.close(); stream = None
+    # Exercise Docker's actual log transport with a synthetic reporter.
+    reporter_code = ('import time;'
+        'print(\'AW_GKE_GATEWAY_V1 {"state":"ready","pid":7,"address":"0.0.0.0","port":7373}\',flush=True);'
+        'print(\'AW_GKE_PROXY_V1 {"state":"ready","generation":1,"pid":8}\',flush=True);'
+        'time.sleep(120)')
+    try:
+        reporter = identifier(call('create', '--pull=never', '--init', '--read-only', '--user=65532:65532',
+            '--cap-drop=ALL', '--security-opt=no-new-privileges', '--ipc=private', '--cgroupns=private',
+            '--network=none', '--name=' + name + '-reporter',
+            '--label=faberline.dev/protected-network=' + nonce, '--label=faberline.dev/protected-role=reporter',
+            '--entrypoint=python', IMAGE, '-c', reporter_code))
+        resources.append((reporter, 'reporter'))
+    except BaseException as error:
+        raise RuntimeError('reporter creation is uncertain; discard runner') from error
+    call('start', reporter)
+    proxy_stream = load('trusted_proxy_stream').ProxyStream(reporter, 7373)
+    try: proxy_stream.wait_observed_ready(15)
+    finally: proxy_stream.close()
     # Exercise the production executor against a synthetic, non-product image.
     # Patching the image regex is confined to this fixture and never affects CI
     # qualification or the production identity rule.
@@ -255,5 +273,6 @@ finally:
     if errors: raise RuntimeError('isolated Docker fixture cleanup failed; discard runner') from errors[0]
 
 print('isolated Docker topology and event barriers: PASS')
+print('synthetic Docker log observation: PASS (readiness may be stale)')
 print('synthetic executor fixture: PASS (not product evidence; event stream not attached)')
 print('synthetic start barrier and its own event stream: PASS (not product evidence)')
