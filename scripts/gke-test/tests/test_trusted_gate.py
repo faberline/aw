@@ -44,6 +44,14 @@ class GateTests(unittest.TestCase):
         with self.assertRaises(ValueError): gate.close()
         os.close(gate.fd)
 
+    def test_failed_empty_verification_cannot_be_retried(self):
+        gate = module.Gate(self.parent)
+        gate.path.chmod(0o644)
+        with self.assertRaises(ValueError): gate.verify_empty()
+        gate.path.chmod(0o444)
+        with self.assertRaises(ValueError): gate.release()
+        os.close(gate.fd)
+
     def test_concurrent_release_allows_exactly_one_writer(self):
         gate = module.Gate(self.parent)
         barrier = threading.Barrier(3)

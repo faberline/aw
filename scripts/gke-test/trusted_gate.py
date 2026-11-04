@@ -64,6 +64,15 @@ class Gate:
             self.released = True
             self.poisoned = False
 
+    def verify_empty(self):
+        with self.lock:
+            if self.released or self.poisoned: raise ValueError('start gate is unavailable')
+            try:
+                self._verify(0)
+            except BaseException:
+                self.poisoned = True
+                raise
+
     def close(self):
         with self.lock:
             if self.fd is None or self.poisoned: raise ValueError('gate is closed or poisoned; discard runner')
