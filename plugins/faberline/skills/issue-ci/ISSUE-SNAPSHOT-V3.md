@@ -17,6 +17,12 @@ issue contracts, including their unresolved blockers and pinned content. This
 does not prove that the issue's own acceptance criteria are met. Independent
 issue review remains required. Existing v1 and v2 behavior stays unchanged.
 
+The shared execution-only planner can run the full trusted roster when a
+valid v3 snapshot still has unresolved required gates. It preserves the
+unresolved reasons and never grants qualification. Callers must obtain the
+snapshot from the exact PR head and verify every trusted workflow definition
+against both frozen commits. Missing or changed snapshots remain blocked.
+
 Adoption needs a protected policy proposal, complete CI and independent
 review. The product adapter must use the pinned controller to load the same
 snapshot and planner specification when it builds its execution plan. Do not

@@ -3,6 +3,7 @@ import copy
 import base64
 import contextlib
 import hashlib
+import importlib.util
 import io
 import json
 import subprocess
@@ -28,6 +29,26 @@ def fixture():
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_unresolved_snapshot_runs_all_tests_without_qualification(self):
+        config, issue = fixture()
+        pull = previous.pull(); pull['draft'] = False
+        definitions = {(previous.base.WORKFLOW, ref): {'sha': previous.base.BLOB}
+                       for ref in (previous.base.HEAD, previous.base.BASE)}
+        spec = importlib.util.spec_from_file_location('v3_execution_plan',
+            previous.base.legacy.SKILLS / 'issue-ci/scripts/test_plan.py')
+        planner = importlib.util.module_from_spec(spec); spec.loader.exec_module(planner)
+        result = planner.execute_unregistered_issue(config, 'o/r', previous.base.HEAD, previous.base.BASE,
+            pull=pull, files=previous.base.files(), issue=issue, definitions=definitions)
+        self.assertEqual(result['plan']['selected'], sorted(config['qualification']['checks']))
+        self.assertEqual(result['qualification'], 'not_evaluated')
+        self.assertIn('linked issue has unresolved required gates', result['unresolved'])
+        scoped = q.scoped_config(config, pull, previous.base.files(), definitions, issue)
+        self.assertEqual(ci.evaluate_policy(scoped, previous.base.evidence(scoped))[0], 'pending')
+        issue['_aw_issue_spec'] = 'changed'
+        with self.assertRaises(ValueError):
+            planner.execute_unregistered_issue(config, 'o/r', previous.base.HEAD, previous.base.BASE,
+                pull=pull, files=previous.base.files(), issue=issue, definitions=definitions)
+
     def test_full_roster_even_for_docs(self):
         config, issue = fixture()
         plan = q.select(config, previous.pull(), previous.base.files('docs/guide.md'), issue)
