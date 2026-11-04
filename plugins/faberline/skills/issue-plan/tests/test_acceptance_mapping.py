@@ -82,7 +82,7 @@ class PlannerAcceptanceMappingTests(unittest.TestCase):
         self.assertEqual(client.writes, 1)
 
     def test_existing_mapping_rechecks_policy_issue_and_comment_inventory(self):
-        for change in ('policy','issue','comments'):
+        for change in ('policy','issue','comments','claimed'):
             client,source=self.publication_fixture()
             mapping.publish(client,7,self.mapping,source)
             reads=0
@@ -93,6 +93,7 @@ class PlannerAcceptanceMappingTests(unittest.TestCase):
                     if change=='policy': return {**source(),'source_commit':'b'*40}
                     if change=='issue': client.row['title']='changed'
                     if change=='comments': client.rows.append({'id':13,'body':'changed'})
+                    if change=='claimed': client.row['labels']=[{'name':'doing'}]
                 return source()
             with self.subTest(change=change),self.assertRaises(ValueError):
                 mapping.publish(client,7,self.mapping,changed_source)
