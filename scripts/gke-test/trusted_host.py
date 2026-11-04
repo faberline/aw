@@ -33,7 +33,7 @@ def run_suite(image, suite_filter, expected, environment, fixed_environment, *, 
     """
     if (not isinstance(image, str)
             or not re.fullmatch(r'ghcr\.io/faberline/[a-z0-9._-]+@sha256:[0-9a-f]{64}', image)
-            or not isinstance(suite_filter, str) or not re.fullmatch(r'[A-Za-z0-9_:.-]{1,256}', suite_filter)
+            or not isinstance(suite_filter, str) or suite_filter.startswith('-') or not re.fullmatch(r'[A-Za-z0-9_:.-]{1,256}', suite_filter)
             or not isinstance(expected, list) or not expected
             or any(not isinstance(name, str) or not name.startswith(suite_filter) for name in expected)
             or not isinstance(environment, dict) or not REQUIRED_ENV <= set(environment) <= ALLOWED_ENV

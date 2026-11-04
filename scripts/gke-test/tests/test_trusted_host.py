@@ -59,6 +59,8 @@ class HostTests(unittest.TestCase):
 
         for port in (None, True, 0, 65536):
             with self.subTest(gateway_port=port), self.assertRaises(ValueError): self.run_suite(gateway_port=port)
+        with self.assertRaises(ValueError):
+            self.run_suite(suite_filter='--nocapture', expected=['--nocapture'])
         self.env['E2E_ENDPOINT'] = 'http://172.18.0.2'
         with self.assertRaises(ValueError): self.run_suite()
 

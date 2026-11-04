@@ -92,11 +92,13 @@ class ContainerTests(unittest.TestCase):
 
     def test_untrusted_command_or_config_fails(self):
         for kwargs in ({'image': 'ghcr.io/faberline/lumen:latest'}, {'network': 'bad'},
-                       {'nonce': 'bad'}, {'kubeconfig': '/tmp/a,b'}, {'suite': 'x;sh'}):
+                       {'nonce': 'bad'}, {'kubeconfig': '/tmp/a,b'}, {'suite': 'x;sh'}, {'suite': '--nocapture'}):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 self.build([BINARY, '--ignored', '--test-threads=1', SUITE], self.env, **kwargs)
         with self.assertRaises(ValueError):
             self.build([BINARY, '--nocapture', SUITE], self.env)
+        with self.assertRaises(ValueError):
+            self.build([BINARY, '--ignored', '--test-threads=1', '--nocapture'], self.env, suite='--nocapture')
         with self.assertRaises(ValueError):
             self.build([BINARY, '--ignored', '--test-threads=1', SUITE], {**self.env, 'GITHUB_TOKEN': 'no'})
 

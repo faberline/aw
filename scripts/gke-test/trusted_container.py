@@ -58,7 +58,7 @@ def command(docker, image, network, kubeconfig, suite, argv, environment, nonce)
             or not isinstance(image, str) or not re.fullmatch(IMAGE, image)
             or not isinstance(network, str) or not re.fullmatch(r'aw-protected-[0-9a-f]{32}', network)
             or not isinstance(nonce, str) or not re.fullmatch(r'[0-9a-f]{32}', nonce)
-            or not isinstance(suite, str) or not re.fullmatch(r'[A-Za-z0-9_:.-]{1,256}', suite)
+            or not isinstance(suite, str) or suite.startswith('-') or not re.fullmatch(r'[A-Za-z0-9_:.-]{1,256}', suite)
             or not isinstance(environment, dict) or not set(environment) <= ENV
             or any(not isinstance(v, str) or '\0' in v or '\n' in v for v in environment.values())):
         raise ValueError('invalid protected container identity')
