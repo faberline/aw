@@ -7,7 +7,6 @@ import re
 import secrets
 import select
 import subprocess
-import sys
 import tempfile
 from unittest.mock import patch
 
@@ -165,7 +164,9 @@ try:
         sidecar_image=IMAGE, test_image=IMAGE)
     pid = inspect_container(test).get('State', {}).get('Pid')
     if type(pid) is not int or pid <= 1: raise ValueError('fixture container host PID is invalid')
-    probe = [sys.executable, str(ROOT / 'tests/fixtures/check-root-mounts.py'), str(pid),
+    # The pinned portable control Python may omit Linux pidfd bindings. The
+    # runner's system Python is used for this Linux capability probe only.
+    probe = ['/usr/bin/python3', str(ROOT / 'tests/fixtures/check-root-mounts.py'), str(pid),
              str(wrapper), str(gate), fixture_kubeconfig]
     if os.geteuid() != 0: probe = ['sudo', '-n'] + probe
     subprocess.run(probe, check=True, timeout=30,
