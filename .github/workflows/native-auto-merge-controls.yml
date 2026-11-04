@@ -74,6 +74,7 @@ jobs:
             --user=65532:65532 --cap-drop=ALL --security-opt=no-new-privileges \
             --mount "type=bind,src=$GITHUB_WORKSPACE/scripts/gke-test/trusted_proxy.py,dst=/trusted/trusted_proxy.py,readonly" \
             --mount "type=bind,src=$GITHUB_WORKSPACE/scripts/gke-test/trusted_gateway.py,dst=/trusted/trusted_gateway.py,readonly" \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/scripts/gke-test/trusted_proxy_events.py,dst=/trusted/trusted_proxy_events.py,readonly" \
             --mount "type=bind,src=$GITHUB_WORKSPACE/scripts/gke-test/tests/fixtures/fake-kubectl,dst=/usr/local/bin/kubectl,readonly" \
             --mount "type=bind,src=$GITHUB_WORKSPACE/scripts/gke-test/tests/fixtures/proxy-linux-integration.py,dst=/trusted/integration.py,readonly" \
             --entrypoint python docker.io/library/python@sha256:7bec7ddcddeff7975d6ba9b4be7dd6f6b2f55e7491539145e2978f7f97ce9144 \
