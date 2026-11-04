@@ -183,7 +183,7 @@ try:
     # runner's system Python is used for this Linux capability probe only.
     probe = ['/usr/bin/python3', str(ROOT / 'tests/fixtures/check-root-mounts.py'), str(pid),
              str(os.getpid()), str(guarded_files.wrapper_fd), str(start_gate.fd),
-             guarded_files.wrapper_hash, fixture_kubeconfig]
+             guarded_files.wrapper_hash, fixture_kubeconfig, test, guarded_test_nonce, name, fixture_image]
     if os.geteuid() != 0: probe = ['sudo', '-n'] + probe
     guarded_files.verify_sources()
     subprocess.run(probe, check=True, timeout=30,
