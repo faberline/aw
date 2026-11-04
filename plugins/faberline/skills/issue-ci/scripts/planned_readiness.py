@@ -7,6 +7,7 @@ import importlib.util
 from pathlib import Path
 
 MARKER = 'AW_PLANNED_EXECUTION_V1 '
+PLANNED_EVENTS=('workflow_run','workflow_dispatch')
 
 def load(path, name):
     spec = importlib.util.spec_from_file_location('planned_readiness_' + name, path)
@@ -15,7 +16,7 @@ def load(path, name):
     return module
 
 
-def collect_once(ci, repo, number, head, document, evaluator_sha, producer_run_id, completed=False):
+def collect_once(ci, repo, number, head, document, evaluator_sha, producer_run_id, completed=False, log_cache=None):
     readiness = load(Path(__file__).with_name('readiness.py'), 'readiness')
     planner = load(Path(__file__).with_name('test_plan.py'), 'test_plan')
     readiness.need(readiness.REPO.fullmatch(repo) and type(number) is int and number > 0
@@ -51,7 +52,7 @@ def collect_once(ci, repo, number, head, document, evaluator_sha, producer_run_i
     for name, check in test_plan['checks'].items():
         wanted.setdefault(check['workflow'], set()).add(check['job'])
     scoped['workflows'] = [dict(path=path, jobs=sorted(jobs)) for path, jobs in sorted(wanted.items())]
-    producer = readiness.producer_identity(ci, repo, config, producer_run_id, completed)
+    producer = readiness.producer_identity(ci, repo, config, producer_run_id, completed,allowed_events=PLANNED_EVENTS)
     readiness.need(producer['head'] == document['source_commit'], 'untrusted_producer',
                    'producer must use the exact current policy source')
     pins = readiness.pin_proof(ci, repo, pull, scoped, producer['head'], evaluator_sha)
@@ -77,8 +78,13 @@ def collect_once(ci, repo, number, head, document, evaluator_sha, producer_run_i
         job_rules = {key: contract['assertions'][key] for key, value in config['qualification']['checks'].items()
                      if value['workflow'] == check['workflow'] and value['job'] == check['job']
                      and key in contract['assertions']}
+        log=None
+        if log_cache is not None:
+            key=(repo,matches[0]['id'])
+            if key not in log_cache:log_cache[key]=readiness.job_log(repo,matches[0]['id'])
+            log=log_cache[key]
         proofs.append(readiness.assertion_evidence(repo, pull, run, matches[0], name,
-                                                   contract['assertions'][name], job_rules))
+                                                   contract['assertions'][name], job_rules,authenticated_log=log))
     return dict(schema='AW_AUTHENTICATED_PLANNED_EXECUTION_V1', repo=repo, pr=number, head=head, base=base,
                 policy_sha256=readiness.digest(config), selection=selection, producer=producer, pins=pins,
                 assertions=proofs, observation_sha256=readiness.digest(snapshots),
@@ -89,10 +95,13 @@ def collect_once(ci, repo, number, head, document, evaluator_sha, producer_run_i
 
 def collect(ci, repo, number, head, load_document, evaluator_sha, producer_run_id, completed=False):
     """Refuse if any authenticated input changes across two complete reads."""
+    # Completed job IDs are immutable; metadata is still re-read each time.
+    log_cache=getattr(ci,'_planned_job_log_cache',None)
+    if log_cache is None:log_cache={}
     first_doc = load_document()
-    first = collect_once(ci, repo, number, head, first_doc, evaluator_sha, producer_run_id, completed)
+    first = collect_once(ci, repo, number, head, first_doc, evaluator_sha, producer_run_id, completed,log_cache)
     second_doc = load_document()
-    second = collect_once(ci, repo, number, head, second_doc, evaluator_sha, producer_run_id, completed)
+    second = collect_once(ci, repo, number, head, second_doc, evaluator_sha, producer_run_id, completed,log_cache)
     if first_doc != second_doc or first != second:
         raise RuntimeError('planned execution inputs changed during collection')
     readiness = load(Path(__file__).with_name('readiness.py'), 'readiness')
@@ -128,7 +137,8 @@ def collect(ci, repo, number, head, load_document, evaluator_sha, producer_run_i
                   _qualification_context=dict(pr=number, head=head, base=second['base'], untrusted_workflows=[]))
     diagnostics = {}
     if (readiness.digest(ci.snapshot(repo, head, scoped, diagnostics)) != second['observation_sha256']
-            or diagnostics or readiness.producer_identity(ci, repo, second_doc['config'], producer_run_id, completed) != second['producer']
+            or diagnostics or readiness.producer_identity(ci, repo, second_doc['config'], producer_run_id, completed,
+                                                          allowed_events=PLANNED_EVENTS) != second['producer']
             or load_document() != second_doc):
         raise RuntimeError('CI, producer or policy changed after planned execution collection')
     return second
@@ -160,7 +170,8 @@ def verify(ci, receipt, repo, number, head, load_document, evaluator_sha):
                    and producer['run_id'] > 0 and type(producer.get('job_id')) is int and producer['job_id'] > 0,
                    'invalid_receipt', 'planned execution producer identity missing')
     document = load_document()
-    actual = readiness.producer_identity(ci, repo, document['config'], producer['run_id'], completed=True)
+    actual = readiness.producer_identity(ci, repo, document['config'], producer['run_id'], completed=True,
+                                         allowed_events=PLANNED_EVENTS)
     readiness.need(actual == producer, 'untrusted_producer', 'published producer differs')
     published = readiness.records(readiness.job_log(repo, producer['job_id']), MARKER)
     matches = [item for item in published if isinstance(item, dict)

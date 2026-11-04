@@ -126,6 +126,16 @@ spec or adopt it.
 
 ## Instructions
 
+On each pass, request a read-only CI evidence recheck for each active PR when
+the trusted repository policy enables planned CI qualification:
+
+```bash
+${CLAUDE_SKILL_DIR}/scripts/plan.sh reconcile-planned
+```
+
+If this fails, report the failure. Continue the independent planning checks.
+This request does not change an issue label or approve a PR.
+
 1. See the queue and the backlog:
 
 ```bash

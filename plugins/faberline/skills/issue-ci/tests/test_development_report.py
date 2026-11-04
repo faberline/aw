@@ -7,8 +7,10 @@ import io
 import json
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 import test_lifecycle as legacy
 import test_qualification as qualification
@@ -36,6 +38,10 @@ class Provider:
             return result
         if path==f'repos/{REPO}':return dict(default_branch='main')
         if path==f'repos/{REPO}/actions/runs/100':return self.run
+        if '/contents/.github/workflows/proof.yml?' in path:
+            raw='name: AW planned test evidence\n'.encode()
+            sha=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+            return dict(type='file',encoding='base64',sha=sha,content=base64.b64encode(raw).decode())
         if '/contents/'in path:return dict(type='file',encoding='base64',sha='0'*40 if self.bad_blob else self.blob(),content=base64.b64encode(self.raw.encode()).decode())
         if '/commits/main'in path:
             self.reads+=1
@@ -207,6 +213,60 @@ class ReporterTests(unittest.TestCase):
             result,_,_=self.invoke(process,config=cfg)
         self.assertEqual(result,0)
         self.assertEqual(self.provider.writes,[('repos/o/r/issues/7/labels','POST',{'labels':['done']}),('repos/o/r/issues/7/labels/todo','DELETE',None)])
+
+    def test_planned_mapping_change_after_snapshot_refuses_done(self):
+        raw=b'name: AW planned test evidence\n'
+        blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+        cfg=qualification.config();cfg.update(completion_owner='local',
+            development_reporter=self.provider.config()['development_reporter'],
+            planner_acceptance_mapping={},review_readiness={'producer':{'path':'.github/workflows/proof.yml','definition_sha':blob}},
+            planned_ci_qualification={'version':1})
+        scoped=qualification.scope(cfg);ordinary=copy.deepcopy(scoped)
+        ordinary['_qualification_context']['issues']=['linked issue has no reviewed contract']
+        calls=[]
+        def receipt(*args):
+            calls.append(1)
+            if len(calls)>1:raise RuntimeError('mapping changed')
+            return {'payload':{'producer':{'run_attempt':1}}}
+        fake=SimpleNamespace(receipt_for=receipt,qualify=lambda *args:scoped)
+        event={'action':'completed','workflow_run':{'status':'completed','conclusion':'success','id':42,
+               'run_attempt':1,'path':'.github/workflows/proof.yml','head_repository':{'full_name':REPO}}}
+        def process(*args,**kwargs):ci.api('repos/o/r/issues/7/labels','POST',{'labels':['done']})
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'event.json';path.write_text(json.dumps(event));self.env['GITHUB_EVENT_PATH']=str(path)
+            with patch.object(ci,'qualify_config',return_value=ordinary), \
+                 patch.object(ci,'planned_handoff_module',return_value=fake), \
+                 patch.object(ci,'snapshot',return_value=qualification.evidence(scoped)):
+                result,_,_=self.invoke(process,config=cfg)
+        self.assertEqual(result,2)
+        self.assertEqual(len(calls),2)
+        self.assertEqual(self.provider.writes,[])
+
+    def test_planned_producer_completion_wakes_done_and_missing_subscription_refuses(self):
+        raw=b'name: AW planned test evidence\n'
+        blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+        cfg=qualification.config();cfg.update(completion_owner='local',
+            development_reporter=self.provider.config()['development_reporter'],
+            planner_acceptance_mapping={},review_readiness={'producer':{'path':'.github/workflows/proof.yml','definition_sha':blob}},
+            planned_ci_qualification={'version':1})
+        scoped=qualification.scope(cfg);ordinary=copy.deepcopy(scoped)
+        ordinary['_qualification_context']['issues']=['linked issue has no reviewed contract']
+        receipt={'payload':{'producer':{'run_attempt':1}}}
+        fake=SimpleNamespace(receipt_for=lambda *args:receipt,qualify=lambda *args:scoped)
+        event={'action':'completed','workflow_run':{'status':'completed','conclusion':'success','id':42,
+               'run_attempt':1,'path':'.github/workflows/proof.yml','head_repository':{'full_name':REPO}}}
+        def process(*args,**kwargs):ci.api('repos/o/r/issues/7/labels','POST',{'labels':['done']})
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'event.json';path.write_text(json.dumps(event));self.env['GITHUB_EVENT_PATH']=str(path)
+            with patch.object(ci,'qualify_config',return_value=ordinary),patch.object(ci,'planned_handoff_module',return_value=fake), \
+                 patch.object(ci,'snapshot',return_value=qualification.evidence(scoped)):
+                result,_,_=self.invoke(process,config=cfg)
+                self.assertEqual(result,0)
+                self.assertIn(('repos/o/r/issues/7/labels','POST',{'labels':['done']}),self.provider.writes)
+                self.provider.raw=self.provider.raw.replace(', "AW planned test evidence"','')
+                cfg['development_reporter']['definition_sha']=self.provider.blob()
+                with self.assertRaisesRegex(RuntimeError,'subscribe'):
+                    self.invoke(process,config=cfg)
     def test_done_label_refuses_missing_skipped_cancelled_failed_or_changed_ci(self):
         cfg=qualification.config();cfg.update(completion_owner='local',development_reporter=self.provider.config()['development_reporter'])
         scoped=qualification.scope(cfg)

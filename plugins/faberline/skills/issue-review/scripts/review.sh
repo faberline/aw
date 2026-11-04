@@ -15,8 +15,14 @@ verify_ci() {
   if ! python3 "$receipt_py" verify-policy "$repo" "$3" "$ISSUE_CI_CONFIG" > "$review_policy_file"; then
     rm -f "$review_policy_file"; rmdir "$review_policy_dir"; return 2
   fi
-  if ! python3 "$ci_py" --repo "$repo" --config "$review_policy_file" --pr "$1" --head "$2"; then
-    rm -f "$review_policy_file"; rmdir "$review_policy_dir"; return 2
+  if python3 -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("planned_ci_qualification") != {"version": 1})' "$review_policy_file" 2>/dev/null; then
+    if ! python3 "$ci_py" --repo "$repo" --config "$review_policy_file" --pr "$1" --head "$2" --planned-review; then
+      rm -f "$review_policy_file"; rmdir "$review_policy_dir"; return 2
+    fi
+  else
+    if ! python3 "$ci_py" --repo "$repo" --config "$review_policy_file" --pr "$1" --head "$2"; then
+      rm -f "$review_policy_file"; rmdir "$review_policy_dir"; return 2
+    fi
   fi
   if ! python3 "$receipt_py" verify-policy "$repo" "$3" "$ISSUE_CI_CONFIG" > /dev/null; then
     rm -f "$review_policy_file"; rmdir "$review_policy_dir"; return 2

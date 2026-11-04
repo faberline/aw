@@ -7,7 +7,8 @@ on:
   repository_dispatch:
     types: [aw-development-reconcile]
   workflow_run:
-    workflows: ["App development CI"]
+    # Include the evidence producer when planned CI qualification is enabled.
+    workflows: ["App development CI", "AW planned test evidence"]
     types: [requested, in_progress, completed]
   issues:
     types: [edited, reopened, closed, labeled, unlabeled]

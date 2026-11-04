@@ -241,6 +241,11 @@ def main():
     # its own current state; status is never an admission/ownership receipt.
     if sys.argv[1:] == ['status']:
         return execute(queue.Client(), ['status'])
+    if sys.argv[1:] == ['reconcile-planned']:
+        reconcile_spec=importlib.util.spec_from_file_location('planner_reconcile',Path(__file__).with_name('planned_reconcile.py'))
+        reconcile=importlib.util.module_from_spec(reconcile_spec);reconcile_spec.loader.exec_module(reconcile)
+        reconcile.execute(queue.Client().repo)
+        return 0
     if sys.argv[1:2] == ['options']:
         return execute(None, sys.argv[1:])
     if sys.argv[1:2] in (['release-status'], ['release-advance']):

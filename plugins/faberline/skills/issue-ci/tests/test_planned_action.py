@@ -16,6 +16,23 @@ AW='b'*40
 
 
 class PlannedActionTests(unittest.TestCase):
+    def test_producer_entry_requires_actual_event_and_current_default_branch(self):
+        doc={'config':{},'source_commit':'c'*40,'path':'.github/issue-ci-required-gates.json'}
+        calls=[]
+        producer=SimpleNamespace(produce=lambda *args:(calls.append(args) or {'receipts':[]}),emit=lambda value:None)
+        ci=SimpleNamespace(strict_json_loads=json.loads,api=lambda path:{'default_branch':'main'})
+        with tempfile.TemporaryDirectory() as tmp:
+            event=Path(tmp)/'event.json';event.write_text('{}')
+            env={'AW_ACTION_REF':AW,'INPUT_OPERATION':'planned-produce','GITHUB_REPOSITORY':'o/r',
+                 'GITHUB_EVENT_PATH':str(event),'GITHUB_RUN_ID':'10','GITHUB_EVENT_NAME':'workflow_dispatch',
+                 'GITHUB_REF':'refs/heads/main','GITHUB_SHA':'c'*40}
+            with patch.dict(os.environ,env,clear=True),patch.object(action,'controller',return_value=ci), \
+                 patch.object(action,'trusted_policy',return_value=doc),patch.object(action,'ci_module',return_value=producer):
+                self.assertEqual(action.main(),0)
+                os.environ['GITHUB_SHA']='d'*40
+                with self.assertRaisesRegex(RuntimeError,'current default branch'):action.main()
+        self.assertEqual(len(calls),1)
+
     def invoke(self,event,operation='planned-execution'):
         config={'workflows':[{'path':'.github/workflows/pr.yml'}],
                 'review_readiness':{'producer':{'path':'.github/workflows/readiness.yml'}}}
