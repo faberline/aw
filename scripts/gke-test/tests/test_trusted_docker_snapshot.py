@@ -22,6 +22,15 @@ class SnapshotTests(unittest.TestCase):
             with self.subTest(data=data), patch.object(module, '_capture', return_value=data), self.assertRaises(ValueError):
                 module.inspect(CID)
 
+    def test_network_snapshot_uses_fixed_local_command(self):
+        with patch.object(module, '_capture', return_value=('{"Id":"' + CID + '"}').encode()) as capture:
+            self.assertEqual(module.inspect_network(CID)['Id'], CID)
+        self.assertEqual(capture.call_args.args[0], ['/usr/bin/docker', 'network', 'inspect', '--format', '{{json .}}', CID])
+        with self.assertRaises(ValueError): module.inspect_network('not-a-network-id')
+        for raw in (b'{"Id":"bad"}', b'{"Id":"a","Id":"a"}'):
+            with self.subTest(raw=raw), patch.object(module, '_capture', return_value=raw), self.assertRaises(ValueError):
+                module.inspect_network(CID)
+
     def test_output_limit_and_timeout_are_enforced(self):
         with self.assertRaisesRegex(RuntimeError, 'discard runner'):
             module._capture([sys.executable, '-c', 'import sys;sys.stdout.write("x"*1100000)'], 5)

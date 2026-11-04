@@ -106,7 +106,7 @@ try:
         raise RuntimeError('Docker event subscription barrier did not establish')
     call('start', test); stream.wait_count(3, 15)
     topology = load('trusted_network')
-    network = json.loads(call('network', 'inspect', network_id))[0]
+    network = load('trusted_docker_snapshot').inspect_network(network_id)
     snapshot = topology.verify_topology(network, inspect_container(sidecar), inspect_container(test),
         name=name, network_id=network_id, nonce=nonce, sidecar_id=sidecar, test_id=test,
         sidecar_image=IMAGE, test_image=IMAGE)
@@ -214,7 +214,7 @@ try:
     started = subprocess.Popen([DOCKER, 'start', '--attach', test], stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     stream.wait_count(3, 15)
-    network = json.loads(call('network', 'inspect', network_id))[0]
+    network = load('trusted_docker_snapshot').inspect_network(network_id)
     # The production topology rule requires a registry digest. Normalize only
     # this local synthetic image after separately checking its exact identity.
     synthetic_details = inspect_container(test)

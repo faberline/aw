@@ -71,16 +71,24 @@ def _unique(pairs):
     return result
 
 
-def inspect(container_id):
-    if not isinstance(container_id, str) or not re.fullmatch(r'[0-9a-f]{64}', container_id):
-        raise ValueError('exact Docker container identity required')
-    raw = _capture(['/usr/bin/docker', 'inspect', '--format', '{{json .}}', container_id], 30)
+def _inspect(identity, prefix):
+    if not isinstance(identity, str) or not re.fullmatch(r'[0-9a-f]{64}', identity):
+        raise ValueError('exact Docker identity required')
+    raw = _capture(['/usr/bin/docker', *prefix, 'inspect', '--format', '{{json .}}', identity], 30)
     def invalid(_value): raise ValueError('invalid Docker inspect number')
     def finite(value):
         result = float(value)
         if not math.isfinite(result): raise ValueError('invalid Docker inspect number')
         return result
     value = json.loads(raw.decode('utf-8'), object_pairs_hook=_unique, parse_constant=invalid, parse_float=finite)
-    if not isinstance(value, dict) or value.get('Id') != container_id:
+    if not isinstance(value, dict) or value.get('Id') != identity:
         raise ValueError('Docker inspect identity differs')
     return value
+
+
+def inspect(container_id):
+    return _inspect(container_id, [])
+
+
+def inspect_network(network_id):
+    return _inspect(network_id, ['network'])
