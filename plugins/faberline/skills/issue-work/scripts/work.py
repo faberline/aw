@@ -54,6 +54,10 @@ def refuse(message):
     raise RuntimeError(message)
 
 
+class AssociationHold(RuntimeError):
+    """One issue has ambiguous PRs; the complete inventory is still known."""
+
+
 def branch_exists(ref):
     return subprocess.run(['git', 'show-ref', '--verify', '--quiet', ref]).returncode == 0
 
@@ -66,10 +70,10 @@ def branch_of(n, *, client=None, prs=None):
         if pr['head']['ref'] not in (f'issue/{n}', f'agy/issue-{n}'):
             continue
         if not pr['head'].get('repo') or pr['head']['repo']['full_name'].lower() != client.repo.lower():
-            refuse(f'foreign PR branch collision for issue #{n}; resolve association')
+            raise AssociationHold(f'foreign PR branch collision for issue #{n}; resolve association')
         matches.append(dict(number=pr['number'], headRefName=pr['head']['ref']))
     if len(matches) > 1:
-        refuse(f'multiple open PRs for issue #{n}; resolve association')
+        raise AssociationHold(f'multiple open PRs for issue #{n}; resolve association')
     if matches:
         return matches[0]['headRefName'], matches[0]['number']
     for b in (f'issue/{n}', f'agy/issue-{n}'):
@@ -174,13 +178,22 @@ def eligible_snapshot(client, snapshot, association):
     result = dict(snapshot, selected=None, retry_binding=None)
     for issue in snapshot['issues']:
         number = issue['number']
-        _, pr = association(number)
+        try:
+            _, pr = association(number)
+        except AssociationHold as error:
+            print(f'hold issue #{number}: {error}',file=sys.stderr)
+            continue
         if pr is None:
             result['selected'] = number
             break
-        before = client.api(f'repos/{client.repo}/pulls/{pr}')
-        ready = ci_retry.retry_ready(client, number, pr)
-        after = client.api(f'repos/{client.repo}/pulls/{pr}')
+        try:
+            before = client.api(f'repos/{client.repo}/pulls/{pr}')
+            ready = ci_retry.retry_ready(client, number, pr)
+            after = client.api(f'repos/{client.repo}/pulls/{pr}')
+        except (RuntimeError, ValueError, KeyError, TypeError, OSError, subprocess.CalledProcessError):
+            # A candidate with unverifiable retry evidence is held. Do not
+            # convert that failure to a claim or starve the next candidate.
+            continue
         identity = lambda pull: (pull.get('head', {}).get('sha'), pull.get('base', {}).get('sha'))
         if ready and identity(before) == identity(after):
             result.update(selected=number, retry_binding=(pr, *identity(after), ready))
