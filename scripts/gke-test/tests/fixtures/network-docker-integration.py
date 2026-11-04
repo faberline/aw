@@ -18,6 +18,7 @@ resources = []
 network_id = None
 stream = None
 started = None
+start_gate = None
 fixture_tag = 'aw-protected-fixture-' + nonce + ':latest'
 fixture_image = None
 temporary = tempfile.TemporaryDirectory(prefix='aw-gke-fixture-')
@@ -124,7 +125,8 @@ try:
     # Demonstrate the protected start barrier using one exact container and
     # event stream. This remains a synthetic fixture, not GKE evidence.
     call('rm', test); resources.remove((test, 'test'))
-    gate = context / 'gate'; gate.touch(mode=0o644); gate.chmod(0o644)
+    start_gate = load('trusted_gate').Gate(context)
+    gate = start_gate.path
     try:
         test = identifier(call('create', '--pull=never', '--init', '--read-only', '--user=65532:65532',
             '--cap-drop=ALL', '--security-opt=no-new-privileges', '--ipc=private', '--cgroupns=private',
@@ -161,7 +163,7 @@ try:
         sidecar_image=IMAGE, test_image=IMAGE)
     if started.poll() is not None or select.select([started.stdout], [], [], 1)[0]:
         raise RuntimeError('suite produced output or stopped before protected release')
-    gate.write_bytes(b'aw-start-v1\n')
+    start_gate.release()
     output, _ = started.communicate(timeout=30)
     prefix = b'AW_SYNTHETIC_SUITE_ENTERED\n'
     if not output.startswith(prefix) or output.count(prefix) != 1:
@@ -178,6 +180,9 @@ finally:
         try:
             if started.poll() is None: started.kill()
             started.communicate(timeout=5)
+        except Exception as error: errors.append(error)
+    if start_gate is not None:
+        try: start_gate.close()
         except Exception as error: errors.append(error)
     if stream is not None:
         try: stream.close()
