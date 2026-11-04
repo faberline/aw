@@ -76,8 +76,10 @@ def validate_contract(ci, config):
     ci.validate_config(config)
     contract = config.get('review_readiness')
     need(isinstance(contract, dict) and type(contract.get('version')) is int
-         and contract['version'] == VERSION, 'missing_contract', 'review_readiness.version must be 1')
-    need(set(contract) == {'version', 'producer', 'sources', 'assertions'},
+         and contract['version'] in (1, 2), 'missing_contract', 'review_readiness.version must be 1 or 2')
+    fields={'version', 'producer', 'sources', 'assertions'}
+    if contract['version']==2:fields.add('policy_outcomes')
+    need(set(contract) == fields,
          'invalid_contract', 'unknown or missing review_readiness fields')
     producer = contract['producer']
     need(isinstance(producer, dict) and set(producer) == {'path', 'id', 'definition_sha', 'job'}
@@ -109,6 +111,23 @@ def validate_contract(ci, config):
              and isinstance(rule['enforcers'], list) and bool(rule['enforcers'])
              and all(n in sources for n in rule['enforcers']),
              'invalid_assertion_contract', 'nonempty exact assertion roster and trusted enforcers required')
+    if contract['version']==2:
+        policies=contract['policy_outcomes']
+        need(isinstance(policies,dict) and bool(policies) and not set(policies)&set(assertions),
+             'invalid_policy_outcome','separate policy outcome declarations required')
+        checks=config['qualification']['checks']
+        for name,rule in policies.items():
+            need(name in checks and checks[name].get('kind')=='policy' and isinstance(rule,dict)
+                 and set(rule)=={'workflow_source'} and rule['workflow_source'] in sources,
+                 'invalid_policy_outcome','only policy checks can use a reviewed workflow outcome')
+            source=sources[rule['workflow_source']]
+            need(source['path']==checks[name]['workflow'], 'invalid_policy_outcome',
+                 'policy proof must bind the actual reviewed workflow source')
+            need(not any(other!=name and (other in assertions or value['kind']!='policy')
+                         and value['workflow']==checks[name]['workflow']
+                         and value['job']==checks[name]['job']
+                         for other,value in checks.items()),'invalid_policy_outcome',
+                 'policy-only outcomes cannot share a job with any assertion check')
     return contract
 
 
@@ -253,9 +272,15 @@ def pin_proof(ci, repo, pr, config, producer_ref, evaluator_sha, producer_only=F
     need(('faberline/aw', '.github/actions/issue-ci/action.yml', evaluator_sha) in reachable,
          'evaluator_binding', 'producer must transitively invoke the exact pinned aw evaluator')
     for check in ([] if producer_only else config['_qualification_context']['selected']):
-        need(check in contract['assertions'], 'missing_assertion_contract', 'no reviewed assertion contract for ' + check)
-        for key in contract['assertions'][check]['enforcers']:
+        rule=contract['assertions'].get(check)
+        policy=contract.get('policy_outcomes',{}).get(check)
+        need(rule is not None or policy is not None, 'missing_assertion_contract', 'no reviewed assertion contract for ' + check)
+        keys=rule['enforcers'] if rule is not None else [policy['workflow_source']]
+        for key in keys:
             source = manifest[key]
+            if policy is not None:
+                need(source['repo']==repo and source['path']==config['qualification']['checks'][check]['workflow'],
+                     'invalid_policy_outcome','outcome workflow must belong to the consumer')
             visit(source['repo'], source['path'], source['ref'], source['blob_sha'])
             if source['repo'] == repo:
                 need(any(ci.qualification_module().matches(source['path'], p) for p in protected),
@@ -263,6 +288,20 @@ def pin_proof(ci, repo, pr, config, producer_ref, evaluator_sha, producer_only=F
                 for ref in (pr['head']['sha'], pr['base']['sha']):
                     visit(repo, source['path'], ref, source['blob_sha'])
     return [proof[key] for key in sorted(proof)]
+
+
+def policy_outcome_evidence(repo,config,check,run,job,*,authenticated_log=None):
+    contract=config['review_readiness'];rule=contract.get('policy_outcomes',{}).get(check)
+    need(rule is not None and config['qualification']['checks'][check]['kind']=='policy'
+         and run.get('status')=='completed' and run.get('conclusion')=='success'
+         and job.get('status')=='completed' and job.get('conclusion')=='success'
+         and type(job.get('id')) is int and job['id']>0,
+         'invalid_policy_outcome','one successful trusted policy job required')
+    log=job_log(repo,job['id']) if authenticated_log is None else authenticated_log
+    need(not records(log,ASSERTION_MARKER) and not records(log,ASSERTION_V2_MARKER),
+         'invalid_policy_outcome','policy-only job cannot emit assertion records')
+    return dict(check=check,kind='policy_outcome',run_id=run['id'],run_attempt=run['run_attempt'],
+                job_id=job['id'],workflow_source=rule['workflow_source'])
 
 
 def producer_identity(ci, repo, config, run_id, completed=False, *, allowed_events=('workflow_run',)):
@@ -426,8 +465,11 @@ def collect_once(ci, repo, number, head, document, evaluator_sha, producer_run_i
                                          for key, value in config['qualification']['checks'].items()
                                          if value['workflow'] == path and value['job'] == name
                                          and key in config['review_readiness']['assertions']}
-                            assertions.append(assertion_evidence(repo, pull, run, job, check,
-                                              config['review_readiness']['assertions'][check], job_rules))
+                            if check in config['review_readiness'].get('policy_outcomes',{}):
+                                assertions.append(policy_outcome_evidence(repo,config,check,run,job))
+                            else:
+                                assertions.append(assertion_evidence(repo, pull, run, job, check,
+                                                  config['review_readiness']['assertions'][check], job_rules))
                         except Refused as exc:
                             reason(exc.code, str(exc), [job['html_url']])
     waiting_codes = {'missing_run', 'missing_job', 'run_pending', 'job_pending'}

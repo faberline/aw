@@ -64,7 +64,8 @@ def collect_once(ci, repo, number, head, document, evaluator_sha, producer_run_i
     proofs = []
     for name in test_plan['selected']:
         check = test_plan['checks'][name]
-        readiness.need(name in contract['assertions'], 'missing_assertion_contract', 'reviewed assertion roster required')
+        readiness.need(name in contract['assertions'] or name in contract.get('policy_outcomes',{}),
+                       'missing_assertion_contract', 'reviewed assertion roster or policy outcome required')
         run, jobs = snapshots[check['workflow']]
         readiness.need(run.get('path') == check['workflow'] and run.get('head_sha') == head
                        and run.get('event') == 'pull_request'
@@ -75,6 +76,14 @@ def collect_once(ci, repo, number, head, document, evaluator_sha, producer_run_i
         readiness.need(len(matches) == 1 and type(matches[0].get('id')) is int and matches[0]['id'] > 0
                        and matches[0].get('status') == 'completed' and matches[0].get('conclusion') == 'success',
                        'untrusted_job', 'one successful exact job required')
+        if name in contract.get('policy_outcomes',{}):
+            log=None
+            if log_cache is not None:
+                key=(repo,matches[0]['id'])
+                if key not in log_cache:log_cache[key]=readiness.job_log(repo,matches[0]['id'])
+                log=log_cache[key]
+            proofs.append(readiness.policy_outcome_evidence(repo,config,name,run,matches[0],authenticated_log=log))
+            continue
         job_rules = {key: contract['assertions'][key] for key, value in config['qualification']['checks'].items()
                      if value['workflow'] == check['workflow'] and value['job'] == check['job']
                      and key in contract['assertions']}

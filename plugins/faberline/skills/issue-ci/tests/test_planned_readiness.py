@@ -73,6 +73,30 @@ class PlannedReadinessTests(unittest.TestCase):
         self.assertIn('linked issue has no reviewed contract', value['selection']['execution']['unresolved'])
         self.assertEqual(self.h.writes, [])
 
+    def test_planned_policy_outcome_keeps_nonzero_test_assertions(self):
+        contract=self.h.config['review_readiness'];contract['version']=2
+        self.h.config['qualification']['checks']['policy']['job']='metadata'
+        self.h.config['workflows'][0]['jobs'].append('metadata')
+        original_pages=self.h.pages
+        def pages(path,key=None):
+            rows=original_pages(path,key)
+            if '/actions/runs/10/attempts/' in path:
+                rows.append({**self.h.job,'id':102,'name':'metadata'})
+            return rows
+        self.h.pages=pages
+        self.h.logs[102]=''
+        contract['sources']['workflow']={'repo':'o/r','ref':previous.BASE,'path':previous.GATE,
+                                        'blob_sha':previous.blob(self.h.source['o/r',previous.GATE])}
+        contract['policy_outcomes']={'policy':{'workflow_source':'workflow'}}
+        del contract['assertions']['policy']
+        self.h.config['qualification']['protected_paths'].append('.github/workflows/**')
+        self.h.logs[101]='\n'.join(line for line in self.h.logs[101].splitlines() if 'policy-assertion' not in line)
+        value=self.run_collection()
+        self.assertEqual(next(row for row in value['assertions'] if row['check']=='policy')['kind'],'policy_outcome')
+        self.assertTrue(all(row.get('count',0)>0 for row in value['assertions'] if row['check']!='policy'))
+        self.h.logs[101]=''
+        with self.assertRaises(RuntimeError):self.run_collection()
+
     def test_untrusted_producer_failed_or_missing_test_never_proves_execution(self):
         for change in ('producer', 'failed', 'missing', 'base', 'mapping', 'foreign-run', 'skipped-job'):
             with self.subTest(change=change):

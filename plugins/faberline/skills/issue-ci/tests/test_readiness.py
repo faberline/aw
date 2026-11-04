@@ -102,6 +102,58 @@ class Harness:
 
 
 class ReadinessTests(unittest.TestCase):
+    def policy_outcome_harness(self):
+        h=Harness();contract=h.config['review_readiness'];contract['version']=2
+        contract['sources']['workflow']=dict(repo='o/r',ref=POLICY_SOURCE,path=GATE,blob_sha=blob(h.source['o/r',GATE]))
+        contract['policy_outcomes']={'policy':{'workflow_source':'workflow'}}
+        del contract['assertions']['policy']
+        h.config['qualification']['protected_paths'].append('.github/workflows/**')
+        h.logs[101]=''
+        return h
+
+    def test_explicit_policy_outcome_proves_the_original_trusted_job_only(self):
+        h=self.policy_outcome_harness();receipt=h.produce();payload=receipt['payload']
+        self.assertEqual(payload['status'],'ready')
+        self.assertEqual(payload['assertions'],[dict(check='policy',kind='policy_outcome',run_id=10,
+                         run_attempt=2,job_id=101,workflow_source='workflow')])
+        self.assertEqual(h.verify(receipt),receipt)
+
+    def test_policy_outcome_cannot_replace_a_test_or_an_untrusted_workflow(self):
+        for problem in ('test','wrong-path','foreign','missing','failed','skipped','shared-test-job'):
+            h=self.policy_outcome_harness();contract=h.config['review_readiness']
+            if problem=='test':
+                contract['policy_outcomes']['unit']=contract['policy_outcomes'].pop('policy')
+                del contract['assertions']['unit']
+            if problem=='wrong-path':contract['sources']['workflow']['path']=ENFORCER
+            if problem=='foreign':contract['sources']['workflow']['repo']='x/r'
+            if problem=='missing':contract['policy_outcomes']['policy']['workflow_source']='missing'
+            if problem=='failed':h.job['conclusion']='failure'
+            if problem=='skipped':h.job['conclusion']='skipped'
+            if problem=='shared-test-job':h.config['qualification']['checks']['unit']['job']='policy'
+            with self.subTest(problem=problem):
+                try:result=h.produce()['payload']['status']
+                except (RuntimeError,ValueError):continue
+                self.assertNotEqual(result,'ready')
+
+    def test_outcome_cannot_hide_unselected_policy_assertions_in_same_job(self):
+        h=self.policy_outcome_harness()
+        h.config['qualification']['checks']['other-policy']=copy.deepcopy(h.config['qualification']['checks']['policy'])
+        h.config['review_readiness']['assertions']['other-policy']=dict(names=['other'],enforcers=['enforcer'])
+        with self.assertRaisesRegex(RuntimeError,'cannot share a job'):
+            r.validate_contract(ci,h.config)
+
+    def test_outcome_cannot_share_with_unconfigured_test_even_if_not_selected(self):
+        h=self.policy_outcome_harness()
+        h.config['qualification']['checks']['unit']['job']='policy'
+        del h.config['review_readiness']['assertions']['unit']
+        with self.assertRaisesRegex(RuntimeError,'cannot share a job'):
+            r.validate_contract(ci,h.config)
+
+    def test_policy_only_job_rejects_unknown_or_malformed_assertion_records(self):
+        for record in (r.ASSERTION_MARKER+json.dumps({'check':'unknown'}),r.ASSERTION_MARKER+'{bad'):
+            h=self.policy_outcome_harness();h.logs[101]=record
+            self.assertEqual(h.produce()['payload']['status'],'fail')
+
     def grouped(self):
         h=Harness()
         h.config['qualification']['checks']['unit']['job']='policy'

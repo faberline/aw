@@ -34,7 +34,8 @@ local Python files.
 
 ## Consumer policy extension
 
-The existing qualification v1 policy needs `review_readiness` with exactly:
+The existing qualification policy can use `review_readiness` version 1 or 2.
+Version 1 needs exactly:
 
 - `version: 1`.
 - `producer`: `path`, numeric workflow `id`, reviewed `definition_sha`, and exact
@@ -51,6 +52,15 @@ The existing qualification v1 policy needs `review_readiness` with exactly:
   Every selected check must have a contract, and each check needs a distinct
   workflow/job pair. Optional reviewed check metadata (e.g. command/profile)
   remains data and is included in `inputs.required_checks`; never executed here.
+
+Version 2 adds `policy_outcomes`. It maps each explicitly reviewed policy
+check to `{ "workflow_source": "source-id" }`. The source must identify the
+consumer's actual protected workflow. AW verifies its pinned bytes at the PR
+head and base, and requires the exact workflow run and job to finish with
+success. Only checks whose reviewed `kind` is `policy` may use this form.
+Unit, integration, functional, E2E and performance checks still require
+nonzero assertion records. A successful image build is a build result; it is
+not a test assertion. Existing version 1 contracts stay unchanged.
 
 The collector recursively follows literal `uses:` references from both selected
 head/base workflow definitions and the producer definition. Remote actions and
