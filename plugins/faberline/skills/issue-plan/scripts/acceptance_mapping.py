@@ -72,15 +72,20 @@ def publish(client, number, mapping_text, policy_source):
     if not isinstance(actor, dict) or type(actor.get('id')) is not int or actor['id'] not in permitted:
         raise ValueError('authenticated publisher is not a trusted planner')
     mapping = load('acceptance_plan')
+    def require_fresh():
+        if policy_source() != first_policy or issue_identity(repo, number, client.issue(number)) != identity:
+            raise ValueError('policy or issue changed before mapping publication')
+        if client.comments(number) != comments:
+            raise ValueError('issue comments changed before mapping publication')
+        if policy_source() != first_policy or issue_identity(repo, number, client.issue(number)) != identity:
+            raise ValueError('policy or issue changed during mapping recheck')
     current = [c for c in comments if c['body'].startswith(mapping.MARKER)]
     if current and current[-1]['body'] == prepared['body']:
         selected = mapping.published_mapping(repo, issue, mapping.current_spec(issue, comments, permitted), comments,
                                              permitted, checks)
+        require_fresh()
         return {'status': 'existing', 'comment_id': selected['comment_id'], 'plan_sha256': selected['plan_sha256']}
-    if policy_source() != first_policy or issue_identity(repo, number, client.issue(number)) != identity:
-        raise ValueError('policy or issue changed before mapping publication')
-    if client.comments(number) != comments:
-        raise ValueError('issue comments changed before mapping publication')
+    require_fresh()
     # Do not catch or retry this call: a lost response could mean it succeeded.
     created = client.command('api', '--method', 'POST', f'repos/{repo}/issues/{number}/comments',
                              payload={'body': prepared['body']})
