@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import re
 import secrets
+import select
 import subprocess
 import tempfile
 from unittest.mock import patch
@@ -16,6 +17,7 @@ name = 'aw-protected-' + nonce
 resources = []
 network_id = None
 stream = None
+started = None
 fixture_tag = 'aw-protected-fixture-' + nonce + ':latest'
 fixture_image = None
 temporary = tempfile.TemporaryDirectory(prefix='aw-gke-fixture-')
@@ -59,6 +61,9 @@ try:
     binary = context / 'lumen-it'
     subprocess.run(['gcc', '-static', '-O2', str(ROOT / 'tests/fixtures/fake-lumen-it.c'),
                     '-o', str(binary)], check=True, capture_output=True, timeout=60)
+    wrapper = context / 'trusted-start'
+    subprocess.run(['gcc', '-static', '-O2', '-std=c11', '-D_POSIX_C_SOURCE=200809L',
+                    str(ROOT / 'trusted_start.c'), '-o', str(wrapper)], check=True, capture_output=True, timeout=60)
     (context / 'Dockerfile').write_text('FROM scratch\nCOPY lumen-it /usr/local/bin/lumen-it\n'
                                         'ENV PATH=/usr/local/bin\nLABEL faberline.dev/protected-fixture=' + nonce + '\n')
     try:
@@ -116,8 +121,64 @@ try:
         exit_code, output = runner.execute(DOCKER, fixture_image, name, fixture_kubeconfig, suite,
             ['/usr/local/bin/lumen-it', '--ignored', '--test-threads=1', suite], environment, 30)
     roster.verify_suite_execution(output, exit_code, [test_name])
+    # Demonstrate the protected start barrier using one exact container and
+    # event stream. This remains a synthetic fixture, not GKE evidence.
+    call('rm', test); resources.remove((test, 'test'))
+    gate = context / 'gate'; gate.touch(mode=0o644); gate.chmod(0o644)
+    try:
+        test = identifier(call('create', '--pull=never', '--init', '--read-only', '--user=65532:65532',
+            '--cap-drop=ALL', '--security-opt=no-new-privileges', '--ipc=private', '--cgroupns=private',
+            '--network=' + name, '--name=' + name + '-test',
+            '--label=faberline.dev/protected-network=' + nonce, '--label=faberline.dev/protected-role=test',
+            '--mount=type=bind,source=' + str(gate) + ',target=/run/aw-start/gate,readonly',
+            '--mount=type=bind,source=' + str(wrapper) + ',target=/run/aw-start/start,readonly',
+            '--mount=type=bind,source=' + str(binary) + ',target=/usr/local/bin/lumen-it,readonly',
+            '--env=AW_FIXTURE_SENTINEL=1', '--entrypoint=/run/aw-start/start',
+            IMAGE, '--ignored', '--test-threads=1', suite))
+        resources.append((test, 'test'))
+    except BaseException as error:
+        raise RuntimeError('barrier container creation is uncertain; discard runner') from error
+    for attempt in range(3):
+        marker = create('barrier-marker' + str(attempt), 'bridge'); call('start', marker)
+        stream = events.NetworkEventStream(DOCKER, network_id, marker, test)
+        call('network', 'connect', network_id, marker)
+        try:
+            stream.wait_count(1, 10)
+        except TimeoutError:
+            stream.close(); stream = None
+            call('network', 'disconnect', network_id, marker)
+            continue
+        call('network', 'disconnect', network_id, marker); stream.wait_count(2, 15)
+        break
+    else:
+        raise RuntimeError('start barrier event subscription did not establish')
+    started = subprocess.Popen([DOCKER, 'start', '--attach', test], stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    stream.wait_count(3, 15)
+    network = json.loads(call('network', 'inspect', network_id))[0]
+    topology.verify_topology(network, inspect_container(sidecar), inspect_container(test),
+        name=name, network_id=network_id, nonce=nonce, sidecar_id=sidecar, test_id=test,
+        sidecar_image=IMAGE, test_image=IMAGE)
+    if started.poll() is not None or select.select([started.stdout], [], [], 1)[0]:
+        raise RuntimeError('suite produced output or stopped before protected release')
+    gate.write_bytes(b'aw-start-v1\n')
+    output, _ = started.communicate(timeout=30)
+    prefix = b'AW_SYNTHETIC_SUITE_ENTERED\n'
+    if not output.startswith(prefix) or output.count(prefix) != 1:
+        raise ValueError('synthetic suite entry sentinel is missing or duplicated')
+    roster.verify_suite_execution(output[len(prefix):].decode('utf-8'), started.returncode, [test_name])
+    started = None
+    stream.wait_count(4, 15)
+    call('network', 'connect', network_id, marker); stream.wait_count(5, 15)
+    call('network', 'disconnect', network_id, marker); stream.wait_count(6, 15)
+    stream.finish(); stream.close(); stream = None
 finally:
     errors = []
+    if started is not None:
+        try:
+            if started.poll() is None: started.kill()
+            started.communicate(timeout=5)
+        except Exception as error: errors.append(error)
     if stream is not None:
         try: stream.close()
         except Exception as error: errors.append(error)
@@ -154,3 +215,4 @@ finally:
 
 print('isolated Docker topology and event barriers: PASS')
 print('synthetic executor fixture: PASS (not product evidence; event stream not attached)')
+print('synthetic start barrier and its own event stream: PASS (not product evidence)')
