@@ -177,6 +177,27 @@ def literal_uses(text):
         need(depth <= 64 and visited <= 20000, 'source_limit', 'YAML node/depth limit exceeded')
         if isinstance(node, yaml.nodes.MappingNode):
             keys = set()
+            # The reusable GKE workflow checks out AW scripts via aw-ref.
+            # The caller must bind that checkout to the workflow commit.
+            # Validate the raw scalar nodes, before YAML object construction.
+            entries = {key.value: value for key, value in node.value
+                       if isinstance(key, yaml.nodes.ScalarNode)}
+            use = entries.get('uses')
+            match = (re.fullmatch(r'(?i:faberline/aw)/\.github/workflows/gke-test\.yml@(.+)', use.value)
+                     if isinstance(use, yaml.nodes.ScalarNode) else None)
+            if match:
+                expected = match.group(1)
+                inputs = entries.get('with')
+                need(re.fullmatch(r'[0-9a-f]{40}', expected) is not None
+                     and isinstance(inputs, yaml.nodes.MappingNode),
+                     'gke_ref_binding', 'GKE workflow needs a literal aw-ref')
+                input_refs = [value for key, value in inputs.value
+                        if isinstance(key, yaml.nodes.ScalarNode) and key.value == 'aw-ref']
+                need(len(input_refs) == 1 and isinstance(input_refs[0], yaml.nodes.ScalarNode)
+                     and input_refs[0].value == expected
+                     and input_refs[0].style in (None, '"', "'")
+                     and input_refs[0].start_mark.line == input_refs[0].end_mark.line,
+                     'gke_ref_binding', 'aw-ref must equal the immutable GKE workflow commit')
             for key, value in node.value:
                 need(isinstance(key, yaml.nodes.ScalarNode),
                      'unsupported_source_syntax', 'complex mapping keys are unsupported')
