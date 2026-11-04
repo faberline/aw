@@ -16,6 +16,11 @@ its individual requirements have independently verified coverage mapping. It pre
 issue contracts, including their unresolved blockers and pinned content. This
 does not prove that the issue's own acceptance criteria are met. Independent
 issue review remains required. Existing v1 and v2 behavior stays unchanged.
+For an existing reviewed contract, v3 also needs `spec_sha256` in the trusted
+default-branch policy. A missing or changed binding remains pending even if
+the submitted snapshot matches the latest comment. The binding must come
+from independent review; matching hashes alone do not prove authorship or
+requirement coverage.
 
 The shared execution-only planner can run the full trusted roster when a
 valid v3 snapshot still has unresolved required gates. It preserves the

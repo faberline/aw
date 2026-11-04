@@ -49,6 +49,25 @@ class SnapshotTests(unittest.TestCase):
             planner.execute_unregistered_issue(config, 'o/r', previous.base.HEAD, previous.base.BASE,
                 pull=pull, files=previous.base.files(), issue=issue, definitions=definitions)
 
+    def test_snapshot_path_needs_explicit_reviewed_coverage_rule(self):
+        config, issue = fixture()
+        pull = previous.pull(); pull['draft'] = False; pull['changed_files'] = 2
+        changed = previous.base.files() + [dict(filename='.github/issue-contract-snapshots/7.json', status='added')]
+        definitions = {(previous.base.WORKFLOW, ref): {'sha': previous.base.BLOB}
+                       for ref in (previous.base.HEAD, previous.base.BASE)}
+        spec = importlib.util.spec_from_file_location('v3_path_execution',
+            previous.base.legacy.SKILLS / 'issue-ci/scripts/test_plan.py')
+        planner = importlib.util.module_from_spec(spec); spec.loader.exec_module(planner)
+        with self.assertRaises(ValueError):
+            planner.execute_unregistered_issue(config, 'o/r', previous.base.HEAD, previous.base.BASE,
+                pull=pull, files=changed, issue=issue, definitions=definitions)
+        config['qualification']['rules'].append(dict(paths=['.github/issue-contract-snapshots/**'],
+            require=['unit', 'functional', 'perf'], exempt={}))
+        result = planner.execute_unregistered_issue(config, 'o/r', previous.base.HEAD, previous.base.BASE,
+            pull=pull, files=changed, issue=issue, definitions=definitions)
+        self.assertIn('.github/issue-contract-snapshots/7.json', result['changed_paths'])
+        self.assertEqual(result['qualification'], 'not_evaluated')
+
     def test_full_roster_even_for_docs(self):
         config, issue = fixture()
         plan = q.select(config, previous.pull(), previous.base.files('docs/guide.md'), issue)
@@ -83,6 +102,37 @@ class SnapshotTests(unittest.TestCase):
         config['qualification']['contracts']['7']['body_sha256'] = '0' * 64
         plan = q.select(config, previous.pull(), previous.base.files(), issue)
         self.assertIn('issue snapshot differs from existing reviewed contract', plan['issues'])
+
+    def test_registered_case_requires_independently_reviewed_spec_binding(self):
+        config, issue = fixture()
+        case = copy.deepcopy(config['qualification']['contracts']['6'])
+        config['qualification']['contracts']['7'] = case
+        definitions = {(previous.base.WORKFLOW, ref): {'sha': previous.base.BLOB}
+                       for ref in (previous.base.HEAD, previous.base.BASE)}
+        def outcome():
+            scoped = q.scoped_config(config, previous.pull(), previous.base.files(), definitions, issue)
+            return ci.evaluate_policy(scoped, previous.base.evidence(scoped))
+        missing = q.select(config, previous.pull(), previous.base.files(), issue)
+        self.assertIn('linked issue planner spec has no reviewed binding', missing['issues'])
+        status, reasons, _ = outcome()
+        self.assertEqual(status, 'pending')
+        self.assertIn('linked issue planner spec has no reviewed binding', reasons)
+        case['spec_sha256'] = issue['_aw_issue_snapshot']['spec_sha256']
+        self.assertEqual(q.select(config, previous.pull(), previous.base.files(), issue)['issues'], [])
+        self.assertEqual(outcome()[0], 'done')
+        changed = '<!-- issue-plan:spec -->\nchanged acceptance'
+        issue['_aw_issue_spec'] = changed
+        issue['_aw_issue_snapshot']['spec_sha256'] = hashlib.sha256(changed.encode()).hexdigest()
+        self.assertIn('linked issue planner spec differs from reviewed binding',
+                      q.select(config, previous.pull(), previous.base.files(), issue)['issues'])
+        status, reasons, _ = outcome()
+        self.assertEqual(status, 'pending')
+        self.assertIn('linked issue planner spec differs from reviewed binding', reasons)
+
+    def test_v2_does_not_accept_v3_spec_field(self):
+        config = previous.policy()
+        config['qualification']['contracts']['7']['spec_sha256'] = 'a' * 64
+        with self.assertRaises(RuntimeError): q.validate(config)
 
     def test_exact_head_blob_is_validated_and_loaded(self):
         config, issue = fixture()

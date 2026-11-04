@@ -80,9 +80,10 @@ def execute_unregistered_issue(config, repo, head, base, *, pull, files, issue, 
     protected = [reason for reason in scope['issues']
                  if reason.startswith('gate infrastructure change requires reviewed policy update: ')]
     remaining = [reason for reason in scope['issues'] if reason not in protected]
-    missing = ('linked issue has no reviewed contract' if policy['version'] == 2
-               else 'linked issue has unresolved required gates')
-    require(remaining == [missing],
+    allowed = ({'linked issue has no reviewed contract'} if policy['version'] == 2 else
+               {'linked issue has unresolved required gates', 'linked issue planner spec has no reviewed binding',
+                'linked issue planner spec differs from reviewed binding'})
+    require(bool(remaining) and set(remaining) <= allowed,
             'execution-only fallback requires an unregistered or unresolved contract and no other blockers')
     require(isinstance(definitions, dict), 'trusted workflow definitions required')
     for path, identity in policy['trusted_workflows'].items():
