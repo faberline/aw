@@ -5,6 +5,8 @@ from pathlib import Path
 import re
 import secrets
 import subprocess
+import tempfile
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCKER = '/usr/bin/docker'
@@ -14,6 +16,9 @@ name = 'aw-protected-' + nonce
 resources = []
 network_id = None
 stream = None
+fixture_tag = 'aw-protected-fixture-' + nonce + ':latest'
+fixture_image = None
+temporary = tempfile.TemporaryDirectory(prefix='aw-gke-fixture-')
 
 
 def call(*args):
@@ -50,6 +55,20 @@ def create(role, network):
 
 
 try:
+    context = Path(temporary.name)
+    binary = context / 'lumen-it'
+    subprocess.run(['gcc', '-static', '-O2', str(ROOT / 'tests/fixtures/fake-lumen-it.c'),
+                    '-o', str(binary)], check=True, capture_output=True, timeout=60)
+    (context / 'Dockerfile').write_text('FROM scratch\nCOPY lumen-it /usr/local/bin/lumen-it\n'
+                                        'ENV PATH=/usr/local/bin\nLABEL faberline.dev/protected-fixture=' + nonce + '\n')
+    try:
+        call('build', '--quiet', '--tag', fixture_tag, str(context))
+        fixture_image = call('image', 'inspect', '--format', '{{.Id}}', fixture_tag)
+        if not re.fullmatch(r'sha256:[0-9a-f]{64}', fixture_image): raise ValueError('invalid fixture image identity')
+    except BaseException as error:
+        raise RuntimeError('fixture image creation is uncertain; discard runner') from error
+    kubeconfig = context / 'kubeconfig'; kubeconfig.write_text('synthetic fixture only'); kubeconfig.chmod(0o644)
+    fixture_kubeconfig = str(kubeconfig)
     try:
         network_id = identifier(call('network', 'create', '--driver=bridge',
                                      '--label=faberline.dev/protected-network=' + nonce, name))
@@ -85,6 +104,18 @@ try:
     call('network', 'connect', network_id, marker); stream.wait_count(5, 15)
     call('network', 'disconnect', network_id, marker); stream.wait_count(6, 15)
     stream.finish()
+    stream.close(); stream = None
+    # Exercise the production executor against a synthetic, non-product image.
+    # Patching the image regex is confined to this fixture and never affects CI
+    # qualification or the production identity rule.
+    runner = load('trusted_container'); roster = load('trusted_roster')
+    suite = 'e2e::operator::'; test_name = suite + 'journey'
+    environment = {'PATH': '/usr/local/bin', 'HOME': '/work', 'LC_ALL': 'C',
+                   'KUBECONFIG': '/run/kubeconfig', 'E2E_ENDPOINT': 'http://172.18.0.2:7373'}
+    with patch.object(runner, 'IMAGE', r'sha256:[0-9a-f]{64}'):
+        exit_code, output = runner.execute(DOCKER, fixture_image, name, fixture_kubeconfig, suite,
+            ['/usr/local/bin/lumen-it', '--ignored', '--test-threads=1', suite], environment, 30)
+    roster.verify_suite_execution(output, exit_code, [test_name])
 finally:
     errors = []
     if stream is not None:
@@ -109,6 +140,17 @@ finally:
                 raise RuntimeError('refuse to remove a foreign or occupied network')
             call('network', 'rm', network_id)
         except Exception as error: errors.append(error)
+    if fixture_image is not None:
+        try:
+            image = json.loads(call('image', 'inspect', fixture_tag))[0]
+            if (image.get('Id') != fixture_image
+                    or (image.get('Config', {}).get('Labels') or {}).get('faberline.dev/protected-fixture') != nonce):
+                raise RuntimeError('refuse to remove a foreign image')
+            call('image', 'rm', fixture_tag)
+        except Exception as error: errors.append(error)
+    try: temporary.cleanup()
+    except Exception as error: errors.append(error)
     if errors: raise RuntimeError('isolated Docker fixture cleanup failed; discard runner') from errors[0]
 
-print('isolated Docker network topology and live event barriers: PASS')
+print('isolated Docker topology and event barriers: PASS')
+print('synthetic executor fixture: PASS (not product evidence; event stream not attached)')
