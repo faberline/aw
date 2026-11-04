@@ -1,8 +1,11 @@
 import importlib.util
 import base64
+import copy
+import hashlib
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('ci_retry', Path(__file__).resolve().parents[1] / 'scripts/ci_retry.py')
 retry = importlib.util.module_from_spec(spec); spec.loader.exec_module(retry)
@@ -49,6 +52,108 @@ class Client:
 
 
 class RetryTests(unittest.TestCase):
+    def setUp(self):
+        self.writer_patch=patch.object(retry,'attest_writer',return_value={'run':90,'attempt':1,'job':91})
+        self.writer_patch.start();self.addCleanup(self.writer_patch.stop)
+
+    def drift_client(self):
+        c=Client();main='d'*40;c.pull.update(mergeable=True,mergeable_state='behind',updated_at='2026-11-03T00:00:00Z')
+        config={'qualification':{'trusted_workflows':{'.github/workflows/ci.yml':{'id':77,'definition_sha':'c'*40}}}}
+        raw=json.dumps(config).encode();blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+        digest=hashlib.sha256(json.dumps(config,sort_keys=True).encode()).hexdigest()
+        c.rows=[{'id':7,'updated_at':'2026-11-03T00:00:01Z','user':{'login':'github-actions[bot]'},
+                 'body':'<!-- issue-ci:'+'d'*64+':applied -->\nCI: todo for PR #9 head `'+HEAD+'`.\nPolicy: '+digest+'\nPR is behind current main\nhttps://github.com/o/r/actions/runs/10'}]
+        c.checks[0]['conclusion']='success'
+        c.issue={'number':7,'state':'open','updated_at':'2026-11-03T00:00:01Z','labels':[{'name':'todo'}]}
+        c.events=[{'id':4,'created_at':'2026-11-03T00:00:00Z','event':'labeled',
+                   'label':{'name':'todo'},'actor':{'login':'github-actions[bot]'}}]
+        c.compare={'base_commit':{'sha':main},'behind_by':1}
+        original=c.api
+        def api(path):
+            if path=='repos/o/r/commits/main':return {'sha':main}
+            if path=='repos/o/r/issues/7':return copy.deepcopy(c.issue)
+            if '/compare/' in path:return copy.deepcopy(c.compare)
+            if '/contents/.github/issue-ci-required-gates.json' in path:
+                return {'type':'file','encoding':'base64','content':base64.b64encode(raw).decode(),'sha':blob}
+            return original(path)
+        c.api=api;c.pages=lambda path:copy.deepcopy(c.events)
+        c.command=lambda *args:copy.deepcopy(c.compare)
+        return c
+
+    def test_trusted_todo_for_behind_main_is_actionable_without_fake_test_failure(self):
+        c=self.drift_client();result=retry.retry_ready(c,7,9)
+        self.assertEqual(result['kind'],'main-drift')
+        self.assertEqual(result['reason'],'behind')
+        self.assertEqual(result['main'],'d'*40)
+
+    def test_drift_rejects_stale_journal_untrusted_actor_races_or_running_ci(self):
+        for change in ('head','actor','journal','policy','not-behind','base-moved','unknown-merge','issue-owner','later-owner','active','incomplete'):
+            c=self.drift_client()
+            if change=='head':c.rows[0]['body']=c.rows[0]['body'].replace(HEAD,'f'*40)
+            if change=='actor':c.events[0]['actor']['login']='alice'
+            if change=='journal':c.rows[0]['body']=c.rows[0]['body'].replace(':applied',':pending')
+            if change=='policy':c.rows[0]['body']=c.rows[0]['body'].replace('Policy: ','Policy: bad')
+            if change=='not-behind':c.compare['behind_by']=0
+            if change=='base-moved':c.compare['base_commit']['sha']='f'*40
+            if change=='unknown-merge':c.pull['mergeable']=None
+            if change=='issue-owner':c.issue['labels'].append({'name':'doing'})
+            if change=='later-owner':c.events.append({'id':5,'created_at':'2026-11-03T00:00:02Z','event':'labeled',
+                                                      'label':{'name':'doing'},'actor':{'login':'other'}})
+            if change=='active':c.checks[0]['status']='in_progress'
+            if change=='incomplete':c.events[0].pop('id')
+            with self.subTest(change=change):self.assertFalse(retry.retry_ready(c,7,9))
+
+    def test_drift_refuses_main_movement_before_return(self):
+        c=self.drift_client();original=c.api;reads=[]
+        def api(path):
+            if path=='repos/o/r/commits/main':
+                reads.append(path)
+                if len(reads)>1:return {'sha':'e'*40}
+            return original(path)
+        c.api=api
+        self.assertFalse(retry.retry_ready(c,7,9))
+
+    def test_drift_refuses_older_run_retry_before_any_new_check_exists(self):
+        c=self.drift_client();original=c.api
+        def api(path):
+            value=original(path)
+            if '/actions/workflows/' in path:
+                latest=value['workflow_runs'][0];latest['run_number']=2
+                active={**latest,'id':9,'run_number':1,'run_attempt':2,'status':'in_progress','conclusion':None}
+                value.update(total_count=2,workflow_runs=[latest,active])
+            return value
+        c.api=api
+        self.assertFalse(retry.retry_ready(c,7,9))
+
+    def test_conflict_requires_exact_current_main_and_dirty_provider_state(self):
+        c=self.drift_client();c.rows[0]['body']=c.rows[0]['body'].replace('PR is behind current main','PR has merge conflicts')
+        c.compare['behind_by']=0;c.pull['base']['sha']='d'*40;c.pull.update(mergeable=False,mergeable_state='dirty')
+        # A conflict may prevent CI from starting on the new base. The old
+        # completed run proves only that no required run is still active.
+        self.assertEqual(retry.retry_ready(c,7,9)['reason'],'conflict')
+        c.pull['mergeable']=None
+        self.assertFalse(retry.retry_ready(c,7,9))
+
+    def test_conflict_can_be_repaired_when_no_ci_run_could_start(self):
+        c=self.drift_client();c.rows[0]['body']=c.rows[0]['body'].replace('PR is behind current main','PR has merge conflicts')
+        c.compare['behind_by']=0;c.pull['base']['sha']='d'*40;c.pull.update(mergeable=False,mergeable_state='dirty')
+        c.checks=[];original=c.api
+        def api(path):
+            if '/actions/workflows/' in path:return {'total_count':0,'workflow_runs':[]}
+            return original(path)
+        c.api=api
+        result=retry.retry_ready(c,7,9)
+        self.assertEqual(result['reason'],'conflict')
+        self.assertEqual(result['workflows'],{'.github/workflows/ci.yml':None})
+
+    def test_drift_refuses_mixed_missing_workflow_and_check_inventory(self):
+        c=self.drift_client()
+        for checks,workflows in ((c.checks,{'.github/workflows/ci.yml':None}),
+                                 ([],{'first':None,'second':{'run':1,'attempt':1}})):
+            c.checks=checks
+            with self.subTest(checks=checks,workflows=workflows), \
+                 patch.object(retry,'completed_workflows',return_value=workflows):
+                self.assertFalse(retry.retry_ready(c,7,9))
     def test_exact_current_failed_check_can_retry(self):
         self.assertTrue(retry.retry_ready(Client(), 7, 9))
 
@@ -152,6 +257,25 @@ class RetryTests(unittest.TestCase):
         snapshot = {'issues': [{'number': 7}, {'number': 8}], 'selected': 7}
         result = worker.eligible_snapshot(c, snapshot, lambda number: ('issue/' + str(number), 9 if number == 7 else None))
         self.assertEqual(result['selected'], 8)
+
+    def test_unreadable_first_candidate_does_not_starve_next_issue(self):
+        c=Client();c.api=lambda path: (_ for _ in ()).throw(OSError('provider unavailable'))
+        snapshot={'issues':[{'number':7},{'number':8}],'selected':7}
+        result=worker.eligible_snapshot(c,snapshot,lambda number:('issue/'+str(number),9 if number==7 else None))
+        self.assertEqual(result['selected'],8)
+
+    def test_ambiguous_first_association_holds_only_that_issue(self):
+        snapshot={'issues':[{'number':7},{'number':8}],'selected':7}
+        def association(number):
+            if number==7:raise worker.AssociationHold('multiple PRs')
+            return ('issue/8',None)
+        self.assertEqual(worker.eligible_snapshot(Client(),snapshot,association)['selected'],8)
+
+    def test_incomplete_shared_pr_inventory_still_aborts(self):
+        snapshot={'issues':[{'number':7},{'number':8}],'selected':7}
+        def association(number):raise RuntimeError('incomplete PR inventory')
+        with self.assertRaisesRegex(RuntimeError,'incomplete PR inventory'):
+            worker.eligible_snapshot(Client(),snapshot,association)
 
     def test_active_wait_requires_trusted_workflow_pr_head_base_and_attempt(self):
         class Active(Client):
