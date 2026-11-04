@@ -23,9 +23,11 @@ def question_id(text):
 def with_release_sources(rows,root):
     existing={(row['role'],row['path']) for row in rows}
     for role in ('candidate','evaluator'):
-        for path in m.RELEASE_FRAMEWORK_SOURCES:
+        for path in m.RELEASE_FRAMEWORK_SOURCES+tuple(m.FRAMEWORK_ROOT+name for name in
+                ('planned_readiness.py','test_plan.py','acceptance_plan.py')):
             if (role,path) not in existing:
                 rows.append(dict(role=role,path=path,content=(root/path).read_text()))
+                existing.add((role,path))
     return rows
 
 
@@ -380,6 +382,21 @@ class ReviewProtocolTests(unittest.TestCase):
         selected={(r['role'],r['path']) for r in rows}
         self.assertTrue(all(('candidate',path) in selected for path in m.RELEASE_FRAMEWORK_SOURCES))
         self.assertFalse(any(('evaluator',path) in selected for path in m.RELEASE_FRAMEWORK_SOURCES))
+
+    def test_planned_runtime_is_bound_only_at_revision_that_imports_it(self):
+        candidate,evaluator='c'*40,'e'*40
+        def blob(api,repo,path,ref):
+            if path.endswith('/action.py') and ref==candidate:
+                return "ci_module('planned_readiness')"
+            if path.endswith(('/planned_readiness.py','/acceptance_plan.py')) and ref==evaluator:
+                raise AssertionError('old revision does not contain planned runtime')
+            return 'pass'
+        with patch.object(m.a.review,'blob',side_effect=blob):
+            rows=m.framework_sources(None,candidate,evaluator)
+        selected={(row['role'],row['path']) for row in rows}
+        for name in ('planned_readiness.py','test_plan.py','acceptance_plan.py'):
+            self.assertIn(('candidate',m.FRAMEWORK_ROOT+name),selected)
+            self.assertNotIn(('evaluator',m.FRAMEWORK_ROOT+name),selected)
 
     def test_release_dependency_omission_is_still_rejected(self):
         root=Path(m.__file__).resolve().parents[5]

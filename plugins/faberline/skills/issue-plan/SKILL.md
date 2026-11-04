@@ -101,6 +101,15 @@ units/static checks may run locally; product CLI subprocess/output/file checks,
 server/network/cluster and performance tests belong in authorized cloud CI.
 Do not classify an offline `relay render --out ...` contract as a pure unit.
 
+When the reviewed default-branch CI policy enables `planner_acceptance_mapping`,
+also map every acceptance item to the policy's existing check IDs. Preserve
+every original human acceptance item. Use the format in
+[`ACCEPTANCE-PLAN.md`](../issue-ci/ACCEPTANCE-PLAN.md). Write the mapping to a
+temporary file, then run `plan.sh acceptance-map N FILE` before admitting the
+issue to todo. The command rechecks the issue, planner identity and policy.
+It does not approve acceptance or remove any CI requirement. If the policy or
+the test mapping is unclear, leave the issue out of todo and report the gap.
+
 ## Blocked
 
 Block an issue only for a human decision, not for a wait on another issue

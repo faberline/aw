@@ -219,6 +219,36 @@ def framework_sources(api,candidate_ref,evaluator_ref,include_recovery=False):
                 raw=content.encode('utf-8')
                 blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
                 result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
+            # Older immutable planners do not import this file. Bind it only
+            # at revisions that actually contain the dependency.
+            test_path=FRAMEWORK_ROOT+'test_plan.py'
+            test_row=next(row for row in result if row['role']==role and row['path']==test_path)
+            tree=ast.parse(test_row['content'])
+            uses_acceptance=any(isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute)
+                and node.func.attr=='with_name' and len(node.args)==1
+                and isinstance(node.args[0],ast.Constant) and node.args[0].value=='acceptance_plan.py'
+                for node in ast.walk(tree))
+            acceptance_path=FRAMEWORK_ROOT+'acceptance_plan.py'
+            if uses_acceptance and not any(row['role']==role and row['path']==acceptance_path for row in result):
+                content=a.review.blob(api,a.GRANTS_REPO,acceptance_path,ref)
+                raw=content.encode('utf-8')
+                blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+                result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=acceptance_path,blob=blob,content=content))
+        action=next(row for row in result if row['role']==role and row['path']==FRAMEWORK_ROOT+'action.py')
+        action_tree=ast.parse(action['content'])
+        uses_planned=any(isinstance(node,ast.Call) and isinstance(node.func,ast.Name)
+            and node.func.id=='ci_module' and len(node.args)==1
+            and isinstance(node.args[0],ast.Constant) and node.args[0].value=='planned_readiness'
+            for node in ast.walk(action_tree))
+        if uses_planned:
+            for name in ('planned_readiness.py','test_plan.py','acceptance_plan.py'):
+                path=FRAMEWORK_ROOT+name
+                if any(row['role']==role and row['path']==path for row in result):
+                    continue
+                content=a.review.blob(api,a.GRANTS_REPO,path,ref)
+                raw=content.encode('utf-8')
+                blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+                result.append(dict(role=role,repo=a.GRANTS_REPO,ref=ref,path=path,blob=blob,content=content))
         controllers=[row for row in result if row['role']==role and row['path']==FRAMEWORK_ROOT+'native_merge.py']
         need(len(controllers)==1,'target_framework_dependency_missing')
         try:
