@@ -753,7 +753,7 @@ class WorkTests(unittest.TestCase):
 
 
 class ReviewerTests(unittest.TestCase):
-    def invoke_many(self, commands, ci_status='0', moved=False, empty=False, api_error=False):
+    def invoke_many(self, commands, ci_status='0', moved=False, empty=False, api_error=False, notify_status='0'):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             log = root / 'calls'
@@ -799,8 +799,8 @@ with (root / 'calls').open('a') as f:
 if args[0] == '-c':
     os.execv(sys.executable, [sys.executable, *args])
 if args[0].endswith('receipt.py'):
-    if args[1] == 'notify':
-        sys.exit(0)
+    if args[1] in ('notify', 'notify-required'):
+        sys.exit(int(os.environ.get('NOTIFY_STATUS', '0')))
     saved = root / 'receipts'
     receipts = json.loads(saved.read_text()) if saved.exists() else []
     key = args[2] + ':' + args[4]
@@ -816,7 +816,7 @@ sys.exit(int(os.environ['CI_STATUS']))
                 executable.chmod(0o755)
             report = root / 'review.md'
             report.write_text('specific review evidence')
-            env = dict(os.environ, PATH=str(root) + ':' + os.environ['PATH'], REVIEW_TEST_ROOT=str(root), ISSUE_CI_CONFIG='/trusted/gates.json', CI_STATUS=ci_status, MOVED='1' if moved else '0', EMPTY='1' if empty else '0', API_ERROR='1' if api_error else '0')
+            env = dict(os.environ, PATH=str(root) + ':' + os.environ['PATH'], REVIEW_TEST_ROOT=str(root), ISSUE_CI_CONFIG='/trusted/gates.json', CI_STATUS=ci_status, MOVED='1' if moved else '0', EMPTY='1' if empty else '0', API_ERROR='1' if api_error else '0', NOTIFY_STATUS=notify_status)
             results = []
             for command in commands:
                 if command == 'move':
@@ -861,6 +861,17 @@ sys.exit(int(os.environ['CI_STATUS']))
                 self.assertIn('record 7 8 ' + SHA + ' ' + BASE + ' ' + command, calls)
                 self.assertNotIn('issue edit', calls)
                 self.assertNotIn(' merge ', calls)
+
+    def test_legacy_failure_succeeds_but_says_ci_handoff_is_not_enabled(self):
+        result, calls = self.invoke('fail', notify_status='3')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('issue was not returned to todo', result.stderr)
+        self.assertIn('record 7 8 ' + SHA + ' ' + BASE + ' fail', calls)
+
+    def test_failed_enabled_handoff_does_not_claim_success(self):
+        result, _ = self.invoke('fail', notify_status='2')
+        self.assertEqual(result.returncode, 2)
+        self.assertNotIn('review evidence reported', result.stdout)
 
     def test_next_after_pass_selects_other_done_and_new_head_is_eligible(self):
         results, calls = self.invoke_many(['next', 'pass', 'next', 'move', 'next'])
@@ -1035,8 +1046,7 @@ class ReviewReceiptTests(unittest.TestCase):
 
     def test_disabled_feedback_reports_a_pending_handoff(self):
         with patch.object(receipt.subprocess, 'run') as dispatch:
-            with self.assertRaisesRegex(RuntimeError, 'handoff pending'):
-                receipt.notify_failure('o/r', '7', '8', SHA, BASE, lambda: {'config': {}})
+            self.assertEqual(receipt.notify_failure('o/r', '7', '8', SHA, BASE, lambda: {'config': {}}), 3)
             dispatch.assert_not_called()
 
     def test_required_failure_must_survive_until_ci_wake(self):

@@ -89,8 +89,13 @@ for issue in sorted(issues, key=lambda issue: issue["updated_at"]):
     fi
     head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
     base=$(gh pr view "$pr" --json baseRefOid --jq .baseRefOid)
-    if ! python3 "$receipt_py" notify "$n" "$pr" "$head" "$base"; then
-      echo "skip: could not wake CI for issue #$n; retry on the next run" >&2
+    if python3 "$receipt_py" notify "$n" "$pr" "$head" "$base"; then
+      :
+    else
+      notify_status=$?
+      if [ "$notify_status" != 3 ]; then
+        echo "skip: could not wake CI for issue #$n; retry on the next run" >&2
+      fi
     fi
     if python3 "$receipt_py" seen "$n" "$pr" "$head" "$base"; then
       continue
@@ -171,7 +176,13 @@ cmd_report() {
   [ -n "${pr:-}" ] || { echo "refused: issue #$n has no open PR" >&2; exit 2; }
   python3 "$receipt_py" record "$n" "$pr" "$reviewed" "$reviewed_base" "$outcome" "$evidence"
   if [ "$outcome" = fail ]; then
-    python3 "$receipt_py" notify-required "$n" "$pr" "$reviewed" "$reviewed_base" "$evidence"
+    if python3 "$receipt_py" notify-required "$n" "$pr" "$reviewed" "$reviewed_base" "$evidence"; then
+      :
+    else
+      notify_status=$?
+      [ "$notify_status" = 3 ] || return "$notify_status"
+      echo "review evidence saved; CI feedback is not enabled and the issue was not returned to todo" >&2
+    fi
   fi
   drop_review_tree "$n"
   echo "review evidence reported for #$n at $reviewed; lifecycle unchanged"

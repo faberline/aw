@@ -125,7 +125,8 @@ def notify_failure(repo, issue, pr, head, base, policy_source, required=None):
     document = policy_source()
     config = document['config']
     if 'local_review_feedback' not in config:
-        raise RuntimeError('local review feedback is not enabled; receipt retained, CI handoff pending')
+        print('local review feedback is not enabled; receipt retained, CI handoff not requested')
+        return 3
     import importlib.util
     folder = Path(__file__).resolve().parents[2] / 'issue-ci/scripts'
     def load(name):
