@@ -386,6 +386,34 @@ class DevelopmentHandoffTests(unittest.TestCase):
              patch.object(d,'review_failure_snapshot',return_value={}):
             return self.invoke(snapshots=data)
 
+    def test_failed_current_local_review_returns_done_issue_to_todo_once(self):
+        settings=config();settings['completion_owner']='local'
+        settings['local_review_feedback']={'version':1,'reviewer_ids':[42]}
+        self.issue['labels']=[{'name':'done'}]
+        review={'comment_id':12,'author_id':42,'url':'https://github.com/o/r/pull/8#issuecomment-12'}
+        with patch.object(d,'local_review_failure',return_value=review):
+            self.assertEqual(self.invoke_development(evidence(),settings),0)
+        self.assertEqual({label['name'] for label in self.issue['labels']},{'todo'})
+        self.assertTrue(any(review['url'] in row['body'] for row in self.comments))
+        # A worker claiming the returned issue starts a new coding epoch.
+        self.issue['labels']=[{'name':'doing'}];self.writes=[]
+        with patch.object(d,'local_review_failure',return_value=review):
+            self.assertEqual(self.invoke_development(evidence(),settings),0)
+        self.assertEqual({label['name'] for label in self.issue['labels']},{'doing'})
+        self.assertFalse(any('/labels' in path for path,_,_ in self.writes))
+
+    def test_local_review_changing_before_mutation_preserves_done(self):
+        settings=config();settings['completion_owner']='local'
+        settings['local_review_feedback']={'version':1,'reviewer_ids':[42]}
+        self.issue['labels']=[{'name':'done'}]
+        review={'comment_id':12,'author_id':42,'url':'https://github.com/o/r/pull/8#issuecomment-12'}
+        edited={**review,'body_sha256':'b'*64}
+        with patch.object(d,'local_review_failure',side_effect=[review,edited]):
+            with self.assertRaisesRegex(RuntimeError,'review evidence changed'):
+                self.invoke_development(evidence(),settings)
+        self.assertEqual({label['name'] for label in self.issue['labels']},{'done'})
+        self.assertFalse(any('/labels' in path for path,_,_ in self.writes))
+
     def test_unmanaged_open_issue_keeps_job_diagnostics_without_unsafe_label_handoff(self):
         self.issue['labels']=[];data=evidence()
         data[WORKFLOW][1][0]['conclusion']='failure'

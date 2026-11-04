@@ -77,7 +77,12 @@ def validate_config(config):
         raise RuntimeError('required workflow paths must be unique')
     if 'qualification' in config:
         qualification_module().validate(config)
-    development_module().validate(config)
+    development = development_module()
+    development_policy = development.validate(config)
+    if 'local_review_feedback' in config:
+        if config.get('completion_owner') != 'local' or development_policy is None:
+            raise RuntimeError('local review feedback requires local completion and development pipeline')
+        development.local_review_reviewers(config)
     return config
 
 
@@ -331,7 +336,8 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
     if development_config is not None:
         validate_config(development_config)
         if any(development_config.get(key) != config.get(key) for key in
-               ('workflows', 'qualification', 'lifecycle_mode', 'qualification_blockers', 'development_pipeline')):
+               ('workflows', 'qualification', 'lifecycle_mode', 'qualification_blockers', 'development_pipeline',
+                'local_review_feedback')):
             raise RuntimeError('development handoff semantics differ from trusted CI policy')
     root = f'repos/{args.repo}'
     pr_path = f'{root}/pulls/{args.pr}'
@@ -367,7 +373,7 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
             state = 'todo'
             reasons = negative['failures'] + reasons
             evidence = sorted(set(evidence + negative['evidence']))
-    development_snapshots, failed_jobs, preflight = {}, [], None
+    development_snapshots, failed_jobs, preflight, local_review = {}, [], None, None
     if development_policy is not None:
         from types import SimpleNamespace
         adapter = SimpleNamespace(api=api, pages=pages)
@@ -382,6 +388,12 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
         if failed_jobs or decisive_preflight:
             state = 'todo'
             reasons = preflight['reasons'] + [f'{r["name"]}: {r["conclusion"]} {r["job_url"]}' for r in failed_jobs] + reasons
+        if 'local_review_feedback' in source_config:
+            local_review = development.local_review_failure(args.repo, issue, args.pr, args.head,
+                preflight['base'], pages(f'{root}/issues/{args.pr}/comments'), source_config)
+            if local_review is not None:
+                state = 'todo'
+                reasons = ['Local review reported a failure: ' + local_review['url']] + reasons
     if not args.apply and state == 'done' and 'qualification' in source_config:
         if snapshot(args.repo, args.head, config) != snapshots:
             raise RuntimeError('CI runs changed during read-only qualification')
@@ -531,6 +543,10 @@ def process_head(args, config, check_event=True, before_mutation=None, developme
         if (development.preflight(adapter, args.repo, args.pr, args.head) != preflight
                 or development.review_failure_snapshot(adapter, args.repo, args.pr, args.head, review_config) != development_snapshots):
             raise RuntimeError('development input or failed review attempt changed; no label mutation')
+        if ('local_review_feedback' in source_config
+                and development.local_review_failure(args.repo, issue, args.pr, args.head, preflight['base'],
+                    pages(f'{root}/issues/{args.pr}/comments'), source_config) != local_review):
+            raise RuntimeError('local review evidence changed; no label mutation')
     if 'qualification' in source_config:
         current_pr = api(pr_path)
         if (current_pr['state'] != 'open' or current_pr['head']['sha'] != args.head
@@ -657,6 +673,10 @@ def development_report(repo, document, evaluator, run_id):
                 or pull.get('base',{}).get('ref')!=default):
             continue
         number,head=pull['number'],pull['head']['sha']
+        base=pull.get('base',{}).get('sha')
+        if not isinstance(base,str) or not re.fullmatch('[0-9a-f]{40}',base):
+            results.append(dict(pr=number,head=head,state='held',reason='PR base identity missing'))
+            continue
         linking_metadata=(pull.get('title'),pull.get('body'))
         issue=qualification_module().linked_issue(pull)
         def failure_api(path,method='GET',data=None):
@@ -681,12 +701,17 @@ def development_report(repo, document, evaluator, run_id):
                     scoped=qualify_config(repo,current,config)
                     if evaluate_policy(scoped,snapshot(repo,head,scoped))[0]!='done':
                         raise RuntimeError('all necessary current-input CI must pass before the done label')
+                    if 'local_review_feedback' in config:
+                        feedback=development_module().local_review_failure(repo,issue,number,head,
+                            current.get('base',{}).get('sha'),pages(f'{root}/issues/{number}/comments'),config)
+                        if feedback is not None:
+                            raise RuntimeError('local review reported a failure; done label is blocked')
                     allowed=True
                 if not allowed:raise RuntimeError('development CI writer cannot merge, close or write unrelated state')
                 current=original_api(f'{root}/pulls/{number}')
                 if (current.get('state')!='open' or current.get('head',{}).get('sha')!=head
                         or (current.get('head',{}).get('repo')or{}).get('full_name')!=repo
-                        or current.get('base',{}).get('ref')!=default):
+                        or current.get('base',{}).get('ref')!=default or current.get('base',{}).get('sha')!=base):
                     raise RuntimeError('source PR moved before development handoff')
                 if source_diagnostic:
                     if (current.get('title'),current.get('body'))!=linking_metadata:

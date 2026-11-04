@@ -28,6 +28,7 @@ receipt = load('receipt', SKILLS / 'issue-review/scripts/receipt.py')
 GATES = [{'path': '.github/workflows/unit.yml', 'jobs': ['unit']},
          {'path': '.github/workflows/cloud.yml', 'jobs': ['functional', 'e2e', 'performance']}]
 SHA = 'a' * 40
+BASE = 'c' * 40
 
 
 def evidence():
@@ -779,6 +780,8 @@ elif args[:2] == ['repo', 'view']:
 elif args[:2] == ['pr', 'view']:
     if 'statusCheckRollup' in args:
         print('4')
+    elif 'baseRefOid' in args:
+        print('c' * 40)
     else:
         counter = root / 'heads'
         count = int(counter.read_text()) if counter.exists() else 0
@@ -796,6 +799,8 @@ with (root / 'calls').open('a') as f:
 if args[0] == '-c':
     os.execv(sys.executable, [sys.executable, *args])
 if args[0].endswith('receipt.py'):
+    if args[1] == 'notify':
+        sys.exit(0)
     saved = root / 'receipts'
     receipts = json.loads(saved.read_text()) if saved.exists() else []
     key = args[2] + ':' + args[4]
@@ -819,7 +824,7 @@ sys.exit(int(os.environ['CI_STATUS']))
                     continue
                 args = ['bash', str(SKILLS / 'issue-review/scripts/review.sh'), command]
                 if command != 'next':
-                    args += ['7', SHA]
+                    args += ['7', SHA, BASE]
                     if command != 'pass':
                         args += [str(report)]
                 results.append(subprocess.run(args, env=env, capture_output=True, text=True))
@@ -834,7 +839,7 @@ sys.exit(int(os.environ['CI_STATUS']))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('handoff.py', calls)
         self.assertIn('--head ' + SHA, calls)
-        self.assertIn('record 7 8 ' + SHA + ' pass', calls)
+        self.assertIn('record 7 8 ' + SHA + ' ' + BASE + ' pass', calls)
         for forbidden in (' merge ', 'issue edit', 'issue close', '--apply'):
             self.assertNotIn(forbidden, calls)
 
@@ -853,7 +858,7 @@ sys.exit(int(os.environ['CI_STATUS']))
             with self.subTest(command=command):
                 result, calls = self.invoke(command)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn('record 7 8 ' + SHA + ' ' + command, calls)
+                self.assertIn('record 7 8 ' + SHA + ' ' + BASE + ' ' + command, calls)
                 self.assertNotIn('issue edit', calls)
                 self.assertNotIn(' merge ', calls)
 
@@ -865,6 +870,7 @@ sys.exit(int(os.environ['CI_STATUS']))
         self.assertIn('issue=9', results[2].stdout)
         self.assertIn('issue=7', results[3].stdout)
         self.assertIn('head=' + 'b' * 40, results[3].stdout)
+        self.assertLess(calls.index('notify 7 8 ' + SHA), calls.index('seen 7 8 ' + SHA))
 
     def test_next_empty_queue_does_not_fetch(self):
         result, calls = self.invoke('next', empty=True)
@@ -881,6 +887,36 @@ sys.exit(int(os.environ['CI_STATUS']))
 
 
 class ReviewReceiptTests(unittest.TestCase):
+    def policy(self):
+        return {'source_commit': BASE, 'config': {}}
+
+    def feedback_policy(self):
+        return {'source_commit': BASE, 'config': {'local_review_feedback': {'version': 1, 'reviewer_ids': [42]}}}
+
+    def valid_pr(self):
+        return dict(state='open', title='Work', body='Closes #7',
+                    head={'sha': SHA, 'repo': {'full_name': 'o/r'}},
+                    base={'sha': BASE, 'ref': 'main', 'repo': {'full_name': 'o/r'}})
+
+    def valid_issue(self, labels=('done',)):
+        return dict(number=7, state='open', url='https://api.github.com/repos/o/r/issues/7',
+                    repository_url='https://api.github.com/repos/o/r', labels=[{'name': x} for x in labels])
+
+    def test_review_policy_must_match_current_base_and_full_trusted_config(self):
+        trusted={'workflows':GATES}
+        document={'config':trusted,'source_commit':BASE,'path':'.github/issue-ci-required-gates.json'}
+        with tempfile.TemporaryDirectory() as directory:
+            config=Path(directory)/'gates.json'
+            config.write_text(json.dumps(trusted))
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(receipt.verify_policy(config, BASE, lambda: document),0)
+            config.write_text(json.dumps({'workflows':GATES[:1]}))
+            with self.assertRaisesRegex(RuntimeError, 'differs from the trusted'):
+                receipt.verify_policy(config, BASE, lambda: document)
+            config.write_text(json.dumps(trusted))
+            with self.assertRaisesRegex(RuntimeError, 'not the current trusted'):
+                receipt.verify_policy(config, 'd'*40, lambda: document)
+
     def test_record_dedupes_authenticated_same_head_comment(self):
         comments = []
         writes = []
@@ -892,26 +928,128 @@ class ReviewReceiptTests(unittest.TestCase):
             if '/comments?' in path:
                 return comments
             if '/pulls/' in path:
-                return dict(state='open', head={'sha': SHA})
-            return dict(state='open', labels=[{'name': 'done'}])
+                return self.valid_pr()
+            if path == 'repos/o/r': return {'default_branch': 'main'}
+            return self.valid_issue()
         with patch.object(receipt, 'api', side_effect=api):
-            receipt.record('o/r', '7', '8', SHA, 'pass', 'verified', 'reviewer')
+            receipt.record('o/r', '7', '8', SHA, BASE, 'pass', 'verified', 'reviewer', self.policy)
             with contextlib.redirect_stdout(io.StringIO()):
-                receipt.record('o/r', '7', '8', SHA, 'pass', 'verified', 'reviewer')
+                receipt.record('o/r', '7', '8', SHA, BASE, 'pass', 'verified', 'reviewer', self.policy)
         self.assertEqual(len(writes), 1)
         self.assertIn('issue-review:7:' + SHA, writes[0]['body'])
 
     def test_spoofed_or_old_head_receipt_cannot_skip_review(self):
-        comments = [dict(body=f'<!-- issue-review:7:{SHA} -->', user={'login': 'attacker'}), dict(body=f'<!-- issue-review:7:{"b" * 40} -->', user={'login': 'reviewer'})]
+        comments = [dict(body=f'<!-- issue-review:7:{SHA}:{BASE} -->', user={'login': 'attacker'}), dict(body=f'<!-- issue-review:7:{"b" * 40}:{BASE} -->', user={'login': 'reviewer'}), dict(body=f'<!-- issue-review:7:{SHA}:{"d" * 40} -->', user={'login': 'reviewer'})]
         with patch.object(receipt, 'api', return_value=comments):
-            self.assertFalse(receipt.seen('o/r', '7', '8', SHA, 'reviewer'))
+            self.assertFalse(receipt.seen('o/r', '7', '8', SHA, BASE, 'reviewer'))
+
+    def test_failure_after_pass_or_block_is_recorded_and_cannot_be_erased_by_pass(self):
+        for prior in ('pass', 'block'):
+            marker=f'<!-- issue-review:7:{SHA}:{BASE} -->'
+            body=f'{marker}\nReview: {prior} head {SHA} base {BASE}.\nOld evidence.\nLifecycle unchanged; no merge.'
+            with self.subTest(prior=prior), patch.object(receipt, 'review_records', return_value=[body]), \
+                 patch.object(receipt, 'api', side_effect=[{'id':42,'login':'reviewer'}, {'default_branch':'main'}, self.valid_pr(), self.valid_issue(), self.valid_pr(), {}]) as api:
+                receipt.record('o/r', '7', '8', SHA, BASE, 'fail', 'New defect.', 'reviewer', self.feedback_policy)
+                self.assertIn('Review: fail', api.call_args.args[1]['body'])
+        failed=f'{marker}\nReview: fail head {SHA} base {BASE}.\nDefect.\nLifecycle unchanged; no merge.'
+        with patch.object(receipt, 'review_records', return_value=[failed]), patch.object(receipt, 'api') as api:
+            with self.assertRaisesRegex(RuntimeError, 'failed review exists'):
+                receipt.record('o/r', '7', '8', SHA, BASE, 'pass', 'verified', 'reviewer', self.policy)
+            api.assert_not_called()
+
+    def test_other_reviewer_failure_before_pass_prevents_receipt(self):
+        failed=dict(id=3, user={'id':42}, updated_at='2026-11-04T00:00:00Z',
+                    body=f'<!-- issue-review:7:{SHA}:{BASE} -->\nReview: fail head {SHA} base {BASE}.\nDefect.\nLifecycle unchanged; no merge.')
+        with patch.object(receipt, 'review_records', return_value=[]), \
+             patch.object(receipt, 'api', side_effect=[{'id':42,'login':'reviewer'}, {'default_branch':'main'},
+                 self.valid_pr(), self.valid_issue(), self.valid_pr(), [failed]]) as api:
+            with self.assertRaisesRegex(RuntimeError, 'failed review exists'):
+                receipt.record('o/r', '7', '8', SHA, BASE, 'pass', 'verified', 'reviewer', self.feedback_policy)
+            self.assertTrue(all(len(call.args) == 1 for call in api.call_args_list))
+
+    def test_idempotent_pass_still_checks_other_reviewer_failure(self):
+        own=f'<!-- issue-review:7:{SHA}:{BASE} -->\nReview: pass head {SHA} base {BASE}.\nverified\nLifecycle unchanged; no merge.'
+        failed=dict(id=3, user={'id':42}, updated_at='2026-11-04T00:00:00Z',
+                    body=f'<!-- issue-review:7:{SHA}:{BASE} -->\nReview: fail head {SHA} base {BASE}.\nDefect.\nLifecycle unchanged; no merge.')
+        with patch.object(receipt, 'review_records', return_value=[own]), \
+             patch.object(receipt, 'api', side_effect=[{'id':42,'login':'reviewer'}, {'default_branch':'main'},
+                 self.valid_pr(), self.valid_issue(), self.valid_pr(), [failed]]) as api:
+            with self.assertRaisesRegex(RuntimeError, 'failed review exists'):
+                receipt.record('o/r', '7', '8', SHA, BASE, 'pass', 'verified', 'reviewer', self.feedback_policy)
+            self.assertTrue(all(len(call.args) == 1 for call in api.call_args_list))
+
+    def test_untrusted_reviewer_cannot_record_failure(self):
+        with patch.object(receipt, 'api', return_value={'id':99,'login':'reviewer'}) as api:
+            with self.assertRaisesRegex(RuntimeError, 'not authorized'):
+                receipt.record('o/o', '7', '8', SHA, BASE, 'fail', 'Defect.', 'reviewer', self.feedback_policy)
+            self.assertEqual(api.call_count, 1)
 
     def test_stale_head_or_mixed_lifecycle_cannot_record_acceptance(self):
-        for pr, labels in ((dict(state='open', head={'sha': 'b' * 40}), ['done']), (dict(state='open', head={'sha': SHA}), ['done', 'doing'])):
-            with self.subTest(labels=labels), patch.object(receipt, 'seen', return_value=False), patch.object(receipt, 'api', side_effect=[pr, dict(state='open', labels=[{'name': l} for l in labels])]) as api:
+        for pr, labels in (({**self.valid_pr(), 'head': {'sha': 'b' * 40}}, ['done']), (self.valid_pr(), ['done', 'doing']), ({**self.valid_pr(), 'base': {'sha': 'd' * 40}}, ['done']), ({**self.valid_pr(), 'body': 'Closes #8'}, ['done'])):
+            with self.subTest(labels=labels), patch.object(receipt, 'review_records', return_value=[]), patch.object(receipt, 'api', side_effect=[{'default_branch':'main'}, pr, self.valid_issue(labels)]) as api:
                 with self.assertRaises(RuntimeError):
-                    receipt.record('o/r', '7', '8', SHA, 'pass', 'verified', 'reviewer')
+                    receipt.record('o/r', '7', '8', SHA, BASE, 'pass', 'verified', 'reviewer', self.policy)
                 self.assertTrue(all(len(c.args) == 1 for c in api.call_args_list))
+
+    def test_base_moving_during_receipt_does_not_post_a_review(self):
+        initial = self.valid_pr()
+        moved = {**initial, 'base': {**initial['base'], 'sha': 'd' * 40}}
+        with patch.object(receipt, 'review_records', return_value=[]), \
+             patch.object(receipt, 'api', side_effect=[{'default_branch':'main'}, initial, self.valid_issue(), moved]) as api:
+            with self.assertRaisesRegex(RuntimeError, 'head, base or linked issue changed'):
+                receipt.record('o/r', '7', '8', SHA, BASE, 'pass', 'verified', 'reviewer', self.policy)
+            self.assertTrue(all(len(call.args) == 1 for call in api.call_args_list))
+
+    def test_failed_review_wakes_ci_without_writing_labels(self):
+        pr = dict(state='open', title='Work', body='Closes #7',
+                  head={'sha': SHA, 'repo': {'full_name': 'o/r'}},
+                  base={'sha': BASE, 'repo': {'full_name': 'o/r'}})
+        comment = dict(id=12, user={'id': 42}, updated_at='2026-11-04T00:00:00Z',
+                       body=f'<!-- issue-review:7:{SHA}:{BASE} -->\nReview: fail head {SHA} base {BASE}.\nFound defect.\nLifecycle unchanged; no merge.')
+        doc = {'config': {'local_review_feedback': {'version': 1, 'reviewer_ids': [42]}}}
+        def api(path): return [comment] if '/comments?' in path else pr
+        with patch.object(receipt, 'api', side_effect=api), \
+             patch.object(receipt.subprocess, 'run') as dispatch:
+            self.assertEqual(receipt.notify_failure('o/r', '7', '8', SHA, BASE, lambda: doc), 0)
+        dispatch.assert_called_once()
+        command = dispatch.call_args.args[0]
+        self.assertIn('repos/o/r/dispatches', command)
+        self.assertEqual(json.loads(dispatch.call_args.kwargs['input']), {'event_type': 'aw-development-reconcile'})
+
+    def test_stale_or_untrusted_review_never_wakes_ci(self):
+        pr = dict(state='open', title='Work', body='Closes #7',
+                  head={'sha': SHA, 'repo': {'full_name': 'o/r'}},
+                  base={'sha': BASE, 'repo': {'full_name': 'o/r'}})
+        comment = dict(id=12, user={'id': 99},
+                       body=f'<!-- issue-review:7:{SHA}:{BASE} -->\nReview: fail head {SHA} base {BASE}.\nDefect.\nLifecycle unchanged; no merge.')
+        doc = {'config': {'local_review_feedback': {'version': 1, 'reviewer_ids': [42]}}}
+        with patch.object(receipt, 'api', side_effect=lambda path: [comment] if '/comments?' in path else pr), \
+             patch.object(receipt.subprocess, 'run') as dispatch:
+            self.assertEqual(receipt.notify_failure('o/r', '7', '8', SHA, BASE, lambda: doc), 0)
+            dispatch.assert_not_called()
+        pr['base']['sha'] = 'd' * 40
+        with patch.object(receipt, 'api', return_value=pr), patch.object(receipt.subprocess, 'run') as dispatch:
+            with self.assertRaisesRegex(RuntimeError, 'target changed'):
+                receipt.notify_failure('o/r', '7', '8', SHA, BASE, lambda: doc)
+            dispatch.assert_not_called()
+
+    def test_disabled_feedback_reports_a_pending_handoff(self):
+        with patch.object(receipt.subprocess, 'run') as dispatch:
+            with self.assertRaisesRegex(RuntimeError, 'handoff pending'):
+                receipt.notify_failure('o/r', '7', '8', SHA, BASE, lambda: {'config': {}})
+            dispatch.assert_not_called()
+
+    def test_required_failure_must_survive_until_ci_wake(self):
+        pr=self.valid_pr()
+        body=f'<!-- issue-review:7:{SHA}:{BASE} -->\nReview: fail head {SHA} base {BASE}.\nDefect.\nLifecycle unchanged; no merge.'
+        comment={'id':12,'user':{'id':42},'updated_at':'2026-11-04T00:00:00Z','body':body}
+        doc={'config':{'local_review_feedback':{'version':1,'reviewer_ids':[42]}}}
+        for rows in ([], [{**comment,'body':body.replace('Defect.','Edited.')}], [{**comment,'user':{'id':99}}]):
+            with self.subTest(rows=rows), patch.object(receipt, 'api', side_effect=lambda path: rows if '/comments?' in path else pr), \
+                 patch.object(receipt.subprocess,'run') as dispatch:
+                with self.assertRaisesRegex(RuntimeError, 'missing or changed'):
+                    receipt.notify_failure('o/r','7','8',SHA,BASE,lambda:doc,{'body':body,'author_id':42})
+                dispatch.assert_not_called()
 
 
 if __name__ == '__main__':
