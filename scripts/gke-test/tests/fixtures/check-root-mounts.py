@@ -1,11 +1,9 @@
 """Synthetic CI probe only. This is not a production PID or mount verifier."""
 import importlib.util
 import copy
-import json
 import os
 from pathlib import Path
 import select
-import subprocess
 import sys
 
 pid, parent, wrapper_no, gate_no, digest, different, container_id, nonce, network, image = sys.argv[1:]
@@ -18,6 +16,8 @@ spec = importlib.util.spec_from_file_location('fixture_mount_identity', root / '
 module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
 spec = importlib.util.spec_from_file_location('fixture_running_container', root / 'trusted_running_container.py')
 running = importlib.util.module_from_spec(spec); spec.loader.exec_module(running)
+spec = importlib.util.spec_from_file_location('fixture_docker_snapshot', root / 'trusted_docker_snapshot.py')
+docker = importlib.util.module_from_spec(spec); spec.loader.exec_module(docker)
 fds = []
 identity = None
 try:
@@ -27,9 +27,7 @@ try:
     identity = running.process_module.ProcessIdentity(int(pid))
     root_fd = identity.root_fd
     def snapshot():
-        result = subprocess.run(['/usr/bin/docker', 'inspect', '--format', '{{json .}}', container_id],
-                                check=True, capture_output=True, text=True, timeout=30)
-        item = json.loads(result.stdout)
+        item = docker.inspect(container_id)
         if item.get('Config', {}).get('Image') != image or not image.startswith('sha256:'):
             raise ValueError('synthetic fixture image differs')
         # The real rule requires a GHCR digest. This normalization is limited

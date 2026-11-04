@@ -98,6 +98,7 @@ def bounded(command_line, timeout):
                                stderr=subprocess.DEVNULL, start_new_session=True)
     deadline = time.monotonic() + timeout
     output = bytearray()
+    output_complete = False
     try:
         with selectors.DefaultSelector() as selector:
             selector.register(process.stdout, selectors.EVENT_READ)
@@ -106,6 +107,7 @@ def bounded(command_line, timeout):
                 if remaining <= 0 or not selector.select(remaining): raise TimeoutError('container timed out')
                 block = os.read(process.stdout.fileno(), 65536)
                 if not block:
+                    output_complete = True
                     selector.unregister(process.stdout)
                     break
                 output.extend(block)
@@ -114,9 +116,23 @@ def bounded(command_line, timeout):
         if remaining <= 0: raise TimeoutError('container timed out')
         return process.wait(timeout=remaining), output.decode('utf-8')
     except BaseException:
-        try: os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError: pass
-        process.wait()
+        cleanup_error = None
+        try:
+            if process.poll() is None:
+                cleanup_error = RuntimeError('forced client termination cannot prove descendant cleanup')
+                os.killpg(process.pid, signal.SIGKILL)
+            elif not output_complete:
+                cleanup_error = RuntimeError('client exited while output remained open')
+        except ProcessLookupError:
+            pass
+        except BaseException as error:
+            cleanup_error = error
+        try:
+            process.wait(timeout=5)
+        except BaseException as error:
+            cleanup_error = error
+        if cleanup_error is not None:
+            raise CleanupUncertain('container client cleanup is uncertain; discard runner') from cleanup_error
         raise
     finally:
         process.stdout.close()

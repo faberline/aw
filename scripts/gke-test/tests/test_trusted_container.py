@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import subprocess
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -25,6 +26,16 @@ class ContainerTests(unittest.TestCase):
         Path(self.config).write_text('test-only config')
         self.env = {'PATH': '/usr/local/bin', 'HOME': '/work', 'LC_ALL': 'C',
                     'KUBECONFIG': '/run/kubeconfig', 'E2E_ENDPOINT': 'http://127.0.0.1:7373'}
+
+    def test_reaped_client_with_invalid_output_is_not_signalled(self):
+        with patch.object(module.os, 'killpg', side_effect=AssertionError('reaped child signalled')):
+            with self.assertRaises(UnicodeDecodeError):
+                module.bounded([sys.executable, '-c', 'import sys;sys.stdout.buffer.write(bytes([255]))'], 5)
+
+    def test_exited_leader_with_open_output_requires_runner_disposal(self):
+        code = 'import os,time; pid=os.fork(); os._exit(0) if pid else time.sleep(2)'
+        with self.assertRaises(module.CleanupUncertain):
+            module.bounded([sys.executable, '-c', code], 0.5)
 
     def build(self, argv, environment, **kwargs):
         values = dict(docker='/usr/local/bin/docker', image=IMAGE, network=NETWORK,
