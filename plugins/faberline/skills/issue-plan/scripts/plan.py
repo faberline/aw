@@ -204,6 +204,23 @@ def execute(client, args):
         sections(text)
         client.command('api', '--method', 'POST', f'repos/{client.repo}/issues/{int(n)}/comments', payload=dict(body=f'{queue.SPEC_MARK}\n\n{text}'))
         return 0
+    if command == 'acceptance-map' and len(args) == 2:
+        n, file = args
+        if not re.fullmatch(r'[1-9][0-9]*', n):
+            raise ValueError('issue number must be a positive integer')
+        adapter_spec = importlib.util.spec_from_file_location('planner_acceptance_mapping',
+                                                             Path(__file__).with_name('acceptance_mapping.py'))
+        adapter = importlib.util.module_from_spec(adapter_spec)
+        adapter_spec.loader.exec_module(adapter)
+        action_spec = importlib.util.spec_from_file_location('planner_ci_action',
+            Path(__file__).resolve().parents[2] / 'issue-ci/scripts/action.py')
+        action = importlib.util.module_from_spec(action_spec)
+        action_spec.loader.exec_module(action)
+        ci = action.controller()
+        policy = lambda: action.trusted_policy(ci, client.repo, '.github/issue-ci-required-gates.json', metadata=True)
+        result = adapter.publish(client, int(n), body(file), policy)
+        print(json.dumps(result, sort_keys=True))
+        return 0
     if command == 'block' and len(args) == 2:
         n, file = args
         issue = required_open(client, n)
@@ -215,7 +232,7 @@ def execute(client, args):
             raise ValueError('lifecycle changed; comment retained, labels unchanged')
         client.patch(n, labels=sorted((queue.labels(fresh) - {'todo'}) | {'blocked'}))
         return 0
-    raise ValueError('usage: status | options [--tasks TASKS] [--milestone N] [--role product|shared] | release-status --milestone N | release-advance --milestone N --expected SHA256 | new TITLE FILE pN --milestone NUMBER | new-backlog TITLE FILE pN --milestone NUMBER | adopt N pN [--milestone NUMBER] | milestone N NUMBER | spec N FILE | prioritize N pN | block N FILE')
+    raise ValueError('usage: status | options [--tasks TASKS] [--milestone N] [--role product|shared] | release-status --milestone N | release-advance --milestone N --expected SHA256 | new TITLE FILE pN --milestone NUMBER | new-backlog TITLE FILE pN --milestone NUMBER | adopt N pN [--milestone NUMBER] | milestone N NUMBER | spec N FILE | acceptance-map N FILE | prioritize N pN | block N FILE')
 
 
 def main():

@@ -91,6 +91,83 @@ def execute_unregistered_issue(config, repo, head, base, *, pull, files, issue, 
                 qualification='not_evaluated', unresolved=protected + remaining)
 
 
+def execute_planned_issue(config, repo, head, base, *, pull, files, issue, comments, definitions):
+    """Join planner mapping to full execution without granting qualification.
+
+    The caller must authenticate the base policy and fetch the complete issue,
+    comment, PR and workflow inventories from the provider. No input here is an
+    independent approval or evidence that the selected tests have passed.
+    """
+    settings = config.get('planner_acceptance_mapping')
+    require(isinstance(settings, dict) and set(settings) == {'version', 'trusted_actor_ids'}
+            and type(settings.get('version')) is int and settings['version'] == 1,
+            'reviewed planner acceptance mapping policy is not enabled')
+    module_spec = importlib.util.spec_from_file_location('aw_ci_acceptance_plan',
+                                                        Path(__file__).with_name('acceptance_plan.py'))
+    mapping = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(mapping)
+    planned = execute_unregistered_issue(config, repo, head, base, pull=pull, files=files,
+                                         issue=issue, definitions=definitions)
+    spec = mapping.current_spec(issue, comments, settings['trusted_actor_ids'])
+    policy = qualification().validate(config)
+    tests = [name for name in planned['plan']['selected'] if policy['checks'][name]['kind'] != 'policy']
+    publication = mapping.published_mapping(repo, issue, spec, comments,
+                                            settings['trusted_actor_ids'], tests)
+    return dict(schema='AW_PLANNED_EXECUTION_ONLY_V1', execution=planned,
+                publication=publication, qualification='not_evaluated')
+
+
+def verify_planned_execution(config, selected, issue, comments, receipts, *, pull, files, definitions):
+    """Verify exact mapping and all test cases; never grant lifecycle authority."""
+    require(isinstance(selected, dict) and selected.get('schema') == 'AW_PLANNED_EXECUTION_ONLY_V1'
+            and selected.get('qualification') == 'not_evaluated', 'invalid planned execution')
+    result = selected.get('execution')
+    require(isinstance(result, dict) and result.get('schema') == 'AW_TEST_EXECUTION_ONLY_V1'
+            and result.get('qualification') == 'not_evaluated', 'invalid execution-only selection')
+    plan = validate_plan(result.get('plan'))
+    require(plan['policy_sha256'] == digest(config), 'selected plan policy changed')
+    fresh = execute_planned_issue(config, plan['repo'], plan['head'], plan['base'], pull=pull,
+                                  files=files, issue=issue, comments=comments, definitions=definitions)
+    require(fresh == selected, 'PR, issue, mapping or workflow selection changed')
+    readiness_spec = importlib.util.spec_from_file_location('aw_planned_readiness',
+                                                             Path(__file__).with_name('readiness.py'))
+    readiness = importlib.util.module_from_spec(readiness_spec)
+    readiness_spec.loader.exec_module(readiness)
+    handoff_spec = importlib.util.spec_from_file_location('aw_planned_handoff',
+                                                           Path(__file__).with_name('handoff.py'))
+    handoff = importlib.util.module_from_spec(handoff_spec)
+    handoff_spec.loader.exec_module(handoff)
+    contract = readiness.validate_contract(handoff, config)
+    require(all(name in contract['assertions'] for name in plan['selected']),
+            'reviewed expected-test inventory is incomplete')
+    expected_inventory = {name: contract['assertions'][name]['names'] for name in plan['selected']}
+    require(isinstance(receipts, list) and all(isinstance(row, dict) for row in receipts),
+            'test receipts must be an array of objects')
+    for name in plan['selected']:
+        expected = expected_inventory[name]
+        require(isinstance(expected, list) and all(isinstance(item, str) and item.strip() for item in expected)
+                and len(expected) == len(set(expected))
+                and (bool(expected) or plan['checks'][name]['kind'] == 'policy'),
+                'invalid independent expected-test inventory: ' + name)
+        rows = [row for row in receipts if row.get('check') == name]
+        require(len(rows) == 1 and rows[0].get('expected') == expected,
+                'receipt differs from independent expected-test inventory: ' + name)
+    settings = config.get('planner_acceptance_mapping')
+    require(isinstance(settings, dict) and set(settings) == {'version', 'trusted_actor_ids'}
+            and type(settings.get('version')) is int and settings['version'] == 1,
+            'reviewed planner acceptance mapping policy is not enabled')
+    module_spec = importlib.util.spec_from_file_location('aw_verify_acceptance_plan',
+                                                        Path(__file__).with_name('acceptance_plan.py'))
+    mapping = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(mapping)
+    current = mapping.current_spec(issue, comments, settings['trusted_actor_ids'])
+    proof = mapping.verify_published_execution(plan['repo'], issue, current, comments,
+                                               settings['trusted_actor_ids'], plan, receipts)
+    require(proof['publication'] == selected.get('publication'), 'issue or planner mapping changed')
+    return dict(schema='AW_PLANNED_TEST_EVIDENCE_V1', proof=proof, inventory_sha256=digest(expected_inventory),
+                unresolved=result['unresolved'], qualification='not_evaluated')
+
+
 def validate_plan(plan):
     require(isinstance(plan, dict) and plan.get('schema') == 'AW_TEST_PLAN_V1', 'invalid plan schema')
     value = {k: v for k, v in plan.items() if k != 'sha256'}
