@@ -136,12 +136,28 @@ try:
     except BaseException as error:
         raise RuntimeError('reporter creation is uncertain; discard runner') from error
     call('start', reporter)
+    reporter_details = inspect_container(reporter)
+    challenge_mounts = [mount for mount in reporter_details.get('Mounts', [])
+                        if mount.get('Destination') == '/run/aw-barrier/challenge']
+    if (len(challenge_mounts) != 1 or challenge_mounts[0].get('Type') != 'bind'
+            or challenge_mounts[0].get('Source') != str(challenge_file) or challenge_mounts[0].get('RW') is not False):
+        raise ValueError('fixture challenge mount is not the expected readonly bind')
     proxy_stream = load('trusted_proxy_stream').ProxyStream(reporter, 57373)
     try:
         proxy_stream.wait_observed_ready(15)
         for _ in range(2):
             challenge = challenge_channel.issue()
             proxy_stream.arm_barrier(challenge)
+            reporter_pid = inspect_container(reporter).get('State', {}).get('Pid')
+            if type(reporter_pid) is not int or reporter_pid <= 1:
+                raise ValueError('fixture reporter host PID is invalid')
+            probe = ['/usr/bin/python3', str(ROOT / 'tests/fixtures/check-sidecar-challenge.py'),
+                     str(reporter_pid), str(os.getpid()), str(challenge_channel.fd), challenge]
+            if os.geteuid() != 0: probe = ['sudo', '-n'] + probe
+            subprocess.run(probe, check=True, timeout=30,
+                           env={'PATH': '/usr/bin:/bin', 'HOME': str(context), 'LC_ALL': 'C'})
+            if inspect_container(reporter).get('State', {}).get('Pid') != reporter_pid:
+                raise ValueError('fixture reporter host PID changed')
             call('kill', '--signal=USR1', reporter)
             proxy_stream.wait_barrier(challenge, 15)
             challenge_channel.confirm(challenge)

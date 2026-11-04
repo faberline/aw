@@ -49,3 +49,22 @@ class MountIdentityTests(unittest.TestCase):
         self.mount.rmdir()
         self.mount.symlink_to(self.wrapper.parent, target_is_directory=True)
         with self.assertRaises(OSError): self.verify()
+
+    def test_sidecar_challenge_must_be_same_inode_and_exact_contents(self):
+        sidecar = self.mount.parent / 'aw-barrier'; sidecar.mkdir()
+        challenge = self.mount.parent.parent.parent / 'challenge'; challenge.touch()
+        os.link(challenge, sidecar / 'challenge')
+        fd = os.open(challenge, os.O_RDWR); self.addCleanup(os.close, fd)
+        module.verify_challenge(self.root_fd, fd, b'')
+        expected = b'a' * 32 + b'\n'; os.write(fd, expected)
+        module.verify_challenge(self.root_fd, fd, expected)
+        with self.assertRaises(ValueError): module.verify_challenge(self.root_fd, fd, b'b' * 32 + b'\n')
+        (sidecar / 'challenge').unlink(); (sidecar / 'challenge').touch()
+        with self.assertRaises(ValueError): module.verify_challenge(self.root_fd, fd, b'')
+
+    def test_sidecar_challenge_rejects_symlink_and_fifo(self):
+        sidecar = self.mount.parent / 'aw-barrier'; sidecar.mkdir()
+        (sidecar / 'challenge').symlink_to(self.gate)
+        with self.assertRaises(OSError): module.verify_challenge(self.root_fd, self.gate_fd, b'')
+        (sidecar / 'challenge').unlink(); os.mkfifo(sidecar / 'challenge')
+        with self.assertRaises(ValueError): module.verify_challenge(self.root_fd, self.gate_fd, b'')

@@ -49,3 +49,21 @@ def verify(root_fd, wrapper_fd, gate_fd, wrapper_hash, *, gate_bytes=b''):
                 raise ValueError('mounted gate contents differ')
         finally:
             os.close(fd)
+
+
+def verify_challenge(root_fd, challenge_fd, expected):
+    """Compare the sidecar's fixed challenge mount with a retained host fd."""
+    if (not isinstance(expected, bytes)
+            or expected != b'' and not re.fullmatch(rb'[0-9a-f]{32}\n', expected)):
+        raise ValueError('invalid protected challenge policy')
+    if not stat.S_ISDIR(os.fstat(root_fd).st_mode): raise ValueError('container root fd is not a directory')
+    fd = _open_beneath(root_fd, ('run', 'aw-barrier', 'challenge'))
+    try:
+        local, remote = os.fstat(challenge_fd), os.fstat(fd)
+        if (not stat.S_ISREG(local.st_mode) or not stat.S_ISREG(remote.st_mode)
+                or (local.st_dev, local.st_ino) != (remote.st_dev, remote.st_ino)
+                or local.st_size != len(expected) or remote.st_size != len(expected)
+                or os.pread(fd, len(expected) + 1, 0) != expected):
+            raise ValueError('container challenge mount differs')
+    finally:
+        os.close(fd)
