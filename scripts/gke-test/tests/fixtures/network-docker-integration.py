@@ -21,6 +21,7 @@ network_id = None
 stream = None
 started = None
 start_gate = None
+challenge_channel = None
 guarded_files = None
 guarded_test_nonce = None
 fixture_tag = 'aw-protected-fixture-' + nonce + ':latest'
@@ -116,8 +117,8 @@ try:
     stream.finish()
     stream.close(); stream = None
     # Exercise the real proxy/report stream against a synthetic upstream.
-    challenge_file = context / 'proxy-challenge'
-    challenge_file.write_bytes(b'a' * 32 + b'\n'); challenge_file.chmod(0o444)
+    challenge_channel = load('trusted_challenge').ChallengeFile(context)
+    challenge_file = challenge_channel.path
     try:
         reporter = identifier(call('create', '--pull=never', '--init', '--read-only', '--user=65532:65532',
             '--cap-drop=ALL', '--security-opt=no-new-privileges', '--ipc=private', '--cgroupns=private',
@@ -138,17 +139,12 @@ try:
     proxy_stream = load('trusted_proxy_stream').ProxyStream(reporter, 57373)
     try:
         proxy_stream.wait_observed_ready(15)
-        proxy_stream.arm_barrier('a' * 32)
-        call('kill', '--signal=USR1', reporter)
-        proxy_stream.wait_barrier('a' * 32, 15)
-        proxy_stream.arm_barrier('b' * 32)
-        call('kill', '--signal=USR1', reporter)
-        try:
-            proxy_stream.wait_barrier('b' * 32, 15)
-        except ValueError:
-            pass
-        else:
-            raise RuntimeError('sidecar accepted an unacknowledged challenge')
+        for _ in range(2):
+            challenge = challenge_channel.issue()
+            proxy_stream.arm_barrier(challenge)
+            call('kill', '--signal=USR1', reporter)
+            proxy_stream.wait_barrier(challenge, 15)
+            challenge_channel.confirm(challenge)
     finally: proxy_stream.close()
     # Exercise the production executor against a synthetic, non-product image.
     # Patching the image regex is confined to this fixture and never affects CI
@@ -251,6 +247,9 @@ finally:
         except Exception as error: errors.append(error)
     if guarded_files is not None:
         try: guarded_files.close()
+        except Exception as error: errors.append(error)
+    if challenge_channel is not None:
+        try: challenge_channel.close()
         except Exception as error: errors.append(error)
     if start_gate is not None:
         try: start_gate.close()
