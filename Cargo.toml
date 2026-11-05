@@ -1,0 +1,18 @@
+[package]
+name = "aw"
+version = "0.4.0"
+edition = "2024"
+description = "Issue worker CLI for faberline agents: claim one issue, do its stage, report back."
+license = "MIT"
+repository = "https://github.com/faberline/aw"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[lints.clippy]
+mod_module_files = "deny"
