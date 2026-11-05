@@ -72,3 +72,24 @@ main_filter_safety.py and shared index guard must be available coherently; no ne
 package dependency, schedule, permissions, package version, CI/review or done
 change.
 The existing local guard is not a filesystem CAS against noncooperating writers.
+
+### Bounded metadata-command transport
+
+The main-only filter helper sends finite binary input through a private unlinked
+regular temporary file, rewound before launch. Git receives EOF at its file end;
+parent descriptor lifetime cannot keep a pipe open. Stdout/stderr use private
+regular files too, not pipes. A monotonic controller deadline and size monitor
+operate independently of communicate/selector IO. Input and accepted stdout/
+stderr are each capped at 16 MB, including bounded final reads; output growth is
+polled while running (not a hard instantaneous disk quota). Deadline/overflow/
+read failure refuses the proof. Only that invocation's Popen child can be killed,
+with a bounded reap; uncertainty holds without retry. No process-group/caller
+signal or guard/lease rewrite is performed. close_fds prevents guard inheritance.
+
+Isolated Python 3.12.11 controls reproduced multi-pipe/input hangs beyond the
+inner timeout and verified file-backed controls, including exact synthetic
+10,516-byte check-attr input and 16,064-byte output. This does not prove the exact
+blocked syscall of any active worker. Process creation/kernel file IO are not
+preemptible by a Python deadline; the fix removes the demonstrated pipe path,
+not every possible OS stall. Qualification, source/index/alias safety, cleanup
+transport and existing owner/guard behavior are unchanged.
