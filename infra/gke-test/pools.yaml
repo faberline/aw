@@ -124,3 +124,14 @@ pools:
     machine_type: n4-standard-2
     spot: true
     max_nodes: 1
+  # One Sift instance with a Hyperdisk PVC, and one isolated smoke Job.
+  - repo: sift
+    pool: sift-server
+    machine_type: n4-standard-2
+    spot: true
+    max_nodes: 1
+  - repo: sift
+    pool: sift-client
+    machine_type: n4-standard-2
+    spot: true
+    max_nodes: 1
