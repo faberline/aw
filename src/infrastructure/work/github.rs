@@ -227,18 +227,14 @@ impl Tracker for GhCli {
     }
 
     fn edit_pr_body(&self, pr: u64, body: &str) -> PortResult<()> {
+        // REST, not `gh pr edit`: that command also reads classic project
+        // cards, which GitHub has removed, and then fails.
         let repo = self.name()?;
+        let path = format!("repos/{repo}/pulls/{pr}");
+        let payload = serde_json::json!({ "body": body }).to_string();
         self.gh(
-            &[
-                "pr",
-                "edit",
-                &pr.to_string(),
-                "--repo",
-                &repo,
-                "--body-file",
-                "-",
-            ],
-            Some(body),
+            &["api", "--method", "PATCH", &path, "--input", "-"],
+            Some(&payload),
         )
         .map(|_| ())
     }
