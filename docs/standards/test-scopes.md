@@ -1,13 +1,5 @@
 # Test scopes
 
-For normal pull request development, the approved
-[DEV-PIPELINE-1 specification](development-pipeline.md) takes precedence over
-this older draft. In particular, keep its ordered stages, all existing
-applicable gates, nonzero test rosters, and every-job failure reporting.
-This draft cannot authorize skipping a failing required test. Its release
-and merge-queue proposals are not adopted by the development specification;
-release pipeline design remains a separate discussion.
-
 Guideline. State: **draft, 2026-10-17**. It becomes a standard when
 `aw tests select` and the map checks in [Planned checks](#planned-checks)
 ship; see the [definition](README.md#what-a-standard-is). Until then, a

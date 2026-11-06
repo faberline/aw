@@ -1,0 +1,150 @@
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use super::stage::Stage;
+
+/// What an agent reports at the end of a stage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Outcome {
+    /// spec or tdd is finished and waits for the planner.
+    Ready,
+    /// The agent cannot finish this stage; the message says why.
+    Blocked,
+    /// review approved and squash-merged the pull request.
+    Passed,
+    /// review asked for changes.
+    Failed,
+}
+
+impl Outcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Outcome::Ready => "ready",
+            Outcome::Blocked => "blocked",
+            Outcome::Passed => "passed",
+            Outcome::Failed => "failed",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Outcome> {
+        match value {
+            "ready" => Some(Outcome::Ready),
+            "blocked" => Some(Outcome::Blocked),
+            "passed" => Some(Outcome::Passed),
+            "failed" => Some(Outcome::Failed),
+            _ => None,
+        }
+    }
+
+    pub fn allowed_in(self, stage: Stage) -> bool {
+        matches!(
+            (stage, self),
+            (_, Outcome::Blocked)
+                | (Stage::Spec | Stage::Tdd, Outcome::Ready)
+                | (Stage::Review, Outcome::Passed | Outcome::Failed)
+        )
+    }
+
+    pub fn allowed(stage: Stage) -> &'static [Outcome] {
+        match stage {
+            Stage::Spec | Stage::Tdd => &[Outcome::Ready, Outcome::Blocked],
+            Stage::Review => &[Outcome::Passed, Outcome::Failed, Outcome::Blocked],
+        }
+    }
+
+    pub fn needs_message(self) -> bool {
+        matches!(self, Outcome::Blocked | Outcome::Failed)
+    }
+}
+
+impl fmt::Display for Outcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A machine-readable issue comment that only `aw` writes.
+///
+/// The first line is an HTML comment, so it is hidden on GitHub and a
+/// person's comment cannot match it by accident.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Signal {
+    pub stage: Stage,
+    pub agent: String,
+    pub outcome: Outcome,
+}
+
+const OPEN: &str = "<!-- aw:signal ";
+const CLOSE: &str = " -->";
+
+impl Signal {
+    pub fn render(&self, message: &str, link: Option<&str>) -> String {
+        let mut body = format!(
+            "{OPEN}stage={} agent={} outcome={}{CLOSE}\n**aw** · `{}` · {} · **{}**",
+            self.stage, self.agent, self.outcome, self.agent, self.stage, self.outcome
+        );
+        if let Some(link) = link {
+            body.push_str("\n\n");
+            body.push_str(link);
+        }
+        let message = message.trim();
+        if !message.is_empty() {
+            body.push_str("\n\n");
+            body.push_str(message);
+        }
+        body
+    }
+
+    pub fn parse(body: &str) -> Option<Signal> {
+        let line = body.lines().next()?.trim();
+        let inner = line.strip_prefix(OPEN)?.strip_suffix(CLOSE)?;
+        let (mut stage, mut agent, mut outcome) = (None, None, None);
+        for token in inner.split_whitespace() {
+            let (key, value) = token.split_once('=')?;
+            match key {
+                "stage" => stage = Stage::parse(value),
+                "agent" => agent = Some(value.to_string()),
+                "outcome" => outcome = Outcome::parse(value),
+                _ => {}
+            }
+        }
+        Some(Signal {
+            stage: stage?,
+            agent: agent?,
+            outcome: outcome?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_then_parse_round_trips() {
+        let signal = Signal {
+            stage: Stage::Tdd,
+            agent: "claude".into(),
+            outcome: Outcome::Ready,
+        };
+        let body = signal.render("details", Some("https://example/pr/1"));
+        assert_eq!(Signal::parse(&body), Some(signal));
+    }
+
+    #[test]
+    fn plain_text_is_not_a_signal() {
+        assert_eq!(Signal::parse("tdd ready for review"), None);
+        assert_eq!(Signal::parse("<!-- aw:signal stage=tdd -->"), None);
+    }
+
+    #[test]
+    fn outcomes_follow_the_stage() {
+        assert!(Outcome::Ready.allowed_in(Stage::Spec));
+        assert!(!Outcome::Ready.allowed_in(Stage::Review));
+        assert!(Outcome::Passed.allowed_in(Stage::Review));
+        assert!(!Outcome::Passed.allowed_in(Stage::Tdd));
+        assert!(Outcome::Blocked.allowed_in(Stage::Tdd));
+    }
+}

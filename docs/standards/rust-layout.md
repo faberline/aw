@@ -1,6 +1,7 @@
 # Rust layout and layers
 
-Standard S3. State: **active**. The checker is `aw standards rust-arch check`.
+Standard S3. State: **active**. The checker was `aw standards rust-arch check`;
+it was removed with the Python engine on 2026-11-06 and is not ported yet.
 Each repository configures it with a `ddd.toml` at its root.
 
 ```bash
@@ -156,7 +157,7 @@ Other rules the checker applies:
   CHANGELOG, SECURITY, CODE_OF_CONDUCT, CLAUDE, AGENTS, and for now STATUS and
   ROADMAP. Other topics go under `docs/`.
 - Every `ddd.toml` copies the shared `[policy]` table exactly. The canonical
-  copy is [`src/aw/scripts/rust_arch/policy.toml`](../../src/aw/scripts/rust_arch/policy.toml).
+  copy is [`rust-arch-policy.toml`](rust-arch-policy.toml).
 
 ## Exceptions
 

@@ -29,7 +29,8 @@ mutants.out.old
 .mcp.json
 .playwright-mcp/
 
-# Python, Node and environment files.
+# Build output, Python, Node and environment files.
+/target/
 __pycache__/
 *.py[cod]
 .pytest_cache/

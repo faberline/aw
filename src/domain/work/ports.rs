@@ -1,0 +1,60 @@
+//! What the work use cases need from the outside world.
+
+use super::claim::Claim;
+use super::issue::{Comment, Issue};
+use super::pull_request::PullRequest;
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct PortError(pub String);
+
+pub type PortResult<T> = Result<T, PortError>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Repo {
+    /// `owner/name`.
+    pub name: String,
+    pub default_branch: String,
+}
+
+/// The issue tracker and code host (GitHub).
+pub trait Tracker {
+    fn repo(&self) -> PortResult<Repo>;
+    fn open_issues(&self, label: &str) -> PortResult<Vec<Issue>>;
+    fn comments(&self, issue: u64) -> PortResult<Vec<Comment>>;
+    fn comment(&self, issue: u64, body: &str) -> PortResult<()>;
+    fn open_prs(&self) -> PortResult<Vec<PullRequest>>;
+    fn create_pr(&self, head: &str, base: &str, title: &str, body: &str)
+    -> PortResult<PullRequest>;
+    fn edit_pr_body(&self, pr: u64, body: &str) -> PortResult<()>;
+    fn approve(&self, pr: u64) -> PortResult<()>;
+    fn request_changes(&self, pr: u64, body: &str) -> PortResult<()>;
+    fn pr_comment(&self, pr: u64, body: &str) -> PortResult<()>;
+    fn squash_merge(&self, pr: u64, subject: &str, body: &str) -> PortResult<()>;
+}
+
+/// The local git checkout. Remote refs are `origin/<branch>`.
+pub trait Workspace {
+    /// No staged, unstaged or untracked changes.
+    fn is_clean(&self) -> PortResult<bool>;
+    fn fetch(&self) -> PortResult<()>;
+    fn has_local_branch(&self, branch: &str) -> PortResult<bool>;
+    fn has_remote_branch(&self, branch: &str) -> PortResult<bool>;
+    fn switch(&self, branch: &str) -> PortResult<()>;
+    fn create_branch(&self, branch: &str, start: &str) -> PortResult<()>;
+    fn fast_forward(&self, upstream: &str) -> PortResult<()>;
+    fn detach(&self, start: &str) -> PortResult<()>;
+    /// Push HEAD to `origin/<branch>`. Never a force push.
+    fn push(&self, branch: &str) -> PortResult<()>;
+}
+
+pub trait ClaimStore {
+    fn load(&self) -> PortResult<Option<Claim>>;
+    fn save(&self, claim: &Claim) -> PortResult<()>;
+    fn clear(&self) -> PortResult<()>;
+}
+
+pub trait Clock {
+    /// Unix seconds.
+    fn now(&self) -> i64;
+}

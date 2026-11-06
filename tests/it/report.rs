@@ -1,0 +1,138 @@
+use aw::application::work::{ClaimOutcome, claim, release, report};
+use aw::domain::work::signal::Outcome;
+use aw::domain::work::stage::Stage;
+
+use crate::support::World;
+
+fn claim_issue(w: &World, agent: &str) {
+    match claim(w.services(), agent).unwrap() {
+        ClaimOutcome::Claimed(_) => {}
+        ClaimOutcome::Nothing(why) => panic!("nothing to claim: {why}"),
+    }
+    w.workspace.calls.borrow_mut().clear();
+}
+
+#[test]
+fn spec_ready_posts_the_signal_and_returns_to_main() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:codex", "stage:spec"]);
+    claim_issue(&w, "codex");
+    let r = report(w.services(), Outcome::Ready, "spec written").unwrap();
+    assert_eq!(r.stage, Stage::Spec);
+    assert_eq!(r.link, None);
+    let signals = w.tracker.signals(1);
+    assert_eq!(signals.len(), 1);
+    assert_eq!(signals[0].outcome, Outcome::Ready);
+    assert!(w.tracker.last_comment(1).contains("spec written"));
+    assert!(w.store.claim.borrow().is_none());
+    assert_eq!(w.workspace.calls(), ["switch main", "ff origin/main"]);
+}
+
+#[test]
+fn tdd_ready_pushes_and_opens_a_closing_pull_request() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:codex", "stage:tdd"]);
+    claim_issue(&w, "codex");
+    let r = report(w.services(), Outcome::Ready, "## Summary\nDone").unwrap();
+    assert_eq!(w.workspace.calls()[0], "push codex/issue-7");
+    assert_eq!(
+        w.tracker.calls()[0],
+        "create_pr codex/issue-7 -> main: Issue 7"
+    );
+    let pr = w.tracker.prs.borrow()[0].clone();
+    assert_eq!(pr.body, "Closes #7\n\n## Summary\nDone");
+    assert_eq!(r.link.as_deref(), Some(pr.url.as_str()));
+    assert!(w.tracker.last_comment(7).contains(&pr.url));
+}
+
+#[test]
+fn tdd_ready_updates_an_open_pull_request() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:codex", "stage:tdd"]);
+    w.tracker.pr(5, "codex/issue-7", "Closes #7\n\nold");
+    claim_issue(&w, "codex");
+    report(w.services(), Outcome::Ready, "new").unwrap();
+    assert_eq!(w.tracker.calls(), ["edit_pr #5", "comment #7"]);
+    assert_eq!(w.tracker.prs.borrow()[0].body, "Closes #7\n\nnew");
+}
+
+#[test]
+fn review_passed_approves_and_squash_merges() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "codex/issue-7", "Closes #7");
+    claim_issue(&w, "claude");
+    report(w.services(), Outcome::Passed, "").unwrap();
+    assert_eq!(
+        w.tracker.calls(),
+        [
+            "approve #5",
+            "merge #5: Issue 7 (#5) | Closes #7",
+            "comment #7"
+        ]
+    );
+}
+
+#[test]
+fn review_failed_requests_changes_or_falls_back_to_a_comment() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "codex/issue-7", "Closes #7");
+    claim_issue(&w, "claude");
+    w.tracker.fail_request_changes.set(true);
+    report(w.services(), Outcome::Failed, "tests missing").unwrap();
+    assert_eq!(w.tracker.calls(), ["pr_comment #5", "comment #7"]);
+    assert!(w.tracker.last_comment(7).contains("tests missing"));
+}
+
+#[test]
+fn outcome_must_fit_the_stage_and_failures_need_a_message() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:codex", "stage:spec"]);
+    claim_issue(&w, "codex");
+    assert!(report(w.services(), Outcome::Passed, "x").is_err());
+    assert!(report(w.services(), Outcome::Blocked, "  ").is_err());
+    assert!(w.tracker.calls().is_empty());
+    assert!(w.store.claim.borrow().is_some());
+}
+
+#[test]
+fn a_dirty_tree_stays_put_with_a_warning() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:codex", "stage:spec"]);
+    claim_issue(&w, "codex");
+    w.workspace.clean.set(false);
+    let r = report(w.services(), Outcome::Blocked, "need input").unwrap();
+    assert_eq!(r.warnings.len(), 1);
+    assert!(w.workspace.calls().is_empty());
+    assert!(w.store.claim.borrow().is_none());
+}
+
+#[test]
+fn report_without_a_claim_is_an_error() {
+    let w = World::new();
+    assert!(report(w.services(), Outcome::Ready, "").is_err());
+}
+
+#[test]
+fn release_drops_the_claim_without_a_signal() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:codex", "stage:spec"]);
+    claim_issue(&w, "codex");
+    let (c, _) = release(w.services()).unwrap();
+    assert_eq!(c.issue, 1);
+    assert!(w.tracker.signals(1).is_empty());
+    assert!(w.store.claim.borrow().is_none());
+    assert!(release(w.services()).is_err());
+}
+
+#[test]
+fn tdd_ready_refuses_uncommitted_changes() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:codex", "stage:tdd"]);
+    claim_issue(&w, "codex");
+    w.workspace.clean.set(false);
+    assert!(report(w.services(), Outcome::Ready, "").is_err());
+    assert!(w.workspace.calls().is_empty());
+    assert!(w.store.claim.borrow().is_some());
+}
