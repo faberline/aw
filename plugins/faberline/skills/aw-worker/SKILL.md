@@ -183,6 +183,10 @@ Then the next agent does not wait one more hour.
 - Work only on the issue that `aw claim` gives. One issue in each run.
 - When you stop with an active claim and cannot finish, run `$AW release <who>`.
 - Never edit or delete a claim or signal comment (`<!-- aw:`). Only `aw` writes them.
+- The claim comment is the only lock in this skill. Do not use the AW session
+  service (MCP `list_sessions`, `read_inbox`, `claim_worktree`) to check for
+  other workers. When that service is unavailable, do not stop: `aw claim`
+  already prevents overlap.
 - Run builds and checks in the foreground and wait for them. Do not end the
   run while a command still runs.
 - When a command is denied by a permission rule, do not work around it. Run
