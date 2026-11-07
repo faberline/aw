@@ -4,9 +4,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use aw::application::work::Services;
-use aw::domain::work::claim::Claim;
+use aw::domain::work::claim::ClaimMark;
 use aw::domain::work::issue::{Comment, Issue};
-use aw::domain::work::ports::{ClaimStore, Clock, PortError, PortResult, Repo, Tracker, Workspace};
+use aw::domain::work::ports::{Clock, PortError, PortResult, Repo, Tracker, Workspace};
 use aw::domain::work::pull_request::PullRequest;
 use aw::domain::work::signal::Signal;
 
@@ -20,6 +20,7 @@ pub struct FakeTracker {
     /// Everything the use case changed, in order, e.g. `merge #5`.
     pub calls: RefCell<Vec<String>>,
     pub fail_request_changes: Cell<bool>,
+    next_comment_id: Cell<u64>,
 }
 
 impl FakeTracker {
@@ -42,15 +43,44 @@ impl FakeTracker {
         });
     }
 
-    pub fn add_comment(&self, issue: u64, body: &str, at: &str) {
+    pub fn add_comment(&self, issue: u64, body: &str, at: &str) -> u64 {
+        let id = self.next_comment_id.get() + 1;
+        self.next_comment_id.set(id);
         self.comments
             .borrow_mut()
             .entry(issue)
             .or_default()
             .push(Comment {
+                id,
                 body: body.into(),
                 created_at: at.into(),
             });
+        id
+    }
+
+    /// The claim marks on `issue`, oldest first.
+    pub fn claims(&self, issue: u64) -> Vec<ClaimMark> {
+        self.comments
+            .borrow()
+            .get(&issue)
+            .map(|cs| {
+                cs.iter()
+                    .filter_map(|c| ClaimMark::parse(&c.body))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn clear_calls(&self) {
+        self.calls.borrow_mut().clear();
+    }
+
+    fn issue_of(&self, id: u64) -> Option<u64> {
+        self.comments
+            .borrow()
+            .iter()
+            .find(|(_, cs)| cs.iter().any(|c| c.id == id))
+            .map(|(n, _)| *n)
     }
 
     pub fn signals(&self, issue: u64) -> Vec<Signal> {
@@ -107,6 +137,30 @@ impl Tracker for FakeTracker {
         Ok(())
     }
 
+    fn edit_comment(&self, id: u64, body: &str) -> PortResult<()> {
+        let issue = self
+            .issue_of(id)
+            .ok_or_else(|| PortError(format!("no comment {id}")))?;
+        self.record(format!("edit_comment #{issue}"));
+        for c in self.comments.borrow_mut().values_mut().flatten() {
+            if c.id == id {
+                c.body = body.into();
+            }
+        }
+        Ok(())
+    }
+
+    fn delete_comment(&self, id: u64) -> PortResult<()> {
+        let issue = self
+            .issue_of(id)
+            .ok_or_else(|| PortError(format!("no comment {id}")))?;
+        self.record(format!("delete_comment #{issue}"));
+        for cs in self.comments.borrow_mut().values_mut() {
+            cs.retain(|c| c.id != id);
+        }
+        Ok(())
+    }
+
     fn open_prs(&self) -> PortResult<Vec<PullRequest>> {
         Ok(self.prs.borrow().clone())
     }
@@ -159,6 +213,8 @@ impl Tracker for FakeTracker {
 }
 
 pub struct FakeWorkspace {
+    /// `owner/name` of `origin`, or `None` outside a git checkout.
+    pub origin: RefCell<Option<String>>,
     pub clean: Cell<bool>,
     pub local: RefCell<Vec<String>>,
     pub remote: RefCell<Vec<String>>,
@@ -168,6 +224,7 @@ pub struct FakeWorkspace {
 impl Default for FakeWorkspace {
     fn default() -> Self {
         FakeWorkspace {
+            origin: RefCell::new(Some("o/r".into())),
             clean: Cell::new(true),
             local: RefCell::new(vec!["main".into()]),
             remote: RefCell::new(vec!["main".into()]),
@@ -187,7 +244,12 @@ impl FakeWorkspace {
 }
 
 impl Workspace for FakeWorkspace {
+    fn origin_repo(&self) -> PortResult<Option<String>> {
+        Ok(self.origin.borrow().clone())
+    }
+
     fn is_clean(&self) -> PortResult<bool> {
+        self.record("status".into());
         Ok(self.clean.get())
     }
 
@@ -231,27 +293,6 @@ impl Workspace for FakeWorkspace {
     }
 }
 
-#[derive(Default)]
-pub struct MemStore {
-    pub claim: RefCell<Option<Claim>>,
-}
-
-impl ClaimStore for MemStore {
-    fn load(&self) -> PortResult<Option<Claim>> {
-        Ok(self.claim.borrow().clone())
-    }
-
-    fn save(&self, claim: &Claim) -> PortResult<()> {
-        *self.claim.borrow_mut() = Some(claim.clone());
-        Ok(())
-    }
-
-    fn clear(&self) -> PortResult<()> {
-        *self.claim.borrow_mut() = None;
-        Ok(())
-    }
-}
-
 pub struct FixedClock(pub Cell<i64>);
 
 impl Clock for FixedClock {
@@ -263,7 +304,6 @@ impl Clock for FixedClock {
 pub struct World {
     pub tracker: FakeTracker,
     pub workspace: FakeWorkspace,
-    pub store: MemStore,
     pub clock: FixedClock,
 }
 
@@ -272,7 +312,6 @@ impl World {
         World {
             tracker: FakeTracker::default(),
             workspace: FakeWorkspace::default(),
-            store: MemStore::default(),
             clock: FixedClock(Cell::new(NOW)),
         }
     }
@@ -281,7 +320,6 @@ impl World {
         Services {
             tracker: &self.tracker,
             workspace: &self.workspace,
-            store: &self.store,
             clock: &self.clock,
         }
     }

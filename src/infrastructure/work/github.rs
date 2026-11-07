@@ -7,10 +7,22 @@ use crate::domain::work::issue::{Comment, Issue};
 use crate::domain::work::ports::{PortError, PortResult, Repo, Tracker};
 use crate::domain::work::pull_request::PullRequest;
 
-/// GitHub through the `gh` CLI, for the repository of the current checkout.
+/// GitHub through the `gh` CLI, for the named repository or, without a
+/// name, the repository of the current checkout.
 #[derive(Default)]
 pub struct GhCli {
+    name: Option<String>,
     repo: OnceCell<Repo>,
+}
+
+impl GhCli {
+    /// `name` is `owner/name`; `None` asks `gh` for the current checkout.
+    pub fn new(name: Option<String>) -> Self {
+        GhCli {
+            name: name.filter(|n| !n.is_empty()),
+            repo: OnceCell::new(),
+        }
+    }
 }
 
 fn json<T: for<'de> Deserialize<'de>>(text: &str, what: &str) -> PortResult<T> {
@@ -45,15 +57,11 @@ struct LabelJson {
     name: String,
 }
 
+/// One issue comment from the REST API (snake_case fields).
 #[derive(Deserialize)]
-struct CommentsJson {
-    comments: Vec<CommentJson>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct CommentJson {
-    body: String,
+    id: u64,
+    body: Option<String>,
     created_at: String,
 }
 
@@ -94,10 +102,12 @@ impl Tracker for GhCli {
         if let Some(repo) = self.repo.get() {
             return Ok(repo.clone());
         }
-        let out = self.gh(
-            &["repo", "view", "--json", "nameWithOwner,defaultBranchRef"],
-            None,
-        )?;
+        let mut args = vec!["repo", "view"];
+        if let Some(name) = &self.name {
+            args.push(name);
+        }
+        args.extend(["--json", "nameWithOwner,defaultBranchRef"]);
+        let out = self.gh(&args, None)?;
         let parsed: RepoJson = json(&out, "repo view")?;
         let repo = Repo {
             name: parsed.name_with_owner,
@@ -139,28 +149,49 @@ impl Tracker for GhCli {
     }
 
     fn comments(&self, issue: u64) -> PortResult<Vec<Comment>> {
+        // REST, not `gh issue view`: only REST gives the numeric id that
+        // edit and delete need. `--jq` prints one comment per line.
         let repo = self.name()?;
+        let path = format!("repos/{repo}/issues/{issue}/comments?per_page=100");
         let out = self.gh(
             &[
-                "issue",
-                "view",
-                &issue.to_string(),
-                "--repo",
-                &repo,
-                "--json",
-                "comments",
+                "api",
+                "--paginate",
+                &path,
+                "--jq",
+                ".[] | {id, body, created_at}",
             ],
             None,
         )?;
-        let parsed: CommentsJson = json(&out, "issue comments")?;
-        Ok(parsed
-            .comments
-            .into_iter()
-            .map(|c| Comment {
-                body: c.body,
-                created_at: c.created_at,
+        out.lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|line| {
+                let c: CommentJson = json(line, "issue comments")?;
+                Ok(Comment {
+                    id: c.id,
+                    body: c.body.unwrap_or_default(),
+                    created_at: c.created_at,
+                })
             })
-            .collect())
+            .collect()
+    }
+
+    fn edit_comment(&self, id: u64, body: &str) -> PortResult<()> {
+        let repo = self.name()?;
+        let path = format!("repos/{repo}/issues/comments/{id}");
+        let payload = serde_json::json!({ "body": body }).to_string();
+        self.gh(
+            &["api", "--method", "PATCH", &path, "--input", "-"],
+            Some(&payload),
+        )
+        .map(|_| ())
+    }
+
+    fn delete_comment(&self, id: u64) -> PortResult<()> {
+        let repo = self.name()?;
+        let path = format!("repos/{repo}/issues/comments/{id}");
+        self.gh(&["api", "--method", "DELETE", &path], None)
+            .map(|_| ())
     }
 
     fn comment(&self, issue: u64, body: &str) -> PortResult<()> {

@@ -4,6 +4,7 @@ fn aw(args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_aw"))
         .args(args)
         .env_remove("AW_AGENT")
+        .env_remove("AW_REPO")
         .output()
         .unwrap()
 }
@@ -34,6 +35,19 @@ fn a_bad_agent_id_fails_before_touching_github() {
 
 #[test]
 fn report_rejects_an_unknown_outcome() {
-    let out = aw(&["report", "done"]);
+    let out = aw(&["report", "--agent", "codex", "done"]);
     assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("invalid value"));
+}
+
+#[test]
+fn claim_commands_need_an_agent() {
+    for command in ["status", "release", "claim"] {
+        let out = aw(&[command]);
+        assert_eq!(out.status.code(), Some(1), "{command}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("--agent"),
+            "{command}"
+        );
+    }
 }

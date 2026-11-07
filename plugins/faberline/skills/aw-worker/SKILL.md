@@ -10,6 +10,7 @@ One run takes at most one issue through one stage.
 Each AI runs this skill on its own hourly schedule and pulls its own work.
 No controller assigns work.
 The `claude` worker is also the planner. Only the planner changes labels.
+Only tdd touches code in a clone. Planning, spec and review use only GitHub.
 
 ## Roles
 
@@ -20,26 +21,32 @@ The `claude` worker is also the planner. Only the planner changes labels.
 | `stage:tdd` | `agy` | tests first, then code; `aw` opens the pull request |
 | `stage:review` | `codex` | review a green pull request; `aw` merges it or sends it back |
 
-## 1. Find the agent id, the clones and `aw`
+## 1. Find the agent id, the repositories and `aw`
 
 - The agent id is the client you run in: Claude Code `claude`, Antigravity `agy`, Codex `codex`.
-- Worker clones are in `~/faberlines/.aw-workers/<agent>/`.
-  Each subdirectory is a dedicated clone of one faberline repository.
-- When the current directory is inside a clone with `git config aw.agent`,
-  use only that clone. Its value is the agent id.
-- Use a clone only when its `git config aw.agent` is the agent id.
-  When no clone is usable, stop and report `no worker clone`.
+- The repositories are the faberline repositories with the GitHub topic `aw`:
+  `gh repo list faberline --topic aw --no-archived --json nameWithOwner --jq '.[].nameWithOwner'`.
+  Use them in name order. When the list is empty, stop and report `no aw repository`.
+- `claude` and `codex` need no clone. Work from any directory.
+- `agy` works in a dedicated clone: `~/faberlines/.aw-workers/agy/<name>`,
+  where `<name>` is the repository name without the owner.
+  When the clone is missing, create it:
+  `gh repo clone <owner>/<name> ~/faberlines/.aw-workers/agy/<name>`.
 - Never work in a person's checkout, such as `~/faberlines/<repo>`.
 
 Use the Rust `aw`: `AW=~/.local/share/aw-rs/bin/aw`.
-`$AW --version` must print `aw 0.4.0` or newer.
+`$AW --version` must print `aw 0.6.0` or newer.
 `~/.local/bin/aw` can be an old Python tool with the same name; do not use it.
 When no binary passes the check, stop and report it.
 Install command: `cargo install --git https://github.com/faberline/aw --root ~/.local/share/aw-rs aw`.
 
+Give every `claim`, `report`, `release` and `status` command the agent and
+the repository: `--agent <agent> --repo <owner>/<name>`. Below, `<who>`
+means these two options.
+
 ## 2. Plan (`claude` only)
 
-Do this in each clone before the claim. Use `gh ... -R <owner>/<repo>`.
+Do this in each repository before the claim. Use `gh ... -R <owner>/<name>`.
 
 A signal is a comment whose first line is
 `<!-- aw:signal stage=<stage> agent=<agent> outcome=<outcome> -->`.
@@ -84,38 +91,49 @@ label and no open sub-issues. Take `p0` first, then the oldest.
 
 ## 3. Claim
 
-For each usable clone, in name order, until one claim succeeds:
+The claim is a comment on the issue that `aw` writes. It starts with
+`<!-- aw:claim`. `aw` finds it again from the agent and the repository.
 
-1. `cd <clone>`.
-2. When `$AW status` exits 0, a past run stopped early and still holds the
-   claim. Continue it: read the JSON, keep the files in the tree, and go to
-   step 4. Claim nothing more in this run.
-   When `$AW status` exits 2 (no claim) and `git status --porcelain` is not
-   empty, a past run stopped early. Keep its files:
-   `git stash push -u -m "aw-worker leftover <UTC time>"`.
-3. `$AW claim --agent <agent>`.
-   - Exit 2: nothing to do here. Try the next clone.
-   - Exit 1: keep stderr for the report. Try the next clone.
+For each repository, in name order, until one claim succeeds:
+
+1. `agy` only: `cd ~/faberlines/.aw-workers/agy/<name>`.
+2. When `$AW status <who>` exits 0, a past run stopped early and still holds
+   the claim. Continue it: read the JSON and go to step 4. `agy` keeps the
+   files in the tree. Claim nothing more in this run.
+3. `agy` only: when `$AW status <who>` exits 2 (no claim) and
+   `git status --porcelain` is not empty, a past run stopped early. Keep its
+   files: `git stash push -u -m "aw-worker leftover <UTC time>"`.
+4. `$AW claim <who>`.
+   - Exit 2: nothing to do here. Try the next repository.
+   - Exit 1: keep stderr for the report. Try the next repository.
    - Exit 0: read the JSON (`repo`, `issue`, `stage`, `branch`, `pr`).
      Go to step 4 and claim nothing more in this run.
 
-When no clone gives a claim, go to step 6.
+When no repository gives a claim, go to the final answer.
 
 ## 4. Do the stage
 
 First read the issue and all comments: `gh issue view <n> -R <repo> --comments`.
 Read the repository rules: `AGENTS.md`, `CLAUDE.md` or `CONTRIBUTING.md`.
 Follow them for code and checks. For git and GitHub, `aw` and this skill win.
-Put report files in a temporary directory, never in the clone.
+Put report files in a temporary directory, never in a clone.
+
+Without a clone, read code through the GitHub API:
+
+- the file list: `gh api "repos/<repo>/git/trees/<ref>?recursive=1" --jq '.tree[].path'`;
+- one file: `gh api -H 'Accept: application/vnd.github.raw' "repos/<repo>/contents/<path>?ref=<ref>"`;
+- a search: `gh search code '<text>' --repo <repo>`.
+
+`<ref>` is the default branch, or the pull request head branch in a review.
 
 ### spec
 
-- Do not change files in the clone.
+- Do not clone the repository. Read the code through the GitHub API.
 - Write the spec: the goal; acceptance criteria that a test or command can
   prove; the tests to write, with one negative case that must fail without
   the change; the files to change; what is out of scope.
 - When one pull request is not enough, report `blocked` and say how to split.
-- `$AW report ready -F <file>`. The spec becomes the signal comment.
+- `$AW report <who> ready -F <file>`. The spec becomes the signal comment.
 
 ### tdd
 
@@ -131,24 +149,26 @@ Put report files in a temporary directory, never in the clone.
 - Commit with conventional messages. Run the repository's checks. For Rust:
   `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`,
   `cargo test`.
-- With a clean tree, run `$AW report ready -F <file>`. The file becomes the
-  pull request body after `Closes #<n>`: summary, changes, the checks you ran
-  and their results.
+- With a clean tree, run `$AW report <who> ready -F <file>` in the clone.
+  The file becomes the pull request body after `Closes #<n>`: summary,
+  changes, the checks you ran and their results.
 - When you cannot finish in this run, commit the work in progress and run
-  `$AW release`. The next run continues on the same local branch.
+  `$AW release <who>`. The next run continues on the same local branch.
 
 ### review
 
+- Do not clone the repository. CI is the test evidence; do not run tests.
 - Read the pull request: `gh pr view <pr> -R <repo>`, `gh pr checks <pr> -R <repo>`,
-  `gh pr diff <pr> -R <repo>`.
-- Checks are still running: `$AW release` and stop. The next run tries again.
+  `gh pr diff <pr> -R <repo>`. Read whole files at the head branch through the
+  GitHub API when the diff is not enough.
+- Checks are still running: `$AW release <who>` and stop. The next run tries again.
 - A check failed or the pull request has a merge conflict:
-  `$AW report failed -F <file>` with the failed checks or the conflict.
-- Compare the diff with the spec and its acceptance criteria. Do not change
-  code. You can run the tests; the clone is detached at the pull request head.
+  `$AW report <who> failed -F <file>` with the failed checks or the conflict.
+- Compare the diff with the spec and its acceptance criteria. Check that the
+  tests in the diff prove each criterion and that CI ran them.
 - Every criterion is proven and all checks are green:
-  `$AW report passed -F <file>`. `aw` approves and squash-merges.
-- Otherwise `$AW report failed -F <file>` with findings per file.
+  `$AW report <who> passed -F <file>`. `aw` approves and squash-merges.
+- Otherwise `$AW report <who> failed -F <file>` with findings per file.
 
 ## 5. After the report (`claude` only)
 
@@ -161,21 +181,21 @@ Then the next agent does not wait one more hour.
   Do not do them with `git` or `gh`.
 - Only the planner (`claude`) changes labels and creates or closes issues.
 - Work only on the issue that `aw claim` gives. One issue in each run.
-- When you stop with an active claim and cannot finish, run `$AW release`.
-- Never edit the claim file (`<git dir>/aw/claim.json`). Only `aw` writes it.
+- When you stop with an active claim and cannot finish, run `$AW release <who>`.
+- Never edit or delete a claim or signal comment (`<!-- aw:`). Only `aw` writes them.
 - Run builds and checks in the foreground and wait for them. Do not end the
   run while a command still runs.
 - When a command is denied by a permission rule, do not work around it. Run
-  `$AW release` and name the command and the rule in the final answer.
+  `$AW release <who>` and name the command and the rule in the final answer.
 - `blocked` is for a decision that only a person can make. Write the reason.
 
 ## Final answer
 
 Use the user's language. Give:
 
-- the agent id and the clones you used;
-- the claim result for each clone;
+- the agent id and the repositories you checked;
+- the claim result for each repository;
 - the work: issue, stage, outcome and pull request;
 - the label moves (planner only);
-- for each clone, the count of open issues with your `agent:` label;
+- for each repository, the count of open issues with your `agent:` label;
 - the health: `正常` (normal) or `異常` (abnormal) with the reason.

@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
+use super::active::{active, in_checkout};
 use super::release::finish;
 use super::services::Services;
 use crate::domain::work::claim::Claim;
@@ -19,12 +20,13 @@ pub struct Reported {
     pub warnings: Vec<String>,
 }
 
-/// Finish the claimed stage: do its GitHub side effect, post the signal
-/// comment, and drop the claim.
-pub fn report(s: Services<'_>, outcome: Outcome, message: &str) -> Result<Reported> {
-    let Some(claim) = s.store.load()? else {
-        bail!("nothing is claimed; run `aw claim` first");
+/// Finish the claimed stage: do its GitHub side effect and turn the claim
+/// comment into the signal.
+pub fn report(s: Services<'_>, agent: &str, outcome: Outcome, message: &str) -> Result<Reported> {
+    let Some(held) = active(s, agent)? else {
+        bail!("`{agent}` holds no claim; run `aw claim` first");
     };
+    let claim = held.claim;
     if !outcome.allowed_in(claim.stage) {
         let allowed: Vec<&str> = Outcome::allowed(claim.stage)
             .iter()
@@ -60,8 +62,8 @@ pub fn report(s: Services<'_>, outcome: Outcome, message: &str) -> Result<Report
         _ => message,
     };
     s.tracker
-        .comment(claim.issue, &signal.render(note, link.as_deref()))
-        .with_context(|| format!("could not comment on issue #{}", claim.issue))?;
+        .edit_comment(held.comment_id, &signal.render(note, link.as_deref()))
+        .with_context(|| format!("could not post the signal on issue #{}", claim.issue))?;
 
     warnings.extend(finish(s, &claim)?);
     Ok(Reported {
@@ -81,6 +83,12 @@ fn pr_url(s: Services<'_>, claim: &Claim) -> Result<Option<(u64, String)>> {
 /// Push the work branch and open its pull request, or update the body of
 /// the one that is already open.
 fn open_pr(s: Services<'_>, claim: &Claim, message: &str) -> Result<String> {
+    if !in_checkout(s, &claim.repo)? {
+        bail!(
+            "run `aw report ready` in the clone of {} that holds the work branch",
+            claim.repo
+        );
+    }
     if !s.workspace.is_clean()? {
         bail!("commit your changes before `aw report ready`; only commits are pushed");
     }

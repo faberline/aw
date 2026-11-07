@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::io::Read;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
 use crate::application::run::{Client, Event, RunServices};
@@ -17,28 +17,44 @@ use crate::interfaces::run::commands;
     version,
     about = "Claim one issue, do its stage, report back.",
     long_about = "Claim one issue, do its stage, report back.\n\n\
-        aw claim   takes the next issue labeled agent:<agent> and checks out its branch\n\
-        aw report  finishes the stage (push + PR, merge, or review) and posts the signal\n\
-        aw release drops the claim without a report\n\
+        aw claim   takes the next issue labeled agent:<agent> and posts the claim on it\n\
+        aw report  finishes the stage (push + PR, merge, or review) and turns the claim into the signal\n\
+        aw release deletes the claim without a report\n\
+        aw status  shows the claim the agent holds\n\
         aw hook    records a worker run start or end from a client hook\n\
         aw runs    lists the recent worker runs\n\n\
+        The claim is an issue comment on GitHub. spec and review use only GitHub;\n\
+        tdd runs in a clean clone of the repository and checks out the work branch.\n\n\
         Exit codes: 0 done, 2 nothing to do, 1 error."
 )]
-struct Cli {
+pub struct Cli {
     #[command(subcommand)]
     command: Command,
 }
 
+/// Who works, and in which repository.
+#[derive(Args)]
+struct Target {
+    /// Agent id, as in the `agent:<id>` label.
+    #[arg(long, env = "AW_AGENT")]
+    agent: String,
+    /// `owner/name`. Default: the repository of the current checkout.
+    #[arg(long, env = "AW_REPO")]
+    repo: Option<String>,
+}
+
 #[derive(Subcommand)]
 enum Command {
-    /// Take the next issue and check out its branch.
+    /// Take the next issue and post the claim on it. tdd also checks out
+    /// the work branch.
     Claim {
-        /// Agent id, as in the `agent:<id>` label.
-        #[arg(long, env = "AW_AGENT")]
-        agent: String,
+        #[command(flatten)]
+        target: Target,
     },
     /// Finish the claimed stage.
     Report {
+        #[command(flatten)]
+        target: Target,
         /// spec/tdd: ready|blocked. review: passed|failed|blocked.
         outcome: OutcomeArg,
         /// Report text. tdd ready: the pull request body.
@@ -48,10 +64,16 @@ enum Command {
         #[arg(short = 'F', long)]
         file: Option<String>,
     },
-    /// Drop the claim without reporting.
-    Release,
-    /// Show the active claim.
-    Status,
+    /// Delete the claim without reporting.
+    Release {
+        #[command(flatten)]
+        target: Target,
+    },
+    /// Show the claim the agent holds.
+    Status {
+        #[command(flatten)]
+        target: Target,
+    },
     /// Record a worker run event from a client hook. Reads the hook JSON
     /// from stdin and always exits 0.
     Hook { client: ClientArg, event: EventArg },
@@ -123,23 +145,35 @@ pub enum Exit {
     Failed,
 }
 
-/// Parse `args` (the program name first) and run one command.
-pub fn run(
-    services: Services<'_>,
-    runs: RunServices<'_>,
-    args: impl IntoIterator<Item = OsString>,
-) -> Exit {
-    let cli = match Cli::try_parse_from(args) {
-        Ok(cli) => cli,
-        Err(err) => {
-            let _ = err.print();
-            return if err.use_stderr() {
-                Exit::Failed
-            } else {
-                Exit::Ok
-            };
+/// Parse `args` (the program name first). On `--help`, `--version` or a
+/// usage error it prints and returns the exit.
+pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Cli, Exit> {
+    Cli::try_parse_from(args).map_err(|err| {
+        let _ = err.print();
+        if err.use_stderr() {
+            Exit::Failed
+        } else {
+            Exit::Ok
         }
-    };
+    })
+}
+
+impl Cli {
+    /// The `--repo` the command names, if any. The composition root points
+    /// the GitHub adapter at it.
+    pub fn repo(&self) -> Option<String> {
+        match &self.command {
+            Command::Claim { target }
+            | Command::Report { target, .. }
+            | Command::Release { target }
+            | Command::Status { target } => target.repo.clone(),
+            _ => None,
+        }
+    }
+}
+
+/// Run one parsed command.
+pub fn run(services: Services<'_>, runs: RunServices<'_>, cli: Cli) -> Exit {
     match execute(services, runs, cli.command) {
         Ok(exit) => exit,
         Err(err) => {
@@ -179,7 +213,7 @@ fn read_message(message: Option<String>, file: Option<String>) -> Result<String>
 
 fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit> {
     match command {
-        Command::Claim { agent } => match work::claim(s, &agent)? {
+        Command::Claim { target } => match work::claim(s, &target.agent)? {
             ClaimOutcome::Claimed(claim) => {
                 print(&claim)?;
                 Ok(Exit::Ok)
@@ -190,29 +224,30 @@ fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit
             }
         },
         Command::Report {
+            target,
             outcome,
             message,
             file,
         } => {
             let text = read_message(message, file)?;
-            let reported = work::report(s, outcome.into(), &text)?;
+            let reported = work::report(s, &target.agent, outcome.into(), &text)?;
             warn(&reported.warnings);
             print(&reported)?;
             Ok(Exit::Ok)
         }
-        Command::Release => {
-            let (claim, warnings) = work::release(s)?;
+        Command::Release { target } => {
+            let (claim, warnings) = work::release(s, &target.agent)?;
             warn(&warnings);
             print(&claim)?;
             Ok(Exit::Ok)
         }
-        Command::Status => match work::status(s)? {
+        Command::Status { target } => match work::status(s, &target.agent)? {
             Some(claim) => {
                 print(&claim)?;
                 Ok(Exit::Ok)
             }
             None => {
-                eprintln!("aw: nothing is claimed");
+                eprintln!("aw: `{}` holds no claim", target.agent);
                 Ok(Exit::Nothing)
             }
         },

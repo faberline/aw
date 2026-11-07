@@ -1,5 +1,6 @@
 //! Use cases: claim one issue, report on it, or release it.
 
+mod active;
 pub mod claim;
 pub mod release;
 pub mod report;
