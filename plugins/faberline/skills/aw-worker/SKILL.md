@@ -11,6 +11,10 @@ Each run plans first. Then it takes issues through their stages, one claim
 at a time, until it must wait for CI or has finished three stages.
 `aw report` moves the `stage:` label, so the next claim can continue at once.
 
+The run's own model plans, writes specs and reviews. In tdd it gives the
+implementation to a Haiku subagent and checks the result. So a spec must be
+complete enough that a small model can do the work from the spec alone.
+
 When this skill runs in a client other than Claude Code, stop and report
 `aw-worker runs only as claude`.
 
@@ -104,9 +108,10 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    - Add `pN` from a legacy `priority:pN` label, or `p2` when there is none.
      Remove the legacy `doing` and `todo` labels.
    - An open pull request already closes it: `stage:review`.
-   - The body has a clear goal and testable acceptance criteria, and one
-     pull request is enough: `stage:tdd`.
-   - The goal is clear but acceptance criteria are missing: `stage:spec`.
+   - The body already meets every point of the spec checklist (section 4,
+     spec), and one pull request is enough: `stage:tdd`.
+   - The goal is clear but the body does not meet the spec checklist:
+     `stage:spec`.
    - One pull request is not enough: create child issues, one pull request
      each, with acceptance criteria. Link them as sub-issues of the parent
      and leave the parent without a stage. Close the parent when all
@@ -116,6 +121,8 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    - Obsolete or duplicate: close it with a one-line reason.
 
 Do not edit an issue's title or body. Write specs and notes as comments.
+Change the labels of one issue per command. Do not loop over many issues in
+one command; a reviewer of the command cannot see what it changes.
 
 ## 3. Claim
 
@@ -164,11 +171,29 @@ Read code through the GitHub API when you do not need the clone:
 
 ### spec
 
-- Read the code; do not change it.
-- Write the spec: the goal; acceptance criteria that a test or command can
-  prove; the tests to write, with one negative case that must fail without
-  the change; the files to change; what is out of scope.
-- When one pull request is not enough, report `blocked` and say how to split.
+- Read the code; do not change it. Read every file that the change touches.
+- A Haiku subagent implements the spec. It knows only the spec and the
+  repository. Write the spec so that it can finish without a question.
+  Use exact names and paths, not descriptions. The spec checklist:
+  1. **Goal**: one or two sentences.
+  2. **Files**: each file to change or create, with its path. For each one,
+     the functions, types or sections to add or change, by exact name, and
+     the signature of each new public item.
+  3. **Steps**: the order of the work, one change per step. Name the
+     existing code to copy a pattern from (path and item).
+  4. **Tests**: each test by file, name and what it asserts, with the input
+     and the expected value. One negative test must fail without the change.
+  5. **Commands**: the exact commands that must pass, from the repository
+     rules (for Rust: `cargo fmt --all -- --check`,
+     `cargo clippy --all-targets -- -D warnings`, `cargo test`). Add a
+     narrower command for the new tests, for example `cargo test -p <crate> <name>`.
+  6. **Acceptance criteria**: each one proven by a named test or command.
+  7. **Out of scope**: what not to change.
+  8. **Traps**: repository rules and known failures that apply, for example
+     the CI contract note in "Repository notes".
+- Keep it to one pull request: at most about six files and 400 changed
+  lines. When one pull request is not enough, report `blocked` and say how
+  to split.
 - `$AW report <who> ready -F <file>`. The spec becomes the signal comment.
 
 ### tdd
@@ -180,11 +205,25 @@ Read code through the GitHub API when you do not need the clone:
   pull request's branch. Do not copy files from another branch.
 - When the branch is behind `origin/<default>` or has a conflict, run
   `git merge origin/<default>` and resolve it. Never rebase. Never force-push.
-- Write the failing tests first. Then write the smallest code that makes them
-  pass. Stay inside the spec.
-- Commit with conventional messages. Run the repository's checks. For Rust:
-  `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`,
-  `cargo test`.
+- When the spec does not meet the spec checklist, do not guess. Report
+  `blocked` with the missing points; the next plan sends it back to spec.
+- Give the implementation to one subagent with the Agent tool and
+  `model: "haiku"`. Its brief has: the clone path and branch; the whole spec;
+  on rework, the review findings; the repository rules file to read; and
+  these rules: write the failing tests first, then the smallest code that
+  makes them pass; stay inside the spec; run the spec's commands in the
+  foreground; do not commit, push, run `aw` or `gh`, or switch branches;
+  report the changed files, each command and its result, and every point
+  where the spec was unclear.
+- When the Agent tool is not available, do the implementation yourself with
+  the same rules.
+- Check the result yourself: read `git diff`, compare it with the spec, and
+  run the spec's commands in the foreground. When a check fails or the diff
+  leaves the spec, send the findings to the same subagent once
+  (SendMessage). Fix small remaining faults yourself. When the work is still
+  not right, or the subagent says the spec is unclear, report `blocked` with
+  the reason.
+- Commit with conventional messages.
 - With a clean tree, run `$AW report <who> ready -F <file>` in the clone.
   The file becomes the pull request body after `Closes #<n>`: summary,
   changes, the checks you ran and their results.
@@ -208,7 +247,9 @@ Read code through the GitHub API when you do not need the clone:
 - A check failed or the pull request has a merge conflict:
   `$AW report <who> failed -F <file>` with the failed checks or the conflict.
 - Compare the diff with the spec and its acceptance criteria. Check that the
-  tests in the diff prove each criterion and that CI ran them.
+  tests in the diff prove each criterion and that CI ran them. A small model
+  wrote the code: look for tests that assert nothing, skipped or ignored
+  tests, and changes outside the spec's files.
 - Every criterion is proven and all checks are green:
   `$AW report <who> passed -F <file>`. `aw` approves and squash-merges.
   GitHub refuses an approval of your own pull request; `aw` reports that as
