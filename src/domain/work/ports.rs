@@ -1,6 +1,5 @@
 //! What the work use cases need from the outside world.
 
-use super::claim::Claim;
 use super::issue::{Comment, Issue};
 use super::pull_request::PullRequest;
 
@@ -23,6 +22,8 @@ pub trait Tracker {
     fn open_issues(&self, label: &str) -> PortResult<Vec<Issue>>;
     fn comments(&self, issue: u64) -> PortResult<Vec<Comment>>;
     fn comment(&self, issue: u64, body: &str) -> PortResult<()>;
+    fn edit_comment(&self, id: u64, body: &str) -> PortResult<()>;
+    fn delete_comment(&self, id: u64) -> PortResult<()>;
     fn open_prs(&self) -> PortResult<Vec<PullRequest>>;
     fn create_pr(&self, head: &str, base: &str, title: &str, body: &str)
     -> PortResult<PullRequest>;
@@ -35,6 +36,9 @@ pub trait Tracker {
 
 /// The local git checkout. Remote refs are `origin/<branch>`.
 pub trait Workspace {
+    /// `owner/name` of the GitHub `origin`, or `None` when the current
+    /// directory is not a git checkout with such a remote.
+    fn origin_repo(&self) -> PortResult<Option<String>>;
     /// No staged, unstaged or untracked changes.
     fn is_clean(&self) -> PortResult<bool>;
     fn fetch(&self) -> PortResult<()>;
@@ -46,12 +50,6 @@ pub trait Workspace {
     fn detach(&self, start: &str) -> PortResult<()>;
     /// Push HEAD to `origin/<branch>`. Never a force push.
     fn push(&self, branch: &str) -> PortResult<()>;
-}
-
-pub trait ClaimStore {
-    fn load(&self) -> PortResult<Option<Claim>>;
-    fn save(&self, claim: &Claim) -> PortResult<()>;
-    fn clear(&self) -> PortResult<()>;
 }
 
 pub trait Clock {

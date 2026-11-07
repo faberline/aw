@@ -6,18 +6,20 @@ use std::process::ExitCode;
 use crate::application::run::RunServices;
 use crate::application::work::Services;
 use crate::infrastructure::run::LedgerFile;
-use crate::infrastructure::work::{ClaimFile, GhCli, GitCli, SystemClock};
+use crate::infrastructure::work::{GhCli, GitCli, SystemClock};
 use crate::interfaces::work::cli::{self, Exit};
 
 pub fn run() -> ExitCode {
-    let tracker = GhCli::default();
+    let parsed = match cli::parse(std::env::args_os()) {
+        Ok(parsed) => parsed,
+        Err(exit) => return exit_code(exit),
+    };
+    let tracker = GhCli::new(parsed.repo());
     let workspace = GitCli;
-    let store = ClaimFile::in_git_dir();
     let clock = SystemClock;
     let services = Services {
         tracker: &tracker,
         workspace: &workspace,
-        store: &store,
         clock: &clock,
     };
     let root = workers_dir();
@@ -27,7 +29,11 @@ pub fn run() -> ExitCode {
         clock: &clock,
         root: &root,
     };
-    match cli::run(services, runs, std::env::args_os()) {
+    exit_code(cli::run(services, runs, parsed))
+}
+
+fn exit_code(exit: Exit) -> ExitCode {
+    match exit {
         Exit::Ok => ExitCode::SUCCESS,
         Exit::Nothing => ExitCode::from(2),
         Exit::Failed => ExitCode::FAILURE,

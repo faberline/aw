@@ -118,22 +118,24 @@ Issue work runs through the `aw` CLI in the
 `aw-worker` wraps one such cycle for an hourly automation. Each AI pulls its
 own work. The automation prompt only names the skill:
 
-| Client | Agent | Stage | Worker clone |
+| Client | Agent | Stage | Where it works |
 |---|---|---|---|
-| Claude Code | `claude` | triage (planner), spec | `~/faberlines/.aw-workers/claude/<repo>` |
+| Claude Code | `claude` | triage (planner), spec | GitHub only; no clone |
 | Antigravity | `agy` | tdd | `~/faberlines/.aw-workers/agy/<repo>` |
-| Codex | `codex` | review | `~/faberlines/.aw-workers/codex/<repo>` |
+| Codex | `codex` | review | GitHub only; no clone; CI is the test evidence |
 
 The `claude` worker is the planner. It triages new issues and moves the
 `stage:` and `agent:` labels after each signal. `aw` itself never moves
 labels.
 
-Prepare a worker clone once:
+The workers use the repositories with the GitHub topic `aw`. Add a
+repository to the queue once:
 
 ```bash
-git clone git@github.com:faberline/<repo>.git ~/faberlines/.aw-workers/<agent>/<repo>
-git -C ~/faberlines/.aw-workers/<agent>/<repo> config aw.agent <agent>
+gh repo edit faberline/<repo> --add-topic aw
 ```
+
+The `agy` worker clones a repository on its first tdd run.
 
 The skill uses the Rust `aw` at `~/.local/share/aw-rs/bin/aw`:
 

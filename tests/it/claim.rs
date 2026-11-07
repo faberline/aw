@@ -1,4 +1,4 @@
-use aw::application::work::{ClaimOutcome, claim};
+use aw::application::work::{ClaimOutcome, claim, status};
 use aw::domain::work::claim::{Claim, STALE_AFTER_SECONDS};
 use aw::domain::work::signal::{Outcome, Signal};
 use aw::domain::work::stage::Stage;
@@ -39,7 +39,25 @@ fn takes_highest_priority_then_oldest() {
     assert_eq!(c.issue, 2);
     assert_eq!(c.stage, Stage::Spec);
     assert_eq!(c.branch, "main");
-    assert_eq!(w.store.claim.borrow().as_ref(), Some(&c));
+    assert_eq!(status(w.services(), "codex").unwrap(), Some(c));
+}
+
+#[test]
+fn the_claim_is_a_comment_on_the_issue() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "agy/issue-7", "Closes #7");
+    claimed(&w, "claude");
+    let marks = w.tracker.claims(7);
+    assert_eq!(marks.len(), 1);
+    assert_eq!(marks[0].agent, "claude");
+    assert_eq!(marks[0].stage, Stage::Review);
+    assert_eq!(marks[0].branch, "agy/issue-7");
+    assert_eq!(marks[0].pr, Some(5));
+    assert_eq!(marks[0].claimed_at, NOW);
+    assert_eq!(w.tracker.calls(), ["comment #7"]);
+    // A claim is not a signal: the issue still waits on this agent.
+    assert!(w.tracker.signals(7).is_empty());
 }
 
 #[test]
@@ -85,14 +103,18 @@ fn a_new_stage_or_agent_makes_the_issue_eligible_again() {
 }
 
 #[test]
-fn spec_switches_to_the_default_branch_and_fast_forwards() {
+fn spec_and_review_do_not_touch_the_working_tree() {
     let w = World::new();
-    w.tracker.issue(1, &["agent:codex", "stage:spec"]);
-    claimed(&w, "codex");
-    assert_eq!(
-        w.workspace.calls(),
-        ["fetch", "switch main", "ff origin/main"]
-    );
+    w.workspace.origin.replace(None);
+    w.workspace.clean.set(false);
+    w.tracker.issue(1, &["agent:claude", "stage:spec", "p0"]);
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "agy/issue-7", "Closes #7");
+    assert_eq!(claimed(&w, "claude").issue, 1);
+    w.tracker.issues.borrow_mut().retain(|i| i.number == 7);
+    w.tracker.comments.borrow_mut().clear();
+    assert_eq!(claimed(&w, "claude").branch, "agy/issue-7");
+    assert!(w.workspace.calls().is_empty(), "{:?}", w.workspace.calls());
 }
 
 #[test]
@@ -103,7 +125,7 @@ fn tdd_creates_the_work_branch_from_the_default_branch() {
     assert_eq!(c.branch, "codex/issue-7");
     assert_eq!(
         w.workspace.calls(),
-        ["fetch", "create codex/issue-7 from origin/main"]
+        ["status", "fetch", "create codex/issue-7 from origin/main"]
     );
 }
 
@@ -115,7 +137,11 @@ fn tdd_continues_a_pushed_work_branch() {
     claimed(&w, "codex");
     assert_eq!(
         w.workspace.calls(),
-        ["fetch", "create codex/issue-7 from origin/codex/issue-7"]
+        [
+            "status",
+            "fetch",
+            "create codex/issue-7 from origin/codex/issue-7"
+        ]
     );
 }
 
@@ -130,7 +156,7 @@ fn tdd_continues_the_open_pull_request_branch() {
     assert_eq!(c.pr, Some(51));
     assert_eq!(
         w.workspace.calls(),
-        ["fetch", "create issue/7 from origin/issue/7"]
+        ["status", "fetch", "create issue/7 from origin/issue/7"]
     );
 }
 
@@ -143,22 +169,39 @@ fn tdd_reuses_a_local_work_branch() {
     claimed(&w, "codex");
     assert_eq!(
         w.workspace.calls(),
-        ["fetch", "switch codex/issue-7", "ff origin/codex/issue-7"]
+        [
+            "status",
+            "fetch",
+            "switch codex/issue-7",
+            "ff origin/codex/issue-7"
+        ]
     );
 }
 
 #[test]
-fn review_checks_out_the_pull_request_head() {
+fn tdd_needs_a_checkout_of_the_repository() {
     let w = World::new();
-    w.tracker.issue(7, &["agent:claude", "stage:review"]);
-    w.tracker.pr(5, "codex/issue-7", "Closes #7");
-    let c = claimed(&w, "claude");
-    assert_eq!(c.pr, Some(5));
-    assert_eq!(c.branch, "codex/issue-7");
-    assert_eq!(
-        w.workspace.calls(),
-        ["fetch", "detach origin/codex/issue-7"]
-    );
+    w.workspace.origin.replace(None);
+    w.tracker.issue(7, &["agent:claude", "stage:tdd", "p0"]);
+    w.tracker.issue(8, &["agent:claude", "stage:spec"]);
+    assert_eq!(claimed(&w, "claude").issue, 8);
+    assert!(w.tracker.claims(7).is_empty());
+
+    let w = World::new();
+    w.workspace.origin.replace(Some("o/other".into()));
+    w.tracker.issue(7, &["agent:claude", "stage:tdd"]);
+    let why = nothing(&w, "claude");
+    assert!(why.contains("#7") && why.contains("o/r"), "{why}");
+    assert!(w.tracker.calls().is_empty());
+}
+
+#[test]
+fn tdd_with_a_dirty_tree_is_an_error_and_leaves_no_claim() {
+    let w = World::new();
+    w.workspace.clean.set(false);
+    w.tracker.issue(1, &["agent:codex", "stage:tdd"]);
+    assert!(claim(w.services(), "codex").is_err());
+    assert!(w.tracker.claims(1).is_empty());
 }
 
 #[test]
@@ -173,7 +216,6 @@ fn review_blocks_when_there_is_no_pull_request_and_moves_on() {
     assert_eq!(signals[0].stage, Stage::Review);
 
     // The blocked signal keeps the issue out of the next claim.
-    w.store.claim.borrow_mut().take();
     w.tracker.issues.borrow_mut().retain(|i| i.number == 1);
     nothing(&w, "claude");
 }
@@ -195,29 +237,34 @@ fn review_refuses_a_self_authored_pull_request() {
 fn an_active_claim_means_nothing_to_do() {
     let w = World::new();
     w.tracker.issue(1, &["agent:codex", "stage:spec"]);
+    w.tracker.issue(2, &["agent:codex", "stage:spec"]);
     let first = claimed(&w, "codex");
     let why = nothing(&w, "codex");
     assert!(why.contains("#1"), "{why}");
-    assert_eq!(w.store.claim.borrow().as_ref(), Some(&first));
+    assert_eq!(status(w.services(), "codex").unwrap(), Some(first));
+    assert!(w.tracker.claims(2).is_empty());
 }
 
 #[test]
-fn a_stale_claim_is_replaced() {
+fn another_agents_claim_does_not_count() {
+    let w = World::new();
+    w.tracker
+        .issue(1, &["agent:codex", "agent:claude", "stage:spec"]);
+    claimed(&w, "codex");
+    assert_eq!(status(w.services(), "claude").unwrap(), None);
+}
+
+#[test]
+fn a_stale_claim_is_removed_and_replaced() {
     let w = World::new();
     w.tracker.issue(1, &["agent:codex", "stage:spec"]);
     claimed(&w, "codex");
     w.clock.0.set(NOW + STALE_AFTER_SECONDS);
+    w.tracker.clear_calls();
     let again = claimed(&w, "codex");
     assert_eq!(again.claimed_at, NOW + STALE_AFTER_SECONDS);
-}
-
-#[test]
-fn a_dirty_tree_is_an_error() {
-    let w = World::new();
-    w.workspace.clean.set(false);
-    w.tracker.issue(1, &["agent:codex", "stage:spec"]);
-    assert!(claim(w.services(), "codex").is_err());
-    assert!(w.store.claim.borrow().is_none());
+    assert_eq!(w.tracker.calls(), ["delete_comment #1", "comment #1"]);
+    assert_eq!(w.tracker.claims(1).len(), 1);
 }
 
 #[test]

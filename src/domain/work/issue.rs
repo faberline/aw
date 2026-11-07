@@ -13,6 +13,8 @@ pub struct Issue {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Comment {
+    /// GitHub's numeric comment id, used to edit or delete it.
+    pub id: u64,
     pub body: String,
     pub created_at: String,
 }

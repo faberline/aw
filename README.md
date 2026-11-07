@@ -1,13 +1,14 @@
 # aw
 
 `aw` is the issue worker CLI for faberline agents, written in Rust. One run
-takes one issue, checks out the branch its stage works on, and reports back.
-Every step that changes GitHub or git goes through `aw`; the agent only does
-what the issue asks between `aw claim` and `aw report`.
+takes one issue, posts a claim on it, and reports back. Every step that
+changes GitHub or git goes through `aw`; the agent only does what the issue
+asks between `aw claim` and `aw report`.
 
 Install it with `cargo install --git https://github.com/faberline/aw aw`.
-It needs `git` and an authenticated `gh` on `PATH` and runs from the root of
-a repository checkout.
+It needs an authenticated `gh` on `PATH`. Only the tdd stage touches code: it
+needs `git` and runs from the root of a clean clone of the repository. The
+spec and review stages use only GitHub and run anywhere.
 
 ## The issue queue
 
@@ -21,11 +22,17 @@ The planner owns the labels. `aw` reads them and never changes them.
 | `p0` … `p3` | priority; `p0` first, no label last |
 | `blocked` | never claimed |
 
-An agent reports with a signal comment. Its first line is a hidden marker
-that only `aw` writes:
+`aw claim` posts a claim comment on the issue. Its first line is a hidden
+marker that only `aw` writes:
 
 ```text
-<!-- aw:signal stage=tdd agent=codex outcome=ready -->
+<!-- aw:claim stage=tdd agent=agy branch=agy/issue-7 pr=- at=1800000000 -->
+```
+
+`aw report` edits that comment into the signal comment:
+
+```text
+<!-- aw:signal stage=tdd agent=agy outcome=ready -->
 ```
 
 After `agent` reports on a stage, `aw claim` skips the issue for that agent
@@ -35,24 +42,32 @@ never counts as a signal.
 ## One run
 
 ```bash
-aw claim --agent codex        # or AW_AGENT=codex aw claim
+aw claim --agent codex --repo faberline/core   # or AW_AGENT, AW_REPO
 # … do what the issue asks …
-aw report ready -F summary.md
+aw report --agent codex --repo faberline/core ready -F summary.md
 ```
 
-`aw claim` refuses a dirty working tree (untracked files included), takes the
-first eligible issue (priority, then oldest) and prints the claim as JSON.
-It exits 2 when there is nothing to do.
+`claim`, `report`, `release` and `status` take `--agent` (or `AW_AGENT`) and
+`--repo owner/name` (or `AW_REPO`). Without `--repo`, `aw` uses the
+repository of the current checkout.
 
-| Stage | `aw claim` checks out | `aw report` outcomes |
-| --- | --- | --- |
-| spec | the default branch, fast-forwarded | `ready`, `blocked` |
-| tdd | the head of the open pull request that closes the issue; else `<agent>/issue-<n>`, new from `origin/<default>` or continued from `origin` | `ready`, `blocked` |
-| review | the head of the open pull request that closes the issue, detached | `passed`, `failed`, `blocked` |
+`aw claim` takes the first eligible issue (priority, then oldest), posts the
+claim comment and prints the claim as JSON. It exits 2 when there is nothing
+to do. An agent holds at most one claim in a repository.
 
-`aw report` does the stage's GitHub side effect, posts the signal comment,
-switches back to the default branch when the tree is clean, and drops the
-claim:
+| Stage | Where it runs | `aw claim` checks out | `aw report` outcomes |
+| --- | --- | --- | --- |
+| spec | anywhere | nothing | `ready`, `blocked` |
+| tdd | a clean clone of the repository | the head of the open pull request that closes the issue; else `<agent>/issue-<n>`, new from `origin/<default>` or continued from `origin` | `ready`, `blocked` |
+| review | anywhere | nothing | `passed`, `failed`, `blocked` |
+
+For tdd, `aw claim` refuses a dirty working tree (untracked files included).
+Outside a clone of the repository it skips tdd issues and names them in its
+exit-2 message.
+
+`aw report` does the stage's GitHub side effect and edits the claim comment
+into the signal comment. After tdd it switches back to the default branch
+when the tree is clean:
 
 - `tdd ready` needs a clean tree. It pushes the branch and opens its pull
   request (or updates the open one). The message becomes the body, after
@@ -65,10 +80,11 @@ A review is never claimed by the agent whose branch prefix authored the pull
 request; `aw` posts a `blocked` signal for the planner instead. It does the
 same when no open pull request closes the issue.
 
-`aw release` drops the claim without a signal, so the issue stays eligible.
-`aw status` prints the active claim (exit 2 when none). The claim lives at
-`<git dir>/aw/claim.json`, one per checkout; a claim older than three hours
-is treated as a dead run and replaced.
+`aw release` deletes the claim comment without a signal, so the issue stays
+eligible. `aw status` prints the agent's claim (exit 2 when none). `aw` finds
+the claim in the comments of the open issues with the agent's `agent:` label.
+A claim older than three hours is treated as a dead run: the next `aw claim`
+deletes it and claims again.
 
 Exit codes: 0 done, 2 nothing to do, 1 error. JSON goes to stdout; messages
 and warnings go to stderr.
@@ -109,14 +125,13 @@ for more than one hour means the automation did not start.
 The crate follows the [Rust layout standard](docs/standards/rust-layout.md):
 
 - `src/domain/work/` — stages, signals, issues, pull requests, the claim, and
-  the ports (`Tracker`, `Workspace`, `ClaimStore`, `Clock`).
+  the ports (`Tracker`, `Workspace`, `Clock`).
 - `src/domain/run/` — run records, hook input, run summaries and the
   `RunLedger` port.
 - `src/application/work/` — the `claim`, `report`, `release` and `status`
   use cases.
 - `src/application/run/` — the `record` and `runs` use cases.
-- `src/infrastructure/work/` — `gh` and `git` adapters, the claim file and
-  the clock.
+- `src/infrastructure/work/` — `gh` and `git` adapters and the clock.
 - `src/infrastructure/run/` — the ledger file.
 - `src/interfaces/work/cli.rs` — the clap command line.
 - `src/interfaces/run/` — the `hook` and `runs` commands.
