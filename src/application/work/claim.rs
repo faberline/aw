@@ -19,7 +19,9 @@ pub enum ClaimOutcome {
 /// Take the first issue `agent` may work on and record the claim as an
 /// issue comment. Only tdd touches the working tree: it must be a clean
 /// checkout of the repository, and the work branch is checked out.
-pub fn claim(s: Services<'_>, agent: &str) -> Result<ClaimOutcome> {
+/// Issues in `skip` are passed over, for example a review that waits on
+/// running checks.
+pub fn claim(s: Services<'_>, agent: &str, skip: &[u64]) -> Result<ClaimOutcome> {
     if !valid_agent(agent) {
         bail!("agent `{agent}` must use only a-z, 0-9 and -");
     }
@@ -49,6 +51,9 @@ pub fn claim(s: Services<'_>, agent: &str) -> Result<ClaimOutcome> {
 
     for open in &board.open {
         let issue = &open.issue;
+        if skip.contains(&issue.number) {
+            continue;
+        }
         let Some(stage) = issue.actionable_stage(agent) else {
             continue;
         };

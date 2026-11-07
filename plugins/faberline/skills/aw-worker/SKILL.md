@@ -152,7 +152,8 @@ For each repository, in name order:
 3. When `$AW status <who>` exits 2 (no claim) and `git status --porcelain`
    is not empty, a past run stopped early. Keep its files:
    `git stash push -u -m "aw-worker leftover <UTC time>"`.
-4. `$AW claim <who>`.
+4. `$AW claim <who>`, with one `--skip <issue>` for each issue that this
+   run released because its checks were still running.
    - Exit 2: nothing to do here. Try the next repository.
    - Exit 1: keep stderr for the report. Try the next repository.
    - Exit 0: read the JSON (`repo`, `issue`, `stage`, `branch`, `pr`).
@@ -161,7 +162,6 @@ For each repository, in name order:
 After each report, claim again in the same repository. Stop the run when:
 
 - `aw claim` exits 2 in every repository;
-- a review found checks still running and released the claim;
 - you released a claim because you could not finish it;
 - this run has reported three stages.
 
@@ -254,8 +254,9 @@ Read code through the GitHub API when you do not need the clone:
 - CI is the test evidence; do not run tests.
 - First do the quick gates yourself with the REST calls above. The pull
   request JSON has `head.sha`, `mergeable` and `mergeable_state`.
-  - Checks are still running: `$AW release <who>` and end the run.
-    The next run tries again.
+  - Checks are still running: `$AW release <who>`. Remember the issue
+    number. Claim again with `--skip` for it (section 3, step 4). A later
+    run reviews it.
   - A check failed or the pull request has a merge conflict:
     `$AW report <who> failed -F <file>` with the failed checks or the
     conflict. No subagent is needed.

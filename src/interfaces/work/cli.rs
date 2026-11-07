@@ -50,6 +50,9 @@ enum Command {
     Claim {
         #[command(flatten)]
         target: Target,
+        /// Pass over this issue number. Repeat it for more issues.
+        #[arg(long, value_name = "ISSUE")]
+        skip: Vec<u64>,
     },
     /// Finish the claimed stage.
     Report {
@@ -163,7 +166,7 @@ impl Cli {
     /// the GitHub adapter at it.
     pub fn repo(&self) -> Option<String> {
         match &self.command {
-            Command::Claim { target }
+            Command::Claim { target, .. }
             | Command::Report { target, .. }
             | Command::Release { target }
             | Command::Status { target } => target.repo.clone(),
@@ -213,7 +216,7 @@ fn read_message(message: Option<String>, file: Option<String>) -> Result<String>
 
 fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit> {
     match command {
-        Command::Claim { target } => match work::claim(s, &target.agent)? {
+        Command::Claim { target, skip } => match work::claim(s, &target.agent, &skip)? {
             ClaimOutcome::Claimed(claim) => {
                 print(&claim)?;
                 Ok(Exit::Ok)
