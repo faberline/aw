@@ -16,8 +16,9 @@ pub struct Claim {
     pub stage: Stage,
     pub title: String,
     pub url: String,
-    /// spec: the default branch. tdd: `<agent>/issue-<n>`. review: the
-    /// pull request head, checked out detached.
+    /// spec: the default branch. tdd: the head of the open pull request
+    /// that closes the issue, else `<agent>/issue-<n>`. review: the pull
+    /// request head, checked out detached.
     pub branch: String,
     pub pr: Option<u64>,
     pub default_branch: String,

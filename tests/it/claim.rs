@@ -120,6 +120,21 @@ fn tdd_continues_a_pushed_work_branch() {
 }
 
 #[test]
+fn tdd_continues_the_open_pull_request_branch() {
+    let w = World::new();
+    w.workspace.remote.borrow_mut().push("issue/7".into());
+    w.tracker.pr(51, "issue/7", "Closes #7\n\nfirst try");
+    w.tracker.issue(7, &["agent:codex", "stage:tdd"]);
+    let c = claimed(&w, "codex");
+    assert_eq!(c.branch, "issue/7");
+    assert_eq!(c.pr, Some(51));
+    assert_eq!(
+        w.workspace.calls(),
+        ["fetch", "create issue/7 from origin/issue/7"]
+    );
+}
+
+#[test]
 fn tdd_reuses_a_local_work_branch() {
     let w = World::new();
     w.workspace.local.borrow_mut().push("codex/issue-7".into());

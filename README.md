@@ -47,7 +47,7 @@ It exits 2 when there is nothing to do.
 | Stage | `aw claim` checks out | `aw report` outcomes |
 | --- | --- | --- |
 | spec | the default branch, fast-forwarded | `ready`, `blocked` |
-| tdd | `<agent>/issue-<n>`, new from `origin/<default>` or continued from `origin` | `ready`, `blocked` |
+| tdd | the head of the open pull request that closes the issue; else `<agent>/issue-<n>`, new from `origin/<default>` or continued from `origin` | `ready`, `blocked` |
 | review | the head of the open pull request that closes the issue, detached | `passed`, `failed`, `blocked` |
 
 `aw report` does the stage's GitHub side effect, posts the signal comment,
