@@ -115,27 +115,21 @@ ownership and acceptance rules.
 Issue work runs through the `aw` CLI in the
 [repository root](../../README.md): `aw claim`, the work, then `aw report`.
 
-`aw-worker` wraps one such cycle for an hourly automation. Each AI pulls its
-own work. The automation prompt only names the skill:
+`aw-worker` runs these cycles for an hourly automation. One agent,
+`claude` (Claude Code), does every stage: triage, spec, tdd and review.
+Each run plans first, then claims and reports until it must wait for CI or
+has finished three stages. `aw report` moves the `stage:` label, so the next
+claim can continue at once. In a cloud session, tdd uses the session's
+checkout; on a computer it uses `~/faberlines/.aw-workers/claude/<repo>`.
 
-| Client | Agent | Stage | Where it works |
-|---|---|---|---|
-| Claude Code | `claude` | triage (planner), spec | GitHub only; no clone |
-| Antigravity | `agy` | tdd | `~/faberlines/.aw-workers/agy/<repo>` |
-| Codex | `codex` | review | GitHub only; no clone; CI is the test evidence |
-
-The `claude` worker is the planner. It triages new issues and moves the
-`stage:` and `agent:` labels after each signal. `aw` itself never moves
-labels.
-
-The workers use the repositories with the GitHub topic `aw`. Add a
+The worker uses the repositories with the GitHub topic `aw`. Add a
 repository to the queue once:
 
 ```bash
 gh repo edit faberline/<repo> --add-topic aw
 ```
 
-The `agy` worker clones a repository on its first tdd run.
+On a computer, the worker clones a repository on its first tdd run.
 
 The skill uses the Rust `aw` at `~/.local/share/aw-rs/bin/aw`:
 

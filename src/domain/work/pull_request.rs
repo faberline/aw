@@ -27,10 +27,6 @@ impl PullRequest {
     pub fn is_for(&self, issue: u64) -> bool {
         self.head.ends_with(&format!("/issue-{issue}")) || self.closes(issue)
     }
-
-    pub fn authored_by(&self, agent: &str) -> bool {
-        self.head.starts_with(&format!("{agent}/"))
-    }
 }
 
 pub fn find_for_issue(prs: &[PullRequest], issue: u64) -> Option<&PullRequest> {

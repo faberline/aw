@@ -1,47 +1,52 @@
 ---
 name: aw-worker
-description: "Run one scheduled issue cycle with the Rust `aw` CLI as this client's agent: Claude Code is `claude` (planner and spec), Antigravity is `agy` (tdd), Codex is `codex` (review). Use when an automation or the user asks to run the aw-worker skill."
+description: "Run one scheduled issue cycle with the Rust `aw` CLI. One agent, `claude` (Claude Code), plans, writes the spec, does tdd and reviews. Use when an automation or the user asks to run the aw-worker skill."
 user-invocable: true
 ---
 
 # aw-worker
 
-One run takes at most one issue through one stage.
-Each AI runs this skill on its own hourly schedule and pulls its own work.
-No controller assigns work.
-The `claude` worker is also the planner. Only the planner changes labels.
-Only tdd touches code in a clone. Planning, spec and review use only GitHub.
+One agent does all the work: `claude`. It runs on an hourly schedule.
+Each run plans first. Then it takes issues through their stages, one claim
+at a time, until it must wait for CI or has finished three stages.
+`aw report` moves the `stage:` label, so the next claim can continue at once.
 
-## Roles
+When this skill runs in a client other than Claude Code, stop and report
+`aw-worker runs only as claude`.
 
-| Labels on the issue | Agent | Work |
-|---|---|---|
-| no `stage:` label | `claude` | triage (planner) |
-| `stage:spec` | `claude` | write the spec |
-| `stage:tdd` | `agy` | tests first, then code; `aw` opens the pull request |
-| `stage:review` | `codex` | review a green pull request; `aw` merges it or sends it back |
+## Stages
 
-## 1. Find the agent id, the repositories and `aw`
+| Labels on the issue | Work |
+|---|---|
+| no `stage:` label | triage (plan) |
+| `stage:spec` | write the spec |
+| `stage:tdd` | tests first, then code; `aw` opens the pull request |
+| `stage:review` | review a green pull request; `aw` merges it or sends it back to tdd |
 
-- The agent id is the client you run in: Claude Code `claude`, Antigravity `agy`, Codex `codex`.
+Every issue in the flow has the label `agent:claude`.
+
+## 1. Find the repositories, the clone and `aw`
+
 - The repositories are the faberline repositories with the GitHub topic `aw`:
   `gh api --paginate "orgs/faberline/repos?per_page=100" --jq '.[] | select(.archived | not) | select(.topics | index("aw")) | .full_name'`.
+  When that call is refused (a cloud session can be limited to its own
+  repositories), use the repositories that the session checked out.
   Use them in name order. When the list is empty, stop and report `no aw repository`.
-- `claude` and `codex` need no clone. Work from any directory.
-- `agy` works in a dedicated clone: `~/faberlines/.aw-workers/agy/<name>`,
-  where `<name>` is the repository name without the owner.
-  When the clone is missing, create it:
-  `gh repo clone <owner>/<name> ~/faberlines/.aw-workers/agy/<name>`.
+- tdd needs a clone. In a cloud session, use the checkout of the repository
+  that the session started with. Otherwise use
+  `~/faberlines/.aw-workers/claude/<name>` (`<name>` is the repository name
+  without the owner). When it is missing, create it:
+  `gh repo clone <owner>/<name> ~/faberlines/.aw-workers/claude/<name>`.
 - Never work in a person's checkout, such as `~/faberlines/<repo>`.
 
 Use the Rust `aw`: `AW=~/.local/share/aw-rs/bin/aw`.
-`$AW --version` must print `aw 0.6.1` or newer.
+`$AW --version` must print `aw 0.7.0` or newer.
 `~/.local/bin/aw` can be an old Python tool with the same name; do not use it.
 When no binary passes the check, stop and report it.
 Install command: `cargo install --git https://github.com/faberline/aw --root ~/.local/share/aw-rs aw`.
 
 Give every `claim`, `report`, `release` and `status` command the agent and
-the repository: `--agent <agent> --repo <owner>/<name>`. Below, `<who>`
+the repository: `--agent claude --repo <owner>/<name>`. Below, `<who>`
 means these two options.
 
 Use only the GitHub REST API: `gh api <path>`. Claude Code cloud sessions
@@ -65,72 +70,78 @@ is `<owner>/<name>`:
 - its checks: `gh api "repos/<repo>/commits/<head sha>/check-runs?per_page=100" --jq '.check_runs[] | {name, status, conclusion}'`
 - its review comments: `gh api repos/<repo>/pulls/<pr>/comments`
 
-## 2. Plan (`claude` only)
+## 2. Plan
 
-Do this in each repository before the claim. Use the REST calls above.
+Do this in each repository before the first claim.
 
 A signal is a comment whose first line is
 `<!-- aw:signal stage=<stage> agent=<agent> outcome=<outcome> -->`.
 Only `aw` writes signals.
-Move labels only when the newest signal has the same stage and agent as the
-issue's current labels.
-An open issue keeps exactly one `stage:` label and one `agent:` label.
+An open issue in the flow keeps exactly one `stage:` label and the label
+`agent:claude`.
 
-| Stage label | Newest signal outcome | New labels |
-|---|---|---|
-| `stage:spec` | `ready` | `stage:tdd`, `agent:agy` |
-| `stage:tdd` | `ready` | `stage:review`, `agent:codex` |
-| `stage:review` | `failed` | `stage:tdd`, `agent:agy` |
-| `stage:review` | `passed` | `stage:done`; close the issue if it is still open |
-| any | `blocked` | see the next list |
+1. Move old agent labels: replace `agent:agy` and `agent:codex` with
+   `agent:claude` on every open issue.
+2. Finish old label moves. `aw` 0.7.0 moves labels itself, but older signals
+   did not. When the newest signal has the same stage as the issue's
+   `stage:` label, move it:
 
-For a `blocked` signal, fix the cause when planning can fix it:
+   | Stage label | Newest signal outcome | New stage label |
+   |---|---|---|
+   | `stage:spec` | `ready` | `stage:tdd` |
+   | `stage:tdd` | `ready` | `stage:review` |
+   | `stage:review` | `failed` | `stage:tdd` |
+   | `stage:review` | `passed` | `stage:done`; close the issue if it is still open |
 
-- No open pull request closes the issue: `stage:tdd`, `agent:agy`.
-- The reviewer authored the pull request: set `agent:` to an agent that did
-  not author it (`codex` first, then `claude`).
-- The spec is unclear or too large: `stage:spec`, `agent:claude`.
-- Otherwise add `blocked` and comment one question for a person.
+3. For an issue with the `blocked` label or a newest `blocked` signal, fix
+   the cause when planning can fix it, then remove `blocked`:
+   - No open pull request closes the issue: `stage:tdd`.
+   - The spec is unclear or too large: `stage:spec`.
+   - Otherwise keep `blocked` and comment one question for a person.
+4. Triage at most three issues: open, no `stage:` label, no `blocked`
+   label and no open sub-issues. Take `p0` first, then the oldest.
+   Always add `agent:claude`.
+   - Add `pN` from a legacy `priority:pN` label, or `p2` when there is none.
+     Remove the legacy `doing` and `todo` labels.
+   - An open pull request already closes it: `stage:review`.
+   - The body has a clear goal and testable acceptance criteria, and one
+     pull request is enough: `stage:tdd`.
+   - The goal is clear but acceptance criteria are missing: `stage:spec`.
+   - One pull request is not enough: create child issues, one pull request
+     each, with acceptance criteria. Link them as sub-issues of the parent
+     and leave the parent without a stage. Close the parent when all
+     children are closed.
+   - A person must decide the product direction: add `blocked` and comment
+     one question.
+   - Obsolete or duplicate: close it with a one-line reason.
 
-Then triage at most three issues: open, no `stage:` label, no `blocked`
-label and no open sub-issues. Take `p0` first, then the oldest.
-
-- Add `pN` from a legacy `priority:pN` label, or `p2` when there is none.
-  Remove the legacy `doing` and `todo` labels.
-- An open pull request already closes it: `stage:review`, `agent:codex`.
-  Use `agent:claude` when the head branch starts with `codex/`.
-- The body has a clear goal and testable acceptance criteria, and one pull
-  request is enough: `stage:tdd`, `agent:agy`.
-- The goal is clear but acceptance criteria are missing: `stage:spec`,
-  `agent:claude`.
-- One pull request is not enough: create child issues, one pull request each,
-  with acceptance criteria. Link them as sub-issues of the parent and leave
-  the parent without a stage. Close the parent when all children are closed.
-- A person must decide the product direction: add `blocked` and comment one
-  question.
-- Obsolete or duplicate: close it with a one-line reason.
+Do not edit an issue's title or body. Write specs and notes as comments.
 
 ## 3. Claim
 
 The claim is a comment on the issue that `aw` writes. It starts with
 `<!-- aw:claim`. `aw` finds it again from the agent and the repository.
 
-For each repository, in name order, until one claim succeeds:
+For each repository, in name order:
 
-1. `agy` only: `cd ~/faberlines/.aw-workers/agy/<name>`.
+1. `cd` to the clone (section 1). `aw` needs it for tdd.
 2. When `$AW status <who>` exits 0, a past run stopped early and still holds
-   the claim. Continue it: read the JSON and go to step 4. `agy` keeps the
-   files in the tree. Claim nothing more in this run.
-3. `agy` only: when `$AW status <who>` exits 2 (no claim) and
-   `git status --porcelain` is not empty, a past run stopped early. Keep its
-   files: `git stash push -u -m "aw-worker leftover <UTC time>"`.
+   the claim. Continue it: read the JSON and go to section 4.
+3. When `$AW status <who>` exits 2 (no claim) and `git status --porcelain`
+   is not empty, a past run stopped early. Keep its files:
+   `git stash push -u -m "aw-worker leftover <UTC time>"`.
 4. `$AW claim <who>`.
    - Exit 2: nothing to do here. Try the next repository.
    - Exit 1: keep stderr for the report. Try the next repository.
    - Exit 0: read the JSON (`repo`, `issue`, `stage`, `branch`, `pr`).
-     Go to step 4 and claim nothing more in this run.
+     Go to section 4.
 
-When no repository gives a claim, go to the final answer.
+After each report, claim again in the same repository. Stop the run when:
+
+- `aw claim` exits 2 in every repository;
+- a review found checks still running and released the claim;
+- you released a claim because you could not finish it;
+- this run has reported three stages.
 
 ## 4. Do the stage
 
@@ -143,7 +154,7 @@ Then run `$AW report` as a plain command. Do not add `trap`, `rm`,
 `set -e` or other cleanup to it; some clients block shell forms that they
 cannot inspect. Leave the temporary file; the system removes it.
 
-Without a clone, read code through the GitHub API:
+Read code through the GitHub API when you do not need the clone:
 
 - the file list: `gh api "repos/<repo>/git/trees/<ref>?recursive=1" --jq '.tree[].path'`;
 - one file: `gh api -H 'Accept: application/vnd.github.raw' "repos/<repo>/contents/<path>?ref=<ref>"`;
@@ -153,7 +164,7 @@ Without a clone, read code through the GitHub API:
 
 ### spec
 
-- Do not clone the repository. Read the code through the GitHub API.
+- Read the code; do not change it.
 - Write the spec: the goal; acceptance criteria that a test or command can
   prove; the tests to write, with one negative case that must fail without
   the change; the files to change; what is out of scope.
@@ -177,36 +188,51 @@ Without a clone, read code through the GitHub API:
 - With a clean tree, run `$AW report <who> ready -F <file>` in the clone.
   The file becomes the pull request body after `Closes #<n>`: summary,
   changes, the checks you ran and their results.
-- When you cannot finish in this run, commit the work in progress and run
-  `$AW release <who>`. The next run continues on the same local branch.
+- When you cannot finish in this run, commit the work in progress. In a cloud
+  session the clone is gone after the run, so push it:
+  `git push origin <branch>` (never force). Then run `$AW release <who>`.
+  The next claim continues from that branch.
+- When the push is refused for that branch, report `blocked` with the branch
+  name and the error.
 
 ### review
 
-- Do not clone the repository. CI is the test evidence; do not run tests.
+- CI is the test evidence; do not run tests.
+- This run or an earlier one wrote the pull request. Review it as a stranger
+  would: trust only the spec, the diff and CI.
 - Read the pull request, its checks and its diff with the REST calls above.
   The pull request JSON has `head.sha`, `mergeable` and `mergeable_state`.
-  Read whole files at the head branch through the GitHub API when the diff
-  is not enough.
-- Checks are still running: `$AW release <who>` and stop. The next run tries again.
+  Read whole files at the head branch when the diff is not enough.
+- Checks are still running: `$AW release <who>` and end the run.
+  The next run tries again.
 - A check failed or the pull request has a merge conflict:
   `$AW report <who> failed -F <file>` with the failed checks or the conflict.
 - Compare the diff with the spec and its acceptance criteria. Check that the
   tests in the diff prove each criterion and that CI ran them.
 - Every criterion is proven and all checks are green:
   `$AW report <who> passed -F <file>`. `aw` approves and squash-merges.
+  GitHub refuses an approval of your own pull request; `aw` reports that as
+  a warning and still merges.
 - Otherwise `$AW report <who> failed -F <file>` with findings per file.
 
-## 5. After the report (`claude` only)
+## Repository notes
 
-Do the label moves of step 2 again for the issue you reported.
-Then the next agent does not wait one more hour.
+- `faberline/core` binds each issue to a reviewed CI contract in
+  `.github/issue-ci-required-gates.json` (`qualification.contracts`).
+  When CI says `linked issue has no reviewed contract`, the tdd pull request
+  adds the contract for its own issue. Copy the shape of contract `100`:
+  every category `required` with all existing checks of that kind,
+  `additional` and `unresolved` empty, and `title_sha256` and `body_sha256`
+  as the SHA-256 of the issue's exact title and body text (UTF-8).
+  Put the same entry in `ci_handoff_policy.qualification.contracts`.
+  Change nothing else in that file.
 
 ## Rules
 
-- `aw` does every push, pull request, review, merge and signal comment.
-  Do not do them with `git` or `gh`.
-- Only the planner (`claude`) changes labels and creates or closes issues.
-- Work only on the issue that `aw claim` gives. One issue in each run.
+- `aw` does every pull request, review, merge and signal comment, and the
+  push of a finished stage. Do not do them with `git` or `gh`.
+  The only other push is the work-in-progress push in tdd.
+- Work only on the issue that `aw claim` gives. One claim at a time.
 - When you stop with an active claim and cannot finish, run `$AW release <who>`.
 - Never edit or delete a claim or signal comment (`<!-- aw:`). Only `aw` writes them.
 - The claim comment is the only lock in this skill. Do not use the AW session
@@ -220,15 +246,16 @@ Then the next agent does not wait one more hour.
   Exception: when a guard rejects only the shell form (for example a `trap`
   or a compound command), run the same action once more as one plain
   command. When that is also denied, release.
-- `blocked` is for a decision that only a person can make. Write the reason.
+- `blocked` is for a decision that only a person can make, or for a refusal
+  that this run cannot fix. Write the reason.
 
 ## Final answer
 
 Use the user's language. Give:
 
-- the agent id and the repositories you checked;
-- the claim result for each repository;
-- the work: issue, stage, outcome and pull request;
-- the label moves (planner only);
-- for each repository, the count of open issues with your `agent:` label;
+- the repositories you checked;
+- the plan changes: label moves, triage, closed issues;
+- each stage you did: issue, stage, outcome and pull request;
+- why the run stopped;
+- for each repository, the count of open issues per `stage:` label;
 - the health: `正常` (normal) or `異常` (abnormal) with the reason.

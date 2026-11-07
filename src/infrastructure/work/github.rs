@@ -215,6 +215,19 @@ impl Tracker for GhCli {
             .map(|_| ())
     }
 
+    fn add_labels(&self, issue: u64, labels: &[String]) -> PortResult<()> {
+        let repo = self.name()?;
+        let path = format!("repos/{repo}/issues/{issue}/labels");
+        self.send("POST", &path, Some(payload!({ "labels": labels })))
+            .map(|_| ())
+    }
+
+    fn remove_label(&self, issue: u64, label: &str) -> PortResult<()> {
+        let repo = self.name()?;
+        let path = format!("repos/{repo}/issues/{issue}/labels/{}", encode(label));
+        self.send("DELETE", &path, None).map(|_| ())
+    }
+
     fn open_prs(&self) -> PortResult<Vec<PullRequest>> {
         let repo = self.name()?;
         let path = format!("repos/{repo}/pulls?state=open&per_page=100");

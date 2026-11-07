@@ -221,16 +221,12 @@ fn review_blocks_when_there_is_no_pull_request_and_moves_on() {
 }
 
 #[test]
-fn review_refuses_a_self_authored_pull_request() {
+fn review_takes_a_pull_request_of_the_same_agent() {
     let w = World::new();
-    w.tracker.issue(7, &["agent:codex", "stage:review"]);
-    w.tracker.pr(5, "codex/issue-7", "Closes #7");
-    nothing(&w, "codex");
-    assert!(
-        w.tracker
-            .last_comment(7)
-            .contains("another agent must review it")
-    );
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    let c = claimed(&w, "claude");
+    assert_eq!((c.issue, c.stage, c.pr), (7, Stage::Review, Some(5)));
 }
 
 #[test]

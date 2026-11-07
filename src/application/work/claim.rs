@@ -81,14 +81,7 @@ pub fn claim(s: Services<'_>, agent: &str) -> Result<ClaimOutcome> {
                     block(s, issue, agent, "No open pull request closes this issue.")?;
                     continue;
                 }
-                Some(pr) if pr.authored_by(agent) => {
-                    let text = format!(
-                        "Pull request #{} was authored by `{agent}`; another agent must review it.",
-                        pr.number
-                    );
-                    block(s, issue, agent, &text)?;
-                    continue;
-                }
+                // One agent may review its own pull request in a later run.
                 Some(pr) => Some(pr),
             }
         } else {

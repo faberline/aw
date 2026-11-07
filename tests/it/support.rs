@@ -161,6 +161,36 @@ impl Tracker for FakeTracker {
         Ok(())
     }
 
+    fn add_labels(&self, issue: u64, labels: &[String]) -> PortResult<()> {
+        self.record(format!("add_labels #{issue} {}", labels.join(",")));
+        for i in self
+            .issues
+            .borrow_mut()
+            .iter_mut()
+            .filter(|i| i.number == issue)
+        {
+            for l in labels {
+                if !i.labels.contains(l) {
+                    i.labels.push(l.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn remove_label(&self, issue: u64, label: &str) -> PortResult<()> {
+        self.record(format!("remove_label #{issue} {label}"));
+        for i in self
+            .issues
+            .borrow_mut()
+            .iter_mut()
+            .filter(|i| i.number == issue)
+        {
+            i.labels.retain(|l| l != label);
+        }
+        Ok(())
+    }
+
     fn open_prs(&self) -> PortResult<Vec<PullRequest>> {
         Ok(self.prs.borrow().clone())
     }
