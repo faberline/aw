@@ -25,7 +25,7 @@ Only tdd touches code in a clone. Planning, spec and review use only GitHub.
 
 - The agent id is the client you run in: Claude Code `claude`, Antigravity `agy`, Codex `codex`.
 - The repositories are the faberline repositories with the GitHub topic `aw`:
-  `gh repo list faberline --topic aw --no-archived --json nameWithOwner --jq '.[].nameWithOwner'`.
+  `gh api --paginate "orgs/faberline/repos?per_page=100" --jq '.[] | select(.archived | not) | select(.topics | index("aw")) | .full_name'`.
   Use them in name order. When the list is empty, stop and report `no aw repository`.
 - `claude` and `codex` need no clone. Work from any directory.
 - `agy` works in a dedicated clone: `~/faberlines/.aw-workers/agy/<name>`,
@@ -35,7 +35,7 @@ Only tdd touches code in a clone. Planning, spec and review use only GitHub.
 - Never work in a person's checkout, such as `~/faberlines/<repo>`.
 
 Use the Rust `aw`: `AW=~/.local/share/aw-rs/bin/aw`.
-`$AW --version` must print `aw 0.6.0` or newer.
+`$AW --version` must print `aw 0.6.1` or newer.
 `~/.local/bin/aw` can be an old Python tool with the same name; do not use it.
 When no binary passes the check, stop and report it.
 Install command: `cargo install --git https://github.com/faberline/aw --root ~/.local/share/aw-rs aw`.
@@ -44,9 +44,30 @@ Give every `claim`, `report`, `release` and `status` command the agent and
 the repository: `--agent <agent> --repo <owner>/<name>`. Below, `<who>`
 means these two options.
 
+Use only the GitHub REST API: `gh api <path>`. Claude Code cloud sessions
+block GraphQL, and most `gh issue`, `gh pr` and `gh repo` commands use it.
+`gh search code` and `gh repo clone` also work. Common calls, where `<repo>`
+is `<owner>/<name>`:
+
+- issues with a label: `gh api --paginate "repos/<repo>/issues?state=open&labels=<label>&per_page=100" --jq '.[] | select(.pull_request | not)'`
+- one issue: `gh api repos/<repo>/issues/<n>`
+- its comments: `gh api --paginate "repos/<repo>/issues/<n>/comments?per_page=100"`
+- add labels: `gh api -X POST repos/<repo>/issues/<n>/labels -f 'labels[]=<a>' -f 'labels[]=<b>'`
+- remove a label: `gh api -X DELETE repos/<repo>/issues/<n>/labels/<label>` (encode `:` as `%3A`)
+- comment: `gh api -X POST repos/<repo>/issues/<n>/comments -F body=@<file>`
+- close: `gh api -X PATCH repos/<repo>/issues/<n> -f state=closed -f state_reason=<completed or not_planned>`
+- create an issue: `gh api -X POST repos/<repo>/issues -f title=<t> -F body=@<file>`
+- sub-issue link: `gh api -X POST repos/<repo>/issues/<parent>/sub_issues -F sub_issue_id=<child issue id>`
+- sub-issues: `gh api repos/<repo>/issues/<n>/sub_issues`
+- open pull requests: `gh api --paginate "repos/<repo>/pulls?state=open&per_page=100"`
+- one pull request: `gh api repos/<repo>/pulls/<pr>`
+- its diff: `gh api -H 'Accept: application/vnd.github.diff' repos/<repo>/pulls/<pr>`
+- its checks: `gh api "repos/<repo>/commits/<head sha>/check-runs?per_page=100" --jq '.check_runs[] | {name, status, conclusion}'`
+- its review comments: `gh api repos/<repo>/pulls/<pr>/comments`
+
 ## 2. Plan (`claude` only)
 
-Do this in each repository before the claim. Use `gh ... -R <owner>/<name>`.
+Do this in each repository before the claim. Use the REST calls above.
 
 A signal is a comment whose first line is
 `<!-- aw:signal stage=<stage> agent=<agent> outcome=<outcome> -->`.
@@ -113,7 +134,7 @@ When no repository gives a claim, go to the final answer.
 
 ## 4. Do the stage
 
-First read the issue and all comments: `gh issue view <n> -R <repo> --comments`.
+First read the issue and all its comments with the REST calls above.
 Read the repository rules: `AGENTS.md`, `CLAUDE.md` or `CONTRIBUTING.md`.
 Follow them for code and checks. For git and GitHub, `aw` and this skill win.
 Put report files in a temporary directory, never in a clone.
@@ -158,9 +179,10 @@ Without a clone, read code through the GitHub API:
 ### review
 
 - Do not clone the repository. CI is the test evidence; do not run tests.
-- Read the pull request: `gh pr view <pr> -R <repo>`, `gh pr checks <pr> -R <repo>`,
-  `gh pr diff <pr> -R <repo>`. Read whole files at the head branch through the
-  GitHub API when the diff is not enough.
+- Read the pull request, its checks and its diff with the REST calls above.
+  The pull request JSON has `head.sha`, `mergeable` and `mergeable_state`.
+  Read whole files at the head branch through the GitHub API when the diff
+  is not enough.
 - Checks are still running: `$AW release <who>` and stop. The next run tries again.
 - A check failed or the pull request has a merge conflict:
   `$AW report <who> failed -F <file>` with the failed checks or the conflict.
