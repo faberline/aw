@@ -12,11 +12,12 @@ spec and review stages use only GitHub and run anywhere.
 
 ## The issue queue
 
-The planner owns the labels. `aw` reads them and never changes them.
+The planner triages issues and sets the first labels. After that, `aw report`
+moves the `stage:` label (see below).
 
 | Label | Meaning |
 | --- | --- |
-| `agent:<id>` | the agent that works on the issue, e.g. `agent:codex` |
+| `agent:<id>` | the agent that works on the issue, e.g. `agent:claude` |
 | `stage:spec`, `stage:tdd`, `stage:review` | the stage to work on; exactly one |
 | `stage:done` | finished; never claimed |
 | `p0` … `p3` | priority; `p0` first, no label last |
@@ -36,8 +37,8 @@ marker that only `aw` writes:
 ```
 
 After `agent` reports on a stage, `aw claim` skips the issue for that agent
-until the planner moves the stage or the `agent:` label. A person's comment
-never counts as a signal.
+until the stage or the `agent:` label changes. A person's comment never counts
+as a signal.
 
 ## One run
 
@@ -76,9 +77,19 @@ when the tree is clean:
 - `review failed` requests changes, or comments when GitHub refuses that.
 - `blocked` and `failed` need a message: `-m TEXT`, or `-F FILE` (`-` is stdin).
 
-A review is never claimed by the agent whose branch prefix authored the pull
-request; `aw` posts a `blocked` signal for the planner instead. It does the
-same when no open pull request closes the issue.
+Then `aw report` moves the `stage:` label, so the next `aw claim` can take the
+issue at once. The `agent:` label stays. A label failure is a warning.
+
+| Report | Labels after it |
+| --- | --- |
+| spec `ready` | `stage:tdd` |
+| tdd `ready` | `stage:review` |
+| review `failed` | `stage:tdd` |
+| review `passed` | `stage:done` |
+| `blocked` | the same stage, plus `blocked` |
+
+The same agent may review its own pull request in a later run. When no open
+pull request closes the issue, `aw` posts a `blocked` signal for review.
 
 `aw release` deletes the claim comment without a signal, so the issue stays
 eligible. `aw status` prints the agent's claim (exit 2 when none). `aw` finds

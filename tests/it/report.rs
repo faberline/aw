@@ -21,7 +21,14 @@ fn spec_ready_turns_the_claim_into_the_signal() {
     let r = report(w.services(), "codex", Outcome::Ready, "spec written").unwrap();
     assert_eq!(r.stage, Stage::Spec);
     assert_eq!(r.link, None);
-    assert_eq!(w.tracker.calls(), ["edit_comment #1"]);
+    assert_eq!(
+        w.tracker.calls(),
+        [
+            "edit_comment #1",
+            "add_labels #1 stage:tdd",
+            "remove_label #1 stage:spec"
+        ]
+    );
     let signals = w.tracker.signals(1);
     assert_eq!(signals.len(), 1);
     assert_eq!(signals[0].outcome, Outcome::Ready);
@@ -42,7 +49,9 @@ fn tdd_ready_pushes_and_opens_a_closing_pull_request() {
         w.tracker.calls(),
         [
             "create_pr codex/issue-7 -> main: Issue 7",
-            "edit_comment #7"
+            "edit_comment #7",
+            "add_labels #7 stage:review",
+            "remove_label #7 stage:tdd"
         ]
     );
     let pr = w.tracker.prs.borrow()[0].clone();
@@ -60,7 +69,15 @@ fn tdd_ready_updates_an_open_pull_request() {
     w.tracker.pr(5, "codex/issue-7", "Closes #7\n\nold");
     claim_issue(&w, "codex");
     report(w.services(), "codex", Outcome::Ready, "new").unwrap();
-    assert_eq!(w.tracker.calls(), ["edit_pr #5", "edit_comment #7"]);
+    assert_eq!(
+        w.tracker.calls(),
+        [
+            "edit_pr #5",
+            "edit_comment #7",
+            "add_labels #7 stage:review",
+            "remove_label #7 stage:tdd"
+        ]
+    );
     assert_eq!(w.tracker.prs.borrow()[0].body, "Closes #7\n\nnew");
 }
 
@@ -88,7 +105,9 @@ fn review_passed_approves_and_squash_merges_without_git() {
         [
             "approve #5",
             "merge #5: Issue 7 (#5) | Closes #7",
-            "edit_comment #7"
+            "edit_comment #7",
+            "add_labels #7 stage:done",
+            "remove_label #7 stage:review"
         ]
     );
     assert!(w.workspace.calls().is_empty());
@@ -102,7 +121,15 @@ fn review_failed_requests_changes_or_falls_back_to_a_comment() {
     claim_issue(&w, "claude");
     w.tracker.fail_request_changes.set(true);
     report(w.services(), "claude", Outcome::Failed, "tests missing").unwrap();
-    assert_eq!(w.tracker.calls(), ["pr_comment #5", "edit_comment #7"]);
+    assert_eq!(
+        w.tracker.calls(),
+        [
+            "pr_comment #5",
+            "edit_comment #7",
+            "add_labels #7 stage:tdd",
+            "remove_label #7 stage:review"
+        ]
+    );
     assert!(w.tracker.last_comment(7).contains("tests missing"));
 }
 
@@ -169,4 +196,28 @@ fn tdd_ready_refuses_uncommitted_changes() {
     assert!(report(w.services(), "codex", Outcome::Ready, "").is_err());
     assert_eq!(w.workspace.calls(), ["status"]);
     assert_eq!(w.tracker.claims(7).len(), 1);
+}
+
+#[test]
+fn the_same_agent_claims_the_next_stage_at_once() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    claim_issue(&w, "claude");
+    report(w.services(), "claude", Outcome::Ready, "spec").unwrap();
+    let labels = w.tracker.issues.borrow()[0].labels.clone();
+    assert_eq!(labels, ["agent:claude", "stage:tdd"]);
+    match claim(w.services(), "claude").unwrap() {
+        ClaimOutcome::Claimed(c) => assert_eq!((c.issue, c.stage), (1, Stage::Tdd)),
+        ClaimOutcome::Nothing(why) => panic!("nothing to claim: {why}"),
+    }
+}
+
+#[test]
+fn blocked_keeps_the_stage_and_adds_blocked() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    claim_issue(&w, "claude");
+    report(w.services(), "claude", Outcome::Blocked, "needs a person").unwrap();
+    let labels = w.tracker.issues.borrow()[0].labels.clone();
+    assert_eq!(labels, ["agent:claude", "stage:spec", "blocked"]);
 }

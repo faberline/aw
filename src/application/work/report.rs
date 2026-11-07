@@ -65,6 +65,7 @@ pub fn report(s: Services<'_>, agent: &str, outcome: Outcome, message: &str) -> 
         .edit_comment(held.comment_id, &signal.render(note, link.as_deref()))
         .with_context(|| format!("could not post the signal on issue #{}", claim.issue))?;
 
+    move_labels(s, &claim, outcome, &mut warnings);
     warnings.extend(finish(s, &claim)?);
     Ok(Reported {
         issue: claim.issue,
@@ -73,6 +74,28 @@ pub fn report(s: Services<'_>, agent: &str, outcome: Outcome, message: &str) -> 
         link,
         warnings,
     })
+}
+
+/// Put the issue on its next stage, so the next claim can take it at once.
+/// The signal is already posted; a label failure is only a warning.
+fn move_labels(s: Services<'_>, claim: &Claim, outcome: Outcome, warnings: &mut Vec<String>) {
+    let change = outcome.label_move(claim.stage);
+    if let Err(err) = s.tracker.add_labels(claim.issue, &change.add) {
+        warnings.push(format!(
+            "could not add {} to #{}: {err}",
+            change.add.join(", "),
+            claim.issue
+        ));
+        return;
+    }
+    if let Some(old) = change.remove
+        && let Err(err) = s.tracker.remove_label(claim.issue, &old)
+    {
+        warnings.push(format!(
+            "could not remove {old} from #{}: {err}",
+            claim.issue
+        ));
+    }
 }
 
 fn pr_url(s: Services<'_>, claim: &Claim) -> Result<Option<(u64, String)>> {

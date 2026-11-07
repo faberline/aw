@@ -24,6 +24,8 @@ pub trait Tracker {
     fn comment(&self, issue: u64, body: &str) -> PortResult<()>;
     fn edit_comment(&self, id: u64, body: &str) -> PortResult<()>;
     fn delete_comment(&self, id: u64) -> PortResult<()>;
+    fn add_labels(&self, issue: u64, labels: &[String]) -> PortResult<()>;
+    fn remove_label(&self, issue: u64, label: &str) -> PortResult<()>;
     fn open_prs(&self) -> PortResult<Vec<PullRequest>>;
     fn create_pr(&self, head: &str, base: &str, title: &str, body: &str)
     -> PortResult<PullRequest>;

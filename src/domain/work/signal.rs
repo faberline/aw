@@ -59,6 +59,36 @@ impl Outcome {
     }
 }
 
+/// The label change that a report makes on the issue.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LabelMove {
+    pub remove: Option<String>,
+    pub add: Vec<String>,
+}
+
+impl Outcome {
+    /// The next stage label after `stage` ends with this outcome.
+    /// `blocked` keeps the stage and adds `blocked` for a person.
+    pub fn label_move(self, stage: Stage) -> LabelMove {
+        let to = match (stage, self) {
+            (_, Outcome::Blocked) => {
+                return LabelMove {
+                    remove: None,
+                    add: vec!["blocked".into()],
+                };
+            }
+            (Stage::Spec, _) => "stage:tdd",
+            (Stage::Tdd, _) => "stage:review",
+            (Stage::Review, Outcome::Failed) => "stage:tdd",
+            (Stage::Review, _) => "stage:done",
+        };
+        LabelMove {
+            remove: Some(format!("stage:{stage}")),
+            add: vec![to.into()],
+        }
+    }
+}
+
 impl fmt::Display for Outcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
@@ -146,5 +176,32 @@ mod tests {
         assert!(Outcome::Passed.allowed_in(Stage::Review));
         assert!(!Outcome::Passed.allowed_in(Stage::Tdd));
         assert!(Outcome::Blocked.allowed_in(Stage::Tdd));
+    }
+
+    #[test]
+    fn each_report_moves_to_the_next_stage() {
+        let to = |stage, outcome: Outcome| {
+            let m = outcome.label_move(stage);
+            (m.remove, m.add)
+        };
+        let some = |s: &str| Some(s.to_string());
+        let one = |s: &str| vec![s.to_string()];
+        assert_eq!(
+            to(Stage::Spec, Outcome::Ready),
+            (some("stage:spec"), one("stage:tdd"))
+        );
+        assert_eq!(
+            to(Stage::Tdd, Outcome::Ready),
+            (some("stage:tdd"), one("stage:review"))
+        );
+        assert_eq!(
+            to(Stage::Review, Outcome::Failed),
+            (some("stage:review"), one("stage:tdd"))
+        );
+        assert_eq!(
+            to(Stage::Review, Outcome::Passed),
+            (some("stage:review"), one("stage:done"))
+        );
+        assert_eq!(to(Stage::Tdd, Outcome::Blocked), (None, one("blocked")));
     }
 }
