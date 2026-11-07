@@ -5,7 +5,7 @@ use aw::domain::work::stage::Stage;
 use crate::support::World;
 
 fn claim_issue(w: &World, agent: &str) {
-    match claim(w.services(), agent).unwrap() {
+    match claim(w.services(), agent, &[]).unwrap() {
         ClaimOutcome::Claimed(_) => {}
         ClaimOutcome::Nothing(why) => panic!("nothing to claim: {why}"),
     }
@@ -206,7 +206,7 @@ fn the_same_agent_claims_the_next_stage_at_once() {
     report(w.services(), "claude", Outcome::Ready, "spec").unwrap();
     let labels = w.tracker.issues.borrow()[0].labels.clone();
     assert_eq!(labels, ["agent:claude", "stage:tdd"]);
-    match claim(w.services(), "claude").unwrap() {
+    match claim(w.services(), "claude", &[]).unwrap() {
         ClaimOutcome::Claimed(c) => assert_eq!((c.issue, c.stage), (1, Stage::Tdd)),
         ClaimOutcome::Nothing(why) => panic!("nothing to claim: {why}"),
     }

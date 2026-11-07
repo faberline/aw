@@ -55,6 +55,8 @@ repository of the current checkout.
 `aw claim` takes the first eligible issue (priority, then oldest), posts the
 claim comment and prints the claim as JSON. It exits 2 when there is nothing
 to do. An agent holds at most one claim in a repository.
+`aw claim --skip <issue>` passes over that issue; repeat it for more. A
+worker uses it for a review whose checks are still running.
 
 | Stage | Where it runs | `aw claim` checks out | `aw report` outcomes |
 | --- | --- | --- | --- |

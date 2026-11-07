@@ -6,14 +6,14 @@ use aw::domain::work::stage::Stage;
 use crate::support::{NOW, World};
 
 fn claimed(world: &World, agent: &str) -> Claim {
-    match claim(world.services(), agent).unwrap() {
+    match claim(world.services(), agent, &[]).unwrap() {
         ClaimOutcome::Claimed(c) => c,
         ClaimOutcome::Nothing(why) => panic!("expected a claim, got nothing: {why}"),
     }
 }
 
 fn nothing(world: &World, agent: &str) -> String {
-    match claim(world.services(), agent).unwrap() {
+    match claim(world.services(), agent, &[]).unwrap() {
         ClaimOutcome::Nothing(why) => why,
         ClaimOutcome::Claimed(c) => panic!("expected nothing, claimed #{}", c.issue),
     }
@@ -40,6 +40,32 @@ fn takes_highest_priority_then_oldest() {
     assert_eq!(c.stage, Stage::Spec);
     assert_eq!(c.branch, "main");
     assert_eq!(status(w.services(), "codex").unwrap(), Some(c));
+}
+
+#[test]
+fn skip_passes_over_the_named_issues() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec", "p0"]);
+    w.tracker.issue(2, &["agent:claude", "stage:spec", "p1"]);
+    w.tracker.issue(3, &["agent:claude", "stage:spec", "p2"]);
+    let c = match claim(w.services(), "claude", &[1, 2]).unwrap() {
+        ClaimOutcome::Claimed(c) => c,
+        ClaimOutcome::Nothing(why) => panic!("expected a claim, got nothing: {why}"),
+    };
+    assert_eq!(c.issue, 3);
+    assert!(w.tracker.claims(1).is_empty());
+    assert!(w.tracker.claims(2).is_empty());
+}
+
+#[test]
+fn skipping_every_issue_leaves_nothing() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    assert!(matches!(
+        claim(w.services(), "claude", &[1]).unwrap(),
+        ClaimOutcome::Nothing(_)
+    ));
+    assert!(w.tracker.calls().is_empty());
 }
 
 #[test]
@@ -200,7 +226,7 @@ fn tdd_with_a_dirty_tree_is_an_error_and_leaves_no_claim() {
     let w = World::new();
     w.workspace.clean.set(false);
     w.tracker.issue(1, &["agent:codex", "stage:tdd"]);
-    assert!(claim(w.services(), "codex").is_err());
+    assert!(claim(w.services(), "codex", &[]).is_err());
     assert!(w.tracker.claims(1).is_empty());
 }
 
@@ -266,6 +292,6 @@ fn a_stale_claim_is_removed_and_replaced() {
 #[test]
 fn a_bad_agent_id_is_an_error() {
     let w = World::new();
-    assert!(claim(w.services(), "Codex").is_err());
-    assert!(claim(w.services(), "").is_err());
+    assert!(claim(w.services(), "Codex", &[]).is_err());
+    assert!(claim(w.services(), "", &[]).is_err());
 }
