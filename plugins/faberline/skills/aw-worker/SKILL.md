@@ -138,6 +138,10 @@ First read the issue and all its comments with the REST calls above.
 Read the repository rules: `AGENTS.md`, `CLAUDE.md` or `CONTRIBUTING.md`.
 Follow them for code and checks. For git and GitHub, `aw` and this skill win.
 Put report files in a temporary directory, never in a clone.
+Write the report file with the file tool or its own plain command first.
+Then run `$AW report` as a plain command. Do not add `trap`, `rm`,
+`set -e` or other cleanup to it; some clients block shell forms that they
+cannot inspect. Leave the temporary file; the system removes it.
 
 Without a clone, read code through the GitHub API:
 
@@ -213,6 +217,9 @@ Then the next agent does not wait one more hour.
   run while a command still runs.
 - When a command is denied by a permission rule, do not work around it. Run
   `$AW release <who>` and name the command and the rule in the final answer.
+  Exception: when a guard rejects only the shell form (for example a `trap`
+  or a compound command), run the same action once more as one plain
+  command. When that is also denied, release.
 - `blocked` is for a decision that only a person can make. Write the reason.
 
 ## Final answer
