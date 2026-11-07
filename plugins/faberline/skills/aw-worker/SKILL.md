@@ -11,9 +11,19 @@ Each run plans first. Then it takes issues through their stages, one claim
 at a time, until it must wait for CI or has finished three stages.
 `aw report` moves the `stage:` label, so the next claim can continue at once.
 
-The run's own model plans, writes specs and reviews. In tdd it gives the
-implementation to a Haiku subagent and checks the result. So a spec must be
-complete enough that a small model can do the work from the spec alone.
+Each kind of work has its own model:
+
+| Work | Model |
+|---|---|
+| plan, spec, and every `aw` command | the run's own model (Sonnet) |
+| tdd implementation | a subagent with `model: "haiku"` |
+| review verdict | a subagent with `model: "opus"` |
+
+The run's own model gives the work to the subagent with the Agent tool,
+checks the result and runs `aw`. Subagents never run `aw`, commit or push.
+When the Agent tool is not available, the run does the work itself.
+A small model implements the spec, so a spec must be complete enough for
+that model to do the work from the spec alone.
 
 When this skill runs in a client other than Claude Code, stop and report
 `aw-worker runs only as claude`.
@@ -237,24 +247,35 @@ Read code through the GitHub API when you do not need the clone:
 ### review
 
 - CI is the test evidence; do not run tests.
-- This run or an earlier one wrote the pull request. Review it as a stranger
-  would: trust only the spec, the diff and CI.
-- Read the pull request, its checks and its diff with the REST calls above.
-  The pull request JSON has `head.sha`, `mergeable` and `mergeable_state`.
-  Read whole files at the head branch when the diff is not enough.
-- Checks are still running: `$AW release <who>` and end the run.
-  The next run tries again.
-- A check failed or the pull request has a merge conflict:
-  `$AW report <who> failed -F <file>` with the failed checks or the conflict.
-- Compare the diff with the spec and its acceptance criteria. Check that the
-  tests in the diff prove each criterion and that CI ran them. A small model
-  wrote the code: look for tests that assert nothing, skipped or ignored
-  tests, and changes outside the spec's files.
-- Every criterion is proven and all checks are green:
-  `$AW report <who> passed -F <file>`. `aw` approves and squash-merges.
-  GitHub refuses an approval of your own pull request; `aw` reports that as
-  a warning and still merges.
-- Otherwise `$AW report <who> failed -F <file>` with findings per file.
+- First do the quick gates yourself with the REST calls above. The pull
+  request JSON has `head.sha`, `mergeable` and `mergeable_state`.
+  - Checks are still running: `$AW release <who>` and end the run.
+    The next run tries again.
+  - A check failed or the pull request has a merge conflict:
+    `$AW report <who> failed -F <file>` with the failed checks or the
+    conflict. No subagent is needed.
+- All checks are green and there is no conflict: give the verdict to one
+  subagent with the Agent tool and `model: "opus"`. Its brief has: the
+  repository and pull request number; the issue number; the REST calls for
+  the pull request, its diff, its checks and whole files at the head branch;
+  the repository rules file; and these rules:
+  - review as a stranger would: trust only the issue, the newest
+    `stage=spec` signal, the diff and CI;
+  - compare the diff with the spec and each acceptance criterion; check that
+    a test in the diff proves each criterion and that CI ran it;
+  - a small model wrote the code: look for tests that assert nothing,
+    skipped or ignored tests, and changes outside the spec's files;
+  - read only; do not run `aw`, `git` writes or `gh` writes;
+  - answer with the first line `VERDICT: passed` or `VERDICT: failed`, then
+    the findings per file with a fix for each.
+- Use the subagent's verdict. Do not change `failed` to `passed`. You may
+  change `passed` to `failed` only for a fact you can show (a red check, a
+  conflict, a file outside the spec).
+- `passed`: `$AW report <who> passed -F <file>` with the summary.
+  `aw` approves and squash-merges. GitHub refuses an approval of your own
+  pull request; `aw` reports that as a warning and still merges.
+- `failed`: `$AW report <who> failed -F <file>` with the findings per file.
+  `aw` sends the issue back to tdd.
 
 ## Repository notes
 
