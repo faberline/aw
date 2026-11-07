@@ -7,7 +7,9 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
+use crate::application::run::{Client, Event, RunServices};
 use crate::application::work::{self, ClaimOutcome, Outcome, Services};
+use crate::interfaces::run::commands;
 
 #[derive(Parser)]
 #[command(
@@ -17,7 +19,9 @@ use crate::application::work::{self, ClaimOutcome, Outcome, Services};
     long_about = "Claim one issue, do its stage, report back.\n\n\
         aw claim   takes the next issue labeled agent:<agent> and checks out its branch\n\
         aw report  finishes the stage (push + PR, merge, or review) and posts the signal\n\
-        aw release drops the claim without a report\n\n\
+        aw release drops the claim without a report\n\
+        aw hook    records a worker run start or end from a client hook\n\
+        aw runs    lists the recent worker runs\n\n\
         Exit codes: 0 done, 2 nothing to do, 1 error."
 )]
 struct Cli {
@@ -48,8 +52,49 @@ enum Command {
     Release,
     /// Show the active claim.
     Status,
+    /// Record a worker run event from a client hook. Reads the hook JSON
+    /// from stdin and always exits 0.
+    Hook { client: ClientArg, event: EventArg },
+    /// List the recent worker runs from the run ledger.
+    Runs {
+        /// How many runs to show, newest last.
+        #[arg(short = 'n', long, default_value_t = 10)]
+        limit: usize,
+    },
     /// Print the version.
     Version,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ClientArg {
+    Claude,
+    Codex,
+    Agy,
+}
+
+impl From<ClientArg> for Client {
+    fn from(c: ClientArg) -> Self {
+        match c {
+            ClientArg::Claude => Client::Claude,
+            ClientArg::Codex => Client::Codex,
+            ClientArg::Agy => Client::Agy,
+        }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum EventArg {
+    Start,
+    End,
+}
+
+impl From<EventArg> for Event {
+    fn from(e: EventArg) -> Self {
+        match e {
+            EventArg::Start => Event::Start,
+            EventArg::End => Event::End,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -79,7 +124,11 @@ pub enum Exit {
 }
 
 /// Parse `args` (the program name first) and run one command.
-pub fn run(services: Services<'_>, args: impl IntoIterator<Item = OsString>) -> Exit {
+pub fn run(
+    services: Services<'_>,
+    runs: RunServices<'_>,
+    args: impl IntoIterator<Item = OsString>,
+) -> Exit {
     let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(err) => {
@@ -91,7 +140,7 @@ pub fn run(services: Services<'_>, args: impl IntoIterator<Item = OsString>) -> 
             };
         }
     };
-    match execute(services, cli.command) {
+    match execute(services, runs, cli.command) {
         Ok(exit) => exit,
         Err(err) => {
             eprintln!("aw: {err:#}");
@@ -128,7 +177,7 @@ fn read_message(message: Option<String>, file: Option<String>) -> Result<String>
     }
 }
 
-fn execute(s: Services<'_>, command: Command) -> Result<Exit> {
+fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit> {
     match command {
         Command::Claim { agent } => match work::claim(s, &agent)? {
             ClaimOutcome::Claimed(claim) => {
@@ -167,6 +216,19 @@ fn execute(s: Services<'_>, command: Command) -> Result<Exit> {
                 Ok(Exit::Nothing)
             }
         },
+        Command::Hook { client, event } => {
+            commands::hook(r, client.into(), event.into());
+            Ok(Exit::Ok)
+        }
+        Command::Runs { limit } => {
+            let runs = commands::runs(r, limit)?;
+            if runs.is_empty() {
+                eprintln!("aw: no runs recorded");
+                return Ok(Exit::Nothing);
+            }
+            print(&runs)?;
+            Ok(Exit::Ok)
+        }
         Command::Version => {
             println!("aw {}", env!("CARGO_PKG_VERSION"));
             Ok(Exit::Ok)

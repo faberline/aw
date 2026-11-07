@@ -73,17 +73,53 @@ is treated as a dead run and replaced.
 Exit codes: 0 done, 2 nothing to do, 1 error. JSON goes to stdout; messages
 and warnings go to stderr.
 
+## Worker runs
+
+Each agent client runs `aw hook` from its own hooks. The command writes one
+line per worker run event to the run ledger, `<workers dir>/runs.jsonl`. The
+workers directory is `$AW_WORKERS_DIR`, or `~/faberlines/.aw-workers`.
+
+```bash
+aw hook claude start   # Claude Code UserPromptSubmit
+aw hook claude end     # Claude Code Stop
+aw hook codex start    # Codex UserPromptSubmit
+aw hook codex end      # Codex Stop
+aw hook agy start      # Antigravity SessionStart
+aw hook agy end        # Antigravity Stop
+aw runs -n 20          # the last 20 runs as JSON, oldest first
+```
+
+`aw hook` reads the hook JSON from stdin. It records only worker runs:
+
+- a session whose working directory is a clone under the workers directory;
+- a start whose prompt is a worker automation prompt, such as a Claude
+  scheduled task named `aw-worker-…`;
+- an end of a session that already has a recorded start.
+
+`aw hook` always exits 0, so it never blocks a prompt. Errors go to stderr.
+It prints nothing for Claude Code and Codex, because their prompt hooks add
+stdout to the model context. For Antigravity it prints the JSON reply.
+
+`aw runs` groups the ledger by session. A run is `ended` when its last
+record is an end, else `open`. An old `open` run crashed or hangs. No new run
+for more than one hour means the automation did not start.
+
 ## Layout
 
 The crate follows the [Rust layout standard](docs/standards/rust-layout.md):
 
 - `src/domain/work/` — stages, signals, issues, pull requests, the claim, and
   the ports (`Tracker`, `Workspace`, `ClaimStore`, `Clock`).
+- `src/domain/run/` — run records, hook input, run summaries and the
+  `RunLedger` port.
 - `src/application/work/` — the `claim`, `report`, `release` and `status`
   use cases.
+- `src/application/run/` — the `record` and `runs` use cases.
 - `src/infrastructure/work/` — `gh` and `git` adapters, the claim file and
   the clock.
+- `src/infrastructure/run/` — the ledger file.
 - `src/interfaces/work/cli.rs` — the clap command line.
+- `src/interfaces/run/` — the `hook` and `runs` commands.
 - `src/app.rs` — the composition root; `src/main.rs` only calls it.
 - `tests/it/` — use cases against in-memory ports, and the binary.
 
