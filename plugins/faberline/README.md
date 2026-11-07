@@ -17,6 +17,7 @@ change. Do not copy these skills into a repository.
 | `/faberline:gh-create-pr` | Opens a pull request, or reuses the open one. |
 | `/faberline:gh-merge-pr` | Waits for checks, then squash-merges and verifies. |
 | `/faberline:git-land` | Runs all of the above in order. |
+| `/faberline:aw-worker` | Runs one scheduled `aw` issue cycle as this client's agent. |
 
 Each skill keeps its script next to it, in `skills/<skill>/scripts/`. The skill
 calls it as `${CLAUDE_SKILL_DIR}/scripts/<script>.sh`. Claude Code replaces
@@ -111,8 +112,34 @@ ownership and acceptance rules.
 
 ## Issue work
 
-Issue work is not a skill. It runs through the `aw` CLI in the
+Issue work runs through the `aw` CLI in the
 [repository root](../../README.md): `aw claim`, the work, then `aw report`.
+
+`aw-worker` wraps one such cycle for an hourly automation. Each AI pulls its
+own work. The automation prompt only names the skill:
+
+| Client | Agent | Stage | Worker clone |
+|---|---|---|---|
+| Claude Code | `claude` | triage (planner), spec | `~/faberlines/.aw-workers/claude/<repo>` |
+| Antigravity | `agy` | tdd | `~/faberlines/.aw-workers/agy/<repo>` |
+| Codex | `codex` | review | `~/faberlines/.aw-workers/codex/<repo>` |
+
+The `claude` worker is the planner. It triages new issues and moves the
+`stage:` and `agent:` labels after each signal. `aw` itself never moves
+labels.
+
+Prepare a worker clone once:
+
+```bash
+git clone git@github.com:faberline/<repo>.git ~/faberlines/.aw-workers/<agent>/<repo>
+git -C ~/faberlines/.aw-workers/<agent>/<repo> config aw.agent <agent>
+```
+
+The skill uses the Rust `aw` at `~/.local/share/aw-rs/bin/aw`:
+
+```bash
+cargo install --git https://github.com/faberline/aw --root ~/.local/share/aw-rs aw
+```
 
 ## Check before you merge
 
