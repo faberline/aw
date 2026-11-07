@@ -87,7 +87,10 @@ label and no open sub-issues. Take `p0` first, then the oldest.
 For each usable clone, in name order, until one claim succeeds:
 
 1. `cd <clone>`.
-2. When `$AW status` exits 2 (no claim) and `git status --porcelain` is not
+2. When `$AW status` exits 0, a past run stopped early and still holds the
+   claim. Continue it: read the JSON, keep the files in the tree, and go to
+   step 4. Claim nothing more in this run.
+   When `$AW status` exits 2 (no claim) and `git status --porcelain` is not
    empty, a past run stopped early. Keep its files:
    `git stash push -u -m "aw-worker leftover <UTC time>"`.
 3. `$AW claim --agent <agent>`.
@@ -119,6 +122,8 @@ Put report files in a temporary directory, never in the clone.
 - The spec is the issue body and the newest `stage=spec` signal.
   On rework, also read the newest `stage=review` signal and the pull request
   review comments.
+- Work on the branch that `aw claim` checked out. On rework it is the open
+  pull request's branch. Do not copy files from another branch.
 - When the branch is behind `origin/<default>` or has a conflict, run
   `git merge origin/<default>` and resolve it. Never rebase. Never force-push.
 - Write the failing tests first. Then write the smallest code that makes them
@@ -157,6 +162,11 @@ Then the next agent does not wait one more hour.
 - Only the planner (`claude`) changes labels and creates or closes issues.
 - Work only on the issue that `aw claim` gives. One issue in each run.
 - When you stop with an active claim and cannot finish, run `$AW release`.
+- Never edit the claim file (`<git dir>/aw/claim.json`). Only `aw` writes it.
+- Run builds and checks in the foreground and wait for them. Do not end the
+  run while a command still runs.
+- When a command is denied by a permission rule, do not work around it. Run
+  `$AW release` and name the command and the rule in the final answer.
 - `blocked` is for a decision that only a person can make. Write the reason.
 
 ## Final answer

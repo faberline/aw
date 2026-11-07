@@ -47,14 +47,18 @@ pub fn claim(s: Services<'_>, agent: &str) -> Result<ClaimOutcome> {
         if !awaiting_report(stage, agent, &comments) {
             continue;
         }
-        let pr = if stage == Stage::Review {
-            if prs.is_none() {
-                prs = Some(s.tracker.open_prs()?);
+        let found = match stage {
+            Stage::Spec => None,
+            Stage::Tdd | Stage::Review => {
+                if prs.is_none() {
+                    prs = Some(s.tracker.open_prs()?);
+                }
+                prs.as_deref()
+                    .and_then(|all| find_for_issue(all, issue.number))
+                    .cloned()
             }
-            let found = prs
-                .as_deref()
-                .and_then(|all| find_for_issue(all, issue.number))
-                .cloned();
+        };
+        let pr = if stage == Stage::Review {
             match found {
                 None => {
                     block(s, &issue, agent, "No open pull request closes this issue.")?;
@@ -71,7 +75,8 @@ pub fn claim(s: Services<'_>, agent: &str) -> Result<ClaimOutcome> {
                 Some(pr) => Some(pr),
             }
         } else {
-            None
+            // A tdd rework continues the branch of the open pull request.
+            found
         };
 
         let claim = Claim {
@@ -104,7 +109,8 @@ fn branch_for(
 ) -> String {
     match (stage, pr) {
         (Stage::Spec, _) => repo.default_branch.clone(),
-        (Stage::Tdd, _) => work_branch(agent, issue.number),
+        (Stage::Tdd, Some(pr)) => pr.head.clone(),
+        (Stage::Tdd, None) => work_branch(agent, issue.number),
         (Stage::Review, Some(pr)) => pr.head.clone(),
         (Stage::Review, None) => unreachable!("review claims always carry a pull request"),
     }
