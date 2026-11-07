@@ -131,8 +131,13 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    - Obsolete or duplicate: close it with a one-line reason.
 
 Do not edit an issue's title or body. Write specs and notes as comments.
-Change the labels of one issue per command. Do not loop over many issues in
-one command; a reviewer of the command cannot see what it changes.
+Each shell command writes to at most one issue. Do not use `for` or
+`while` loops, and do not name two issue numbers in one write command.
+A permission reviewer refuses a command whose effect it cannot see. For
+three issues, run three separate commands, one after another.
+When a write is refused, run it again once as one command for one issue.
+Finish the plan before the first claim. Do not run plan writes and
+`aw claim` at the same time.
 
 ## 3. Claim
 
