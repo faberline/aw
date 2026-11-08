@@ -28,6 +28,28 @@ that model to do the work from the spec alone.
 When this skill runs in a client other than Claude Code, stop and report
 `aw-worker runs only as claude`.
 
+## Stage runs
+
+The automation can run one worker per stage, each on its own schedule
+and model. Then the run's prompt names one stage:
+
+| Stage run | Model of the run | Plan (section 2) |
+|---|---|---|
+| `spec` | Sonnet | yes |
+| `tdd` | Haiku | no |
+| `review` | Opus | no |
+
+In a stage run:
+
+- Add `--stage <stage>` to every `claim`, `report`, `release` and `status`
+  command (it is part of `<who>`). `aw` then takes and holds only claims of
+  that stage, so the three runs do not block each other.
+- Only the spec run plans. The tdd and review runs skip section 2.
+- The run's own model does the stage work. Do not give it to a subagent.
+- `$AW --version` must print `aw 0.7.2` or newer.
+
+Without a stage in the prompt, one run does every stage as described below.
+
 ## Stages
 
 | Labels on the issue | Work |
@@ -60,8 +82,8 @@ When no binary passes the check, stop and report it.
 Install command: `cargo install --git https://github.com/faberline/aw --root ~/.local/share/aw-rs aw`.
 
 Give every `claim`, `report`, `release` and `status` command the agent and
-the repository: `--agent claude --repo <owner>/<name>`. Below, `<who>`
-means these two options.
+the repository: `--agent claude --repo <owner>/<name>`, and in a stage run
+also `--stage <stage>`. Below, `<who>` means these options.
 
 Use only the GitHub REST API: `gh api <path>`. Claude Code cloud sessions
 block GraphQL, and most `gh issue`, `gh pr` and `gh repo` commands use it.

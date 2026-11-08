@@ -51,3 +51,10 @@ fn claim_commands_need_an_agent() {
         );
     }
 }
+
+#[test]
+fn stage_rejects_an_unknown_stage() {
+    let out = aw(&["claim", "--agent", "claude", "--stage", "done"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("invalid value"));
+}

@@ -7,14 +7,15 @@ use crate::domain::work::claim::Claim;
 use crate::domain::work::stage::Stage;
 
 /// The claim `agent` holds in the repository, if any.
-pub fn status(s: Services<'_>, agent: &str) -> Result<Option<Claim>> {
-    Ok(active(s, agent)?.map(|a| a.claim))
+/// With a `stage`, only a claim for that stage.
+pub fn status(s: Services<'_>, agent: &str, stage: Option<Stage>) -> Result<Option<Claim>> {
+    Ok(active(s, agent, stage)?.map(|a| a.claim))
 }
 
 /// Delete the claim comment without reporting. The issue stays eligible,
 /// so the next `aw claim` may take it again.
-pub fn release(s: Services<'_>, agent: &str) -> Result<(Claim, Vec<String>)> {
-    let Some(held) = active(s, agent)? else {
+pub fn release(s: Services<'_>, agent: &str, stage: Option<Stage>) -> Result<(Claim, Vec<String>)> {
+    let Some(held) = active(s, agent, stage)? else {
         bail!("`{agent}` holds no claim");
     };
     s.tracker

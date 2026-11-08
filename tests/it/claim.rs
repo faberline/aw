@@ -6,14 +6,14 @@ use aw::domain::work::stage::Stage;
 use crate::support::{NOW, World};
 
 fn claimed(world: &World, agent: &str) -> Claim {
-    match claim(world.services(), agent, &[]).unwrap() {
+    match claim(world.services(), agent, None, &[]).unwrap() {
         ClaimOutcome::Claimed(c) => c,
         ClaimOutcome::Nothing(why) => panic!("expected a claim, got nothing: {why}"),
     }
 }
 
 fn nothing(world: &World, agent: &str) -> String {
-    match claim(world.services(), agent, &[]).unwrap() {
+    match claim(world.services(), agent, None, &[]).unwrap() {
         ClaimOutcome::Nothing(why) => why,
         ClaimOutcome::Claimed(c) => panic!("expected nothing, claimed #{}", c.issue),
     }
@@ -39,7 +39,7 @@ fn takes_highest_priority_then_oldest() {
     assert_eq!(c.issue, 2);
     assert_eq!(c.stage, Stage::Spec);
     assert_eq!(c.branch, "main");
-    assert_eq!(status(w.services(), "codex").unwrap(), Some(c));
+    assert_eq!(status(w.services(), "codex", None).unwrap(), Some(c));
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn skip_passes_over_the_named_issues() {
     w.tracker.issue(1, &["agent:claude", "stage:spec", "p0"]);
     w.tracker.issue(2, &["agent:claude", "stage:spec", "p1"]);
     w.tracker.issue(3, &["agent:claude", "stage:spec", "p2"]);
-    let c = match claim(w.services(), "claude", &[1, 2]).unwrap() {
+    let c = match claim(w.services(), "claude", None, &[1, 2]).unwrap() {
         ClaimOutcome::Claimed(c) => c,
         ClaimOutcome::Nothing(why) => panic!("expected a claim, got nothing: {why}"),
     };
@@ -62,7 +62,7 @@ fn skipping_every_issue_leaves_nothing() {
     let w = World::new();
     w.tracker.issue(1, &["agent:claude", "stage:spec"]);
     assert!(matches!(
-        claim(w.services(), "claude", &[1]).unwrap(),
+        claim(w.services(), "claude", None, &[1]).unwrap(),
         ClaimOutcome::Nothing(_)
     ));
     assert!(w.tracker.calls().is_empty());
@@ -226,7 +226,7 @@ fn tdd_with_a_dirty_tree_is_an_error_and_leaves_no_claim() {
     let w = World::new();
     w.workspace.clean.set(false);
     w.tracker.issue(1, &["agent:codex", "stage:tdd"]);
-    assert!(claim(w.services(), "codex", &[]).is_err());
+    assert!(claim(w.services(), "codex", None, &[]).is_err());
     assert!(w.tracker.claims(1).is_empty());
 }
 
@@ -263,7 +263,7 @@ fn an_active_claim_means_nothing_to_do() {
     let first = claimed(&w, "codex");
     let why = nothing(&w, "codex");
     assert!(why.contains("#1"), "{why}");
-    assert_eq!(status(w.services(), "codex").unwrap(), Some(first));
+    assert_eq!(status(w.services(), "codex", None).unwrap(), Some(first));
     assert!(w.tracker.claims(2).is_empty());
 }
 
@@ -273,7 +273,7 @@ fn another_agents_claim_does_not_count() {
     w.tracker
         .issue(1, &["agent:codex", "agent:claude", "stage:spec"]);
     claimed(&w, "codex");
-    assert_eq!(status(w.services(), "claude").unwrap(), None);
+    assert_eq!(status(w.services(), "claude", None).unwrap(), None);
 }
 
 #[test]
@@ -292,6 +292,67 @@ fn a_stale_claim_is_removed_and_replaced() {
 #[test]
 fn a_bad_agent_id_is_an_error() {
     let w = World::new();
-    assert!(claim(w.services(), "Codex", &[]).is_err());
-    assert!(claim(w.services(), "", &[]).is_err());
+    assert!(claim(w.services(), "Codex", None, &[]).is_err());
+    assert!(claim(w.services(), "", None, &[]).is_err());
+}
+
+fn claimed_in(w: &World, agent: &str, stage: Stage) -> Claim {
+    match claim(w.services(), agent, Some(stage), &[]).unwrap() {
+        ClaimOutcome::Claimed(c) => c,
+        ClaimOutcome::Nothing(why) => panic!("expected a claim, got nothing: {why}"),
+    }
+}
+
+#[test]
+fn a_stage_takes_only_issues_of_that_stage() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec", "p0"]);
+    w.tracker.issue(7, &["agent:claude", "stage:review", "p2"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    let c = claimed_in(&w, "claude", Stage::Review);
+    assert_eq!((c.issue, c.stage), (7, Stage::Review));
+    assert!(w.tracker.claims(1).is_empty());
+}
+
+#[test]
+fn a_stage_with_no_issue_says_which_stage() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    let why = match claim(w.services(), "claude", Some(Stage::Review), &[]).unwrap() {
+        ClaimOutcome::Nothing(why) => why,
+        ClaimOutcome::Claimed(c) => panic!("expected nothing, claimed #{}", c.issue),
+    };
+    assert!(why.contains("no open review issue"), "{why}");
+    assert!(w.tracker.calls().is_empty());
+}
+
+#[test]
+fn each_stage_holds_its_own_claim() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    w.tracker.issue(2, &["agent:claude", "stage:spec"]);
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    let spec = claimed_in(&w, "claude", Stage::Spec);
+    // A spec claim does not stop a review claim of the same agent.
+    let review = claimed_in(&w, "claude", Stage::Review);
+    assert_eq!((spec.issue, review.issue), (1, 7));
+    // A second spec claim waits for the first one.
+    let why = match claim(w.services(), "claude", Some(Stage::Spec), &[]).unwrap() {
+        ClaimOutcome::Nothing(why) => why,
+        ClaimOutcome::Claimed(c) => panic!("expected nothing, claimed #{}", c.issue),
+    };
+    assert!(why.contains("#1"), "{why}");
+    assert_eq!(
+        status(w.services(), "claude", Some(Stage::Spec)).unwrap(),
+        Some(spec)
+    );
+    assert_eq!(
+        status(w.services(), "claude", Some(Stage::Review)).unwrap(),
+        Some(review)
+    );
+    assert_eq!(
+        status(w.services(), "claude", Some(Stage::Tdd)).unwrap(),
+        None
+    );
 }

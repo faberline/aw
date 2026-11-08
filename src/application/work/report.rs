@@ -22,8 +22,15 @@ pub struct Reported {
 
 /// Finish the claimed stage: do its GitHub side effect and turn the claim
 /// comment into the signal.
-pub fn report(s: Services<'_>, agent: &str, outcome: Outcome, message: &str) -> Result<Reported> {
-    let Some(held) = active(s, agent)? else {
+/// With a `stage`, the claim for that stage.
+pub fn report(
+    s: Services<'_>,
+    agent: &str,
+    stage: Option<Stage>,
+    outcome: Outcome,
+    message: &str,
+) -> Result<Reported> {
+    let Some(held) = active(s, agent, stage)? else {
         bail!("`{agent}` holds no claim; run `aw claim` first");
     };
     let claim = held.claim;

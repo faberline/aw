@@ -126,6 +126,11 @@ Haiku subagent writes the tests and code from the spec. In review an Opus
 subagent gives the verdict. So each spec follows a checklist: exact files
 and names, steps, tests with expected values, commands and traps.
 
+The automation can also run one worker per stage: `spec` (Sonnet, also
+plans), `tdd` (Haiku) and `review` (Opus). Each passes `--stage <stage>`
+to `aw`, so each holds its own claim and the three runs do not block each
+other.
+
 The worker uses the repositories with the GitHub topic `aw`. Add a
 repository to the queue once:
 
