@@ -130,7 +130,9 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    | `stage:review` | `passed` | `stage:done`; close the issue if it is still open |
 
 3. For an issue with the `blocked` label or a newest `blocked` signal, fix
-   the cause when planning can fix it, then remove `blocked`:
+   the cause when planning can fix it. Comment the answer, then remove
+   `blocked`. A comment after the `blocked` signal lets the same stage claim
+   the issue again (`aw` 0.7.8 or later):
    - No open pull request closes the issue: `stage:tdd`.
    - The spec is unclear or too large: `stage:spec`.
    - Otherwise keep `blocked` and comment one question for a person.

@@ -1,4 +1,5 @@
-use super::signal::Signal;
+use super::claim::ClaimMark;
+use super::signal::{Outcome, Signal};
 use super::stage::Stage;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,21 +98,38 @@ pub fn claim_order(issues: &mut [Issue]) {
 
 /// The newest `aw` signal in the comments.
 pub fn latest_signal(comments: &[Comment]) -> Option<Signal> {
+    latest_signal_at(comments).map(|(_, s)| s)
+}
+
+/// The newest `aw` signal and the time of its comment.
+fn latest_signal_at(comments: &[Comment]) -> Option<(&str, Signal)> {
     comments
         .iter()
         .filter_map(|c| Signal::parse(&c.body).map(|s| (c.created_at.as_str(), s)))
         .max_by(|a, b| a.0.cmp(b.0))
-        .map(|(_, s)| s)
 }
 
 /// True until `agent` reports on `stage`. A signal for another stage or
 /// from another agent does not count, so the planner can move the stage or
-/// the agent label to make the issue work again.
+/// the agent label to make the issue work again. A `blocked` signal stops
+/// counting when a person or the planner comments after it: that comment is
+/// the answer, so the same stage can claim the issue again.
 pub fn awaiting_report(stage: Stage, agent: &str, comments: &[Comment]) -> bool {
-    match latest_signal(comments) {
-        Some(s) => !(s.stage == stage && s.agent == agent),
-        None => true,
+    let Some((at, s)) = latest_signal_at(comments) else {
+        return true;
+    };
+    if s.stage != stage || s.agent != agent {
+        return true;
     }
+    s.outcome == Outcome::Blocked
+        && comments
+            .iter()
+            .any(|c| c.created_at.as_str() > at && !is_aw_comment(&c.body))
+}
+
+/// A signal or a claim that `aw` wrote.
+fn is_aw_comment(body: &str) -> bool {
+    Signal::parse(body).is_some() || ClaimMark::parse(body).is_some()
 }
 
 #[cfg(test)]
@@ -127,6 +145,56 @@ mod tests {
             created_at: format!("2026-01-{number:02}T00:00:00Z"),
             milestone: milestone.map(String::from),
         }
+    }
+
+    fn comment(body: &str, at: &str) -> Comment {
+        Comment {
+            id: 0,
+            body: body.to_string(),
+            created_at: at.to_string(),
+        }
+    }
+
+    const SPEC_BLOCKED: &str = "<!-- aw:signal stage=spec agent=claude outcome=blocked -->";
+
+    #[test]
+    fn a_blocked_signal_waits_for_an_answer() {
+        let blocked = [comment(SPEC_BLOCKED, "2026-11-08T16:10:00Z")];
+        assert!(!awaiting_report(Stage::Spec, "claude", &blocked));
+    }
+
+    #[test]
+    fn an_answer_after_a_blocked_signal_reopens_the_stage() {
+        let answered = [
+            comment("Planner: do option (a).", "2026-11-08T16:00:00Z"),
+            comment(SPEC_BLOCKED, "2026-11-08T16:10:00Z"),
+            comment("Planner: the needs are closed now.", "2026-11-08T18:11:00Z"),
+        ];
+        assert!(awaiting_report(Stage::Spec, "claude", &answered));
+    }
+
+    #[test]
+    fn only_aw_comments_after_a_blocked_signal_do_not_reopen_it() {
+        let only_aw = [
+            comment(SPEC_BLOCKED, "2026-11-08T16:10:00Z"),
+            comment(
+                "<!-- aw:claim stage=spec agent=claude branch=- pr=- at=1800000000 -->",
+                "2026-11-08T17:00:00Z",
+            ),
+        ];
+        assert!(!awaiting_report(Stage::Spec, "claude", &only_aw));
+    }
+
+    #[test]
+    fn an_answer_after_a_ready_signal_does_not_reopen_the_stage() {
+        let ready = [
+            comment(
+                "<!-- aw:signal stage=spec agent=claude outcome=ready -->",
+                "2026-11-08T16:10:00Z",
+            ),
+            comment("Looks good.", "2026-11-08T18:11:00Z"),
+        ];
+        assert!(!awaiting_report(Stage::Spec, "claude", &ready));
     }
 
     #[test]
