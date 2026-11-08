@@ -278,6 +278,12 @@ Read code through the GitHub API when you do not need the clone:
   (SendMessage). Fix small remaining faults yourself. When the work is still
   not right, or the subagent says the spec is unclear, report `blocked` with
   the reason.
+- Format Rust with `cargo fmt`. It reads each crate's edition. When
+  `cargo fmt --all -- --check` also fails on files the branch did not
+  change, format only the changed files with
+  `rustfmt --edition <edition in that crate's Cargo.toml> <file>`.
+  Never guess the edition: a wrong edition sorts imports differently and
+  review fails on CI's `cargo fmt --all -- --check`.
 - Commit with conventional messages.
 - With a clean tree, run `$AW report <who> ready -F <file>` in the clone.
   The file becomes the pull request body after `Closes #<n>`: summary,
