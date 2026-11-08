@@ -12,6 +12,12 @@ inputs:
   wait:
     description: How long kind waits for the control plane.
     default: 120s
+  token:
+    description: >
+      A token that can read the GHCR packages. The packages are private, so
+      the calling job needs `permissions: packages: read` and the repository
+      needs Actions access to both packages.
+    default: ${{ github.token }}
 
 runs:
   using: composite
@@ -23,8 +29,10 @@ runs:
         BASE: ghcr.io/faberline/ci-base:1
         NODE: ghcr.io/faberline/kindest-node:v1.33.1@sha256:050072256b9a903bd914c0b2866828150cb229cea0efe5892e2b644d5dd3b34f
         KIND_SHA256: c72eda46430f065fb45c5f70e7c957cc9209402ef309294821978677c8fb3284
+        TOKEN: ${{ inputs.token }}
       run: |
         set -euo pipefail
+        echo "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
         pull() {
           for i in 1 2 3 4 5; do
             docker pull --quiet "$1" && return 0
