@@ -35,6 +35,7 @@ impl FakeTracker {
             url: format!("https://github.com/o/r/issues/{number}"),
             labels: labels.iter().map(|l| l.to_string()).collect(),
             created_at: format!("2026-01-{:02}T00:00:00Z", number.min(28)),
+            milestone: None,
         });
     }
 

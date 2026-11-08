@@ -151,6 +151,19 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    - A person must decide the product direction: add `blocked` and comment
      one question.
    - Obsolete or duplicate: close it with a one-line reason.
+   - An issue without a milestone: leave the milestone empty. A person
+     sets it.
+5. Check for a release. A release follows the milestones: a milestone is
+   ready when all of its issues are closed. Find the open milestone with
+   the lowest version in its title (`<repo>@X.Y.Z` or `vX.Y.Z`). It is
+   ready when it has 0 open issues and at least 1 closed issue.
+   - When the repository has `.github/aw-release.json`, follow it.
+   - Otherwise do not release. Name the milestone in the final answer as
+     ready for release.
+   Do not close a milestone. The release closes it.
+
+`aw claim` takes `p0` first, then the issues of the lowest milestone
+version, so one milestone is cleared before the next one starts.
 
 Do not edit an issue's title or body. Write specs and notes as comments.
 Each shell command writes to at most one issue. Do not use `for` or
@@ -367,4 +380,5 @@ Use the user's language. Give:
 - each stage you did: issue, stage, outcome and pull request;
 - why the run stopped;
 - for each repository, the count of open issues per `stage:` label;
+- a milestone that is ready for release (section 2, step 5);
 - the health: `正常` (normal) or `異常` (abnormal) with the reason.

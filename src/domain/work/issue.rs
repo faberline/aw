@@ -9,6 +9,8 @@ pub struct Issue {
     pub labels: Vec<String>,
     /// RFC 3339 UTC time, as GitHub returns it. It sorts as text.
     pub created_at: String,
+    /// The title of the issue's milestone, such as `core@0.5.0`.
+    pub milestone: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,11 +55,41 @@ impl Issue {
     }
 }
 
-/// Claim order: `p0` first, unlabeled last, then the oldest issue.
+/// The version in a milestone title: `core@0.5.0`, `v1.2.3` or `1.2`.
+/// Missing parts are 0. A title without a version gives `None`.
+pub fn milestone_version(title: &str) -> Option<(u64, u64, u64)> {
+    let tail = title.rsplit('@').next()?.trim();
+    let tail = tail.strip_prefix('v').unwrap_or(tail);
+    let mut parts = tail.split('.');
+    let mut next = |required: bool| match parts.next() {
+        Some(p) => p.parse::<u64>().ok(),
+        None if required => None,
+        None => Some(0),
+    };
+    let version = (next(true)?, next(false)?, next(false)?);
+    parts.next().is_none().then_some(version)
+}
+
+impl Issue {
+    /// Issues of the lowest milestone version come first, so a milestone
+    /// is cleared before the next one starts. Then an issue in a milestone
+    /// without a version, then an issue without a milestone.
+    fn milestone_rank(&self) -> (u8, (u64, u64, u64)) {
+        match self.milestone.as_deref() {
+            Some(t) => milestone_version(t).map_or((1, (0, 0, 0)), |v| (0, v)),
+            None => (2, (0, 0, 0)),
+        }
+    }
+}
+
+/// Claim order: `p0` first, then the lowest milestone version, then the
+/// priority label (unlabeled last), then the oldest issue.
 pub fn claim_order(issues: &mut [Issue]) {
     issues.sort_by(|a, b| {
-        a.priority()
-            .cmp(&b.priority())
+        (a.priority() != 0)
+            .cmp(&(b.priority() != 0))
+            .then_with(|| a.milestone_rank().cmp(&b.milestone_rank()))
+            .then_with(|| a.priority().cmp(&b.priority()))
             .then_with(|| a.created_at.cmp(&b.created_at))
             .then_with(|| a.number.cmp(&b.number))
     });
@@ -79,5 +111,45 @@ pub fn awaiting_report(stage: Stage, agent: &str, comments: &[Comment]) -> bool 
     match latest_signal(comments) {
         Some(s) => !(s.stage == stage && s.agent == agent),
         None => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn issue(number: u64, labels: &[&str], milestone: Option<&str>) -> Issue {
+        Issue {
+            number,
+            title: String::new(),
+            url: String::new(),
+            labels: labels.iter().map(|l| l.to_string()).collect(),
+            created_at: format!("2026-01-{number:02}T00:00:00Z"),
+            milestone: milestone.map(String::from),
+        }
+    }
+
+    #[test]
+    fn milestone_titles_give_versions() {
+        assert_eq!(milestone_version("core@0.5.0"), Some((0, 5, 0)));
+        assert_eq!(milestone_version("lumen@0.10.0"), Some((0, 10, 0)));
+        assert_eq!(milestone_version("v1.2"), Some((1, 2, 0)));
+        assert_eq!(milestone_version("Shared observability runtime"), None);
+        assert_eq!(milestone_version("x@1.2.3.4"), None);
+    }
+
+    #[test]
+    fn the_lowest_milestone_comes_first_after_p0() {
+        let mut issues = vec![
+            issue(1, &["p1"], None),
+            issue(2, &["p1"], Some("lumen@0.10.0")),
+            issue(3, &["p3"], Some("lumen@0.7.0")),
+            issue(4, &["p2"], Some("Backlog")),
+            issue(5, &["p0"], None),
+            issue(6, &["p1"], Some("lumen@0.7.0")),
+        ];
+        claim_order(&mut issues);
+        let order: Vec<u64> = issues.iter().map(|i| i.number).collect();
+        assert_eq!(order, [5, 6, 3, 2, 4, 1]);
     }
 }
