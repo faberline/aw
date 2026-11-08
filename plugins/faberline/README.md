@@ -131,6 +131,10 @@ plans), `tdd` (Haiku) and `review` (Opus). Each passes `--stage <stage>`
 to `aw`, so each holds its own claim and the three runs do not block each
 other.
 
+When review passes but a strict ruleset refuses a branch that is behind
+`main`, `aw` updates the branch instead of merging. The issue stays at
+review, CI runs again and the next review run merges it.
+
 The worker uses the repositories with the GitHub topic `aw`. Add a
 repository to the queue once:
 

@@ -121,6 +121,45 @@ fn review_passed_approves_and_squash_merges_without_git() {
 }
 
 #[test]
+fn review_passed_behind_base_updates_the_branch_and_stays_at_review() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    claim_issue(&w, "claude");
+    w.tracker.fail_merge.set(true);
+    w.tracker.behind.set(3);
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert!(reported.updated_branch);
+    assert_eq!(
+        reported.link.as_deref(),
+        Some("https://github.com/o/r/pull/5")
+    );
+    assert_eq!(
+        w.tracker.calls(),
+        ["approve #5", "update_branch #5", "edit_comment #7"]
+    );
+    // The claim is gone, no signal is posted and the stage label stays.
+    assert!(w.tracker.claims(7).is_empty());
+    assert!(w.tracker.signals(7).is_empty());
+    assert!(w.tracker.last_comment(7).contains("branch updated"));
+    let labels = w.tracker.issues.borrow()[0].labels.clone();
+    assert_eq!(labels, ["agent:claude", "stage:review"]);
+}
+
+#[test]
+fn review_passed_merge_failure_up_to_date_is_an_error() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    claim_issue(&w, "claude");
+    w.tracker.fail_merge.set(true);
+    let err = report(w.services(), "claude", None, Outcome::Passed, "").unwrap_err();
+    assert!(format!("{err:#}").contains("could not merge #5"));
+    assert_eq!(w.tracker.calls(), ["approve #5"]);
+    assert_eq!(w.tracker.claims(7).len(), 1);
+}
+
+#[test]
 fn review_failed_requests_changes_or_falls_back_to_a_comment() {
     let w = World::new();
     w.tracker.issue(7, &["agent:claude", "stage:review"]);

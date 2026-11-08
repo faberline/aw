@@ -303,6 +303,22 @@ impl Tracker for GhCli {
         )
         .map(|_| ())
     }
+
+    fn behind_by(&self, base: &str, head: &str) -> PortResult<u64> {
+        let repo = self.name()?;
+        // Branch names keep their `/`; the compare path accepts it.
+        let path = format!("repos/{repo}/compare/{base}...{head}");
+        let out = self.get(&path, Some(".behind_by"))?;
+        out.trim()
+            .parse()
+            .map_err(|_| PortError(format!("compare returned `{}`", out.trim())))
+    }
+
+    fn update_branch(&self, pr: u64) -> PortResult<()> {
+        let repo = self.name()?;
+        let path = format!("repos/{repo}/pulls/{pr}/update-branch");
+        self.send("PUT", &path, None).map(|_| ())
+    }
 }
 
 #[cfg(test)]

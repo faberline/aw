@@ -34,6 +34,10 @@ pub trait Tracker {
     fn request_changes(&self, pr: u64, body: &str) -> PortResult<()>;
     fn pr_comment(&self, pr: u64, body: &str) -> PortResult<()>;
     fn squash_merge(&self, pr: u64, subject: &str, body: &str) -> PortResult<()>;
+    /// How many commits of `base` the `head` branch does not have.
+    fn behind_by(&self, base: &str, head: &str) -> PortResult<u64>;
+    /// Merge the base branch into the pull request branch; CI runs again.
+    fn update_branch(&self, pr: u64) -> PortResult<()>;
 }
 
 /// The local git checkout. Remote refs are `origin/<branch>`.

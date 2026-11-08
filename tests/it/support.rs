@@ -20,6 +20,10 @@ pub struct FakeTracker {
     /// Everything the use case changed, in order, e.g. `merge #5`.
     pub calls: RefCell<Vec<String>>,
     pub fail_request_changes: Cell<bool>,
+    /// The merge fails, as a strict ruleset refuses a branch behind base.
+    pub fail_merge: Cell<bool>,
+    /// What `behind_by` returns.
+    pub behind: Cell<u64>,
     next_comment_id: Cell<u64>,
 }
 
@@ -237,7 +241,20 @@ impl Tracker for FakeTracker {
     }
 
     fn squash_merge(&self, pr: u64, subject: &str, body: &str) -> PortResult<()> {
+        if self.fail_merge.get() {
+            return Err(PortError("required status checks are expected".into()));
+        }
         self.record(format!("merge #{pr}: {subject} | {body}"));
+        Ok(())
+    }
+
+    fn behind_by(&self, base: &str, head: &str) -> PortResult<u64> {
+        let _ = (base, head);
+        Ok(self.behind.get())
+    }
+
+    fn update_branch(&self, pr: u64) -> PortResult<()> {
+        self.record(format!("update_branch #{pr}"));
         Ok(())
     }
 }
