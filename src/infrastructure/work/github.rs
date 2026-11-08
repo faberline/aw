@@ -70,6 +70,8 @@ struct IssueJson {
     url: String,
     labels: Vec<String>,
     created_at: String,
+    #[serde(default)]
+    milestone: Option<String>,
 }
 
 impl From<IssueJson> for Issue {
@@ -80,6 +82,7 @@ impl From<IssueJson> for Issue {
             url: i.url,
             labels: i.labels,
             created_at: i.created_at,
+            milestone: i.milestone,
         }
     }
 }
@@ -87,7 +90,8 @@ impl From<IssueJson> for Issue {
 /// `.[]` keeps pull requests out (the issues endpoint lists both) and
 /// flattens the label objects to names.
 const ISSUE_JQ: &str = ".[] | select(.pull_request | not) \
-    | {number, title, url: .html_url, labels: [.labels[].name], created_at}";
+    | {number, title, url: .html_url, labels: [.labels[].name], created_at, \
+      milestone: .milestone.title}";
 
 /// One issue comment from the REST API.
 #[derive(Deserialize)]
@@ -343,6 +347,7 @@ mod tests {
         assert_eq!(issues.len(), 2);
         assert_eq!(issues[0].number, 7);
         assert_eq!(issues[0].labels, ["agent:agy", "stage:tdd"]);
+        assert_eq!(issues[0].milestone, None);
     }
 
     #[test]

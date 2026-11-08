@@ -135,6 +135,26 @@ When review passes but a strict ruleset refuses a branch that is behind
 `main`, `aw` updates the branch instead of merging. The issue stays at
 review, CI runs again and the next review run merges it.
 
+`aw claim` takes `p0` first, then the issues of the open milestone with
+the lowest version (`<repo>@X.Y.Z` or `vX.Y.Z`), then the priority label,
+then the oldest issue. A milestone is ready for release when all of its
+issues are closed. The plan step names it in the run's final answer, or
+follows `.github/aw-release.json` when the repository has one.
+
+### Open an issue
+
+Answer every question when you open the issue, so the worker does not
+stop at `blocked`. Give:
+
+- the goal: what changes and why;
+- the acceptance criteria that a test can check;
+- the scope: what stays out, and the files or modules when you know them;
+- the decisions a person must make (names, versions, product direction),
+  already made;
+- the milestone, and a `pN` priority label.
+
+One issue is one pull request. Split larger work into sub-issues.
+
 The worker uses the repositories with the GitHub topic `aw`. Add a
 repository to the queue once:
 
