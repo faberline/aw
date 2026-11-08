@@ -9,6 +9,7 @@ use serde::Serialize;
 
 use crate::application::run::{Client, Event, RunServices};
 use crate::application::work::{self, ClaimOutcome, Outcome, Services};
+use crate::domain::work::stage::Stage;
 use crate::interfaces::run::commands;
 
 #[derive(Parser)]
@@ -41,6 +42,33 @@ struct Target {
     /// `owner/name`. Default: the repository of the current checkout.
     #[arg(long, env = "AW_REPO")]
     repo: Option<String>,
+    /// Work on this stage only: claim, hold and report only its issues.
+    /// One worker per stage can then run at the same time.
+    #[arg(long, env = "AW_STAGE")]
+    stage: Option<StageArg>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum StageArg {
+    Spec,
+    Tdd,
+    Review,
+}
+
+impl From<StageArg> for Stage {
+    fn from(s: StageArg) -> Self {
+        match s {
+            StageArg::Spec => Stage::Spec,
+            StageArg::Tdd => Stage::Tdd,
+            StageArg::Review => Stage::Review,
+        }
+    }
+}
+
+impl Target {
+    fn stage(&self) -> Option<Stage> {
+        self.stage.map(Stage::from)
+    }
 }
 
 #[derive(Subcommand)]
@@ -216,16 +244,18 @@ fn read_message(message: Option<String>, file: Option<String>) -> Result<String>
 
 fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit> {
     match command {
-        Command::Claim { target, skip } => match work::claim(s, &target.agent, &skip)? {
-            ClaimOutcome::Claimed(claim) => {
-                print(&claim)?;
-                Ok(Exit::Ok)
+        Command::Claim { target, skip } => {
+            match work::claim(s, &target.agent, target.stage(), &skip)? {
+                ClaimOutcome::Claimed(claim) => {
+                    print(&claim)?;
+                    Ok(Exit::Ok)
+                }
+                ClaimOutcome::Nothing(why) => {
+                    eprintln!("aw: {why}");
+                    Ok(Exit::Nothing)
+                }
             }
-            ClaimOutcome::Nothing(why) => {
-                eprintln!("aw: {why}");
-                Ok(Exit::Nothing)
-            }
-        },
+        }
         Command::Report {
             target,
             outcome,
@@ -233,18 +263,18 @@ fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit
             file,
         } => {
             let text = read_message(message, file)?;
-            let reported = work::report(s, &target.agent, outcome.into(), &text)?;
+            let reported = work::report(s, &target.agent, target.stage(), outcome.into(), &text)?;
             warn(&reported.warnings);
             print(&reported)?;
             Ok(Exit::Ok)
         }
         Command::Release { target } => {
-            let (claim, warnings) = work::release(s, &target.agent)?;
+            let (claim, warnings) = work::release(s, &target.agent, target.stage())?;
             warn(&warnings);
             print(&claim)?;
             Ok(Exit::Ok)
         }
-        Command::Status { target } => match work::status(s, &target.agent)? {
+        Command::Status { target } => match work::status(s, &target.agent, target.stage())? {
             Some(claim) => {
                 print(&claim)?;
                 Ok(Exit::Ok)

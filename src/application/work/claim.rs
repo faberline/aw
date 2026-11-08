@@ -20,14 +20,20 @@ pub enum ClaimOutcome {
 /// issue comment. Only tdd touches the working tree: it must be a clean
 /// checkout of the repository, and the work branch is checked out.
 /// Issues in `skip` are passed over, for example a review that waits on
-/// running checks.
-pub fn claim(s: Services<'_>, agent: &str, skip: &[u64]) -> Result<ClaimOutcome> {
+/// running checks. With `only`, the agent takes and holds claims of that
+/// stage only, so one worker per stage can run at the same time.
+pub fn claim(
+    s: Services<'_>,
+    agent: &str,
+    only: Option<Stage>,
+    skip: &[u64],
+) -> Result<ClaimOutcome> {
     if !valid_agent(agent) {
         bail!("agent `{agent}` must use only a-z, 0-9 and -");
     }
     let now = s.clock.now();
     let board = board(s, agent)?;
-    if let Some(active) = board.active(agent) {
+    if let Some(active) = board.active(agent, only) {
         if !active.claim.is_stale(now) {
             return Ok(ClaimOutcome::Nothing(format!(
                 "issue #{} ({}) is still claimed by `{agent}`; run `aw report` or `aw release` first",
@@ -57,6 +63,9 @@ pub fn claim(s: Services<'_>, agent: &str, skip: &[u64]) -> Result<ClaimOutcome>
         let Some(stage) = issue.actionable_stage(agent) else {
             continue;
         };
+        if only.is_some_and(|o| o != stage) {
+            continue;
+        }
         if !awaiting_report(stage, agent, &open.comments) {
             continue;
         }
@@ -115,7 +124,10 @@ pub fn claim(s: Services<'_>, agent: &str, skip: &[u64]) -> Result<ClaimOutcome>
         return Ok(ClaimOutcome::Claimed(claim));
     }
 
-    let mut why = format!("no open issue for `{agent}` is waiting on it");
+    let mut why = match only {
+        Some(o) => format!("no open {o} issue for `{agent}` is waiting on it"),
+        None => format!("no open issue for `{agent}` is waiting on it"),
+    };
     if !needs_checkout.is_empty() {
         why.push_str(&format!(
             "; tdd on {} needs a clone of {}: run `aw claim` in it",
