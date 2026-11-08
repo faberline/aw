@@ -19,9 +19,8 @@ inputs:
     default: 120s
   token:
     description: >
-      A token that can read the GHCR packages. The packages are private, so
-      the calling job needs `permissions: packages: read` and the repository
-      needs Actions access to both packages.
+      A token for GHCR. The packages are public, so the default token is
+      enough. A login gives a higher pull rate limit.
     default: ${{ github.token }}
 
 runs:
