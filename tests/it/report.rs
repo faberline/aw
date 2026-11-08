@@ -143,6 +143,61 @@ fn review_passed_behind_base_updates_the_branch_and_stays_at_review() {
 }
 
 #[test]
+fn review_passed_behind_base_waits_while_another_review_pr_is_up_to_date() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    w.tracker.issue(8, &["agent:claude", "stage:review"]);
+    w.tracker.pr(6, "claude/issue-8", "Closes #8");
+    claim_issue(&w, "claude");
+    w.tracker.fail_merge.set(true);
+    w.tracker.behind.set(3);
+    w.tracker
+        .behind_heads
+        .borrow_mut()
+        .insert("claude/issue-8".into(), 0);
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert!(!reported.updated_branch);
+    assert_eq!(reported.waiting_for, Some(6));
+    // No branch update: only the claim turns into the note.
+    assert_eq!(w.tracker.calls(), ["edit_comment #7"]);
+    assert!(w.tracker.claims(7).is_empty());
+    assert!(w.tracker.signals(7).is_empty());
+    assert!(w.tracker.last_comment(7).contains("waiting to update"));
+    let labels = w.tracker.issues.borrow()[0].labels.clone();
+    assert_eq!(labels, ["agent:claude", "stage:review"]);
+    let json = serde_json::to_value(&reported).unwrap();
+    assert_eq!(json["waiting_for"], 6);
+}
+
+#[test]
+fn review_passed_behind_base_updates_when_other_review_prs_are_behind_or_blocked() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    // Behind like this one: it does not go first.
+    w.tracker.issue(8, &["agent:claude", "stage:review"]);
+    w.tracker.pr(6, "claude/issue-8", "Closes #8");
+    // Up to date, but blocked: it does not merge next.
+    w.tracker
+        .issue(9, &["agent:claude", "stage:review", "blocked"]);
+    w.tracker.pr(4, "claude/issue-9", "Closes #9");
+    // Up to date, but not at review.
+    w.tracker.issue(10, &["agent:claude", "stage:tdd"]);
+    w.tracker.pr(3, "claude/issue-10", "Closes #10");
+    claim_issue(&w, "claude");
+    w.tracker.fail_merge.set(true);
+    w.tracker.behind.set(3);
+    for head in ["claude/issue-9", "claude/issue-10"] {
+        w.tracker.behind_heads.borrow_mut().insert(head.into(), 0);
+    }
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert!(reported.updated_branch);
+    assert_eq!(reported.waiting_for, None);
+    assert_eq!(w.tracker.calls(), ["update_branch #5", "edit_comment #7"]);
+}
+
+#[test]
 fn review_passed_merge_failure_up_to_date_is_an_error() {
     let w = World::new();
     w.tracker.issue(7, &["agent:claude", "stage:review"]);
