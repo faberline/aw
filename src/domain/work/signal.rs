@@ -12,7 +12,7 @@ pub enum Outcome {
     Ready,
     /// The agent cannot finish this stage; the message says why.
     Blocked,
-    /// review approved and squash-merged the pull request.
+    /// review squash-merged the pull request.
     Passed,
     /// review asked for changes.
     Failed,

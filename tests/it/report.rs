@@ -100,7 +100,7 @@ fn tdd_ready_refuses_a_checkout_of_another_repository() {
 }
 
 #[test]
-fn review_passed_approves_and_squash_merges_without_git() {
+fn review_passed_squash_merges_without_approval_or_git() {
     let w = World::new();
     w.tracker.issue(7, &["agent:claude", "stage:review"]);
     w.tracker.pr(5, "codex/issue-7", "Closes #7");
@@ -110,7 +110,6 @@ fn review_passed_approves_and_squash_merges_without_git() {
     assert_eq!(
         w.tracker.calls(),
         [
-            "approve #5",
             "merge #5: Issue 7 (#5) | Closes #7",
             "edit_comment #7",
             "add_labels #7 stage:done",
@@ -134,10 +133,7 @@ fn review_passed_behind_base_updates_the_branch_and_stays_at_review() {
         reported.link.as_deref(),
         Some("https://github.com/o/r/pull/5")
     );
-    assert_eq!(
-        w.tracker.calls(),
-        ["approve #5", "update_branch #5", "edit_comment #7"]
-    );
+    assert_eq!(w.tracker.calls(), ["update_branch #5", "edit_comment #7"]);
     // The claim is gone, no signal is posted and the stage label stays.
     assert!(w.tracker.claims(7).is_empty());
     assert!(w.tracker.signals(7).is_empty());
@@ -155,7 +151,7 @@ fn review_passed_merge_failure_up_to_date_is_an_error() {
     w.tracker.fail_merge.set(true);
     let err = report(w.services(), "claude", None, Outcome::Passed, "").unwrap_err();
     assert!(format!("{err:#}").contains("could not merge #5"));
-    assert_eq!(w.tracker.calls(), ["approve #5"]);
+    assert!(w.tracker.calls().is_empty());
     assert_eq!(w.tracker.claims(7).len(), 1);
 }
 

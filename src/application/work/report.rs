@@ -224,9 +224,6 @@ fn merge(
     warnings: &mut Vec<String>,
 ) -> Result<Merge> {
     let (number, url) = reviewed_pr(s, claim)?;
-    if let Err(err) = s.tracker.approve(number) {
-        warnings.push(format!("could not approve #{number}: {err}"));
-    }
     let subject = format!("{} (#{number})", claim.title);
     let body = if message.is_empty() {
         format!("Closes #{}", claim.issue)

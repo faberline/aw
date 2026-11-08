@@ -75,7 +75,7 @@ when the tree is clean:
 - `tdd ready` needs a clean tree. It pushes the branch and opens its pull
   request (or updates the open one). The message becomes the body, after
   `Closes #<n>`.
-- `review passed` approves and squash-merges with subject `<title> (#<pr>)`.
+- `review passed` squash-merges, without an approval, with subject `<title> (#<pr>)`.
 - `review failed` requests changes, or comments when GitHub refuses that.
 - `blocked` and `failed` need a message: `-m TEXT`, or `-F FILE` (`-` is stdin).
 
