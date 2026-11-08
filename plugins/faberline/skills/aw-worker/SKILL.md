@@ -166,7 +166,10 @@ Finish the plan before the first claim. Do not run plan writes and
 The claim is a comment on the issue that `aw` writes. It starts with
 `<!-- aw:claim`. `aw` finds it again from the agent and the repository.
 
-For each repository, in name order:
+Take the repositories in turns, so that one repository with a long queue
+does not use every stage of the run. Start at the repository whose
+position in the name-order list (counting from 0) is the current UTC hour
+modulo the number of repositories. For each repository:
 
 1. `cd` to the clone (section 1). `aw` needs it for tdd.
 2. When `$AW status <who>` exits 0, a past run stopped early and still holds
@@ -181,7 +184,9 @@ For each repository, in name order:
    - Exit 0: read the JSON (`repo`, `issue`, `stage`, `branch`, `pr`).
      Go to section 4.
 
-After each report, claim again in the same repository. Stop the run when:
+After each report, go to the next repository in name order, and after the
+last one go back to the first. Pass over a repository where `aw claim`
+exited 1 or 2 in this run. Stop the run when:
 
 - `aw claim` exits 2 in every repository;
 - you released a claim because you could not finish it;
