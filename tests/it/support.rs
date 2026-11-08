@@ -24,6 +24,8 @@ pub struct FakeTracker {
     pub fail_merge: Cell<bool>,
     /// What `behind_by` returns.
     pub behind: Cell<u64>,
+    /// What `behind_by` returns for these head branches, over `behind`.
+    pub behind_heads: RefCell<HashMap<String, u64>>,
     next_comment_id: Cell<u64>,
 }
 
@@ -245,8 +247,9 @@ impl Tracker for FakeTracker {
     }
 
     fn behind_by(&self, base: &str, head: &str) -> PortResult<u64> {
-        let _ = (base, head);
-        Ok(self.behind.get())
+        let _ = base;
+        let heads = self.behind_heads.borrow();
+        Ok(heads.get(head).copied().unwrap_or(self.behind.get()))
     }
 
     fn update_branch(&self, pr: u64) -> PortResult<()> {

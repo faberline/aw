@@ -21,6 +21,11 @@ pub struct Reported {
     /// review run merges after CI.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub updated_branch: bool,
+    /// review passed and the branch was behind, but another review pull
+    /// request already ran CI on the current base: `aw` left this branch as
+    /// it is, so the two do not race. The next review run tries again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting_for: Option<u64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }
@@ -63,6 +68,9 @@ pub fn report(
             Merge::Updated(url) => {
                 return updated(s, held.comment_id, &claim, message, url, warnings);
             }
+            Merge::Waiting { url, holder } => {
+                return waiting(s, held.comment_id, &claim, message, url, holder, warnings);
+            }
         },
         (Stage::Review, Outcome::Failed) => Some(request_changes(s, &claim, message)?),
         _ => None,
@@ -90,6 +98,7 @@ pub fn report(
         outcome,
         link,
         updated_branch: false,
+        waiting_for: None,
         warnings,
     })
 }
@@ -131,6 +140,53 @@ fn updated(
         outcome: Outcome::Passed,
         link: Some(url),
         updated_branch: true,
+        waiting_for: None,
+        warnings,
+    })
+}
+
+/// review passed on a branch behind the base branch, but another review
+/// pull request is already up to date with the base. Leave this branch as
+/// it is, replace the claim with a note that is not a signal, and keep the
+/// stage label. The next review run tries again.
+fn waiting(
+    s: Services<'_>,
+    comment_id: u64,
+    claim: &Claim,
+    message: &str,
+    url: String,
+    holder: u64,
+    mut warnings: Vec<String>,
+) -> Result<Reported> {
+    let base = &claim.default_branch;
+    let mut note = format!(
+        "**aw** · `{}` · review · **waiting to update**\n\n{url}\n\n\
+         Review passed, but the branch is behind `{base}`. Pull request #{holder} \
+         is already up to date with `{base}` and goes first. `aw` updates this \
+         branch when no other review pull request is up to date; the next review \
+         run tries again.",
+        claim.agent
+    );
+    if !message.is_empty() {
+        note.push_str("\n\n");
+        note.push_str(message);
+    }
+    s.tracker
+        .edit_comment(comment_id, &note)
+        .with_context(|| format!("could not post the note on issue #{}", claim.issue))?;
+    warnings.push(format!(
+        "#{} was behind `{base}`, and #{holder} is already up to date; \
+         left the branch as it is. The issue stays at review.",
+        claim.issue
+    ));
+    warnings.extend(finish(s, claim)?);
+    Ok(Reported {
+        issue: claim.issue,
+        stage: claim.stage,
+        outcome: Outcome::Passed,
+        link: Some(url),
+        updated_branch: false,
+        waiting_for: Some(holder),
         warnings,
     })
 }
@@ -215,6 +271,12 @@ enum Merge {
     /// The merge was refused and the branch was behind the base branch;
     /// `aw` updated the branch instead.
     Updated(String),
+    /// The branch was behind, but the review pull request `holder` is
+    /// already up to date with the base branch; `aw` waits for it.
+    Waiting {
+        url: String,
+        holder: u64,
+    },
 }
 
 fn merge(
@@ -239,6 +301,9 @@ fn merge(
     match s.tracker.behind_by(&claim.default_branch, &head) {
         Ok(0) => {}
         Ok(_) => {
+            if let Some(holder) = up_to_date_review_pr(s, claim, number, warnings)? {
+                return Ok(Merge::Waiting { url, holder });
+            }
             s.tracker.update_branch(number).with_context(|| {
                 format!("could not merge #{number} ({err}) or update its branch")
             })?;
@@ -247,6 +312,40 @@ fn merge(
         Err(cmp) => warnings.push(format!("could not compare #{number} with its base: {cmp}")),
     }
     Err(anyhow::Error::new(err).context(format!("could not merge #{number}")))
+}
+
+/// Another open pull request of a `stage:review` issue that is up to date
+/// with the base branch. Its CI runs on the current base, so it merges
+/// next. Updating a second branch now only races it: whichever merges
+/// first leaves the other behind, and its CI ran for nothing.
+fn up_to_date_review_pr(
+    s: Services<'_>,
+    claim: &Claim,
+    own: u64,
+    warnings: &mut Vec<String>,
+) -> Result<Option<u64>> {
+    let issues = s.tracker.open_issues(&format!("stage:{}", Stage::Review))?;
+    let prs = s.tracker.open_prs()?;
+    for issue in issues {
+        if issue.number == claim.issue || issue.has_label("blocked") {
+            continue;
+        }
+        let Some(pr) = find_for_issue(&prs, issue.number) else {
+            continue;
+        };
+        if pr.number == own {
+            continue;
+        }
+        match s.tracker.behind_by(&claim.default_branch, &pr.head) {
+            Ok(0) => return Ok(Some(pr.number)),
+            Ok(_) => {}
+            Err(err) => warnings.push(format!(
+                "could not compare #{} with its base: {err}",
+                pr.number
+            )),
+        }
+    }
+    Ok(None)
 }
 
 fn reviewed_head(s: Services<'_>, number: u64) -> Result<String> {
