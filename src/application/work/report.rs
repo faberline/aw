@@ -16,6 +16,11 @@ pub struct Reported {
     pub outcome: Outcome,
     /// The pull request the report points at, when there is one.
     pub link: Option<String>,
+    /// review passed, but the branch was behind the base branch: `aw`
+    /// updated it instead of merging. The issue stays at review; the next
+    /// review run merges after CI.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub updated_branch: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }
@@ -53,7 +58,12 @@ pub fn report(
     let mut warnings = Vec::new();
     let link = match (claim.stage, outcome) {
         (Stage::Tdd, Outcome::Ready) => Some(open_pr(s, &claim, message)?),
-        (Stage::Review, Outcome::Passed) => Some(merge(s, &claim, message, &mut warnings)?),
+        (Stage::Review, Outcome::Passed) => match merge(s, &claim, message, &mut warnings)? {
+            Merge::Merged(url) => Some(url),
+            Merge::Updated(url) => {
+                return updated(s, held.comment_id, &claim, message, url, warnings);
+            }
+        },
         (Stage::Review, Outcome::Failed) => Some(request_changes(s, &claim, message)?),
         _ => None,
     };
@@ -79,6 +89,48 @@ pub fn report(
         stage: claim.stage,
         outcome,
         link,
+        updated_branch: false,
+        warnings,
+    })
+}
+
+/// review passed on a branch behind the base branch, and `aw` updated it.
+/// Replace the claim with a note that is not a signal, keep the stage
+/// label, and let the next review run merge after CI.
+fn updated(
+    s: Services<'_>,
+    comment_id: u64,
+    claim: &Claim,
+    message: &str,
+    url: String,
+    mut warnings: Vec<String>,
+) -> Result<Reported> {
+    let base = &claim.default_branch;
+    let mut note = format!(
+        "**aw** · `{}` · review · **branch updated**\n\n{url}\n\n\
+         Review passed, but the branch was behind `{base}`. `aw` merged `{base}` \
+         into it. CI runs again; the next review run merges when CI passes.",
+        claim.agent
+    );
+    if !message.is_empty() {
+        note.push_str("\n\n");
+        note.push_str(message);
+    }
+    s.tracker
+        .edit_comment(comment_id, &note)
+        .with_context(|| format!("could not post the note on issue #{}", claim.issue))?;
+    warnings.push(format!(
+        "#{} was behind `{base}`; updated the branch instead of merging. \
+         The issue stays at review until CI passes.",
+        claim.issue
+    ));
+    warnings.extend(finish(s, claim)?);
+    Ok(Reported {
+        issue: claim.issue,
+        stage: claim.stage,
+        outcome: Outcome::Passed,
+        link: Some(url),
+        updated_branch: true,
         warnings,
     })
 }
@@ -158,12 +210,19 @@ fn reviewed_pr(s: Services<'_>, claim: &Claim) -> Result<(u64, String)> {
     Ok((number, url))
 }
 
+enum Merge {
+    Merged(String),
+    /// The merge was refused and the branch was behind the base branch;
+    /// `aw` updated the branch instead.
+    Updated(String),
+}
+
 fn merge(
     s: Services<'_>,
     claim: &Claim,
     message: &str,
     warnings: &mut Vec<String>,
-) -> Result<String> {
+) -> Result<Merge> {
     let (number, url) = reviewed_pr(s, claim)?;
     if let Err(err) = s.tracker.approve(number) {
         warnings.push(format!("could not approve #{number}: {err}"));
@@ -174,10 +233,32 @@ fn merge(
     } else {
         message.to_string()
     };
+    let Err(err) = s.tracker.squash_merge(number, &subject, &body) else {
+        return Ok(Merge::Merged(url));
+    };
+    // A strict ruleset refuses a branch that is behind the base branch.
+    // Update it, so CI runs on the current base, instead of failing review.
+    let head = reviewed_head(s, number)?;
+    match s.tracker.behind_by(&claim.default_branch, &head) {
+        Ok(0) => {}
+        Ok(_) => {
+            s.tracker.update_branch(number).with_context(|| {
+                format!("could not merge #{number} ({err}) or update its branch")
+            })?;
+            return Ok(Merge::Updated(url));
+        }
+        Err(cmp) => warnings.push(format!("could not compare #{number} with its base: {cmp}")),
+    }
+    Err(anyhow::Error::new(err).context(format!("could not merge #{number}")))
+}
+
+fn reviewed_head(s: Services<'_>, number: u64) -> Result<String> {
     s.tracker
-        .squash_merge(number, &subject, &body)
-        .with_context(|| format!("could not merge #{number}"))?;
-    Ok(url)
+        .open_prs()?
+        .into_iter()
+        .find(|p| p.number == number)
+        .map(|p| p.head)
+        .with_context(|| format!("pull request #{number} is no longer open"))
 }
 
 fn request_changes(s: Services<'_>, claim: &Claim, message: &str) -> Result<String> {

@@ -302,6 +302,17 @@ Read code through the GitHub API when you do not need the clone:
 - `passed`: `$AW report <who> passed -F <file>` with the summary.
   `aw` approves and squash-merges. GitHub refuses an approval of your own
   pull request; `aw` reports that as a warning and still merges.
+  A strict ruleset refuses a branch that is behind the default branch.
+  Then `aw` (0.7.3 or later) updates the branch instead of merging. Its JSON
+  has `"updated_branch": true`, the issue stays at `stage:review` and the
+  claim becomes a `branch updated` note. CI runs again. This is not a
+  failure; do not report `failed` for it.
+- `mergeable_state` `behind` alone is not a failure. Review as usual; `aw`
+  updates the branch on `passed`.
+- The newest `aw` comment on the issue is a `branch updated` note, and the
+  head has no commit after it except that update merge: the code was
+  already reviewed. When all checks are green, report `passed` again
+  without a subagent.
 - `failed`: `$AW report <who> failed -F <file>` with the findings per file.
   `aw` sends the issue back to tdd.
 
