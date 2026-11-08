@@ -30,7 +30,6 @@ pub trait Tracker {
     fn create_pr(&self, head: &str, base: &str, title: &str, body: &str)
     -> PortResult<PullRequest>;
     fn edit_pr_body(&self, pr: u64, body: &str) -> PortResult<()>;
-    fn approve(&self, pr: u64) -> PortResult<()>;
     fn request_changes(&self, pr: u64, body: &str) -> PortResult<()>;
     fn pr_comment(&self, pr: u64, body: &str) -> PortResult<()>;
     fn squash_merge(&self, pr: u64, subject: &str, body: &str) -> PortResult<()>;

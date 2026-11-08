@@ -321,8 +321,7 @@ Read code through the GitHub API when you do not need the clone:
   change `passed` to `failed` only for a fact you can show (a red check, a
   conflict, a file outside the spec).
 - `passed`: `$AW report <who> passed -F <file>` with the summary.
-  `aw` approves and squash-merges. GitHub refuses an approval of your own
-  pull request; `aw` reports that as a warning and still merges.
+  `aw` squash-merges. It does not approve: the verdict is the review.
   A strict ruleset refuses a branch that is behind the default branch.
   Then `aw` (0.7.3 or later) updates the branch instead of merging. Its JSON
   has `"updated_branch": true`, the issue stays at `stage:review` and the

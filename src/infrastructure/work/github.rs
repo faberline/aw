@@ -270,13 +270,6 @@ impl Tracker for GhCli {
             .map(|_| ())
     }
 
-    fn approve(&self, pr: u64) -> PortResult<()> {
-        let repo = self.name()?;
-        let path = format!("repos/{repo}/pulls/{pr}/reviews");
-        self.send("POST", &path, Some(payload!({ "event": "APPROVE" })))
-            .map(|_| ())
-    }
-
     fn request_changes(&self, pr: u64, body: &str) -> PortResult<()> {
         let repo = self.name()?;
         let path = format!("repos/{repo}/pulls/{pr}/reviews");

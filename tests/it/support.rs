@@ -221,11 +221,6 @@ impl Tracker for FakeTracker {
         Ok(())
     }
 
-    fn approve(&self, pr: u64) -> PortResult<()> {
-        self.record(format!("approve #{pr}"));
-        Ok(())
-    }
-
     fn request_changes(&self, pr: u64, _body: &str) -> PortResult<()> {
         if self.fail_request_changes.get() {
             return Err(PortError(
