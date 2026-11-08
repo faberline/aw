@@ -263,7 +263,10 @@ Read code through the GitHub API when you do not need the clone:
 - Commit with conventional messages.
 - With a clean tree, run `$AW report <who> ready -F <file>` in the clone.
   The file becomes the pull request body after `Closes #<n>`: summary,
-  changes, the checks you ran and their results.
+  changes, the checks you ran and their results. `aw` writes the
+  `Closes #<n>` line. Do not write it in the file. Do not write `close`,
+  `fix` or `resolve` before an issue number or a link anywhere in it: CI
+  then finds no linked issue and fails `development preflight`.
 - When you cannot finish in this run, commit the work in progress. In a cloud
   session the clone is gone after the run, so push it:
   `git push origin <branch>` (never force). Then run `$AW release <who>`.
