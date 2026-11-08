@@ -83,3 +83,9 @@ jobs:
       - run: kubectl get nodes
       - if: always()
         run: kind delete cluster --name ci-image-check || true
+      - uses: ./.github/actions/kind
+        with:
+          create: "false"
+      - run: |
+          test -x "$KIND_BIN"
+          docker image inspect "$KIND_NODE_IMAGE" >/dev/null

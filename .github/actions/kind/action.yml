@@ -3,20 +3,24 @@ description: >
   Creates a kind cluster with no download from GitHub releases or Docker Hub.
   The kind binary comes from ghcr.io/faberline/ci-base and the node image
   from ghcr.io/faberline/kindest-node. Each pull tries five times.
-  The step puts kind on PATH for later steps.
+  The step puts kind on PATH and sets KIND_BIN and KIND_NODE_IMAGE for
+  later steps. With create "false" it only installs kind and pulls the
+  node image, for a job that creates its own clusters.
 
 inputs:
   name:
-    description: The cluster name.
-    required: true
+    description: The cluster name. Needed when create is "true".
+    default: ""
+  create:
+    description: '"true" creates the cluster; "false" only installs kind.'
+    default: "true"
   wait:
     description: How long kind waits for the control plane.
     default: 120s
   token:
     description: >
-      A token that can read the GHCR packages. The packages are private, so
-      the calling job needs `permissions: packages: read` and the repository
-      needs Actions access to both packages.
+      A token for GHCR. The packages are public, so the default token is
+      enough. A login gives a higher pull rate limit.
     default: ${{ github.token }}
 
 runs:
@@ -25,6 +29,7 @@ runs:
     - shell: bash
       env:
         CLUSTER: ${{ inputs.name }}
+        CREATE: ${{ inputs.create }}
         WAIT: ${{ inputs.wait }}
         BASE: ghcr.io/faberline/ci-base:1
         NODE: ghcr.io/faberline/kindest-node:v1.33.1@sha256:050072256b9a903bd914c0b2866828150cb229cea0efe5892e2b644d5dd3b34f
@@ -50,5 +55,9 @@ runs:
         echo "$KIND_SHA256  $dir/kind" | sha256sum --check --strict
         chmod +x "$dir/kind"
         echo "$dir" >> "$GITHUB_PATH"
+        echo "KIND_BIN=$dir/kind" >> "$GITHUB_ENV"
+        echo "KIND_NODE_IMAGE=$NODE" >> "$GITHUB_ENV"
+        test "$CREATE" = true || exit 0
+        test -n "$CLUSTER" || { echo "::error::name is required when create is true"; exit 1; }
         "$dir/kind" create cluster --name "$CLUSTER" --image "$NODE" --wait "$WAIT"
         test "$(kubectl config current-context)" = "kind-$CLUSTER"
