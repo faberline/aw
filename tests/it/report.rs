@@ -190,6 +190,49 @@ fn review_passed_behind_base_waits_while_another_review_pr_is_up_to_date() {
 }
 
 #[test]
+fn review_passed_behind_base_updates_a_higher_priority_pr_before_an_up_to_date_lower_one() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review", "p0"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    // Up to date and green, but p2: it does not hold back the p0 branch.
+    w.tracker.issue(8, &["agent:claude", "stage:review", "p2"]);
+    w.tracker.pr(6, "claude/issue-8", "Closes #8");
+    claim_issue(&w, "claude");
+    w.tracker.fail_merge.set(true);
+    w.tracker.behind.set(3);
+    w.tracker
+        .behind_heads
+        .borrow_mut()
+        .insert("claude/issue-8".into(), 0);
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert!(reported.updated_branch);
+    assert_eq!(reported.waiting_for, None);
+    assert_eq!(w.tracker.calls(), ["update_branch #5", "edit_comment #7"]);
+}
+
+#[test]
+fn review_passed_behind_base_waits_for_an_up_to_date_pr_of_the_same_or_higher_priority() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review", "p1"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    // Other agents' review issues, so `claude` claims #7.
+    w.tracker.issue(8, &["agent:codex", "stage:review", "p0"]);
+    w.tracker.pr(6, "codex/issue-8", "Closes #8");
+    w.tracker.issue(9, &["agent:codex", "stage:review", "p1"]);
+    w.tracker.pr(4, "codex/issue-9", "Closes #9");
+    claim_issue(&w, "claude");
+    w.tracker.fail_merge.set(true);
+    w.tracker.behind.set(3);
+    w.tracker
+        .behind_heads
+        .borrow_mut()
+        .insert("codex/issue-9".into(), 0);
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert!(!reported.updated_branch);
+    assert_eq!(reported.waiting_for, Some(4));
+}
+
+#[test]
 fn review_passed_behind_base_updates_when_other_review_prs_are_behind_blocked_or_red() {
     let w = World::new();
     w.tracker.issue(7, &["agent:claude", "stage:review"]);

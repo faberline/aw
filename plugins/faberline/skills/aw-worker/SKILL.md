@@ -354,7 +354,9 @@ Read code through the GitHub API when you do not need the clone:
   JSON has `"waiting_for": <pr>`, the issue stays at `stage:review` and the
   claim becomes a `waiting to update` note. This is not a failure either.
   An up-to-date pull request with a failed check does not count, because it
-  cannot merge next (0.7.9 or later).
+  cannot merge next (0.7.9 or later). An up-to-date pull request of a lower
+  priority label (for example `p2` against `p0`) does not count either; the
+  higher-priority branch is updated at once (0.7.12 or later).
 - `mergeable_state` `behind` alone is not a failure. Review as usual; `aw`
   updates the branch on `passed`.
 - The newest `aw` comment on the issue is a `branch updated` or
