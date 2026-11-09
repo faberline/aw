@@ -163,8 +163,8 @@ fn waiting(
         "**aw** · `{}` · review · **waiting to update**\n\n{url}\n\n\
          Review passed, but the branch is behind `{base}`. Pull request #{holder} \
          is already up to date with `{base}` and goes first. `aw` updates this \
-         branch when no other review pull request is up to date; the next review \
-         run tries again.",
+         branch when no other review pull request of the same or a higher priority \
+         is up to date; the next review run tries again.",
         claim.agent
     );
     if !message.is_empty() {
@@ -318,6 +318,9 @@ fn merge(
 /// with the base branch and has no failed check. Its CI runs on the current
 /// base, so it merges next. Updating a second branch now only races it: whichever merges
 /// first leaves the other behind, and its CI ran for nothing.
+///
+/// A pull request of a lower priority label does not hold back this one:
+/// a `p0` branch is updated at once, and the race costs the lower one a CI run.
 fn up_to_date_review_pr(
     s: Services<'_>,
     claim: &Claim,
@@ -326,8 +329,15 @@ fn up_to_date_review_pr(
 ) -> Result<Option<u64>> {
     let issues = s.tracker.open_issues(&format!("stage:{}", Stage::Review))?;
     let prs = s.tracker.open_prs()?;
+    let own_priority = issues
+        .iter()
+        .find(|i| i.number == claim.issue)
+        .map_or(4, |i| i.priority());
     for issue in issues {
-        if issue.number == claim.issue || issue.has_label("blocked") {
+        if issue.number == claim.issue
+            || issue.has_label("blocked")
+            || issue.priority() > own_priority
+        {
             continue;
         }
         let Some(pr) = find_for_issue(&prs, issue.number) else {
