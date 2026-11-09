@@ -45,13 +45,15 @@ Promote a guideline only when all three are true:
 | S3 | [Rust layout and layers](rust-layout.md) | every Rust repository | `aw standards rust-arch check` with the repository's `ddd.toml` | `ddd.toml` exception entries | active |
 | S4 | [Core reuse](core-reuse.md) | every Rust repository, and `core` itself | `aw standards check` | `[[standards.core_reuse.exception]]` in `aw.toml` | active since 2026-10-15; 8 of 25 repositories pass |
 | S5 | [SaaS service skeleton](saas-service.md) | repositories with `[project] kind = "saas-service"`: `lumen`, `tape`, `defer`, `relay`, `keep` | `aw standards saas-service check` | `[[standards.saas_service.exception]]` in `aw.toml` | candidate since 2026-10-22; report only; 0 of 5 pass |
+| S7 | [CI stages](ci.md) | every repository with CI | `aw ci check` | `[[standards.ci.exception]]` in `aw.toml` | active since 2026-11-09; 0 of 8 repositories pass (`aw` misses only the ruleset) |
 
 A candidate becomes active when its checker is on `aw` main.
 
-**Checkers are not available now.** On 2026-11-06 `aw` became a Rust issue
-CLI and the Python engine was removed, with `scripts/meta/` and every
+**Most checkers are not available now.** On 2026-11-06 `aw` became a Rust
+issue CLI and the Python engine was removed, with `scripts/meta/` and every
 `aw standards` command in the table. The rules still apply; check them by
-hand until a checker is ported to the Rust `aw`.
+hand until a checker is ported to the Rust `aw`. `aw ci check` (S7) is the
+first checker in the Rust `aw`.
 For DEV-PIPELINE-1, each consumer also needs its own verified adoption evidence.
 This specification covers ordinary PR development only. Release pipelines
 will be defined separately.
@@ -64,7 +66,6 @@ will be defined separately.
 | [rust-tests.md](rust-tests.md) | Every test of a Rust repository is Rust: unit, integration, e2e, and performance. e2e is a test binary that talks to the server over the network. Becomes part of S3 when its checker ships. |
 | [test-scopes.md](test-scopes.md) | Which tests run when, by what changed: this change on your machine before push, the branch against `main` in the cloud, and everything in the cloud in the merge queue before every merge to `main`. Performance runs only in the cloud, and the whole performance matrix only on a release candidate. The path-to-test map in `aw.toml`, with feature sets. Becomes a standard when `aw tests select` and its map checks ship. |
 | [test-cluster.md](test-cluster.md) | Testing on the shared GKE cluster instead of kind: the `gke-test` overlay, the node pool row, and the workflow. Becomes S6 when `aw standards check` reads the overlay. |
-| [ci.md](ci.md) | The CI stages of every repository: `lint`, `test`, `e2e`, `gate`, like GitLab CI stages. The stages are fixed; each repository cuts its own `test-*` and `e2e-*` jobs. The ruleset requires only `gate`. CI reads only the code, not the issue. Becomes a standard when `aw` checks `ci.yml` and the ruleset. |
 
 The authoring, service, CLI, meta-doc, and release conventions are still in
 the root [CONTRIBUTING.md](https://github.com/faberline/workspace/blob/main/CONTRIBUTING.md)

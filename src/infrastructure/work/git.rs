@@ -20,7 +20,7 @@ impl GitCli {
 }
 
 /// `owner/name` from a GitHub remote URL in SSH or HTTPS form.
-fn github_repo(url: &str) -> Option<String> {
+pub(crate) fn github_repo(url: &str) -> Option<String> {
     let url = url.trim();
     let path = url
         .strip_prefix("git@github.com:")
