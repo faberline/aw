@@ -251,6 +251,10 @@ Read code through the GitHub API when you do not need the clone:
 - Keep it to one pull request: at most about six files and 400 changed
   lines. When one pull request is not enough, report `blocked` and say how
   to split.
+- The pull request closes the issue: `aw report ready` always writes
+  `Closes #<n>`. Do not write a spec for a slice that must leave the issue
+  open. When the issue needs more than one pull request, report `blocked`
+  and name the child issues, one pull request each.
 - `$AW report <who> ready -F <file>`. The spec becomes the signal comment.
 
 ### tdd
