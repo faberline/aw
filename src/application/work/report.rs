@@ -315,8 +315,8 @@ fn merge(
 }
 
 /// Another open pull request of a `stage:review` issue that is up to date
-/// with the base branch. Its CI runs on the current base, so it merges
-/// next. Updating a second branch now only races it: whichever merges
+/// with the base branch and has no failed check. Its CI runs on the current
+/// base, so it merges next. Updating a second branch now only races it: whichever merges
 /// first leaves the other behind, and its CI ran for nothing.
 fn up_to_date_review_pr(
     s: Services<'_>,
@@ -337,7 +337,19 @@ fn up_to_date_review_pr(
             continue;
         }
         match s.tracker.behind_by(&claim.default_branch, &pr.head) {
-            Ok(0) => return Ok(Some(pr.number)),
+            // A red pull request cannot merge next, so it does not hold
+            // the others back. When its checks cannot be read, wait.
+            Ok(0) => match s.tracker.has_failed_checks(&pr.head) {
+                Ok(true) => {}
+                Ok(false) => return Ok(Some(pr.number)),
+                Err(err) => {
+                    warnings.push(format!(
+                        "could not read the checks of #{}: {err}",
+                        pr.number
+                    ));
+                    return Ok(Some(pr.number));
+                }
+            },
             Ok(_) => {}
             Err(err) => warnings.push(format!(
                 "could not compare #{} with its base: {err}",

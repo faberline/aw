@@ -37,6 +37,9 @@ pub trait Tracker {
     fn behind_by(&self, base: &str, head: &str) -> PortResult<u64>;
     /// Merge the base branch into the pull request branch; CI runs again.
     fn update_branch(&self, pr: u64) -> PortResult<()>;
+    /// The newest check run of some name on the `head` branch failed or
+    /// timed out. CI must run again before that branch can merge.
+    fn has_failed_checks(&self, head: &str) -> PortResult<bool>;
 }
 
 /// The local git checkout. Remote refs are `origin/<branch>`.
