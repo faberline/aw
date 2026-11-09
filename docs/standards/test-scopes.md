@@ -195,10 +195,10 @@ A pull request workflow starts with one small `select` job. It reads the
 changed paths and the map, and gives the selectors as outputs. The test jobs
 read those outputs: a `cargo test` job for `lib` and `it`, and the
 [test cluster](test-cluster.md#the-test-job) matrix for `e2e` suites, and a
-job for `perf` tests. In normal development these execute in the stage order
-defined by DEV-PIPELINE-1. When no tests apply, require an explicit reviewed
-not-applicable decision and an applicability receipt. A skipped or zero-test
-required job does not count as passed.
+job for `perf` tests. These jobs sit in the stages of [ci.md](ci.md):
+`select` is `test-select`, the test jobs are `test-*` and `e2e-*`, and the
+`gate` job is the one required check. A job that the map does not select is
+skipped, and `gate` accepts that. A selected job that runs zero tests fails.
 
 The cargo build happens once for each feature set of a run. The test client image of
 [rust-tests.md](rust-tests.md#the-test-client-image) holds the same test
