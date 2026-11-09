@@ -244,6 +244,8 @@ Read code through the GitHub API when you do not need the clone:
      rules (for Rust: `cargo fmt --all -- --check`,
      `cargo clippy --all-targets -- -D warnings`, `cargo test`). Add a
      narrower command for the new tests, for example `cargo test -p <crate> <name>`.
+     When the change touches `.github/workflows/ci.yml`, add
+     `$AW ci check --dir . --no-ruleset` (standard S7).
   6. **Acceptance criteria**: each one proven by a named test or command.
   7. **Out of scope**: what not to change.
   8. **Traps**: repository rules and known failures that apply, for example
@@ -290,6 +292,11 @@ Read code through the GitHub API when you do not need the clone:
   `rustfmt --edition <edition in that crate's Cargo.toml> <file>`.
   Never guess the edition: a wrong edition sorts imports differently and
   review fails on CI's `cargo fmt --all -- --check`.
+- When the branch changes `.github/workflows/ci.yml`, run
+  `$AW ci check --dir . --no-ruleset` in the clone (`aw` 0.7.11 or later).
+  It checks the CI stages standard, `docs/standards/ci.md` in aw. Every
+  check must be `pass`, `excepted` or `skipped`. Fix each `fail`. Put the
+  JSON output in a fenced block in the report file below.
 - Commit with conventional messages.
 - With a clean tree, run `$AW report <who> ready -F <file>` in the clone.
   The file becomes the pull request body after `Closes #<n>`: summary,
