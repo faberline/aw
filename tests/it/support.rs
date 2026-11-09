@@ -271,6 +271,9 @@ pub struct FakeWorkspace {
     pub local: RefCell<Vec<String>>,
     pub remote: RefCell<Vec<String>>,
     pub calls: RefCell<Vec<String>>,
+    /// `git switch` fails, as it does in a linked worktree when another
+    /// worktree has the branch checked out.
+    pub switch_fails: Cell<bool>,
 }
 
 impl Default for FakeWorkspace {
@@ -281,6 +284,7 @@ impl Default for FakeWorkspace {
             local: RefCell::new(vec!["main".into()]),
             remote: RefCell::new(vec!["main".into()]),
             calls: RefCell::new(Vec::new()),
+            switch_fails: Cell::new(false),
         }
     }
 }
@@ -320,6 +324,11 @@ impl Workspace for FakeWorkspace {
 
     fn switch(&self, branch: &str) -> PortResult<()> {
         self.record(format!("switch {branch}"));
+        if self.switch_fails.get() {
+            return Err(PortError(format!(
+                "fatal: '{branch}' is already used by worktree"
+            )));
+        }
         Ok(())
     }
 

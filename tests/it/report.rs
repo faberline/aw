@@ -70,6 +70,25 @@ fn tdd_ready_pushes_and_opens_a_closing_pull_request() {
 }
 
 #[test]
+fn tdd_ready_detaches_when_the_default_branch_is_in_another_worktree() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:codex", "stage:tdd"]);
+    claim_issue(&w, "codex");
+    w.workspace.switch_fails.set(true);
+    let r = report(w.services(), "codex", None, Outcome::Ready, "done").unwrap();
+    let calls = w.workspace.calls();
+    assert!(calls.contains(&"switch main".to_string()), "{calls:?}");
+    assert_eq!(calls.last().map(String::as_str), Some("detach origin/main"));
+    assert!(
+        r.warnings
+            .iter()
+            .any(|w| w.contains("detached at `origin/main`")),
+        "{:?}",
+        r.warnings
+    );
+}
+
+#[test]
 fn tdd_ready_updates_an_open_pull_request() {
     let w = World::new();
     w.tracker.issue(7, &["agent:codex", "stage:tdd"]);
