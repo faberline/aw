@@ -137,9 +137,12 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    - The spec is unclear or too large: `stage:spec`.
    - Otherwise keep `blocked` and comment one question for a person.
 4. Triage at most three issues: open, no `stage:` label, no `blocked`
-   label and no open sub-issues. Take `p0` first, then the oldest.
+   label and no open sub-issues. Take them in claim order: `p0` first,
+   then the lowest milestone version, then the `pN` label, then the
+   oldest.
    Always add `agent:claude`.
-   - Add `pN` from a legacy `priority:pN` label, or `p2` when there is none.
+   - Replace a legacy `priority:pN` label with `pN`, or add `p2` when there
+     is none. Use only `pN` labels.
      Remove the legacy `doing` and `todo` labels.
    - An open pull request already closes it: `stage:review`.
    - The body already meets every point of the spec checklist (section 4,
