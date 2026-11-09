@@ -160,7 +160,7 @@ The exception path will be `[[standards.ci.exception]]` in `aw.toml`.
 
 | Repository | Workflows on `main` | Required checks | Main gap |
 |---|---|---|---|
-| `aw` | `rust.yml`, `gke-test.yml`, `gke-test-reaper.yml`, `ci-image.yml` | none | one `check` job, actions not pinned, no ruleset |
+| `aw` | `ci.yml`, `gke-test.yml` (reusable), `gke-test-reaper.yml`, `ci-image.yml` | none | follows the stages; no ruleset yet |
 | `core` | `ci.yml`, `development-ci.yml`, `issue-ci.yml` | 20 | DEV-PIPELINE-1 contract gates, "candidate" jobs |
 | `lumen` | 13, with 4 one-off release recovery files | 32 | contract gates, about 3 hours per pull request |
 | `som` | 13 (`m6-*`, `python-*`, `rust-*`, `som-service.yml`) | none | old M6 workflows, no ruleset |
