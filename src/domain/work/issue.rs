@@ -40,10 +40,11 @@ impl Issue {
     }
 
     /// 0 for `p0` … 3 for `p3`, 4 when there is no priority label.
-    /// A legacy `priority:pN` label counts when no `pN` label is set.
     pub fn priority(&self) -> u8 {
-        let find = |prefix: &str| (0..4u8).find(|n| self.has_label(&format!("{prefix}p{n}")));
-        find("").or_else(|| find("priority:")).unwrap_or(4)
+        ["p0", "p1", "p2", "p3"]
+            .iter()
+            .position(|p| self.has_label(p))
+            .map_or(4, |i| i as u8)
     }
 
     /// The stage `agent` may work on, judged from labels only.
@@ -218,20 +219,5 @@ mod tests {
         claim_order(&mut issues);
         let order: Vec<u64> = issues.iter().map(|i| i.number).collect();
         assert_eq!(order, [5, 6, 3, 2, 4, 1]);
-    }
-
-    #[test]
-    fn a_legacy_priority_label_counts_when_no_short_one_is_set() {
-        assert_eq!(issue(1, &["priority:p1"], None).priority(), 1);
-        assert_eq!(issue(2, &["p3", "priority:p0"], None).priority(), 3);
-        assert_eq!(issue(3, &["priority"], None).priority(), 4);
-        let mut issues = vec![
-            issue(4, &["priority:p2"], Some("som@0.6.0")),
-            issue(5, &["priority:p1"], Some("som@0.6.0")),
-            issue(6, &["priority:p0"], Some("som@0.7.0")),
-        ];
-        claim_order(&mut issues);
-        let order: Vec<u64> = issues.iter().map(|i| i.number).collect();
-        assert_eq!(order, [6, 5, 4]);
     }
 }
