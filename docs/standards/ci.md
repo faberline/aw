@@ -1,9 +1,8 @@
 # CI stages
 
-Guideline. State: **draft, 2026-11-09**. It becomes a standard when `aw`
-checks the workflow and the ruleset (see [Checker](#checker)); see the
-[definition](README.md#what-a-standard-is). Until then, every repository
-follows it when it changes its CI.
+Standard S7. State: **active since 2026-11-09**. `aw ci check` checks the
+workflow and the ruleset (see [Checker](#checker)); see the
+[definition](README.md#what-a-standard-is).
 
 The idea is the same as GitLab CI stages. **The stages are the same in every
 repository. Each repository cuts its own jobs inside a stage.** One fixed job,
@@ -139,22 +138,45 @@ version, when its job is done. The history keeps it.
   and nothing else.
 - Other rules of the ruleset stay as they are.
 - A change to a ruleset needs the user's approval. The issue that moves a
-  repository to this guideline lists the ruleset change as its own step.
+  repository to this standard lists the ruleset change as its own step.
 - During the move, the old required checks block the new workflow. Add
   `gate` to the ruleset first, merge the new `ci.yml`, then remove the old
   checks.
 
 ## Checker
 
-Planned, not available. `aw` checks:
+```bash
+aw ci check                         # the current checkout and its origin's ruleset
+aw ci check --repo faberline/core   # the default branch on GitHub
+aw ci check --dir . --no-ruleset    # local files only
+```
 
-1. `.github/workflows/ci.yml` exists, with workflow name `ci`.
-2. Every job id is `lint`, `gate`, `test-*` or `e2e-*`.
-3. `lint` runs the fixed commands. `test-*` needs `lint`.
-4. `gate` has `if: always()` and needs every other job.
-5. The default-branch ruleset requires `gate` and no other status check.
+It prints a JSON report and exits 1 when a check fails.
 
-The exception path will be `[[standards.ci.exception]]` in `aw.toml`.
+| ID | Check |
+|---|---|
+| CI1 | `.github/workflows/ci.yml` exists. |
+| CI2 | The workflow name is `ci`. |
+| CI3 | Every job id is `lint`, `gate`, `test-*` or `e2e-*`; `lint`, `gate` and at least one `test-*` exist. |
+| CI4 | `lint` runs the two fixed commands. Spacing does not matter; a `\` line break does. |
+| CI5 | Every `test-*` job needs `lint` directly. |
+| CI6 | Every `e2e-*` job waits for a `test-*` job, directly or through other jobs. |
+| CI7 | `gate` has `name: gate` and `if: always()`, needs every other job, and its steps check `.lint.result == "success"` and `.result == "success" or .result == "skipped"`. |
+| CI8 | The default-branch ruleset requires `gate` and no other status check. Classic branch protection is not read. |
+| CI9 | Every exception names a check `CI1`–`CI8` and has a reason. |
+
+### Exceptions
+
+A repository opts out of one check in its own `aw.toml`. The reason is
+required.
+
+```toml
+[[standards.ci.exception]]
+check = "CI8"
+reason = "no ruleset until the first release"
+```
+
+An excepted check is still printed. It does not fail the run.
 
 ## Measured state, 2026-11-09
 

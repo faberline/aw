@@ -2,11 +2,13 @@
 
 use std::ffi::OsString;
 use std::io::Read;
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
+use crate::application::ci::{self, CiServices};
 use crate::application::run::{Client, Event, RunServices};
 use crate::application::work::{self, ClaimOutcome, Outcome, Services};
 use crate::domain::work::stage::Stage;
@@ -23,10 +25,11 @@ use crate::interfaces::run::commands;
         aw release deletes the claim without a report\n\
         aw status  shows the claim the agent holds\n\
         aw hook    records a worker run start or end from a client hook\n\
-        aw runs    lists the recent worker runs\n\n\
+        aw runs    lists the recent worker runs\n\
+        aw ci check checks ci.yml and the ruleset against docs/standards/ci.md\n\n\
         The claim is an issue comment on GitHub. spec and review use only GitHub;\n\
         tdd runs in a clean clone of the repository and checks out the work branch.\n\n\
-        Exit codes: 0 done, 2 nothing to do, 1 error."
+        Exit codes: 0 done, 2 nothing to do, 1 error or a failed check."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -114,8 +117,38 @@ enum Command {
         #[arg(short = 'n', long, default_value_t = 10)]
         limit: usize,
     },
+    /// Check the repository against a standard.
+    Ci {
+        #[command(subcommand)]
+        command: CiCommand,
+    },
     /// Print the version.
     Version,
+}
+
+#[derive(Subcommand)]
+enum CiCommand {
+    /// Check `.github/workflows/ci.yml`, the `[[standards.ci.exception]]`
+    /// entries of `aw.toml` and the default-branch ruleset against
+    /// docs/standards/ci.md. Prints the report; exits 1 when a check fails.
+    Check(CiTarget),
+}
+
+/// Where `aw ci check` reads from.
+#[derive(Args, Clone, Debug, Default)]
+pub struct CiTarget {
+    /// The checkout to read. Default: the current directory, or GitHub when
+    /// only `--repo` is given.
+    #[arg(long)]
+    pub dir: Option<PathBuf>,
+    /// `owner/name`. Without `--dir`, the files come from its default branch
+    /// on GitHub. With `--dir`, it names the repository for the ruleset.
+    /// Default: the `origin` of the checkout.
+    #[arg(long)]
+    pub repo: Option<String>,
+    /// Do not read the ruleset; its check is skipped.
+    #[arg(long)]
+    pub no_ruleset: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -199,6 +232,35 @@ impl Cli {
             | Command::Release { target }
             | Command::Status { target } => target.repo.clone(),
             _ => None,
+        }
+    }
+
+    /// The target of `aw ci check`, if that is the command. The composition
+    /// root builds the CI adapters from it and calls [`run_ci`].
+    pub fn ci_target(&self) -> Option<&CiTarget> {
+        match &self.command {
+            Command::Ci {
+                command: CiCommand::Check(target),
+            } => Some(target),
+            _ => None,
+        }
+    }
+}
+
+/// Run `aw ci check`: print the report, exit 1 when a check fails.
+pub fn run_ci(services: CiServices<'_>) -> Exit {
+    let result = ci::check(services)
+        .map_err(anyhow::Error::from)
+        .and_then(|report| {
+            print(&report)?;
+            Ok(report.passed)
+        });
+    match result {
+        Ok(true) => Exit::Ok,
+        Ok(false) => Exit::Failed,
+        Err(err) => {
+            eprintln!("aw: {err:#}");
+            Exit::Failed
         }
     }
 }
@@ -296,6 +358,9 @@ fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit
             }
             print(&runs)?;
             Ok(Exit::Ok)
+        }
+        Command::Ci { .. } => {
+            anyhow::bail!("`aw ci` needs the CI adapters; the composition root runs it")
         }
         Command::Version => {
             println!("aw {}", env!("CARGO_PKG_VERSION"));

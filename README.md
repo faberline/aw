@@ -133,19 +133,40 @@ stdout to the model context. For Antigravity it prints the JSON reply.
 record is an end, else `open`. An old `open` run crashed or hangs. No new run
 for more than one hour means the automation did not start.
 
+## CI check
+
+`aw ci check` checks one repository against the
+[CI stages standard](docs/standards/ci.md) and prints a JSON report.
+
+```bash
+aw ci check                              # the current checkout and its origin's ruleset
+aw ci check --dir ../core --no-ruleset   # local files only
+aw ci check --repo faberline/core        # the default branch on GitHub
+```
+
+It reads `.github/workflows/ci.yml`, the `[[standards.ci.exception]]` entries
+of `aw.toml` and the required status checks of the default-branch ruleset.
+Each check `CI1`–`CI9` is `pass`, `fail`, `excepted` or `skipped`. It exits 1
+when a check fails.
+
 ## Layout
 
 The crate follows the [Rust layout standard](docs/standards/rust-layout.md):
 
 - `src/domain/work/` — stages, signals, issues, pull requests, the claim, and
   the ports (`Tracker`, `Workspace`, `Clock`).
+- `src/domain/ci/` — the CI stages checks and their ports (`CiFiles`,
+  `BranchRules`).
 - `src/domain/run/` — run records, hook input, run summaries and the
   `RunLedger` port.
 - `src/application/work/` — the `claim`, `report`, `release` and `status`
   use cases.
 - `src/application/run/` — the `record` and `runs` use cases.
+- `src/application/ci.rs` — the `ci check` use case.
 - `src/infrastructure/work/` — `gh` and `git` adapters and the clock.
 - `src/infrastructure/run/` — the ledger file.
+- `src/infrastructure/ci/` — `ci.yml` and `aw.toml` parsing, local and GitHub
+  file readers, and the ruleset reader.
 - `src/interfaces/work/cli.rs` — the clap command line.
 - `src/interfaces/run/` — the `hook` and `runs` commands.
 - `src/app.rs` — the composition root; `src/main.rs` only calls it.
