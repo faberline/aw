@@ -141,7 +141,8 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    then the lowest milestone version, then the `pN` label, then the
    oldest.
    Always add `agent:claude`.
-   - Add `pN` from a legacy `priority:pN` label, or `p2` when there is none.
+   - Replace a legacy `priority:pN` label with `pN`, or add `p2` when there
+     is none. Use only `pN` labels.
      Remove the legacy `doing` and `todo` labels.
    - An open pull request already closes it: `stage:review`.
    - The body already meets every point of the spec checklist (section 4,
