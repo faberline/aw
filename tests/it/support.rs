@@ -26,6 +26,8 @@ pub struct FakeTracker {
     pub behind: Cell<u64>,
     /// What `behind_by` returns for these head branches, over `behind`.
     pub behind_heads: RefCell<HashMap<String, u64>>,
+    /// Head branches whose newest check runs failed.
+    pub red_heads: RefCell<Vec<String>>,
     next_comment_id: Cell<u64>,
 }
 
@@ -255,6 +257,10 @@ impl Tracker for FakeTracker {
     fn update_branch(&self, pr: u64) -> PortResult<()> {
         self.record(format!("update_branch #{pr}"));
         Ok(())
+    }
+
+    fn has_failed_checks(&self, head: &str) -> PortResult<bool> {
+        Ok(self.red_heads.borrow().iter().any(|h| h == head))
     }
 }
 

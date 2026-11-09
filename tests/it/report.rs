@@ -171,7 +171,7 @@ fn review_passed_behind_base_waits_while_another_review_pr_is_up_to_date() {
 }
 
 #[test]
-fn review_passed_behind_base_updates_when_other_review_prs_are_behind_or_blocked() {
+fn review_passed_behind_base_updates_when_other_review_prs_are_behind_blocked_or_red() {
     let w = World::new();
     w.tracker.issue(7, &["agent:claude", "stage:review"]);
     w.tracker.pr(5, "claude/issue-7", "Closes #7");
@@ -185,10 +185,17 @@ fn review_passed_behind_base_updates_when_other_review_prs_are_behind_or_blocked
     // Up to date, but not at review.
     w.tracker.issue(10, &["agent:claude", "stage:tdd"]);
     w.tracker.pr(3, "claude/issue-10", "Closes #10");
+    // Up to date, but a check failed: it cannot merge next.
+    w.tracker.issue(11, &["agent:claude", "stage:review"]);
+    w.tracker.pr(2, "claude/issue-11", "Closes #11");
+    w.tracker
+        .red_heads
+        .borrow_mut()
+        .push("claude/issue-11".into());
     claim_issue(&w, "claude");
     w.tracker.fail_merge.set(true);
     w.tracker.behind.set(3);
-    for head in ["claude/issue-9", "claude/issue-10"] {
+    for head in ["claude/issue-9", "claude/issue-10", "claude/issue-11"] {
         w.tracker.behind_heads.borrow_mut().insert(head.into(), 0);
     }
     let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();

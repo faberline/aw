@@ -316,6 +316,23 @@ impl Tracker for GhCli {
         let path = format!("repos/{repo}/pulls/{pr}/update-branch");
         self.send("PUT", &path, None).map(|_| ())
     }
+
+    fn has_failed_checks(&self, head: &str) -> PortResult<bool> {
+        let repo = self.name()?;
+        // The ref is a path segment, so its `/` is escaped.
+        let path = format!(
+            "repos/{repo}/commits/{}/check-runs?per_page=100",
+            encode(head)
+        );
+        // A re-run replaces an older run of the same name.
+        let jq = "[.check_runs | group_by(.name)[] | max_by(.id) \
+                  | select(.conclusion == \"failure\" or .conclusion == \"timed_out\")] | length";
+        let out = self.get(&path, Some(jq))?;
+        out.trim()
+            .parse::<u64>()
+            .map(|n| n > 0)
+            .map_err(|_| PortError(format!("check runs returned `{}`", out.trim())))
+    }
 }
 
 #[cfg(test)]
