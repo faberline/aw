@@ -137,7 +137,9 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    - The spec is unclear or too large: `stage:spec`.
    - Otherwise keep `blocked` and comment one question for a person.
 4. Triage at most three issues: open, no `stage:` label, no `blocked`
-   label and no open sub-issues. Take `p0` first, then the oldest.
+   label and no open sub-issues. Take them in claim order: `p0` first,
+   then the lowest milestone version, then the priority label (`pN` or a
+   legacy `priority:pN`), then the oldest.
    Always add `agent:claude`.
    - Add `pN` from a legacy `priority:pN` label, or `p2` when there is none.
      Remove the legacy `doing` and `todo` labels.
