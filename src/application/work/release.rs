@@ -42,10 +42,19 @@ pub(crate) fn finish(s: Services<'_>, claim: &Claim) -> Result<Vec<String>> {
     match s.workspace.is_clean() {
         Ok(true) => {
             if let Err(err) = switch_to(s, &claim.default_branch) {
-                warnings.push(format!(
-                    "could not switch back to `{}`: {err:#}",
-                    claim.default_branch
-                ));
+                // A linked worktree cannot switch to a branch that another
+                // worktree has checked out. Leave the work branch anyway.
+                let upstream = format!("origin/{}", claim.default_branch);
+                match s.workspace.detach(&upstream) {
+                    Ok(()) => warnings.push(format!(
+                        "could not switch back to `{}` ({err:#}); detached at `{upstream}`",
+                        claim.default_branch
+                    )),
+                    Err(detach_err) => warnings.push(format!(
+                        "could not switch back to `{}`: {err:#}; could not detach at `{upstream}`: {detach_err:#}",
+                        claim.default_branch
+                    )),
+                }
             }
         }
         Ok(false) => warnings.push(format!(

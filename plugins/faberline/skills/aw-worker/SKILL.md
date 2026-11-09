@@ -327,6 +327,8 @@ Read code through the GitHub API when you do not need the clone:
   - a small model wrote the code: look for tests that assert nothing,
     skipped or ignored tests, and changes outside the spec's files;
   - read only; do not run `aw`, `git` writes or `gh` writes;
+  - the first line of the pull request body, `Closes #<n>`, is written by
+    `aw` and links the issue; it is required, not a finding;
   - answer with the first line `VERDICT: passed` or `VERDICT: failed`, then
     the findings per file with a fix for each.
 - Use the subagent's verdict. Do not change `failed` to `passed`. You may
@@ -388,6 +390,12 @@ Read code through the GitHub API when you do not need the clone:
   command. When that is also denied, release.
 - `blocked` is for a decision that only a person can make, or for a refusal
   that this run cannot fix. Write the reason.
+- Local runs only: when `aw report` cannot push over HTTPS (no git
+  credentials, or a token without the `workflow` scope for a change under
+  `.github/workflows/`) and an SSH key works, run the same command once more
+  with SSH for that command only:
+  `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.git@github.com:.insteadOf GIT_CONFIG_VALUE_0=https://github.com/ $AW report ...`.
+  Do not change git or `gh` configuration files.
 
 ## Final answer
 
