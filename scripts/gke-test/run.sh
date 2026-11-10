@@ -39,6 +39,7 @@ set -euo pipefail
 #                           still collects evidence and tears down in time
 #   BLOCKER_GRACE_SECONDS   default 120; a pod or PVC must be this old before
 #                           blockers.sh may call it stuck (fail fast, aw#222)
+#   SCHEDULING_GRACE_SECONDS  default 300; the same for FailedScheduling
 #   POOLS_FILE     default: infra/gke-test/pools.yaml of the same aw checkout
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -73,6 +74,7 @@ ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-900s}"
 TEST_JOB_TIMEOUT="${TEST_JOB_TIMEOUT:-$(( (TTL_MINUTES > 20 ? TTL_MINUTES - 15 : 5) * 60 ))}"
 POOLS_FILE="${POOLS_FILE:-$SCRIPT_DIR/../../infra/gke-test/pools.yaml}"
 BLOCKER_GRACE_SECONDS="${BLOCKER_GRACE_SECONDS:-120}"
+SCHEDULING_GRACE_SECONDS="${SCHEDULING_GRACE_SECONDS:-300}"
 # These series take only Hyperdisk. Keep the same list in hyperdisk_only_re of
 # infra/gke-test/main.tf.
 HYPERDISK_ONLY_RE='^(n4|n4a|n4d|c4|c4a|c4d)-'
@@ -260,7 +262,7 @@ find_blockers() {
     && kubectl -n "$NAMESPACE" get pods -o json >"$d/pods.json" 2>/dev/null \
     && kubectl -n "$NAMESPACE" get pvc -o json >"$d/pvcs.json" 2>/dev/null; then
     "$SCRIPT_DIR/blockers.sh" "$d/events.json" "$d/pods.json" "$d/pvcs.json" \
-      "$BLOCKER_GRACE_SECONDS" "$(date +%s)" || true
+      "$BLOCKER_GRACE_SECONDS" "$(date +%s)" "$SCHEDULING_GRACE_SECONDS" || true
   fi
   rm -rf "$d"
 }

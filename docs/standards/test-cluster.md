@@ -495,10 +495,16 @@ at once and prints the reason when:
 
 1. a PVC that is not Bound has a `ProvisioningFailed` event with "infeasible"
    (a wrong storage class, or a Hyperdisk smaller than its minimum);
-2. a Pending pod has a `NotTriggerScaleUp` event and no `TriggeredScaleUp`
-   event, or has the annotation `cluster_autoscaler_unhelpable_until=Inf`;
-3. a Pending pod that has no node has a `FailedScheduling` event and no
-   `TriggeredScaleUp` event.
+2. a Pending pod has a `NotTriggerScaleUp` event, or has the annotation
+   `cluster_autoscaler_unhelpable_until=Inf`;
+3. a Pending pod that has no node has a `FailedScheduling` event, and has
+   been Pending for `SCHEDULING_GRACE_SECONDS` (default 300).
+
+The autoscaler sends `TriggeredScaleUp` for one pod only; the other Pending
+pods wait for the same new node and have no event of their own. So signals
+2 (`NotTriggerScaleUp`) and 3 do not count while any pod of the namespace has
+a `TriggeredScaleUp` event from the last 600 s. The `Inf` annotation does
+not depend on that.
 
 On every failed exit (a blocker, a timeout, a failed Job) `run.sh` prints
 the last 100 events, `kubectl describe pods`, and the last 100 log lines of

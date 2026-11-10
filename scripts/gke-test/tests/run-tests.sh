@@ -97,7 +97,7 @@ pod() { # pod <name> <phase> <node> <created> [annotations-json]
 }
 event() { # event <kind> <name> <reason> <message>
   jq -n --arg k "$1" --arg n "$2" --arg r "$3" --arg m "$4" \
-    '{involvedObject:{kind:$k,name:$n},reason:$r,message:$m}'
+    '{involvedObject:{kind:$k,name:$n},reason:$r,message:$m,lastTimestamp:"2027-01-15T07:59:00Z"}'
 }
 pvc() { jq -n --arg n "$1" --arg ph "$2" --arg c "$3" '{metadata:{name:$n,creationTimestamp:$c},status:{phase:$ph}}'; }
 items() { jq -s '{items: .}'; }
@@ -138,6 +138,23 @@ check "blockers: FailedScheduling then TriggeredScaleUp is a normal scale-up" qu
 pod web-0 Pending "" "$new_ts" | items >"$TMP/pnew.json"
 check "blockers: FailedScheduling inside the grace time is not a blocker" quiet "$TMP/e3.json" "$TMP/pnew.json" "$TMP/empty.json"
 pod web-0 Running node-1 "$old_ts" | items >"$TMP/prun.json"
+# Several Pending pods; only web-0 got TriggeredScaleUp. web-1 has none.
+{ pod web-0 Pending "" "$old_ts"; pod web-1 Pending "" "$old_ts"; } | items >"$TMP/p2pods.json"
+{ event Pod web-1 FailedScheduling "x"; event Pod web-0 TriggeredScaleUp "pod triggered scale-up"; } | jq -c '.' | items >"$TMP/e3c.json"
+check "blockers: a TriggeredScaleUp for another pod covers the namespace" quiet "$TMP/e3c.json" "$TMP/p2pods.json" "$TMP/empty.json"
+{ event Pod web-1 NotTriggerScaleUp "x"; event Pod web-0 TriggeredScaleUp "pod triggered scale-up"; } | items >"$TMP/e2c.json"
+check "blockers: NotTriggerScaleUp is covered by a scale-up of another pod" quiet "$TMP/e2c.json" "$TMP/p2pods.json" "$TMP/empty.json"
+# An old TriggeredScaleUp (over 600 s) no longer covers.
+{ event Pod web-1 FailedScheduling "x"; event Pod web-0 TriggeredScaleUp "y" | jq '.lastTimestamp="2027-01-15T07:40:00Z"'; } | items >"$TMP/e3d.json"
+check "blockers: a TriggeredScaleUp older than 600 s does not cover" has FailedScheduling < <(blockers "$TMP/e3d.json" "$TMP/p2pods.json" "$TMP/empty.json")
+# The Inf annotation ignores the scale-up cover.
+pod web-1 Pending "" "$old_ts" '{"cluster_autoscaler_unhelpable_until":"Inf"}' | items >"$TMP/p2inf.json"
+check "blockers: unhelpable=Inf is a blocker even during a scale-up" has unhelpable < <(blockers "$TMP/e3c.json" "$TMP/p2inf.json" "$TMP/empty.json")
+# FailedScheduling uses the longer grace time: 200 s old is not enough, 400 s is.
+pod web-0 Pending "" "2027-01-15T07:56:40Z" | items >"$TMP/p200.json"
+check "blockers: FailedScheduling at 200 s is inside the scheduling grace" quiet "$TMP/e3.json" "$TMP/p200.json" "$TMP/empty.json"
+pod web-0 Pending "" "2027-01-15T07:53:20Z" | items >"$TMP/p400.json"
+check "blockers: FailedScheduling at 400 s is a blocker" has FailedScheduling < <(blockers "$TMP/e3.json" "$TMP/p400.json" "$TMP/empty.json")
 check "blockers: a placed pod is not a blocker" quiet "$TMP/e3.json" "$TMP/prun.json" "$TMP/empty.json"
 check "blockers: empty namespace" quiet "$TMP/empty.json" "$TMP/empty.json" "$TMP/empty.json"
 
