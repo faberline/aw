@@ -84,6 +84,11 @@ enum Command {
         /// Pass over this issue number. Repeat it for more issues.
         #[arg(long, value_name = "ISSUE")]
         skip: Vec<u64>,
+        /// What this machine has, for issues labeled `needs:<THING>`
+        /// (for example `mac`). Without it, an issue with a `needs:`
+        /// label is passed over. Repeat it or separate with commas.
+        #[arg(long, env = "AW_HAS", value_name = "THING", value_delimiter = ',')]
+        has: Vec<String>,
     },
     /// Finish the claimed stage.
     Report {
@@ -306,8 +311,8 @@ fn read_message(message: Option<String>, file: Option<String>) -> Result<String>
 
 fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit> {
     match command {
-        Command::Claim { target, skip } => {
-            match work::claim(s, &target.agent, target.stage(), &skip)? {
+        Command::Claim { target, skip, has } => {
+            match work::claim(s, &target.agent, target.stage(), &skip, &has)? {
                 ClaimOutcome::Claimed(claim) => {
                     print(&claim)?;
                     Ok(Exit::Ok)

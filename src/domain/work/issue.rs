@@ -47,6 +47,16 @@ impl Issue {
             .map_or(4, |i| i as u8)
     }
 
+    /// The first `needs:<thing>` label whose thing the worker does not
+    /// have, such as `mac` for an issue that only a Mac can run. A worker
+    /// passes over such an issue; a worker that has the thing takes it.
+    pub fn missing_need(&self, has: &[String]) -> Option<&str> {
+        self.labels
+            .iter()
+            .filter_map(|l| l.strip_prefix("needs:"))
+            .find(|need| !has.iter().any(|h| h == need))
+    }
+
     /// The stage `agent` may work on, judged from labels only.
     pub fn actionable_stage(&self, agent: &str) -> Option<Stage> {
         if !self.has_label(&agent_label(agent)) || self.has_label("blocked") {
@@ -195,6 +205,15 @@ mod tests {
             comment("Looks good.", "2026-11-08T18:11:00Z"),
         ];
         assert!(!awaiting_report(Stage::Spec, "claude", &ready));
+    }
+
+    #[test]
+    fn a_needs_label_is_missing_until_the_worker_has_it() {
+        let i = issue(1, &["agent:claude", "needs:mac", "needs:gpu"], None);
+        assert_eq!(i.missing_need(&[]), Some("mac"));
+        assert_eq!(i.missing_need(&["mac".into()]), Some("gpu"));
+        assert_eq!(i.missing_need(&["gpu".into(), "mac".into()]), None);
+        assert_eq!(issue(2, &["p1"], None).missing_need(&[]), None);
     }
 
     #[test]

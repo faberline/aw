@@ -58,6 +58,12 @@ to do. An agent holds at most one claim in a repository.
 `aw claim --skip <issue>` passes over that issue; repeat it for more. A
 worker uses it for a review whose checks are still running.
 
+An issue with a `needs:<thing>` label is work that only some machines can
+do, for example `needs:mac` for a model training run on the local Mac.
+`aw claim` passes over it unless the worker says it has the thing:
+`aw claim --has mac` (or `AW_HAS=mac`; separate more with commas). A cloud
+worker runs without `--has`, so it leaves that issue to a Mac.
+
 | Stage | Where it runs | `aw claim` checks out | `aw report` outcomes |
 | --- | --- | --- | --- |
 | spec | anywhere | nothing | `ready`, `blocked` |
