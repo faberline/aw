@@ -37,6 +37,9 @@ set -euo pipefail
 #   TEST_JOB_TIMEOUT        seconds; includes the client pool scale-up;
 #                           default TTL_MINUTES minus 15 minutes, so the run
 #                           still collects evidence and tears down in time
+#   BLOCKER_GRACE_SECONDS   default 120; a pod or PVC must be this old before
+#                           blockers.sh may call it stuck (fail fast, aw#222)
+#   SCHEDULING_GRACE_SECONDS  default 300; the same for FailedScheduling
 #   POOLS_FILE     default: infra/gke-test/pools.yaml of the same aw checkout
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -70,6 +73,8 @@ TTL_MINUTES="${TTL_MINUTES:-90}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-900s}"
 TEST_JOB_TIMEOUT="${TEST_JOB_TIMEOUT:-$(( (TTL_MINUTES > 20 ? TTL_MINUTES - 15 : 5) * 60 ))}"
 POOLS_FILE="${POOLS_FILE:-$SCRIPT_DIR/../../infra/gke-test/pools.yaml}"
+BLOCKER_GRACE_SECONDS="${BLOCKER_GRACE_SECONDS:-120}"
+SCHEDULING_GRACE_SECONDS="${SCHEDULING_GRACE_SECONDS:-300}"
 # These series take only Hyperdisk. Keep the same list in hyperdisk_only_re of
 # infra/gke-test/main.tf.
 HYPERDISK_ONLY_RE='^(n4|n4a|n4d|c4|c4a|c4d)-'
@@ -248,9 +253,65 @@ collect_evidence() {
   set -e
 }
 
+# Pod, PVC, and event state of the namespace, then the blockers.sh verdict.
+# Prints the reasons (one per line); prints nothing when no pod is stuck.
+find_blockers() {
+  local d
+  d="$(mktemp -d)"
+  if kubectl -n "$NAMESPACE" get events -o json >"$d/events.json" 2>/dev/null \
+    && kubectl -n "$NAMESPACE" get pods -o json >"$d/pods.json" 2>/dev/null \
+    && kubectl -n "$NAMESPACE" get pvc -o json >"$d/pvcs.json" 2>/dev/null; then
+    "$SCRIPT_DIR/blockers.sh" "$d/events.json" "$d/pods.json" "$d/pvcs.json" \
+      "$BLOCKER_GRACE_SECONDS" "$(date +%s)" "$SCHEDULING_GRACE_SECONDS" || true
+  fi
+  rm -rf "$d"
+}
+
+# Run a command (a kubectl wait) and stop it early when find_blockers reports
+# a stuck pod or PVC. The command keeps its own timeout.
+guarded() {
+  local pid reasons
+  "$@" >&2 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep "${BLOCKER_POLL_SECONDS:-15}"
+    kill -0 "$pid" 2>/dev/null || break
+    reasons="$(find_blockers)"
+    if [[ -n "$reasons" ]]; then
+      log "fail fast: pods cannot start:"
+      sed 's/^/  /' <<<"$reasons" >&2
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 3
+    fi
+  done
+  wait "$pid"
+}
+
+# Put the cluster state of a failed run into the job log, so a reader does not
+# need the evidence artifact (aw#230). The evidence folder keeps everything.
+print_diagnostics() {
+  set +e
+  log "---- diagnostics for namespace $NAMESPACE ----"
+  log "events (last 100):"
+  kubectl -n "$NAMESPACE" get events --sort-by=.lastTimestamp 2>&1 | tail -n 100 >&2
+  log "describe pods (last 400 lines):"
+  kubectl -n "$NAMESPACE" describe pods 2>&1 | tail -n 400 >&2
+  local pod
+  for pod in $(kubectl -n "$NAMESPACE" get pods -o name 2>/dev/null); do
+    log "log tail of ${pod#pod/} (last 100 lines):"
+    kubectl -n "$NAMESPACE" logs "$pod" --all-containers --prefix --tail=100 >&2 2>&1
+  done
+  log "---- end of diagnostics ----"
+  set -e
+}
+
 on_exit() {
   local status=$?
   trap - EXIT
+  if (( status != 0 )); then
+    print_diagnostics
+  fi
   log "collecting evidence into $EVIDENCE_DIR"
   collect_evidence
   "$SCRIPT_DIR/teardown.sh" || status=1
@@ -291,14 +352,14 @@ kubectl apply --server-side --force-conflicts --field-manager=gke-test -f "$EVID
 
 for workload in $(kubectl -n "$NAMESPACE" get deployment,statefulset,daemonset -o name); do
   log "waiting for $workload"
-  kubectl -n "$NAMESPACE" rollout status "$workload" --timeout="$ROLLOUT_TIMEOUT" >&2
+  guarded kubectl -n "$NAMESPACE" rollout status "$workload" --timeout="$ROLLOUT_TIMEOUT"
 done
 
 if [[ -n "$job_name" ]]; then
   log "starting test Job $job_name"
   kubectl apply --server-side --force-conflicts --field-manager=gke-test -f "$job_rendered" >&2
   deadline=$((SECONDS + TEST_JOB_TIMEOUT))
-  state=""
+  state="" polls=0 reasons=""
   while [[ -z "$state" ]]; do
     if (( SECONDS >= deadline )); then
       log "test Job $job_name did not finish in ${TEST_JOB_TIMEOUT}s"
@@ -306,6 +367,15 @@ if [[ -n "$job_name" ]]; then
       break
     fi
     sleep 10
+    if (( ++polls % 3 == 0 )); then
+      reasons="$(find_blockers)"
+      if [[ -n "$reasons" ]]; then
+        log "fail fast: pods cannot start:"
+        sed 's/^/  /' <<<"$reasons" >&2
+        state="Blocked"
+        break
+      fi
+    fi
     state="$(kubectl -n "$NAMESPACE" get job "$job_name" -o json | jq -r '
       [.status.conditions[]? | select(.status == "True") | .type]
       | if index("Complete") then "Complete" elif index("Failed") then "Failed" else "" end')"
