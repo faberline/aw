@@ -134,7 +134,9 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    `blocked`. A comment after the `blocked` signal lets the same stage claim
    the issue again (`aw` 0.7.8 or later):
    - No open pull request closes the issue: `stage:tdd`.
-   - The spec is unclear or too large: `stage:spec`.
+   - The spec is unclear or too large: `stage:spec`. A review `blocked`
+     signal that starts with `spec unclear:` is this case; the new spec
+     answers each point of it.
    - Otherwise keep `blocked` and comment one question for a person.
 4. Triage at most three issues: open, no `stage:` label, no `blocked`
    label and no open sub-issues. Take them in claim order: `p0` first,
@@ -349,7 +351,7 @@ Read code through the GitHub API when you do not need the clone:
     run reviews it.
   - A check failed or the pull request has a merge conflict:
     `$AW report <who> failed -F <file>` with the failed checks or the
-    conflict. No subagent is needed.
+    conflict. No subagent is needed, except on the third review (below).
 - All checks are green and there is no conflict: give the verdict to one
   subagent with the Agent tool and `model: "opus"`. Its brief has: the
   repository and pull request number; the issue number; the REST calls for
@@ -369,7 +371,8 @@ Read code through the GitHub API when you do not need the clone:
   - the first line of the pull request body, `Closes #<n>`, is written by
     `aw` and links the issue; it is required, not a finding;
   - answer with the first line `VERDICT: passed`, `VERDICT: failed` or
-    `VERDICT: closed`, then the findings per file with a fix for each;
+    `VERDICT: closed` (on the third review also `VERDICT: blocked`), then
+    the findings per file with a fix for each;
   - `closed` means that rework cannot save the pull request and a new start
     from the default branch costs less. Use it only for one of these, and
     name the one that applies with its evidence:
@@ -384,10 +387,27 @@ Read code through the GitHub API when you do not need the clone:
   change `passed` to `failed` only for a fact you can show (a red check, a
   conflict, a file outside the spec). Only the subagent gives `closed`; do
   not choose it yourself.
-- A failed check or a conflict normally needs no subagent (see the quick
-  gates). But when the issue already has two or more `stage=review` `failed`
-  signals for this pull request, give it to the subagent with the failed
-  checks or the conflict in the brief. It answers `failed` or `closed`.
+- The third review is a diagnosis. When the issue already has two or more
+  `stage=review` `failed` signals for this pull request, always give it to
+  the subagent, also when a check failed or there is a conflict (the quick
+  gates do not apply). Add to its brief the failed checks or the conflict,
+  the earlier `failed` signals, and this task: read the issue, the newest
+  `stage=spec` signal and the diff, and find why the rework does not
+  converge. It answers with one cause on the first line:
+  - `VERDICT: failed` — the spec is clear and the code is close. Give each
+    remaining finding with the exact fix, so the next tdd run cannot miss it.
+  - `VERDICT: closed` — the spec is clear but the pull request cannot be
+    saved (the `closed` cases above).
+  - `VERDICT: blocked` — the issue or the spec is the cause: it is unclear,
+    it contradicts itself or the repository, it is too large, or a criterion
+    cannot be tested. Name the sentence or criterion and say what is missing.
+  - `VERDICT: passed` — all checks are green and the earlier findings are
+    fixed.
+- `blocked` from the diagnosis: `$AW report <who> blocked -F <file>`. Start
+  the file with `spec unclear:` and the subagent's reason. The next spec run
+  reads it, writes the spec again and moves the issue to `stage:spec`
+  (section 2, step 3). The pull request stays open; the new spec says to
+  keep it or to start again.
 - `passed`: `$AW report <who> passed -F <file>` with the summary.
   `aw` squash-merges. It does not approve: the verdict is the review.
   A strict ruleset refuses a branch that is behind the default branch.
