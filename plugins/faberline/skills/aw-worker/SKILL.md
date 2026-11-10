@@ -351,7 +351,7 @@ Read code through the GitHub API when you do not need the clone:
     run reviews it.
   - A check failed or the pull request has a merge conflict:
     `$AW report <who> failed -F <file>` with the failed checks or the
-    conflict. No subagent is needed.
+    conflict. No subagent is needed, except on the third review (below).
 - All checks are green and there is no conflict: give the verdict to one
   subagent with the Agent tool and `model: "opus"`. Its brief has: the
   repository and pull request number; the issue number; the REST calls for
@@ -371,7 +371,8 @@ Read code through the GitHub API when you do not need the clone:
   - the first line of the pull request body, `Closes #<n>`, is written by
     `aw` and links the issue; it is required, not a finding;
   - answer with the first line `VERDICT: passed`, `VERDICT: failed` or
-    `VERDICT: closed`, then the findings per file with a fix for each;
+    `VERDICT: closed` (on the third review also `VERDICT: blocked`), then
+    the findings per file with a fix for each;
   - `closed` means that rework cannot save the pull request and a new start
     from the default branch costs less. Use it only for one of these, and
     name the one that applies with its evidence:
