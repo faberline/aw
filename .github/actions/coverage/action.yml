@@ -1,0 +1,64 @@
+name: coverage ratchet
+description: >
+  Checks line coverage against the baseline in aw.toml (standard S8,
+  docs/standards/coverage.md in aw). Run `cargo llvm-cov --json
+  --summary-only --output-path <file>` first and pass that file. On a pull
+  request it also reads aw.toml on the base branch, so the baseline cannot go
+  down. It writes a report to the job summary and keeps the data as the
+  artifact "coverage".
+
+inputs:
+  summary:
+    description: The output file of `cargo llvm-cov --json --summary-only`.
+    required: true
+  config:
+    description: The file with [standards.coverage].
+    default: aw.toml
+  token:
+    description: A token that can read the repository contents.
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Read the base baseline
+      if: github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        CONFIG: ${{ inputs.config }}
+        BASE_REF: ${{ github.base_ref }}
+      run: |
+        out="$RUNNER_TEMP/coverage-base.toml"
+        if gh api -H "Accept: application/vnd.github.raw" \
+            "repos/$GITHUB_REPOSITORY/contents/$CONFIG?ref=$BASE_REF" \
+            >"$out" 2>"$out.err"; then
+          echo "COVERAGE_BASE=$out" >>"$GITHUB_ENV"
+        elif grep -q "HTTP 404" "$out.err"; then
+          echo "$BASE_REF has no $CONFIG; COV5 is skipped."
+        else
+          cat "$out.err" >&2
+          exit 1
+        fi
+
+    - name: Check the coverage ratchet
+      shell: bash
+      env:
+        SUMMARY: ${{ inputs.summary }}
+        CONFIG: ${{ inputs.config }}
+        COVERAGE_ROOT: ${{ github.workspace }}
+      run: |
+        cp "$SUMMARY" "$RUNNER_TEMP/coverage-summary.json"
+        "$GITHUB_ACTION_PATH/check.sh" "$SUMMARY" "$CONFIG" "${COVERAGE_BASE:-}" \
+          | tee "$RUNNER_TEMP/coverage-report.json"
+
+    - name: Keep the coverage data
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: coverage
+        path: |
+          ${{ runner.temp }}/coverage-summary.json
+          ${{ runner.temp }}/coverage-report.json
+        retention-days: 30
+        if-no-files-found: warn
