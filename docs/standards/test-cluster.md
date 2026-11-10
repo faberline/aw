@@ -441,7 +441,8 @@ jobs:
 4. Wakes `system-pool`, creates `ghcr-pull`, applies CRDs, then applies the
    rest with server-side apply.
 5. Waits for every rollout. The first pod on a pool waits a few minutes for
-   the autoscaler to add a node.
+   the autoscaler to add a node. The wait fails fast (see "Fail fast and
+   diagnostics" below) when a pod cannot start.
 6. Applies the test Job and waits until it is `Complete` or `Failed`. A
    `Complete` Job whose log shows `running 0 tests` fails the run: its filter
    matched no test.
@@ -469,6 +470,41 @@ cluster, so they run when the cluster has no node. The workflow:
 A run can start while a park runs. Its node is still Ready while GKE deletes
 it. So `wake.sh` always resizes `system-pool` to 1: GKE refuses the resize
 until the park ends, `resize_pool` retries, and then the node comes back.
+
+### Cluster operations that collide
+
+GKE runs one cluster operation at a time and answers a second resize with
+`FAILED_PRECONDITION: Cluster is running incompatible operation`. Calls from
+different repositories cannot share a GitHub `concurrency` group, so
+`resize_pool` (`scripts/gke-test/common.sh`) handles it:
+
+- It skips the resize when the pool already has the target size and no
+  cluster operation runs.
+- It retries a busy cluster with backoff (15 s, 30 s, then 60 s, plus up to
+  9 s of jitter) for up to `RESIZE_RETRY_SECONDS` (default 900). `park.sh`
+  uses 300, so a late park cannot park a cluster that a run woke meanwhile.
+- Any other error gets 3 attempts.
+
+## Fail fast and diagnostics
+
+While `run.sh` waits for a rollout or the test Job, it checks the namespace
+every 15 s (every 30 s for the Job) with `scripts/gke-test/blockers.sh`. An
+object must be older than `BLOCKER_GRACE_SECONDS` (default 120) before it
+counts, so a normal scale-up from 0 nodes is never a blocker. The run stops
+at once and prints the reason when:
+
+1. a PVC that is not Bound has a `ProvisioningFailed` event with "infeasible"
+   (a wrong storage class, or a Hyperdisk smaller than its minimum);
+2. a Pending pod has a `NotTriggerScaleUp` event and no `TriggeredScaleUp`
+   event, or has the annotation `cluster_autoscaler_unhelpable_until=Inf`;
+3. a Pending pod that has no node has a `FailedScheduling` event and no
+   `TriggeredScaleUp` event.
+
+On every failed exit (a blocker, a timeout, a failed Job) `run.sh` prints
+the last 100 events, `kubectl describe pods`, and the last 100 log lines of
+each pod into the job log. The evidence artifact keeps the full output.
+
+Test the scripts without a cluster: `scripts/gke-test/tests/run-tests.sh`.
 
 See its executions with:
 

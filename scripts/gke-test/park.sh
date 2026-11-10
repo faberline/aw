@@ -29,5 +29,7 @@ fi
 # resizes to 1 again. When wake.sh already returned, its kube-dns wait or its
 # test fails and the run reports it; the window is the few seconds between
 # check and resize.
-resize_pool "$GKE_SYSTEM_POOL" 0
+# A park that waits long may park a cluster a new run woke meanwhile, so it
+# retries a busy cluster for 5 minutes only (a wake retries for 15).
+RESIZE_RETRY_SECONDS="${PARK_RETRY_SECONDS:-300}" resize_pool "$GKE_SYSTEM_POOL" 0
 log "parked: $GKE_SYSTEM_POOL at 0 nodes"
