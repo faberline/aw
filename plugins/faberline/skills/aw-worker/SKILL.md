@@ -126,7 +126,7 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    |---|---|---|
    | `stage:spec` | `ready` | `stage:tdd` |
    | `stage:tdd` | `ready` | `stage:review` |
-   | `stage:review` | `failed` | `stage:tdd` |
+   | `stage:review` | `failed` or `closed` | `stage:tdd` |
    | `stage:review` | `passed` | `stage:done`; close the issue if it is still open |
 
 3. For an issue with the `blocked` label or a newest `blocked` signal, fix
@@ -368,11 +368,26 @@ Read code through the GitHub API when you do not need the clone:
   - read only; do not run `aw`, `git` writes or `gh` writes;
   - the first line of the pull request body, `Closes #<n>`, is written by
     `aw` and links the issue; it is required, not a finding;
-  - answer with the first line `VERDICT: passed` or `VERDICT: failed`, then
-    the findings per file with a fix for each.
+  - answer with the first line `VERDICT: passed`, `VERDICT: failed` or
+    `VERDICT: closed`, then the findings per file with a fix for each;
+  - `closed` means that rework cannot save the pull request and a new start
+    from the default branch costs less. Use it only for one of these, and
+    name the one that applies with its evidence:
+    - the default branch already has the change, or another pull request
+      replaced this one;
+    - the diff does not build what the spec asks for, so most of it must be
+      written again;
+    - the issue has two or more `stage=review` `failed` signals for this
+      pull request and the same findings are still there;
+    - the branch is so far behind that its conflicts touch most of the diff.
 - Use the subagent's verdict. Do not change `failed` to `passed`. You may
   change `passed` to `failed` only for a fact you can show (a red check, a
-  conflict, a file outside the spec).
+  conflict, a file outside the spec). Only the subagent gives `closed`; do
+  not choose it yourself.
+- A failed check or a conflict normally needs no subagent (see the quick
+  gates). But when the issue already has two or more `stage=review` `failed`
+  signals for this pull request, give it to the subagent with the failed
+  checks or the conflict in the brief. It answers `failed` or `closed`.
 - `passed`: `$AW report <who> passed -F <file>` with the summary.
   `aw` squash-merges. It does not approve: the verdict is the review.
   A strict ruleset refuses a branch that is behind the default branch.
@@ -397,6 +412,12 @@ Read code through the GitHub API when you do not need the clone:
   all checks are green, report `passed` again without a subagent.
 - `failed`: `$AW report <who> failed -F <file>` with the findings per file.
   `aw` sends the issue back to tdd.
+- `closed`: `$AW report <who> closed -F <file>` with the reason and its
+  evidence (`aw` 0.7.14 or later). `aw` comments the reason on the pull
+  request, closes it without a merge, deletes its branch and sends the issue
+  back to tdd. The next tdd run starts again from the default branch. When
+  the default branch already has the change, say so in the file; the next
+  spec run closes the issue. With an older `aw`, report `failed`.
 
 ## Repository notes
 

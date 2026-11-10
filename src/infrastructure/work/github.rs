@@ -286,6 +286,18 @@ impl Tracker for GhCli {
         self.comment(pr, body)
     }
 
+    fn close_pr(&self, pr: u64) -> PortResult<()> {
+        let path = format!("repos/{}/pulls/{pr}", self.name()?);
+        let body = payload!({ "state": "closed" });
+        self.send("PATCH", &path, Some(body)).map(|_| ())
+    }
+
+    fn delete_branch(&self, branch: &str) -> PortResult<()> {
+        // The ref keeps its `/`; the git refs path accepts it.
+        let path = format!("repos/{}/git/refs/heads/{branch}", self.name()?);
+        self.send("DELETE", &path, None).map(|_| ())
+    }
+
     fn squash_merge(&self, pr: u64, subject: &str, body: &str) -> PortResult<()> {
         let repo = self.name()?;
         let path = format!("repos/{repo}/pulls/{pr}/merge");

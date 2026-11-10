@@ -73,6 +73,7 @@ pub fn report(
             }
         },
         (Stage::Review, Outcome::Failed) => Some(request_changes(s, &claim, message)?),
+        (Stage::Review, Outcome::Closed) => Some(close(s, &claim, message, &mut warnings)?),
         _ => None,
     };
 
@@ -277,6 +278,30 @@ enum Merge {
         url: String,
         holder: u64,
     },
+}
+
+/// Close the reviewed pull request without a merge and delete its branch,
+/// so the next tdd run starts again from the default branch.
+fn close(
+    s: Services<'_>,
+    claim: &Claim,
+    message: &str,
+    warnings: &mut Vec<String>,
+) -> Result<String> {
+    let (number, url) = reviewed_pr(s, claim)?;
+    let head = reviewed_head(s, number)?;
+    s.tracker
+        .pr_comment(number, message)
+        .with_context(|| format!("could not comment on #{number}"))?;
+    s.tracker
+        .close_pr(number)
+        .with_context(|| format!("could not close #{number}"))?;
+    if head == claim.default_branch {
+        warnings.push(format!("`{head}` is the default branch; it stays"));
+    } else if let Err(err) = s.tracker.delete_branch(&head) {
+        warnings.push(format!("could not delete the branch `{head}`: {err}"));
+    }
+    Ok(url)
 }
 
 fn merge(

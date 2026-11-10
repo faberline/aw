@@ -16,6 +16,9 @@ pub enum Outcome {
     Passed,
     /// review asked for changes.
     Failed,
+    /// review closed the pull request without a merge; tdd starts again
+    /// from the default branch.
+    Closed,
 }
 
 impl Outcome {
@@ -25,6 +28,7 @@ impl Outcome {
             Outcome::Blocked => "blocked",
             Outcome::Passed => "passed",
             Outcome::Failed => "failed",
+            Outcome::Closed => "closed",
         }
     }
 
@@ -34,6 +38,7 @@ impl Outcome {
             "blocked" => Some(Outcome::Blocked),
             "passed" => Some(Outcome::Passed),
             "failed" => Some(Outcome::Failed),
+            "closed" => Some(Outcome::Closed),
             _ => None,
         }
     }
@@ -43,19 +48,27 @@ impl Outcome {
             (stage, self),
             (_, Outcome::Blocked)
                 | (Stage::Spec | Stage::Tdd, Outcome::Ready)
-                | (Stage::Review, Outcome::Passed | Outcome::Failed)
+                | (
+                    Stage::Review,
+                    Outcome::Passed | Outcome::Failed | Outcome::Closed
+                )
         )
     }
 
     pub fn allowed(stage: Stage) -> &'static [Outcome] {
         match stage {
             Stage::Spec | Stage::Tdd => &[Outcome::Ready, Outcome::Blocked],
-            Stage::Review => &[Outcome::Passed, Outcome::Failed, Outcome::Blocked],
+            Stage::Review => &[
+                Outcome::Passed,
+                Outcome::Failed,
+                Outcome::Closed,
+                Outcome::Blocked,
+            ],
         }
     }
 
     pub fn needs_message(self) -> bool {
-        matches!(self, Outcome::Blocked | Outcome::Failed)
+        matches!(self, Outcome::Blocked | Outcome::Failed | Outcome::Closed)
     }
 }
 
@@ -79,7 +92,7 @@ impl Outcome {
             }
             (Stage::Spec, _) => "stage:tdd",
             (Stage::Tdd, _) => "stage:review",
-            (Stage::Review, Outcome::Failed) => "stage:tdd",
+            (Stage::Review, Outcome::Failed | Outcome::Closed) => "stage:tdd",
             (Stage::Review, _) => "stage:done",
         };
         LabelMove {
@@ -198,6 +211,14 @@ mod tests {
             to(Stage::Review, Outcome::Failed),
             (some("stage:review"), one("stage:tdd"))
         );
+        assert_eq!(
+            to(Stage::Review, Outcome::Closed),
+            (some("stage:review"), one("stage:tdd"))
+        );
+        assert!(Outcome::Closed.allowed_in(Stage::Review));
+        assert!(!Outcome::Closed.allowed_in(Stage::Tdd));
+        assert!(Outcome::Closed.needs_message());
+        assert_eq!(Outcome::parse("closed"), Some(Outcome::Closed));
         assert_eq!(
             to(Stage::Review, Outcome::Passed),
             (some("stage:review"), one("stage:done"))

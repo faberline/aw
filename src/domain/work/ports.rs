@@ -32,6 +32,10 @@ pub trait Tracker {
     fn edit_pr_body(&self, pr: u64, body: &str) -> PortResult<()>;
     fn request_changes(&self, pr: u64, body: &str) -> PortResult<()>;
     fn pr_comment(&self, pr: u64, body: &str) -> PortResult<()>;
+    /// Close the pull request without a merge.
+    fn close_pr(&self, pr: u64) -> PortResult<()>;
+    /// Delete a branch of the repository.
+    fn delete_branch(&self, branch: &str) -> PortResult<()>;
     fn squash_merge(&self, pr: u64, subject: &str, body: &str) -> PortResult<()>;
     /// How many commits of `base` the `head` branch does not have.
     fn behind_by(&self, base: &str, head: &str) -> PortResult<u64>;
