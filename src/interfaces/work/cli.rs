@@ -94,7 +94,7 @@ enum Command {
     Report {
         #[command(flatten)]
         target: Target,
-        /// spec/tdd: ready|blocked. review: passed|failed|blocked.
+        /// spec/tdd: ready|blocked. review: passed|failed|closed|blocked.
         outcome: OutcomeArg,
         /// Report text. tdd ready: the pull request body.
         #[arg(short, long, conflicts_with = "file")]
@@ -194,6 +194,7 @@ enum OutcomeArg {
     Blocked,
     Passed,
     Failed,
+    Closed,
 }
 
 impl From<OutcomeArg> for Outcome {
@@ -203,6 +204,7 @@ impl From<OutcomeArg> for Outcome {
             OutcomeArg::Blocked => Outcome::Blocked,
             OutcomeArg::Passed => Outcome::Passed,
             OutcomeArg::Failed => Outcome::Failed,
+            OutcomeArg::Closed => Outcome::Closed,
         }
     }
 }

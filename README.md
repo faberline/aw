@@ -68,7 +68,7 @@ worker runs without `--has`, so it leaves that issue to a Mac.
 | --- | --- | --- | --- |
 | spec | anywhere | nothing | `ready`, `blocked` |
 | tdd | a clean clone of the repository | the head of the open pull request that closes the issue; else `<agent>/issue-<n>`, new from `origin/<default>` or continued from `origin` | `ready`, `blocked` |
-| review | anywhere | nothing | `passed`, `failed`, `blocked` |
+| review | anywhere | nothing | `passed`, `failed`, `closed`, `blocked` |
 
 For tdd, `aw claim` refuses a dirty working tree (untracked files included).
 Outside a clone of the repository it skips tdd issues and names them in its
@@ -83,7 +83,11 @@ when the tree is clean:
   `Closes #<n>`.
 - `review passed` squash-merges, without an approval, with subject `<title> (#<pr>)`.
 - `review failed` requests changes, or comments when GitHub refuses that.
-- `blocked` and `failed` need a message: `-m TEXT`, or `-F FILE` (`-` is stdin).
+- `review closed` comments the message on the pull request, closes it
+  without a merge and deletes its branch. The next tdd run starts again
+  from the default branch. Use it when rework cannot save the pull request.
+- `blocked`, `failed` and `closed` need a message: `-m TEXT`, or `-F FILE`
+  (`-` is stdin).
 
 Then `aw report` moves the `stage:` label, so the next `aw claim` can take the
 issue at once. The `agent:` label stays. A label failure is a warning.
@@ -92,7 +96,7 @@ issue at once. The `agent:` label stays. A label failure is a warning.
 | --- | --- |
 | spec `ready` | `stage:tdd` |
 | tdd `ready` | `stage:review` |
-| review `failed` | `stage:tdd` |
+| review `failed` or `closed` | `stage:tdd` |
 | review `passed` | `stage:done` |
 | `blocked` | the same stage, plus `blocked` |
 

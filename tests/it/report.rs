@@ -307,6 +307,71 @@ fn review_failed_requests_changes_or_falls_back_to_a_comment() {
 }
 
 #[test]
+fn review_closed_closes_the_pull_request_and_deletes_its_branch() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    claim_issue(&w, "claude");
+    let r = report(
+        w.services(),
+        "claude",
+        None,
+        Outcome::Closed,
+        "wrong design; start again",
+    )
+    .unwrap();
+    assert_eq!(r.outcome, Outcome::Closed);
+    assert_eq!(r.link.as_deref(), Some("https://github.com/o/r/pull/5"));
+    assert!(r.warnings.is_empty());
+    assert_eq!(
+        w.tracker.calls(),
+        [
+            "pr_comment #5",
+            "close_pr #5",
+            "delete_branch claude/issue-7",
+            "edit_comment #7",
+            "add_labels #7 stage:tdd",
+            "remove_label #7 stage:review"
+        ]
+    );
+    assert!(w.tracker.last_comment(7).contains("wrong design"));
+}
+
+#[test]
+fn review_closed_keeps_going_when_the_branch_stays() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    claim_issue(&w, "claude");
+    w.tracker.fail_delete_branch.set(true);
+    let r = report(w.services(), "claude", None, Outcome::Closed, "superseded").unwrap();
+    assert_eq!(r.warnings.len(), 1);
+    assert!(r.warnings[0].contains("claude/issue-7"));
+    assert!(w.tracker.calls().contains(&"close_pr #5".to_string()));
+    assert!(
+        w.tracker
+            .calls()
+            .contains(&"add_labels #7 stage:tdd".to_string())
+    );
+}
+
+#[test]
+fn review_closed_needs_a_message_and_a_review_stage() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    claim_issue(&w, "claude");
+    assert!(report(w.services(), "claude", None, Outcome::Closed, " ").is_err());
+    assert!(w.tracker.calls().is_empty());
+
+    let w = World::new();
+    w.tracker.issue(1, &["agent:codex", "stage:spec"]);
+    claim_issue(&w, "codex");
+    assert!(report(w.services(), "codex", None, Outcome::Closed, "x").is_err());
+    assert!(w.tracker.calls().is_empty());
+}
+
+#[test]
 fn outcome_must_fit_the_stage_and_failures_need_a_message() {
     let w = World::new();
     w.tracker.issue(1, &["agent:codex", "stage:spec"]);

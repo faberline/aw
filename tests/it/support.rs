@@ -20,6 +20,7 @@ pub struct FakeTracker {
     /// Everything the use case changed, in order, e.g. `merge #5`.
     pub calls: RefCell<Vec<String>>,
     pub fail_request_changes: Cell<bool>,
+    pub fail_delete_branch: Cell<bool>,
     /// The merge fails, as a strict ruleset refuses a branch behind base.
     pub fail_merge: Cell<bool>,
     /// What `behind_by` returns.
@@ -237,6 +238,20 @@ impl Tracker for FakeTracker {
 
     fn pr_comment(&self, pr: u64, _body: &str) -> PortResult<()> {
         self.record(format!("pr_comment #{pr}"));
+        Ok(())
+    }
+
+    fn close_pr(&self, pr: u64) -> PortResult<()> {
+        self.record(format!("close_pr #{pr}"));
+        self.prs.borrow_mut().retain(|p| p.number != pr);
+        Ok(())
+    }
+
+    fn delete_branch(&self, branch: &str) -> PortResult<()> {
+        if self.fail_delete_branch.get() {
+            return Err(PortError("reference does not exist".into()));
+        }
+        self.record(format!("delete_branch {branch}"));
         Ok(())
     }
 
