@@ -1,0 +1,7 @@
+# aw's own settings for the Faberline standards (docs/standards/).
+
+# S8 test coverage: docs/standards/coverage.md. CI raises `line`; it never
+# goes down.
+[standards.coverage]
+line = 81.24
+target = 100

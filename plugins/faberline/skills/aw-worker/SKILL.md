@@ -166,6 +166,23 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    - Otherwise do not release. Name the milestone in the final answer as
      ready for release.
    Do not close a milestone. The release closes it.
+6. Open the next coverage issue (standard S8, `docs/standards/coverage.md`
+   in aw). Do this only when the default branch's `aw.toml` has
+   `[standards.coverage]` and no open issue has a title that starts with
+   `test(coverage):`.
+   - Find the newest artifact `coverage` of the default branch:
+     `gh api "repos/<repo>/actions/artifacts?name=coverage&per_page=30" --jq '[.artifacts[] | select(.workflow_run.head_branch == "<default>" and (.expired | not))][0].id'`.
+     No artifact: skip this step.
+   - Download it to a temporary directory:
+     `gh api repos/<repo>/actions/artifacts/<id>/zip > <dir>/coverage.zip`,
+     then `unzip -o <dir>/coverage.zip -d <dir>`. Take the first entry of
+     `most_uncovered` in `coverage-report.json`.
+   - Create one issue with the title `test(coverage): cover <file>` and a
+     body with: the file, its line percent and uncovered lines; the goal,
+     tests that run every line of the file; the rules: tests only, no change
+     of behavior, a bug that a test finds becomes a new issue, an exclude
+     only as S8 allows; set `line` in `aw.toml` to the value that COV4
+     names. Triage it in the next plan like any issue: `p2`.
 
 `aw claim` takes `p0` first, then the issues of the lowest milestone
 version, so one milestone is cleared before the next one starts.
@@ -300,6 +317,11 @@ Read code through the GitHub API when you do not need the clone:
   It checks the CI stages standard, `docs/standards/ci.md` in aw. Every
   check must be `pass`, `excepted` or `skipped`. Fix each `fail`. Put the
   JSON output in a fenced block in the report file below.
+- When the repository's `aw.toml` has `[standards.coverage]` (standard S8,
+  `docs/standards/coverage.md` in aw), the tests run every new and changed
+  line. Put this rule in the subagent's brief. On rework after a CI coverage
+  failure, follow the check's detail: COV3 needs more tests; COV4 names the
+  new `line` for `aw.toml`. Never lower `line`.
 - Commit with conventional messages.
 - With a clean tree, run `$AW report <who> ready -F <file>` in the clone.
   The file becomes the pull request body after `Closes #<n>`: summary,
@@ -336,6 +358,10 @@ Read code through the GitHub API when you do not need the clone:
     a test in the diff proves each criterion and that CI ran it;
   - a small model wrote the code: look for tests that assert nothing,
     skipped or ignored tests, and changes outside the spec's files;
+  - a lower `line` in `[standards.coverage]` of `aw.toml`, or a new
+    `[[standards.coverage.exclude]]` whose reason the S8 page
+    (`docs/standards/coverage.md` in aw, section "Excludes") does not
+    allow, is a finding;
   - read only; do not run `aw`, `git` writes or `gh` writes;
   - the first line of the pull request body, `Closes #<n>`, is written by
     `aw` and links the issue; it is required, not a finding;

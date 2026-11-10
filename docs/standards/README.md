@@ -46,6 +46,7 @@ Promote a guideline only when all three are true:
 | S4 | [Core reuse](core-reuse.md) | every Rust repository, and `core` itself | `aw standards check` | `[[standards.core_reuse.exception]]` in `aw.toml` | active since 2026-10-15; 8 of 25 repositories pass |
 | S5 | [SaaS service skeleton](saas-service.md) | repositories with `[project] kind = "saas-service"`: `lumen`, `tape`, `defer`, `relay`, `keep` | `aw standards saas-service check` | `[[standards.saas_service.exception]]` in `aw.toml` | candidate since 2026-10-22; report only; 0 of 5 pass |
 | S7 | [CI stages](ci.md) | every repository with CI | `aw ci check` | `[[standards.ci.exception]]` in `aw.toml` | active since 2026-11-09; 0 of 8 repositories pass (`aw` misses only the ruleset) |
+| S8 | [Test coverage](coverage.md): 100 % line coverage, reached by a ratchet | every Rust repository | the coverage action, `.github/actions/coverage` | `[[standards.coverage.exclude]]` in `aw.toml` | active since 2026-11-10; `aw` adopted, then `lumen`, then the rest |
 
 A candidate becomes active when its checker is on `aw` main.
 
