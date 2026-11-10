@@ -393,3 +393,93 @@ fn only_needs_issues_leave_nothing_and_say_why() {
     assert!(why.contains("#1 needs `mac`"), "{why}");
     assert!(w.tracker.calls().is_empty());
 }
+
+fn spec_ready(msg: &str) -> String {
+    Signal {
+        stage: Stage::Spec,
+        agent: "claude".into(),
+        outcome: Outcome::Ready,
+    }
+    .render(msg, None)
+}
+
+fn tdd_with_pr(w: &World, head: &str) {
+    w.workspace.remote.borrow_mut().push(head.into());
+    w.tracker.pr(51, head, "Closes #7");
+    w.tracker.issue(7, &["agent:claude", "stage:tdd"]);
+}
+
+#[test]
+fn tdd_merges_main_into_a_branch_that_is_behind() {
+    let w = World::new();
+    tdd_with_pr(&w, "issue/7");
+    w.workspace.behind.set(true);
+    let c = claimed(&w, "claude");
+    assert_eq!((c.branch.as_str(), c.pr), ("issue/7", Some(51)));
+    assert_eq!(
+        w.workspace.calls(),
+        [
+            "status",
+            "fetch",
+            "create issue/7 from origin/issue/7",
+            "merge origin/main"
+        ]
+    );
+    assert!(!w.tracker.calls().iter().any(|c| c.starts_with("close_pr")));
+}
+
+#[test]
+fn tdd_starts_a_new_branch_when_the_merge_conflicts() {
+    let w = World::new();
+    tdd_with_pr(&w, "issue/7");
+    w.workspace.behind.set(true);
+    w.workspace.conflicts.set(true);
+    let c = claimed(&w, "claude");
+    assert_eq!((c.branch.as_str(), c.pr), ("issue/7-r2", None));
+    assert!(
+        w.workspace
+            .calls()
+            .contains(&"create issue/7-r2 from origin/main".to_string())
+    );
+    assert_eq!(
+        w.tracker.calls(),
+        ["comment #7", "pr_comment #51", "close_pr #51"]
+    );
+}
+
+#[test]
+fn a_spec_redo_marker_starts_a_new_branch_without_a_merge() {
+    let w = World::new();
+    tdd_with_pr(&w, "issue/7");
+    w.tracker.add_comment(
+        7,
+        &spec_ready("Start from main.\n\naw:redo"),
+        "2026-02-01T00:00:00Z",
+    );
+    let c = claimed(&w, "claude");
+    assert_eq!((c.branch.as_str(), c.pr), ("issue/7-r2", None));
+    assert!(!w.workspace.calls().iter().any(|c| c.starts_with("merge")));
+    assert!(w.tracker.calls().contains(&"close_pr #51".to_string()));
+    // The redo is done: the new claim does not ask for another.
+    assert_eq!(w.tracker.claims(7)[0].branch, "issue/7-r2");
+}
+
+#[test]
+fn a_redo_on_a_redo_branch_gives_r3() {
+    let w = World::new();
+    tdd_with_pr(&w, "issue/7-r2");
+    w.workspace.remote.borrow_mut().push("issue/7".into());
+    w.tracker
+        .add_comment(7, &spec_ready("aw:redo"), "2026-02-01T00:00:00Z");
+    assert_eq!(claimed(&w, "claude").branch, "issue/7-r3");
+}
+
+#[test]
+fn a_redo_skips_branches_that_already_exist() {
+    let w = World::new();
+    tdd_with_pr(&w, "issue/7");
+    w.workspace.remote.borrow_mut().push("issue/7-r2".into());
+    w.tracker
+        .add_comment(7, &spec_ready("aw:redo"), "2026-02-01T00:00:00Z");
+    assert_eq!(claimed(&w, "claude").branch, "issue/7-r3");
+}

@@ -94,6 +94,19 @@ impl Workspace for GitCli {
         self.git(&["merge", "--ff-only", "--quiet", upstream])
     }
 
+    fn contains(&self, upstream: &str) -> PortResult<bool> {
+        succeeds("git", &["merge-base", "--is-ancestor", upstream, "HEAD"])
+    }
+
+    fn merge(&self, upstream: &str) -> PortResult<bool> {
+        let args = ["merge", "--no-ff", "--no-edit", "--quiet", upstream];
+        if run("git", &args, None).is_ok() {
+            return Ok(true);
+        }
+        self.git(&["merge", "--abort"])?;
+        Ok(false)
+    }
+
     fn detach(&self, start: &str) -> PortResult<()> {
         self.git(&["switch", "--quiet", "--detach", start])
     }

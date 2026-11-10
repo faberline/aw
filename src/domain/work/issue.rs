@@ -137,6 +137,34 @@ pub fn awaiting_report(stage: Stage, agent: &str, comments: &[Comment]) -> bool 
             .any(|c| c.created_at.as_str() > at && !is_aw_comment(&c.body))
 }
 
+/// The line a spec writes in its message to ask for a redo from the
+/// newest default branch.
+pub const REDO_MARKER: &str = "aw:redo";
+
+/// The newest spec signal asks for a redo, and no tdd or review work has
+/// started since. After a claim posts its mark, or a report posts its
+/// signal, the redo is done and must not repeat.
+pub fn redo_requested(comments: &[Comment]) -> bool {
+    let newest_spec = comments
+        .iter()
+        .filter(|c| Signal::parse(&c.body).is_some_and(|s| s.stage == Stage::Spec))
+        .max_by(|a, b| a.created_at.cmp(&b.created_at));
+    let Some(spec) = newest_spec else {
+        return false;
+    };
+    let asked = spec
+        .body
+        .lines()
+        .skip(1)
+        .any(|l| l.trim().eq_ignore_ascii_case(REDO_MARKER));
+    asked
+        && !comments.iter().any(|c| {
+            c.created_at >= spec.created_at
+                && (Signal::parse(&c.body).is_some_and(|s| s.stage != Stage::Spec)
+                    || ClaimMark::parse(&c.body).is_some_and(|m| m.stage != Stage::Spec))
+        })
+}
+
 /// A signal or a claim that `aw` wrote.
 fn is_aw_comment(body: &str) -> bool {
     Signal::parse(body).is_some() || ClaimMark::parse(body).is_some()
@@ -165,6 +193,7 @@ mod tests {
         }
     }
 
+    const SPEC_READY: &str = "<!-- aw:signal stage=spec agent=claude outcome=ready -->";
     const SPEC_BLOCKED: &str = "<!-- aw:signal stage=spec agent=claude outcome=blocked -->";
 
     #[test]
@@ -205,6 +234,29 @@ mod tests {
             comment("Looks good.", "2026-11-08T18:11:00Z"),
         ];
         assert!(!awaiting_report(Stage::Spec, "claude", &ready));
+    }
+
+    #[test]
+    fn a_spec_redo_marker_asks_once() {
+        let spec = |msg: &str| format!("{SPEC_READY}\n**aw**\n\n{msg}");
+        let asked = comment(&spec("Start fresh.\naw:redo\n"), "2026-11-08T16:00:00Z");
+        assert!(redo_requested(std::slice::from_ref(&asked)));
+        let plain = comment(&spec("Start fresh."), "2026-11-08T16:00:00Z");
+        assert!(!redo_requested(&[plain]));
+        assert!(!redo_requested(&[]));
+        let claimed = comment(
+            "<!-- aw:claim stage=tdd agent=claude branch=issue/7-r2 pr=- at=1800000000 -->",
+            "2026-11-08T17:00:00Z",
+        );
+        assert!(!redo_requested(&[asked.clone(), claimed]));
+        let blocked = comment(
+            "<!-- aw:signal stage=tdd agent=claude outcome=blocked -->",
+            "2026-11-08T17:00:00Z",
+        );
+        assert!(!redo_requested(&[asked.clone(), blocked.clone()]));
+        // A newer spec that does not ask supersedes the old request.
+        let newer = comment(&spec("Keep the branch."), "2026-11-08T18:00:00Z");
+        assert!(!redo_requested(&[asked, newer]));
     }
 
     #[test]
