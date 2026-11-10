@@ -214,6 +214,9 @@ modulo the number of repositories. For each repository:
    `git stash push -u -m "aw-worker leftover <UTC time>"`.
 4. `$AW claim <who>`, with one `--skip <issue>` for each issue that this
    run released because its checks were still running.
+   On a Mac (`uname` prints `Darwin`), add `--has mac`. Then `aw` (0.7.13
+   or later) also offers the issues labeled `needs:mac`. On any other
+   machine do not add it; `aw` passes over those issues.
    - Exit 2: nothing to do here. Try the next repository.
    - Exit 1: keep stderr for the report. Try the next repository.
    - Exit 0: read the JSON (`repo`, `issue`, `stage`, `branch`, `pr`).

@@ -6,14 +6,14 @@ use aw::domain::work::stage::Stage;
 use crate::support::{NOW, World};
 
 fn claimed(world: &World, agent: &str) -> Claim {
-    match claim(world.services(), agent, None, &[]).unwrap() {
+    match claim(world.services(), agent, None, &[], &[]).unwrap() {
         ClaimOutcome::Claimed(c) => c,
         ClaimOutcome::Nothing(why) => panic!("expected a claim, got nothing: {why}"),
     }
 }
 
 fn nothing(world: &World, agent: &str) -> String {
-    match claim(world.services(), agent, None, &[]).unwrap() {
+    match claim(world.services(), agent, None, &[], &[]).unwrap() {
         ClaimOutcome::Nothing(why) => why,
         ClaimOutcome::Claimed(c) => panic!("expected nothing, claimed #{}", c.issue),
     }
@@ -48,7 +48,7 @@ fn skip_passes_over_the_named_issues() {
     w.tracker.issue(1, &["agent:claude", "stage:spec", "p0"]);
     w.tracker.issue(2, &["agent:claude", "stage:spec", "p1"]);
     w.tracker.issue(3, &["agent:claude", "stage:spec", "p2"]);
-    let c = match claim(w.services(), "claude", None, &[1, 2]).unwrap() {
+    let c = match claim(w.services(), "claude", None, &[1, 2], &[]).unwrap() {
         ClaimOutcome::Claimed(c) => c,
         ClaimOutcome::Nothing(why) => panic!("expected a claim, got nothing: {why}"),
     };
@@ -62,7 +62,7 @@ fn skipping_every_issue_leaves_nothing() {
     let w = World::new();
     w.tracker.issue(1, &["agent:claude", "stage:spec"]);
     assert!(matches!(
-        claim(w.services(), "claude", None, &[1]).unwrap(),
+        claim(w.services(), "claude", None, &[1], &[]).unwrap(),
         ClaimOutcome::Nothing(_)
     ));
     assert!(w.tracker.calls().is_empty());
@@ -226,7 +226,7 @@ fn tdd_with_a_dirty_tree_is_an_error_and_leaves_no_claim() {
     let w = World::new();
     w.workspace.clean.set(false);
     w.tracker.issue(1, &["agent:codex", "stage:tdd"]);
-    assert!(claim(w.services(), "codex", None, &[]).is_err());
+    assert!(claim(w.services(), "codex", None, &[], &[]).is_err());
     assert!(w.tracker.claims(1).is_empty());
 }
 
@@ -292,12 +292,12 @@ fn a_stale_claim_is_removed_and_replaced() {
 #[test]
 fn a_bad_agent_id_is_an_error() {
     let w = World::new();
-    assert!(claim(w.services(), "Codex", None, &[]).is_err());
-    assert!(claim(w.services(), "", None, &[]).is_err());
+    assert!(claim(w.services(), "Codex", None, &[], &[]).is_err());
+    assert!(claim(w.services(), "", None, &[], &[]).is_err());
 }
 
 fn claimed_in(w: &World, agent: &str, stage: Stage) -> Claim {
-    match claim(w.services(), agent, Some(stage), &[]).unwrap() {
+    match claim(w.services(), agent, Some(stage), &[], &[]).unwrap() {
         ClaimOutcome::Claimed(c) => c,
         ClaimOutcome::Nothing(why) => panic!("expected a claim, got nothing: {why}"),
     }
@@ -318,7 +318,7 @@ fn a_stage_takes_only_issues_of_that_stage() {
 fn a_stage_with_no_issue_says_which_stage() {
     let w = World::new();
     w.tracker.issue(1, &["agent:claude", "stage:spec"]);
-    let why = match claim(w.services(), "claude", Some(Stage::Review), &[]).unwrap() {
+    let why = match claim(w.services(), "claude", Some(Stage::Review), &[], &[]).unwrap() {
         ClaimOutcome::Nothing(why) => why,
         ClaimOutcome::Claimed(c) => panic!("expected nothing, claimed #{}", c.issue),
     };
@@ -338,7 +338,7 @@ fn each_stage_holds_its_own_claim() {
     let review = claimed_in(&w, "claude", Stage::Review);
     assert_eq!((spec.issue, review.issue), (1, 7));
     // A second spec claim waits for the first one.
-    let why = match claim(w.services(), "claude", Some(Stage::Spec), &[]).unwrap() {
+    let why = match claim(w.services(), "claude", Some(Stage::Spec), &[], &[]).unwrap() {
         ClaimOutcome::Nothing(why) => why,
         ClaimOutcome::Claimed(c) => panic!("expected nothing, claimed #{}", c.issue),
     };
@@ -355,4 +355,41 @@ fn each_stage_holds_its_own_claim() {
         status(w.services(), "claude", Some(Stage::Tdd)).unwrap(),
         None
     );
+}
+
+#[test]
+fn a_needs_label_is_passed_over_without_the_thing() {
+    let w = World::new();
+    w.tracker
+        .issue(1, &["agent:claude", "stage:spec", "p0", "needs:mac"]);
+    w.tracker.issue(2, &["agent:claude", "stage:spec", "p2"]);
+    let c = match claim(w.services(), "claude", None, &[], &[]).unwrap() {
+        ClaimOutcome::Claimed(c) => c,
+        ClaimOutcome::Nothing(why) => panic!("expected a claim, got nothing: {why}"),
+    };
+    assert_eq!(c.issue, 2);
+    assert!(w.tracker.claims(1).is_empty());
+}
+
+#[test]
+fn a_worker_that_has_the_thing_takes_the_needs_issue() {
+    let w = World::new();
+    w.tracker
+        .issue(1, &["agent:claude", "stage:spec", "p0", "needs:mac"]);
+    w.tracker.issue(2, &["agent:claude", "stage:spec", "p2"]);
+    let c = match claim(w.services(), "claude", None, &[], &["mac".to_string()]).unwrap() {
+        ClaimOutcome::Claimed(c) => c,
+        ClaimOutcome::Nothing(why) => panic!("expected a claim, got nothing: {why}"),
+    };
+    assert_eq!(c.issue, 1);
+}
+
+#[test]
+fn only_needs_issues_leave_nothing_and_say_why() {
+    let w = World::new();
+    w.tracker
+        .issue(1, &["agent:claude", "stage:spec", "needs:mac"]);
+    let why = nothing(&w, "claude");
+    assert!(why.contains("#1 needs `mac`"), "{why}");
+    assert!(w.tracker.calls().is_empty());
 }

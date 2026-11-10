@@ -22,11 +22,14 @@ pub enum ClaimOutcome {
 /// Issues in `skip` are passed over, for example a review that waits on
 /// running checks. With `only`, the agent takes and holds claims of that
 /// stage only, so one worker per stage can run at the same time.
+/// An issue with a `needs:<thing>` label is passed over unless `has`
+/// names that thing, so a cloud worker leaves Mac-only work to a Mac.
 pub fn claim(
     s: Services<'_>,
     agent: &str,
     only: Option<Stage>,
     skip: &[u64],
+    has: &[String],
 ) -> Result<ClaimOutcome> {
     if !valid_agent(agent) {
         bail!("agent `{agent}` must use only a-z, 0-9 and -");
@@ -54,6 +57,7 @@ pub fn claim(
     let mut prs: Option<Vec<PullRequest>> = None;
     let mut checkout: Option<bool> = None;
     let mut needs_checkout = Vec::new();
+    let mut needs_other = Vec::new();
 
     for open in &board.open {
         let issue = &open.issue;
@@ -67,6 +71,10 @@ pub fn claim(
             continue;
         }
         if !awaiting_report(stage, agent, &open.comments) {
+            continue;
+        }
+        if let Some(need) = issue.missing_need(has) {
+            needs_other.push(format!("#{} needs `{need}`", issue.number));
             continue;
         }
         if stage == Stage::Tdd {
@@ -133,6 +141,12 @@ pub fn claim(
             "; tdd on {} needs a clone of {}: run `aw claim` in it",
             needs_checkout.join(", "),
             repo.name
+        ));
+    }
+    if !needs_other.is_empty() {
+        why.push_str(&format!(
+            "; passed over {}: run `aw claim --has <thing>` on a machine that has it",
+            needs_other.join(", ")
         ));
     }
     Ok(ClaimOutcome::Nothing(why))
