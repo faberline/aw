@@ -493,3 +493,34 @@ fn a_stage_reports_and_releases_only_its_own_claim() {
     assert_eq!((c.issue, c.stage), (7, Stage::Review));
     assert_eq!(status(w.services(), "claude", None).unwrap(), None);
 }
+
+#[test]
+fn review_closed_never_deletes_the_default_branch() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "main", "Closes #7");
+    claim_issue(&w, "claude");
+    let r = report(w.services(), "claude", None, Outcome::Closed, "superseded").unwrap();
+    assert_eq!(r.warnings.len(), 1);
+    assert!(r.warnings[0].contains("default branch"));
+    assert!(
+        !w.tracker
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("delete_branch"))
+    );
+    assert!(w.tracker.calls().contains(&"close_pr #5".to_string()));
+}
+
+#[test]
+fn review_closed_is_an_error_when_the_pull_request_is_gone() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    claim_issue(&w, "claude");
+    w.tracker.prs.borrow_mut().clear();
+    let err = report(w.services(), "claude", None, Outcome::Closed, "superseded").unwrap_err();
+    assert!(format!("{err:#}").contains("no longer open"));
+    assert!(w.tracker.calls().is_empty());
+    assert_eq!(w.tracker.claims(7).len(), 1);
+}
