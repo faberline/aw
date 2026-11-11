@@ -100,6 +100,7 @@ Look only at these:
 - e. Blocked issues whose reason is gone (G10, below).
 - f. Stage liveness (G8, below).
 - g. Review loops (G12, below).
+- h. Parent issues whose children are all done (G13, below).
 
 ### 5. Find root causes before you act
 
@@ -227,6 +228,7 @@ A root cause is urgent when one of these is true:
 - Its faberline/aw issue is open for more than 2 hours and has no comment after its creation.
 - A stage routine is dead (G8).
 - A review loop (G12) is on the release chain (G11) or has `p0` or `p1`.
+- A finished parent issue (G13) stops a chain that has `p0` or `p1`.
 
 For an urgent root cause, put the label `urgent` on its faberline/aw issue.
 Create a new issue with the label, or add the label to an open one.
@@ -323,10 +325,35 @@ In each run, look at each issue with the label `blocked`.
 Check if the reason still holds.
 Examples of a gone reason: the failed check is now green; the dependency issue is now closed; the tag now exists.
 
-When the reason is gone, say so in one of these places:
+Check the fact first.
+Read the pull request or the issue that the blocked issue waited for.
+Use `gh api repos/<owner>/<repo>/pulls/<n>` or `gh api repos/<owner>/<repo>/issues/<n>`.
+Note its state.
+Note its merge time (`merged_at`) or its close time (`closed_at`).
+A pull request can be closed but not merged.
+Then say so in the facts, and check that the work it carried is not needed.
+Write these facts in the decision.
 
-- the faberline/aw tracking issue;
-- a `decision` issue of type `中控可決定`, with the exact label change in the `執行清單`.
+When the reason is gone, a note is not enough.
+The supervisor may not change the label, so the desk must do it.
+The desk acts only on an `執行清單`.
+Open one `decision` issue for each run of `<target>`.
+Put each stale `blocked` issue of this run in that one issue.
+Use `類型：中控可決定`.
+Use one option.
+Its `執行清單` has these lines for each stale issue:
+
+- the label to remove (`blocked`);
+- the `stage:*` label to add, when the issue has none (G4);
+- the comment text for the issue, in one line.
+
+Search the open faberline/aw issues first (step 6).
+A `decision(<repo>)` issue can be open already.
+Then you may add the item there in a comment.
+The comment must have the full `執行清單`.
+A comment that only says "the reason is gone" is not enough.
+Do not create a second decision issue for the same blocked issue.
+Do not change the label yourself.
 
 Example failure: core#163 stayed `blocked` after all 46 checks of its pull request became green.
 
@@ -378,3 +405,49 @@ Example failure: core#163 (pull request 171) got six failed review signals.
 Each had a small new finding.
 The `status(core)` board did not name it.
 The issue is on the release chain to `v0.5.0`.
+
+### Parent issue with all children done (G13)
+
+A parent issue can stay open after its work is done.
+It has no `stage:*` label, so no stage routine claims it.
+Other issues wait for it.
+The chain stops, and no routine sees it.
+
+For each open issue in `<target>` without a `stage:*` label, do this:
+
+1. List its child issues.
+   Use `gh api repos/<target>/issues/<n>/sub_issues`.
+   Also read the issue links in the task list of its body.
+2. Check that each child is closed and has the label `stage:done`.
+   The issue must have at least one child.
+3. Check that another open issue waits for this parent.
+   Read the last aw signal and the body of each `blocked` issue.
+
+When all three are true, this is a root cause named "finished parent".
+Open a `decision` issue in faberline/aw in the same run.
+Use `類型：中控可決定`.
+Use one option.
+Write these facts: each child with its link and its close time; the issue that waits; since when it waits.
+The `執行清單` has these lines:
+
+- close the parent issue, with the comment text in one line;
+- remove `blocked` from each issue that waits for the parent;
+- add the `stage:*` label to a waiting issue that has none (G4).
+
+Search the open faberline/aw issues first (step 6).
+When an open `decision(<repo>)` issue exists, add a comment there with the full `執行清單`.
+Do not create a duplicate.
+
+A comment on the parent that asks the planner to decide is not enough.
+No routine reads it.
+You may write that comment, but the `decision` issue is required.
+
+When the chain has `p0` or `p1`, add `urgent` (step 9).
+Do not close the parent yourself.
+Do not change labels yourself.
+
+Example failure: faberline/core#157 had only closed children with `stage:done`.
+It stopped core#147 from 11:54Z to 14:30Z on 2026-11-11.
+core#147 is on the release chain to `v0.5.0`.
+The supervisor left a comment for the planner.
+The desk found the problem by hand.
