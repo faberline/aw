@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Tests for resize_pool (common.sh) and blockers.sh. No cluster needed: gcloud
-# is a fake on PATH. Run: scripts/gke-test/tests/run-tests.sh
+# Tests for resize_pool (common.sh), blockers.sh, check-cr-storage.sh, and
+# lock.sh. No cluster needed: gcloud and kubectl are fakes on PATH. Run: scripts/gke-test/tests/run-tests.sh
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GKE="$HERE/.."
@@ -200,6 +200,141 @@ check "cr-storage: another kind is not checked" test -z "$(cr_check "$TMP/cr-oth
 check "cr-storage: another repository is not checked" test -z "$(cr_check "$TMP/cr-bad.json" keep)"
 check "cr-storage: the tape row of infra/gke-test/cr-storage.yaml works" \
   test "$("$GKE/check-cr-storage.sh" "$TMP/cr-bad.json" "$GKE/../../infra/gke-test/cr-storage.yaml" tape "$CR_POOLS" "$HD_RE" | wc -l)" -eq 2
+
+# --- lock.sh -------------------------------------------------------------------
+# The fake kubectl keeps one Lease in $TMP/lease.json and counts versions like
+# the API server: `replace` with an old resourceVersion is a Conflict.
+# FAKE_KUBECTL_DOWN=1 makes every Lease request fail.
+cat >"$TMP/bin/kubectl" <<'FAKE'
+#!/usr/bin/env bash
+f="$TMP/lease.json"
+args=()
+while (($#)); do
+  case "$1" in
+    --request-timeout=*|--ignore-not-found) ;;
+    -n|-o|-f) shift ;;
+    *) args+=("$1") ;;
+  esac
+  shift
+done
+set -- "${args[@]}"
+if [[ "$1 $2" == "create namespace" ]]; then
+  echo "Error from server (AlreadyExists): namespaces \"$3\" already exists" >&2
+  exit 1
+fi
+if [[ "${FAKE_KUBECTL_DOWN:-}" == 1 ]]; then
+  echo "Unable to connect to the server: timeout" >&2
+  exit 1
+fi
+# Store stdin as the Lease, with the next resourceVersion.
+store() {
+  local rv=$(( $(cat "$TMP/rv" 2>/dev/null || echo 0) + 1 ))
+  jq --arg rv "$rv" '.metadata.resourceVersion = $rv' >"$f"
+  echo "$rv" >"$TMP/rv"
+}
+case "$1" in
+  get)
+    [[ -f "$f" ]] || { echo "Error from server (NotFound): leases.coordination.k8s.io \"$3\" not found" >&2; exit 1; }
+    cat "$f" ;;
+  create)
+    [[ ! -f "$f" ]] || { echo "Error from server (AlreadyExists): leases.coordination.k8s.io already exists" >&2; exit 1; }
+    store ;;
+  replace)
+    in="$(cat)"
+    [[ -f "$f" ]] || { echo "Error from server (NotFound): leases.coordination.k8s.io not found" >&2; exit 1; }
+    [[ "$(jq -r '.metadata.resourceVersion' <<<"$in")" == "$(jq -r '.metadata.resourceVersion' "$f")" ]] \
+      || { echo "Error from server (Conflict): the object has been modified" >&2; exit 1; }
+    store <<<"$in" ;;
+  delete) rm -f "$f" ;;
+esac
+FAKE
+chmod +x "$TMP/bin/kubectl"
+
+lock() { # lock <holder> <action>; QUEUE_MINUTES, LANE and the FAKE_ values pass through
+  env PATH="$TMP/bin:$PATH" TMP="$TMP" KUBECONFIG="$TMP/kubeconfig" REPO=lumen LOCK_HOLDER="$1" \
+    LOCK_SLEEP="${LOCK_SLEEP:-true}" "$GKE/lock.sh" "$2" 2>"$TMP/lock.log"
+}
+lease_holder() { jq -r '.spec.holderIdentity' "$TMP/lease.json" 2>/dev/null; }
+no_lease() { rm -f "$TMP/lease.json"; }
+# A Lease that <holder> renewed <age> seconds ago, with a 600 s duration.
+put_lease() { # put_lease <holder> <age>
+  jq -n --arg h "$1" --argjson age "$2" '{metadata: {name: "gke-test-lumen", resourceVersion: "7"},
+    spec: {holderIdentity: $h, leaseDurationSeconds: 600,
+           renewTime: ((now - $age) | strftime("%Y-%m-%dT%H:%M:%S.000000Z"))}}' >"$TMP/lease.json"
+  echo 7 >"$TMP/rv"
+}
+
+no_lease
+check "lock: a free lease is taken" lock run-a acquire
+check "lock: the lease names its holder" test "$(lease_holder)" = run-a
+check "lock: the lease lasts TTL_MINUTES plus 15 minutes" \
+  test "$(jq -r '.spec.leaseDurationSeconds' "$TMP/lease.json")" -eq 6300
+rv_before="$(cat "$TMP/rv")"
+check "lock: the holder renews" lock run-a renew
+check "lock: a renew writes the lease" test "$(cat "$TMP/rv")" -gt "$rv_before"
+if lock run-b renew; then fail "lock: another run cannot renew"; else pass "lock: another run cannot renew"; fi
+check "lock: the holder acquires again without a wait" env QUEUE_MINUTES=0 \
+  PATH="$TMP/bin:$PATH" TMP="$TMP" KUBECONFIG="$TMP/kubeconfig" REPO=lumen LOCK_HOLDER=run-a "$GKE/lock.sh" acquire 2>/dev/null
+# A held lease: the second run waits, then fails at QUEUE_MINUTES. It never
+# takes the lease, and the holder keeps it.
+if QUEUE_MINUTES=1 lock run-b acquire; then
+  fail "lock: a second run waits and times out"
+elif [[ "$(lease_holder)" == run-a ]] && grep -q 'still waiting after 1 minutes' "$TMP/lock.log"; then
+  pass "lock: a second run waits and times out"
+else
+  fail "lock: a second run waits and times out"
+fi
+check "lock: release by another run does nothing" lock run-b release
+check "lock: the lease is still held after that" test "$(lease_holder)" = run-a
+# The holder releases while the second run waits: the second run gets it.
+cat >"$TMP/bin/holder-releases" <<'FAKE'
+#!/usr/bin/env bash
+rm -f "$TMP/lease.json"
+FAKE
+chmod +x "$TMP/bin/holder-releases"
+check "lock: a waiting run gets the lease after a release" env LOCK_SLEEP=holder-releases \
+  PATH="$TMP/bin:$PATH" TMP="$TMP" KUBECONFIG="$TMP/kubeconfig" REPO=lumen LOCK_HOLDER=run-b "$GKE/lock.sh" acquire 2>/dev/null
+check "lock: the waiting run is the new holder" test "$(lease_holder)" = run-b
+check "lock: the holder releases" lock run-b release
+check "lock: a released lease is gone" test ! -f "$TMP/lease.json"
+check "lock: release twice is safe" lock run-b release
+# A dead run: its lease expired, so the next run takes it over.
+put_lease dead-run 700
+check "lock: an expired lease is taken over" lock run-c acquire
+check "lock: the take-over names the new holder" test "$(lease_holder)" = run-c
+put_lease live-run 100
+if QUEUE_MINUTES=1 lock run-c acquire; then
+  fail "lock: a lease inside its duration is not taken over"
+else
+  check "lock: a lease inside its duration is not taken over" test "$(lease_holder)" = live-run
+fi
+# Never run without the lease when the cluster does not answer.
+no_lease
+if FAKE_KUBECTL_DOWN=1 lock run-d acquire; then
+  fail "lock: an API error fails the run"
+else
+  check "lock: an API error fails the run" grep -q 'refused 5 requests' "$TMP/lock.log"
+fi
+if FAKE_KUBECTL_DOWN=1 lock run-d renew; then fail "lock: an API error fails a renew"; else pass "lock: an API error fails a renew"; fi
+if lock run-d renew; then fail "lock: no lease fails a renew"; else pass "lock: no lease fails a renew"; fi
+# A lane has its own lease; the name is a DNS name.
+no_lease
+check "lock: a lane run takes its own lease" env LANE=Perf_A1 \
+  PATH="$TMP/bin:$PATH" TMP="$TMP" KUBECONFIG="$TMP/kubeconfig" REPO=lumen LOCK_HOLDER=run-e "$GKE/lock.sh" acquire 2>/dev/null
+check "lock: the lane lease name" test "$(jq -r '.metadata.name' "$TMP/lease.json")" = gke-test-lumen-lane-perf-a1
+
+# The workflow must not bring back a concurrency group for the job: a group
+# cancels waiting runs (aw#293).
+WF="$GKE/../../.github/workflows/gke-test.yml"
+step_index() { # step_index <text in the step's run>
+  yq ".jobs.gke-test.steps | to_entries | map(select(.value.run // \"\" | contains(\"$1\"))) | .[0].key" "$WF"
+}
+check "workflow: no concurrency group" test "$(yq '.jobs.gke-test | has("concurrency")' "$WF")" = false
+check "workflow: waits for the lease before run.sh" test "$(step_index 'lock.sh acquire')" -lt "$(step_index 'gke-test/run.sh')"
+check "workflow: the release step always runs, and is last" test \
+  "$(yq '.jobs.gke-test.steps[-1] | (.if == "always()" and (.run | contains("lock.sh release")))' "$WF")" = true
+check "workflow: the backup teardown runs only with the lease" test \
+  "$(yq '.jobs.gke-test.steps[] | select(.name == "Tear down (backup)") | .run | contains("lock.sh renew")' "$WF")" = true
 
 if ((fails > 0)); then
   printf '%s test(s) failed\n' "$fails" >&2
