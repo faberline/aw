@@ -21,6 +21,7 @@ moves the `stage:` label (see below).
 | `stage:spec`, `stage:tdd`, `stage:review` | the stage to work on; exactly one |
 | `stage:done` | finished; never claimed |
 | `p0` … `p3` | priority; `p0` first, no label last |
+| `bar` | inside the internal-use bar of the repository; claimed after `p0` and before the milestone order |
 | `blocked` | never claimed |
 
 `aw claim` posts a claim comment on the issue. Its first line is a hidden
