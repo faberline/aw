@@ -282,6 +282,13 @@ Read code through the GitHub API when you do not need the clone:
   `Closes #<n>`. Do not write a spec for a slice that must leave the issue
   open. When the issue needs more than one pull request, report `blocked`
   and name the child issues, one pull request each.
+- When the spec must make tdd start again from the newest default branch
+  (the old pull request branch is wrong or dirty), write the line
+  `aw:redo` alone on its own line in the spec file. Do not only write
+  "start from main" in prose: `aw claim` reads only this line. Then
+  `aw claim` for tdd gives a new branch `<head>-r2` (later `-r3`) from the
+  default branch and closes the old pull request with a comment. The redo
+  happens once, at the next tdd claim; later claims continue the new branch.
 - `$AW report <who> ready -F <file>`. The spec becomes the signal comment.
 
 ### tdd
@@ -291,8 +298,14 @@ Read code through the GitHub API when you do not need the clone:
   review comments.
 - Work on the branch that `aw claim` checked out. On rework it is the open
   pull request's branch. Do not copy files from another branch.
-- When the branch is behind `origin/<default>` or has a conflict, run
-  `git merge origin/<default>` and resolve it. Never rebase. Never force-push.
+- `aw claim` already ran `git merge origin/<default>` when that branch was
+  behind and the merge was clean. When the merge conflicts, or the spec
+  has an `aw:redo` line, `aw claim` gives a new branch `<head>-r2` (or
+  `-r3`) from the default branch and closes the old pull request. Use the
+  branch in the claim JSON; never switch branches yourself. Never rebase.
+  Never force-push. The net diff must still hold only the spec's files.
+- If you must merge yourself (for example `main` moved during the run), run
+  `git merge origin/<default>`, not rebase, and resolve it.
 - When the spec does not meet the spec checklist, do not guess. Report
   `blocked` with the missing points; the next plan sends it back to spec.
 - Give the implementation to one subagent with the Agent tool and

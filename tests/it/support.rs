@@ -289,6 +289,10 @@ pub struct FakeWorkspace {
     /// `git switch` fails, as it does in a linked worktree when another
     /// worktree has the branch checked out.
     pub switch_fails: Cell<bool>,
+    /// HEAD lacks commits of `origin/<default>`.
+    pub behind: Cell<bool>,
+    /// Merging `origin/<default>` conflicts.
+    pub conflicts: Cell<bool>,
 }
 
 impl Default for FakeWorkspace {
@@ -300,6 +304,8 @@ impl Default for FakeWorkspace {
             remote: RefCell::new(vec!["main".into()]),
             calls: RefCell::new(Vec::new()),
             switch_fails: Cell::new(false),
+            behind: Cell::new(false),
+            conflicts: Cell::new(false),
         }
     }
 }
@@ -356,6 +362,15 @@ impl Workspace for FakeWorkspace {
     fn fast_forward(&self, upstream: &str) -> PortResult<()> {
         self.record(format!("ff {upstream}"));
         Ok(())
+    }
+
+    fn contains(&self, _upstream: &str) -> PortResult<bool> {
+        Ok(!self.behind.get())
+    }
+
+    fn merge(&self, upstream: &str) -> PortResult<bool> {
+        self.record(format!("merge {upstream}"));
+        Ok(!self.conflicts.get())
     }
 
     fn detach(&self, start: &str) -> PortResult<()> {
