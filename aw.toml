@@ -3,5 +3,5 @@
 # S8 test coverage: docs/standards/coverage.md. CI raises `line`; it never
 # goes down.
 [standards.coverage]
-line = 82.03
+line = 87.69
 target = 100
