@@ -630,3 +630,23 @@ CRDs, ClusterRoles, and ClusterRoleBindings, and Kubernetes allows that only
 with `bind` and `escalate`, which equal `cluster-admin`. This is a test cluster
 with no real data, and every repository belongs to the same owner, so
 repositories are not isolated from each other beyond namespaces and pools.
+
+## Temporary resources
+
+### Bucket `sift-restore-drill-20261111`
+
+`infra/gke-test/sift-restore-drill.tf` makes one GCS bucket for the one-time
+backup restore drill of `faberline/sift#84`. It is temporary.
+
+- Region `asia-east1`. Uniform bucket-level access. Public access prevention
+  is enforced. A lifecycle rule deletes objects after 7 days.
+- Only pods that run as Kubernetes service account `sift-restore-drill` in
+  namespace `sift` get `roles/storage.objectAdmin`, on this bucket only. The
+  grant uses the Workload Identity Federation for GKE principal directly, so
+  the pod needs no annotation and there is no extra Google service account.
+- No project-level role changes. `gke-test-sift` and `faberlineGkeTest` stay
+  as they are.
+
+To remove it: delete `infra/gke-test/sift-restore-drill.tf` (and this
+section) in a pull request, then run `terraform apply`. `force_destroy` deletes
+the objects with the bucket.
