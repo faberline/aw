@@ -45,7 +45,8 @@ order.
 - `permissions: contents: read` at the top. A job widens only what it uses,
   for example `id-token: write` on an `e2e-*` job that signs in to GKE.
 - Concurrency: one run per ref. Cancel an older run only on a pull request,
-  so a push to `main` always finishes.
+  so a push to `main` always finishes. See [Queue](#queue).
+- Every job has `timeout-minutes`. See [Queue](#queue).
 - Actions are pinned to a full commit SHA with the version in a comment.
 - Cargo commands use `--locked`.
 - CI reads only the code. It does not read the issue, the pull request body,
@@ -118,6 +119,31 @@ jobs:
           echo "$RESULTS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' > /dev/null
 ```
 
+## Queue
+
+The whole `faberline` organization shares 20 concurrent GitHub Actions
+jobs, not 20 for each repository. One pull request with 36 jobs can make the
+runs of every other repository wait ("queued", zero jobs). These rules keep
+the queue short. They never remove a test, a matrix entry, a threshold or a
+required check.
+
+1. **A new push cancels the old run.** Every workflow with a `pull_request`
+   trigger has a top-level `concurrency` group for its ref with
+   `cancel-in-progress: true` on a pull request. Workflows that run on
+   `main`, on a tag or on a schedule never cancel, and neither do release
+   workflows: `cancel-in-progress` is `false` or `github.event_name ==
+   'pull_request'`.
+2. **A stuck job does not hold a slot.** Every job has `timeout-minutes`.
+   Set it to about three times the normal run time. The default is 360
+   minutes. A job that calls a reusable workflow (`uses:`) cannot set it; the
+   called workflow sets it on its own jobs.
+
+`aw ci check` reads rule 1 as CI10 and rule 2 as CI11 for `ci.yml`.
+
+To see the load, run `scripts/ci/pr-jobs.sh`. It prints, for each repository,
+the job count and the median job minutes of one recent pull request, from one
+GraphQL call.
+
 ## Other workflows
 
 A repository has `ci.yml` and may have these. None of them is a required
@@ -163,7 +189,9 @@ It prints a JSON report and exits 1 when a check fails.
 | CI6 | Every `e2e-*` job waits for a `test-*` job, directly or through other jobs. |
 | CI7 | `gate` has `name: gate` and `if: always()`, needs every other job, and its steps check `.lint.result == "success"` and `.result == "success" or .result == "skipped"`. |
 | CI8 | The default-branch ruleset requires `gate` and no other status check. Classic branch protection is not read. |
-| CI9 | Every exception names a check `CI1`–`CI8` and has a reason. |
+| CI9 | Every exception names a check `CI1`–`CI8`, `CI10` or `CI11` and has a reason. |
+| CI10 | A workflow with a `pull_request` trigger has a top-level `concurrency` group. (The check does not read `cancel-in-progress`.) |
+| CI11 | Every job has `timeout-minutes`, except a job that calls a reusable workflow with `uses:`. |
 
 ### Exceptions
 

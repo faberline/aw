@@ -8,10 +8,14 @@ on:
   pull_request:
   push:
     branches: [main]
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   lint:
     name: "lint: fmt, clippy"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -19,6 +23,7 @@ jobs:
     name: "test: workspace"
     needs: [lint]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - run: cargo test --workspace --locked
   gate:
@@ -26,6 +31,7 @@ jobs:
     if: always()
     needs: [lint, test-workspace]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check every stage
         env:
@@ -92,6 +98,28 @@ fn a_broken_ci_yml_prints_the_report_and_exits_1() {
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(report["passed"], false);
     assert_eq!(status(&report, "CI5"), "fail");
+}
+
+#[test]
+fn a_pull_request_workflow_without_concurrency_fails_ci10() {
+    let start = CI.find("concurrency:").unwrap();
+    let end = CI.find("jobs:").unwrap();
+    let without = format!("{}{}", &CI[..start], &CI[end..]);
+    let dir = checkout("noconc", Some(&without), None);
+    let (out, report) = check(&dir, &["--no-ruleset"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(status(&report, "CI10"), "fail");
+    assert_eq!(status(&report, "CI11"), "pass");
+}
+
+#[test]
+fn a_job_without_timeout_fails_ci11() {
+    let without = CI.replace("    timeout-minutes: 5\n", "");
+    let dir = checkout("notimeout", Some(&without), None);
+    let (out, report) = check(&dir, &["--no-ruleset"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(status(&report, "CI11"), "fail");
+    assert_eq!(status(&report, "CI10"), "pass");
 }
 
 #[test]
