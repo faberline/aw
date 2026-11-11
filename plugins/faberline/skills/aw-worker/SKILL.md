@@ -46,7 +46,7 @@ In a stage run:
   that stage, so the three runs do not block each other.
 - Only the spec run plans. The tdd and review runs skip section 2.
 - The run's own model does the stage work. Do not give it to a subagent.
-- `$AW --version` must print `aw 0.7.2` or newer.
+- `$AW --version` must print `aw 0.7.22` or newer.
 
 Without a stage in the prompt, one run does every stage as described below.
 
@@ -76,7 +76,8 @@ Every issue in the flow has the label `agent:claude`.
 - Never work in a person's checkout, such as `~/faberlines/<repo>`.
 
 Use the Rust `aw`: `AW=~/.local/share/aw-rs/bin/aw`.
-`$AW --version` must print `aw 0.7.0` or newer.
+`$AW --version` must print `aw 0.7.22` or newer.
+An older `aw` has no `respec` outcome or handles it wrongly: install the new one with the command below, then check again.
 `~/.local/bin/aw` can be an old Python tool with the same name; do not use it.
 When no binary passes the check, stop and report it.
 Install command: `cargo install --git https://github.com/faberline/aw --root ~/.local/share/aw-rs aw`.
@@ -315,9 +316,17 @@ Read code through the GitHub API when you do not need the clone:
   Never force-push. The net diff must still hold only the spec's files.
 - If you must merge yourself (for example `main` moved during the run), run
   `git merge origin/<default>`, not rebase, and resolve it.
-- When the spec does not meet the spec checklist, do not guess. Report
-  `respec` with the missing points: name each missing file or rule exactly.
-  `aw` moves the issue to `stage:spec` and adds no `blocked`.
+- First compare the spec with the spec checklist, before any other work.
+  When the spec does not meet it, do not guess. Report `respec`:
+  `$AW report <who> respec -F <file>`. The file lists the missing points,
+  one numbered line each: name each missing file, rule, test or value
+  exactly. `aw` moves the issue to `stage:spec` and adds no `blocked`.
+- Never report `blocked` for an incomplete or unclear spec. `blocked` keeps
+  `stage:tdd` and adds `blocked`: the spec run does not read `stage:tdd`,
+  and the tdd run does not take `blocked`, so no run takes the issue.
+  As a safety net, `aw` (0.7.22 or later) changes a tdd `blocked` report to
+  `respec` when its first line says the spec is the cause (for example
+  `spec unclear: ...`). Do not rely on it.
 - Give the implementation to one subagent with the Agent tool and
   `model: "haiku"`. Its brief has: the clone path and branch; the whole spec;
   on rework, the review findings; the repository rules file to read; and
@@ -508,6 +517,8 @@ Read code through the GitHub API when you do not need the clone:
   command. When that is also denied, release.
 - `blocked` is for a decision that only a person can make, or for a refusal
   that this run cannot fix. Write the reason.
+  A spec that tdd finds incomplete or unclear is not such a case: the spec
+  run can fix it. In tdd, report `respec`.
 - Local runs only: when `aw report` cannot push over HTTPS (no git
   credentials, or a token without the `workflow` scope for a change under
   `.github/workflows/`) and an SSH key works, run the same command once more

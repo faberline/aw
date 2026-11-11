@@ -82,6 +82,37 @@ impl Outcome {
     }
 }
 
+/// Prefixes that an agent can put before the reason of a `blocked` report.
+const BLOCKED_PREFIXES: [&str; 3] = ["tdd blocked:", "blocked:", "tdd:"];
+
+/// Words that say the spec lacks something.
+const SPEC_GAP_WORDS: [&str; 6] = [
+    "unclear",
+    "incomplete",
+    "not complete",
+    "missing",
+    "lacks",
+    "does not meet",
+];
+
+/// True when the first line of a `blocked` message says that the spec is
+/// the cause: it starts with `spec` or `the spec` and has a gap word, for
+/// example `spec unclear: ...` or `tdd blocked: the spec is missing points`.
+/// A tdd report with such a message is a `respec`, not a `blocked`: the
+/// spec stage can fix it, so no person is needed.
+pub fn names_spec_gap(message: &str) -> bool {
+    let first = message.lines().next().unwrap_or("").trim().to_lowercase();
+    let mut reason = first.as_str();
+    for prefix in BLOCKED_PREFIXES {
+        if let Some(rest) = reason.strip_prefix(prefix) {
+            reason = rest.trim_start();
+            break;
+        }
+    }
+    let about_spec = reason.starts_with("spec ") || reason.starts_with("the spec ");
+    about_spec && SPEC_GAP_WORDS.iter().any(|word| reason.contains(word))
+}
+
 /// The label change that a report makes on the issue.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LabelMove {
@@ -245,5 +276,33 @@ mod tests {
         assert!(!Outcome::Respec.allowed_in(Stage::Review));
         assert!(Outcome::Respec.needs_message());
         assert_eq!(Outcome::parse("respec"), Some(Outcome::Respec));
+    }
+
+    #[test]
+    fn a_blocked_message_about_a_spec_gap_is_found() {
+        for message in [
+            "spec unclear: the issue body does not meet the spec checklist.",
+            "Spec incomplete: no test is named",
+            "tdd blocked: the spec is missing points that the tdd checklist needs.\n\n1. x",
+            "blocked: the spec lacks tests/a.rs",
+            "tdd: spec does not meet the checklist",
+            "  the spec is not complete",
+        ] {
+            assert!(names_spec_gap(message), "{message}");
+        }
+    }
+
+    #[test]
+    fn a_blocked_message_for_a_person_is_not_a_spec_gap() {
+        for message in [
+            "",
+            "the push was refused for branch claude/issue-1",
+            "the owner must choose between A and B",
+            "the spec needs a decision of the owner",
+            "cargo test fails\nthe spec is unclear too",
+            "tests are missing a fixture; spec unclear",
+        ] {
+            assert!(!names_spec_gap(message), "{message}");
+        }
     }
 }

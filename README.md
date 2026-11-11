@@ -102,6 +102,14 @@ issue at once. The `agent:` label stays. A label failure is a warning.
 | tdd `respec` | `stage:spec`, no `blocked` |
 | `blocked` | the same stage, plus `blocked` |
 
+`blocked` is for a case that needs a person. An incomplete spec is not one:
+tdd reports `respec` and the message lists the missing points. When a tdd
+`blocked` message says on its first line that the spec is the cause (it
+starts with `spec` or `the spec`, after an optional `blocked:`, `tdd:` or
+`tdd blocked:`, and has `unclear`, `incomplete`, `not complete`, `missing`,
+`lacks` or `does not meet`), `aw` reports `respec` instead and prints a
+warning. No routine takes an issue with `stage:tdd` and `blocked`.
+
 The same agent may review its own pull request in a later run. When no open
 pull request closes the issue, `aw` posts a `blocked` signal for review.
 
