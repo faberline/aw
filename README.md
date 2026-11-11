@@ -176,7 +176,7 @@ The repository keeps two reviewed files on its default branch:
 
 - `.github/aw-release.json` — the contract. For each milestone: the version,
   the hash of the milestone goal, the acceptance goals with their issues and
-  checks, and the publication.
+  checks, and the publication. One version belongs to one milestone only.
 - `.github/aw-release-gates.json` — the policy. For each full-test workflow:
   the path, the workflow id, the git blob hash of the reviewed definition,
   and each job name with its kind (`unit`, `functional_e2e`, `performance` or
@@ -203,6 +203,15 @@ latest attempt, has exactly the jobs of the policy and each job is
 `completed` with `success`. A missing, skipped, cancelled, extra, stale or
 unknown job does not pass. A run that is not the reviewed workflow at the
 reviewed definition stops the command.
+
+Only an open pull request holds the milestone at `work`. A pull request
+that was closed and never merged is dropped work; it does not hold the
+milestone and it does not prove a goal issue.
+
+A green candidate is good for the final tag only when its full tests ran
+every workflow and every job of the policy on the default branch. When the
+policy gains a workflow or a job after the candidate, the state is
+`ready_rc` again: the release needs a new candidate.
 
 `release-advance` reads everything again. It stops when the fingerprint is
 not `--expected`. For the action `tag` it checks that the reviewed workflow

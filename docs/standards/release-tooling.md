@@ -220,7 +220,7 @@ their own design step.
 
 ## The milestone gate
 
-**In `aw` (0.7.20).** The promotion workflow publishes a candidate. The
+**In `aw` (0.7.20, guards added in 0.7.21).** The promotion workflow publishes a candidate. The
 milestone gate decides before that: when a milestone gets its `-rc.N` tag and
 its final tag. It replaces the Python release tool that each repository had
 ([aw#284](https://github.com/faberline/aw/issues/284)).
@@ -233,6 +233,8 @@ its final tag. It replaces the Python release tool that each repository had
 - `release-advance` writes only the tag. The actions `publish`, `close` and
   `failure_issue` are not built yet; the command prints the assessment and
   exits 2.
+- A candidate that did not run a workflow or a job of the current policy is
+  too old for the final tag. The gate asks for a new candidate.
 - No repository has the policy file yet. `release-status` stops with
   `not found` until the repository adds it.
 

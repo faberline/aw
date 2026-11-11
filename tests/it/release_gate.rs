@@ -24,6 +24,9 @@ const RC2: &str = "v0.5.0-rc.2";
 const FINAL: &str = "v0.5.0";
 const JOBS: [&str; 3] = ["unit", "e2e", "perf"];
 
+/// One change to a value of the code host, for a table of bad inputs.
+type Change = fn(&mut Value);
+
 fn sha(c: char) -> String {
     c.to_string().repeat(40)
 }
@@ -232,7 +235,7 @@ impl Fake {
                 issues: vec![json!({"number": 3, "state": "closed", "body": "Do it"})],
                 pulls: vec![json!({
                     "number": 5, "body": "The work.\n\nCloses #3", "milestone": null,
-                    "merged_at": "2026-11-01T00:00:00Z", "merge_commit_sha": merge(),
+                    "state": "closed", "merged_at": "2026-11-01T00:00:00Z", "merge_commit_sha": merge(),
                 })],
                 ..State::default()
             }),
@@ -397,13 +400,64 @@ fn open_work_holds_the_release() {
     let fake = Fake::new();
     fake.edit(|s| {
         s.pulls
-            .push(json!({"number": 6, "body": "", "milestone": {"number": 8}, "merged_at": null}));
+            .push(json!({"number": 6, "body": "", "milestone": {"number": 8}, "state": "open", "merged_at": null}));
     });
     assert!(
         fake.status()["reasons"][1]
             .as_str()
             .unwrap()
             .contains("[6]")
+    );
+}
+
+#[test]
+fn a_closed_pull_request_that_never_merged_does_not_hold_the_release() {
+    // Pull request 6 was replaced by pull request 5 and closed.
+    let fake = Fake::new();
+    fake.edit(|s| {
+        s.pulls.push(json!({
+            "number": 6, "body": "Closes #3", "milestone": {"number": 8},
+            "state": "closed", "merged_at": null,
+        }));
+    });
+    let a = fake.status();
+    assert_eq!(
+        (a["state"].as_str(), a["tag"].as_str()),
+        (Some("ready_rc"), Some(RC1))
+    );
+
+    // The same pull request, open, holds the release.
+    fake.edit(|s| s.pulls[1]["state"] = json!("open"));
+    let a = fake.status();
+    assert_eq!(a["state"], "work");
+    assert!(a["reasons"][1].as_str().unwrap().contains("[6]"));
+
+    // A state that is not known is not a pass.
+    let unknown: [Change; 3] = [
+        |pull| pull["state"] = json!("draft"),
+        |pull| pull["state"] = json!(null),
+        |pull| {
+            pull.as_object_mut().unwrap().remove("merged_at");
+            pull["state"] = json!("closed");
+        },
+    ];
+    for (i, change) in unknown.into_iter().enumerate() {
+        fake.edit(|s| change(&mut s.pulls[1]));
+        assert!(
+            fake.stop().contains("unknown pull request state"),
+            "change {i}"
+        );
+    }
+
+    // Closed work alone does not prove a goal issue.
+    let fake = Fake::new();
+    fake.edit(|s| {
+        s.pulls[0]["state"] = json!("closed");
+        s.pulls[0]["merged_at"] = json!(null);
+    });
+    assert!(
+        fake.stop()
+            .contains("closed goal issue lacks a merged landed PR")
     );
 }
 
@@ -625,7 +679,7 @@ fn new_work_after_a_green_candidate_needs_a_new_candidate() {
             .push(json!({"number": 6, "state": "closed", "body": ""}));
         s.pulls.push(json!({
             "number": 7, "body": "Fixes #6", "milestone": null,
-            "merged_at": "2026-11-02T00:00:00Z", "merge_commit_sha": sha('7'),
+            "state": "closed", "merged_at": "2026-11-02T00:00:00Z", "merge_commit_sha": sha('7'),
         }));
         s.ancestors.insert((sha('7'), head()));
     });
@@ -782,7 +836,6 @@ fn a_blob_must_be_the_bytes_it_names() {
             )
         })
         .unwrap();
-    type Change = fn(&mut Value);
     let cases: [(Change, &str); 7] = [
         (
             |v| v["sha"] = json!(sha('d')),
@@ -970,6 +1023,48 @@ fn the_current_policy_must_keep_every_gate_of_the_tag() {
         fake.stop()
             .contains("current policy dropped or changed a prior release gate")
     );
+}
+
+#[test]
+fn a_gate_added_after_the_candidate_needs_a_new_candidate() {
+    // The candidate on the older commit is green for the policy of its
+    // commit. The policy on the default branch then gains a gate.
+    let added: [Change; 2] = [
+        |policy| policy["workflows"][0]["jobs"]["smoke"] = json!("policy"),
+        |policy| {
+            let mut more = policy["workflows"][0].clone();
+            more["path"] = json!(".github/workflows/more.yml");
+            more["id"] = json!(78);
+            more["jobs"] = json!({"smoke": "policy"});
+            policy["workflows"].as_array_mut().unwrap().push(more);
+        },
+    ];
+    for (i, change) in added.into_iter().enumerate() {
+        let fake = Fake::new();
+        let old = sha('b');
+        fake.commit(&old);
+        fake.tag(RC1, &old);
+        fake.run(900, RC1, &old);
+        fake.edit(|s| s.ancestors.insert((sha('b'), head())));
+        let a = fake.status();
+        assert_eq!(
+            (a["state"].as_str(), a["release_head"].as_str()),
+            (Some("ready_final"), Some(old.as_str())),
+            "change {i}"
+        );
+
+        let mut wider = policy();
+        change(&mut wider);
+        fake.file(&head(), POLICY_PATH, &wider.to_string());
+        let a = fake.status();
+        assert_eq!(
+            (a["state"].as_str(), a["tag"].as_str()),
+            (Some("ready_rc"), Some(RC2)),
+            "change {i}"
+        );
+        assert_eq!(a["release_head"], head(), "change {i}");
+        assert_eq!(a["action"], "tag", "change {i}");
+    }
 }
 
 #[test]
@@ -1230,7 +1325,7 @@ fn advance_does_not_create_a_tag_that_cannot_start_the_full_tests() {
         s.ancestors.insert((sha('b'), head()));
         s.pulls.push(json!({
             "number": 7, "body": "", "milestone": {"number": 8},
-            "merged_at": "2026-11-02T00:00:00Z", "merge_commit_sha": sha('7'),
+            "state": "closed", "merged_at": "2026-11-02T00:00:00Z", "merge_commit_sha": sha('7'),
         }));
         s.ancestors.insert((sha('7'), head()));
     });
@@ -1371,7 +1466,7 @@ fn preflight_refuses_a_wrong_tag_commit_or_state() {
         s.ancestors.insert((sha('b'), head()));
         s.pulls.push(json!({
             "number": 7, "body": "", "milestone": {"number": 8},
-            "merged_at": "2026-11-02T00:00:00Z", "merge_commit_sha": sha('7'),
+            "state": "closed", "merged_at": "2026-11-02T00:00:00Z", "merge_commit_sha": sha('7'),
         }));
         s.ancestors.insert((sha('7'), head()));
     });
@@ -1389,10 +1484,26 @@ fn preflight_needs_one_milestone_for_the_version() {
         .unwrap_err()
         .0;
     assert!(err.contains("no unique existing milestone"));
-    assert_eq!(
-        preflight(fake.services(), RC1, &head(), Some(8)).unwrap()["milestone"],
-        8
+    // The contract itself refuses the version, with a milestone number too.
+    let err = preflight(fake.services(), RC1, &head(), Some(8))
+        .unwrap_err()
+        .0;
+    assert!(err.contains("release version belongs to more than one milestone"));
+    assert!(
+        fake.stop()
+            .contains("release version belongs to more than one milestone")
     );
+
+    // Another milestone with another version does not stop this one.
+    two["milestones"]["9"]["version"] = json!("0.6.0");
+    fake.file(&head(), CONTRACT_PATH, &two.to_string());
+    for number in [None, Some(8)] {
+        assert_eq!(
+            preflight(fake.services(), RC1, &head(), number).unwrap()["milestone"],
+            8
+        );
+    }
+    assert_eq!(fake.status()["state"], "ready_final");
 }
 
 // ---- command line -----------------------------------------------------------

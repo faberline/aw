@@ -49,6 +49,19 @@ pub fn contract(
             && config["milestones"].is_object(),
         "invalid reviewed release configuration",
     )?;
+    let versions: Vec<&Value> = config["milestones"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(_, item)| &item["version"])
+        .filter(|version| !version.is_null())
+        .collect();
+    require(
+        versions
+            .iter()
+            .all(|a| versions.iter().filter(|b| a == *b).count() == 1),
+        "release version belongs to more than one milestone",
+    )?;
     let number = milestone["number"].as_u64().unwrap_or(0);
     let item = &config["milestones"][number.to_string()];
     require(
@@ -180,6 +193,21 @@ mod tests {
             broken(|v| v["milestones"]["8"]["publication"] = json!("crates"))
                 .contains("publication")
         );
+    }
+
+    #[test]
+    fn refuses_one_version_for_two_milestones() {
+        let v = "release version belongs to more than one milestone";
+        // Also when the other milestone is not the one asked for.
+        let err = broken(|c| {
+            c["milestones"]["7"] = json!({"version": "0.4.0"});
+            c["milestones"]["9"] = json!({"version": "0.4.0"});
+        });
+        assert!(err.contains(v));
+        assert!(broken(|c| c["milestones"]["9"] = c["milestones"]["8"].clone()).contains(v));
+        let mut other = good();
+        other["milestones"]["9"] = json!({"version": "0.6.0"});
+        assert!(contract(&other, "o/r", &milestone(), &checks()).is_ok());
     }
 
     #[test]
