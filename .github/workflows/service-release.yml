@@ -1,0 +1,482 @@
+# Shared release promotion for a faberline service repository. aw owns this
+# file. A repository keeps a thin `.github/workflows/<app>-release.yml` that
+# takes the workflow_dispatch inputs and calls this workflow:
+#
+#   concurrency:
+#     group: keep-release-promotion-${{ inputs.version }}
+#     cancel-in-progress: false
+#   jobs:
+#     release:
+#       permissions:
+#         actions: read
+#         attestations: read
+#         contents: write
+#         packages: write
+#         pull-requests: read
+#       uses: faberline/aw/.github/workflows/service-release.yml@<40-hex commit>
+#       with:
+#         app: keep
+#         version: ${{ inputs.version }}
+#         candidate_run_id: ${{ inputs.candidate_run_id }}
+#         candidate_run_attempt: ${{ inputs.candidate_run_attempt }}
+#         gke_receipt_b64: ${{ inputs.gke_receipt_b64 }}
+#         gke_receipt_sha256: ${{ inputs.gke_receipt_sha256 }}
+#         gke_receipt_sidecar_b64: ${{ inputs.gke_receipt_sidecar_b64 }}
+#         gke_receipt_sidecar_sha256: ${{ inputs.gke_receipt_sidecar_sha256 }}
+#         compatibility_note: "- Compatibility: ..."
+#
+# This workflow never builds. It proves the candidate, moves the image tags to
+# the candidate root digest, and publishes the candidate bytes. Every gate of
+# the per-repository `<app>-release.yml` it replaces is here. Do not remove or
+# relax a gate; tests/it/release_workflow.rs fails when one goes missing.
+# Full contract: docs/standards/release-tooling.md.
+name: service-release
+
+on:
+  workflow_call:
+    inputs:
+      app:
+        description: App name. The repository is faberline/<app> and the tag is <app>@<version>.
+        required: true
+        type: string
+      version:
+        description: Exact semver without the <app>@ prefix.
+        required: true
+        type: string
+      candidate_run_id:
+        description: Exact successful <app>-release-candidate run ID.
+        required: true
+        type: string
+      candidate_run_attempt:
+        description: Exact successful <app>-release-candidate run attempt.
+        required: true
+        type: string
+      gke_receipt_b64:
+        description: Base64 of the sanitized <app>-gke-receipt.json bytes.
+        required: true
+        type: string
+      gke_receipt_sha256:
+        description: Lowercase SHA-256 of the sanitized <app>-gke-receipt.json bytes.
+        required: true
+        type: string
+      gke_receipt_sidecar_b64:
+        description: Base64 of the exact <app>-gke-receipt.json.sha256 sidecar bytes.
+        required: true
+        type: string
+      gke_receipt_sidecar_sha256:
+        description: Lowercase SHA-256 of the exact <app>-gke-receipt.json.sha256 sidecar bytes.
+        required: true
+        type: string
+      compatibility_note:
+        description: >-
+          The one release-notes line that starts with "- Compatibility: ". It
+          must equal the line the repository's public verifier expects.
+        required: true
+        type: string
+      release_notes_extra:
+        description: One more release-notes line after the compatibility line, for example an install line. Empty for none.
+        required: false
+        default: ""
+        type: string
+      image_note:
+        description: True to write the image release-notes line. False for tape, whose notes do not carry it.
+        required: false
+        default: true
+        type: boolean
+      verify_script:
+        description: Path in the calling repository of its release artifact verifier.
+        required: false
+        default: scripts/release/verify-release-artifacts.sh
+        type: string
+      verify_takes_app:
+        description: True when the verifier takes --app <app> (the shared-script lineage). False for tape.
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  verify-inputs:
+    name: prove immutable tag and candidate receipt
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
+      packages: read
+      pull-requests: read
+    outputs:
+      root_digest: ${{ steps.contract.outputs.root_digest }}
+      amd64_digest: ${{ steps.contract.outputs.amd64_digest }}
+      arm64_digest: ${{ steps.contract.outputs.arm64_digest }}
+      candidate_attempt: ${{ steps.contract.outputs.candidate_attempt }}
+      candidate_url: ${{ steps.contract.outputs.candidate_url }}
+      pr_url: ${{ steps.contract.outputs.pr_url }}
+      gke_receipt_sha256: ${{ steps.contract.outputs.gke_receipt_sha256 }}
+      gke_receipt_sidecar_sha256: ${{ steps.contract.outputs.gke_receipt_sidecar_sha256 }}
+    env:
+      APP: ${{ inputs.app }}
+      VERSION: ${{ inputs.version }}
+      CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+      CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+      VERIFY_SCRIPT: ${{ inputs.verify_script }}
+      VERIFY_TAKES_APP: ${{ inputs.verify_takes_app }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Refuse the retired tag-first route
+        env:
+          COMPATIBILITY_NOTE: ${{ inputs.compatibility_note }}
+          RELEASE_NOTES_EXTRA: ${{ inputs.release_notes_extra }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$APP" =~ ^[a-z][a-z0-9-]*$ ]] || { echo "invalid app input" >&2; exit 1; }
+          [[ "$GITHUB_REPOSITORY" == "faberline/$APP" ]] || { echo "app input does not name this repository" >&2; exit 1; }
+          [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || { echo "promotion is workflow_dispatch only" >&2; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid version input" >&2; exit 1; }
+          [[ "$GITHUB_REF" == "refs/tags/${APP}@${VERSION}" ]] || { echo "promotion must dispatch the exact annotated release tag" >&2; exit 1; }
+          [[ "$GITHUB_WORKFLOW_REF" == "${GITHUB_REPOSITORY}/.github/workflows/${APP}-release.yml@${GITHUB_REF}" ]] || { echo "promotion workflow identity mismatch" >&2; exit 1; }
+          [[ "$VERIFY_SCRIPT" =~ ^scripts/[A-Za-z0-9_./-]+$ && "$VERIFY_SCRIPT" != *..* ]] || { echo "invalid verify_script input" >&2; exit 1; }
+          [[ -f "$VERIFY_SCRIPT" && ! -L "$VERIFY_SCRIPT" && -x "$VERIFY_SCRIPT" ]] || { echo "verify_script is not an executable regular file" >&2; exit 1; }
+          [[ "$COMPATIBILITY_NOTE" == "- Compatibility: "?* && "$COMPATIBILITY_NOTE" != *$'\n'* ]] || { echo "compatibility_note must be one line that starts with '- Compatibility: '" >&2; exit 1; }
+          [[ "$RELEASE_NOTES_EXTRA" != *$'\n'* ]] || { echo "release_notes_extra must be one line" >&2; exit 1; }
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Decode and bind sanitized GKE receipt
+        id: gke_receipt
+        env:
+          GKE_RECEIPT_B64: ${{ inputs.gke_receipt_b64 }}
+          GKE_RECEIPT_SHA256: ${{ inputs.gke_receipt_sha256 }}
+          GKE_RECEIPT_SIDECAR_B64: ${{ inputs.gke_receipt_sidecar_b64 }}
+          GKE_RECEIPT_SIDECAR_SHA256: ${{ inputs.gke_receipt_sidecar_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p gke-receipt
+          decode_exact() {
+            local encoded="$1" expected="$2" output="$3" actual
+            [[ "$encoded" =~ ^[A-Za-z0-9+/]+={0,2}$ && $((${#encoded} % 4)) -eq 0 ]] || { echo "receipt input is not canonical base64" >&2; exit 1; }
+            [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || { echo "receipt input SHA-256 is invalid" >&2; exit 1; }
+            printf '%s' "$encoded" | base64 --decode > "$output"
+            actual="$(sha256sum "$output" | awk '{print $1}')"
+            [[ "$actual" == "$expected" ]] || { echo "receipt input SHA-256 does not bind decoded bytes" >&2; exit 1; }
+          }
+          decode_exact "$GKE_RECEIPT_B64" "$GKE_RECEIPT_SHA256" "gke-receipt/${APP}-gke-receipt.json"
+          decode_exact "$GKE_RECEIPT_SIDECAR_B64" "$GKE_RECEIPT_SIDECAR_SHA256" "gke-receipt/${APP}-gke-receipt.json.sha256"
+          {
+            echo "receipt=$PWD/gke-receipt/${APP}-gke-receipt.json"
+            echo "sidecar=$PWD/gke-receipt/${APP}-gke-receipt.json.sha256"
+          } >> "$GITHUB_OUTPUT"
+      - name: Verify tag ruleset, candidate receipt, and supply chain
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GKE_RECEIPT: ${{ steps.gke_receipt.outputs.receipt }}
+          GKE_RECEIPT_SIDECAR: ${{ steps.gke_receipt.outputs.sidecar }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_args=()
+          if [[ "$VERIFY_TAKES_APP" == true ]]; then app_args=(--app "$APP"); fi
+          "$VERIFY_SCRIPT" "${app_args[@]}" \
+            --repo "faberline/${APP}" \
+            --tag "${APP}@${VERSION}" \
+            --commit "$GITHUB_SHA" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --candidate-run-attempt "$CANDIDATE_RUN_ATTEMPT" \
+            --mode candidate \
+            --gke-receipt "$GKE_RECEIPT" \
+            --gke-receipt-sidecar "$GKE_RECEIPT_SIDECAR" \
+            --output promotion-contract.json
+      - name: Export immutable candidate contract
+        id: contract
+        env:
+          GKE_RECEIPT_SHA256: ${{ inputs.gke_receipt_sha256 }}
+          GKE_RECEIPT_SIDECAR_SHA256: ${{ inputs.gke_receipt_sidecar_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e --arg commit "$GITHUB_SHA" --arg run "$CANDIDATE_RUN_ID" --arg attempt "$CANDIDATE_RUN_ATTEMPT" --arg receipt "$GKE_RECEIPT_SHA256" --arg sidecar "$GKE_RECEIPT_SIDECAR_SHA256" '
+            .commit == $commit and .candidate_run_id == $run and
+            .candidate_attempt == $attempt and
+            .gke_receipt_sha256 == $receipt and
+            .gke_receipt_sidecar_sha256 == $sidecar and
+            ([.root_digest,.amd64_digest,.arm64_digest] | all(test("^sha256:[0-9a-f]{64}$")))
+          ' promotion-contract.json >/dev/null
+          {
+            echo "root_digest=$(jq -r .root_digest promotion-contract.json)"
+            echo "amd64_digest=$(jq -r .amd64_digest promotion-contract.json)"
+            echo "arm64_digest=$(jq -r .arm64_digest promotion-contract.json)"
+            echo "candidate_attempt=$(jq -r .candidate_attempt promotion-contract.json)"
+            echo "candidate_url=$(jq -r .candidate_url promotion-contract.json)"
+            echo "pr_url=$(jq -r .pr_url promotion-contract.json)"
+            echo "gke_receipt_sha256=$(jq -r .gke_receipt_sha256 promotion-contract.json)"
+            echo "gke_receipt_sidecar_sha256=$(jq -r .gke_receipt_sidecar_sha256 promotion-contract.json)"
+          } >> "$GITHUB_OUTPUT"
+
+  publish-release:
+    name: promote exact candidate root and publish release
+    needs: verify-inputs
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      attestations: read
+      contents: write
+      packages: write
+      pull-requests: read
+    env:
+      APP: ${{ inputs.app }}
+      VERSION: ${{ inputs.version }}
+      CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+      CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+      VERIFY_SCRIPT: ${{ inputs.verify_script }}
+      VERIFY_TAKES_APP: ${{ inputs.verify_takes_app }}
+      ROOT_DIGEST: ${{ needs.verify-inputs.outputs.root_digest }}
+      AMD64_DIGEST: ${{ needs.verify-inputs.outputs.amd64_digest }}
+      ARM64_DIGEST: ${{ needs.verify-inputs.outputs.arm64_digest }}
+      CANDIDATE_ATTEMPT: ${{ needs.verify-inputs.outputs.candidate_attempt }}
+      CANDIDATE_URL: ${{ needs.verify-inputs.outputs.candidate_url }}
+      PR_URL: ${{ needs.verify-inputs.outputs.pr_url }}
+      VERIFIED_GKE_RECEIPT_SHA256: ${{ needs.verify-inputs.outputs.gke_receipt_sha256 }}
+      VERIFIED_GKE_RECEIPT_SIDECAR_SHA256: ${{ needs.verify-inputs.outputs.gke_receipt_sidecar_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Decode and bind sanitized GKE receipt
+        id: gke_receipt
+        env:
+          GKE_RECEIPT_B64: ${{ inputs.gke_receipt_b64 }}
+          GKE_RECEIPT_SHA256: ${{ inputs.gke_receipt_sha256 }}
+          GKE_RECEIPT_SIDECAR_B64: ${{ inputs.gke_receipt_sidecar_b64 }}
+          GKE_RECEIPT_SIDECAR_SHA256: ${{ inputs.gke_receipt_sidecar_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p gke-receipt
+          decode_exact() {
+            local encoded="$1" expected="$2" output="$3" actual
+            [[ "$encoded" =~ ^[A-Za-z0-9+/]+={0,2}$ && $((${#encoded} % 4)) -eq 0 ]] || { echo "receipt input is not canonical base64" >&2; exit 1; }
+            [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || { echo "receipt input SHA-256 is invalid" >&2; exit 1; }
+            printf '%s' "$encoded" | base64 --decode > "$output"
+            actual="$(sha256sum "$output" | awk '{print $1}')"
+            [[ "$actual" == "$expected" ]] || { echo "receipt input SHA-256 does not bind decoded bytes" >&2; exit 1; }
+          }
+          decode_exact "$GKE_RECEIPT_B64" "$GKE_RECEIPT_SHA256" "gke-receipt/${APP}-gke-receipt.json"
+          decode_exact "$GKE_RECEIPT_SIDECAR_B64" "$GKE_RECEIPT_SIDECAR_SHA256" "gke-receipt/${APP}-gke-receipt.json.sha256"
+          {
+            echo "receipt=$PWD/gke-receipt/${APP}-gke-receipt.json"
+            echo "sidecar=$PWD/gke-receipt/${APP}-gke-receipt.json.sha256"
+          } >> "$GITHUB_OUTPUT"
+      - name: Re-query exact candidate immediately before stable writes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GKE_RECEIPT: ${{ steps.gke_receipt.outputs.receipt }}
+          GKE_RECEIPT_SIDECAR: ${{ steps.gke_receipt.outputs.sidecar }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_args=()
+          if [[ "$VERIFY_TAKES_APP" == true ]]; then app_args=(--app "$APP"); fi
+          "$VERIFY_SCRIPT" "${app_args[@]}" \
+            --repo "faberline/${APP}" \
+            --tag "${APP}@${VERSION}" \
+            --commit "$GITHUB_SHA" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --candidate-run-attempt "$CANDIDATE_RUN_ATTEMPT" \
+            --mode candidate \
+            --gke-receipt "$GKE_RECEIPT" \
+            --gke-receipt-sidecar "$GKE_RECEIPT_SIDECAR" \
+            --output promotion-contract.json
+          jq -e \
+            --arg root "$ROOT_DIGEST" \
+            --arg amd64 "$AMD64_DIGEST" \
+            --arg arm64 "$ARM64_DIGEST" \
+            --arg receipt "$VERIFIED_GKE_RECEIPT_SHA256" \
+            --arg sidecar "$VERIFIED_GKE_RECEIPT_SIDECAR_SHA256" \
+            '.root_digest == $root and .amd64_digest == $amd64 and .arm64_digest == $arm64 and .gke_receipt_sha256 == $receipt and .gke_receipt_sidecar_sha256 == $sidecar' \
+            promotion-contract.json >/dev/null
+      - name: Exit safely if this exact public release already exists
+        id: existing_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          query="query(\$owner:String!, \$name:String!, \$tag:String!) { repository(owner:\$owner, name:\$name) { release(tagName:\$tag) { id } } }"
+          json="$(gh api graphql -f query="$query" -f owner="$GITHUB_REPOSITORY_OWNER" -f name="${GITHUB_REPOSITORY#*/}" -f tag="${APP}@${VERSION}")"
+          if [[ "$(jq -r '.data.repository.release | if . == null then "absent" else "present" end' <<<"$json")" == present ]]; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
+      - name: Verify existing public release without moving latest
+        if: steps.existing_release.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GKE_RECEIPT: ${{ steps.gke_receipt.outputs.receipt }}
+          GKE_RECEIPT_SIDECAR: ${{ steps.gke_receipt.outputs.sidecar }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_args=()
+          if [[ "$VERIFY_TAKES_APP" == true ]]; then app_args=(--app "$APP"); fi
+          "$VERIFY_SCRIPT" "${app_args[@]}" \
+            --repo "faberline/${APP}" \
+            --tag "${APP}@${VERSION}" \
+            --commit "$GITHUB_SHA" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --candidate-run-attempt "$CANDIDATE_RUN_ATTEMPT" \
+            --mode public \
+            --gke-receipt "$GKE_RECEIPT" \
+            --gke-receipt-sidecar "$GKE_RECEIPT_SIDECAR" \
+            --output promotion-contract.json
+      - name: Download exact candidate release bytes
+        if: steps.existing_release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run download "$CANDIDATE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "${APP}-release-candidate-${CANDIDATE_RUN_ID}-${CANDIDATE_ATTEMPT}" --dir candidate
+          [[ -f candidate/final-candidate-manifest.json && -f candidate/final-candidate-manifest.json.sha256 ]] || { echo "candidate receipt bytes are incomplete" >&2; exit 1; }
+      - name: Promote exact root digest to semver and safe latest
+        if: steps.existing_release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_repo="ghcr.io/faberline/${APP}"
+          root_digest="$ROOT_DIGEST"
+          version="$VERSION"
+          root_ref="${image_repo}@${root_digest}"
+          semver_ref="${image_repo}:${version}"
+          digest_or_absent() {
+            local ref="$1" error manifest status
+            error="$(mktemp)"
+            set +e
+            manifest="$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' 2>"$error")"
+            status=$?
+            set -e
+            if [[ "$status" == 0 ]]; then
+              rm -f "$error"
+              jq -er '.digest' <<<"$manifest"
+              return 0
+            fi
+            if grep -Eqi 'manifest unknown|not found' "$error"; then
+              rm -f "$error"
+              return 0
+            fi
+            cat "$error" >&2
+            rm -f "$error"
+            echo "cannot prove GHCR image state: $ref" >&2
+            exit 1
+          }
+          semver_current="$(digest_or_absent "$semver_ref")"
+          [[ -z "$semver_current" || "$semver_current" == "$root_digest" ]] || { echo "semver tag already points at a different root" >&2; exit 1; }
+          latest_current="$(digest_or_absent "${image_repo}:latest")"
+          latest_target=true
+          if [[ -n "$latest_current" && "$latest_current" != "$root_digest" ]]; then
+            newer_published=false
+            latest_matches_newer=false
+            latest_matches_older=false
+            while IFS= read -r tag; do
+              next="${tag#"${APP}"@}"
+              [[ "$tag" =~ ^${APP}@[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+              if [[ "$(printf '%s\n%s\n' "$version" "$next" | sort -V | tail -n1)" == "$next" && "$next" != "$version" ]]; then
+                newer_published=true
+                digest="$(digest_or_absent "${image_repo}:${next}")"
+                [[ -n "$digest" ]] || { echo "newer published semver image is absent: $next" >&2; exit 1; }
+                [[ "$digest" == "$latest_current" ]] && latest_matches_newer=true
+                continue
+              fi
+              [[ "$next" != "$version" ]] || continue
+              digest="$(digest_or_absent "${image_repo}:${next}")"
+              [[ -n "$digest" ]] || continue
+              [[ "$digest" == "$latest_current" ]] && latest_matches_older=true
+            done < <(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isDraft | jq -r '.[] | select(.isDraft == false) | .tagName')
+            if [[ "$newer_published" == true ]]; then
+              if [[ "$latest_matches_newer" == true ]]; then
+                latest_target=false
+              else
+                echo "latest does not match a newer published semver root" >&2
+                exit 1
+              fi
+            elif [[ "$latest_matches_older" != true ]]; then
+              echo "latest does not match an older published semver root" >&2
+              exit 1
+            fi
+          fi
+          docker buildx imagetools create --tag "$semver_ref" "$root_ref"
+          [[ "$(docker buildx imagetools inspect "$semver_ref" --format '{{json .Manifest}}' | jq -er '.digest')" == "$root_digest" ]] || { echo "semver tag did not bind candidate root" >&2; exit 1; }
+          if [[ "$latest_target" == true ]]; then
+            [[ "$(digest_or_absent "${image_repo}:latest")" == "$latest_current" ]] || { echo "latest changed before write" >&2; exit 1; }
+            docker buildx imagetools create --tag "${image_repo}:latest" "$root_ref"
+            [[ "$(docker buildx imagetools inspect "${image_repo}:latest" --format '{{json .Manifest}}' | jq -er '.digest')" == "$root_digest" ]] || { echo "latest tag did not bind candidate root" >&2; exit 1; }
+          fi
+      - name: Create exact GitHub Release with candidate bytes
+        if: steps.existing_release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPATIBILITY_NOTE: ${{ inputs.compatibility_note }}
+          RELEASE_NOTES_EXTRA: ${{ inputs.release_notes_extra }}
+          IMAGE_NOTE: ${{ inputs.image_note }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf '# %s@%s\n\n' "$APP" "$VERSION"
+            printf -- '- Source commit: %s\n' "$GITHUB_SHA"
+            printf -- '- Pull request: %s\n' "$PR_URL"
+            printf -- '- Candidate run: %s\n' "$CANDIDATE_URL"
+            printf -- '- Promotion run: https://github.com/%s/actions/runs/%s/attempts/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf -- '- Root index digest: %s\n' "$ROOT_DIGEST"
+            printf -- '- linux/amd64 digest: %s\n' "$AMD64_DIGEST"
+            printf -- '- linux/arm64 digest: %s\n' "$ARM64_DIGEST"
+            printf -- '- GKE receipt SHA-256: %s\n' "$VERIFIED_GKE_RECEIPT_SHA256"
+            printf -- '- GKE receipt sidecar SHA-256: %s\n' "$VERIFIED_GKE_RECEIPT_SIDECAR_SHA256"
+            printf -- '- Release path: landed main -> immutable candidate -> digest-pinned GKE acceptance -> protected annotated tag -> no-rebuild promotion.\n'
+            printf '%s\n' "$COMPATIBILITY_NOTE"
+            if [[ -n "$RELEASE_NOTES_EXTRA" ]]; then printf '%s\n' "$RELEASE_NOTES_EXTRA"; fi
+            if [[ "$IMAGE_NOTE" == true ]]; then
+              printf -- '- Image: ghcr.io/faberline/%s:%s is the root index digest above; latest moves only when this is the newest semver.\n' "$APP" "$VERSION"
+            fi
+          } > release-notes.md
+          gh release create "${APP}@${VERSION}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "${APP}@${VERSION}" --notes-file release-notes.md \
+            candidate/"${APP}"-*.tar.gz candidate/"${APP}"-*.tar.gz.sha256 candidate/spdx-amd64.json candidate/spdx-arm64.json "gke-receipt/${APP}-gke-receipt.json" "gke-receipt/${APP}-gke-receipt.json.sha256"
+      - name: Publicly verify immutable tag, release bytes, and promoted image
+        if: steps.existing_release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GKE_RECEIPT: ${{ steps.gke_receipt.outputs.receipt }}
+          GKE_RECEIPT_SIDECAR: ${{ steps.gke_receipt.outputs.sidecar }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_args=()
+          if [[ "$VERIFY_TAKES_APP" == true ]]; then app_args=(--app "$APP"); fi
+          "$VERIFY_SCRIPT" "${app_args[@]}" \
+            --repo "faberline/${APP}" \
+            --tag "${APP}@${VERSION}" \
+            --commit "$GITHUB_SHA" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --candidate-run-attempt "$CANDIDATE_RUN_ATTEMPT" \
+            --mode public \
+            --gke-receipt "$GKE_RECEIPT" \
+            --gke-receipt-sidecar "$GKE_RECEIPT_SIDECAR" \
+            --output promotion-contract.json
