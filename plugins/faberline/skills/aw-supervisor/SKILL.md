@@ -1,0 +1,331 @@
+---
+name: aw-supervisor
+description: "Run one supervisor pass over the aw issue flow of one repository. Finds root causes, files decision and pipeline issues in faberline/aw, and updates the status board. Use when a routine prompt asks to run the aw-supervisor skill for `<owner>/<repo>`."
+user-invocable: true
+---
+
+# aw-supervisor
+
+The supervisor watches the pipeline of one repository.
+The routine prompt gives the repository as `<owner>/<repo>`.
+Below, `<repo>` means the repository name without the owner.
+`<target>` means `<owner>/<repo>`.
+
+Other routines run the spec, tdd and review stages.
+The supervisor does not run a stage.
+The supervisor does not claim issues.
+Run one pass, then stop.
+
+Nobody reads your final answer in time.
+Nobody reads your comments in `<target>` in time.
+The control desk reads only faberline/aw issues, once each hour.
+So each finding that needs a person or the desk must be in a faberline/aw issue.
+It must also be in the status board (step 10).
+
+## Write authorization
+
+The routine prompt lists the allowed GitHub writes.
+Do only those writes.
+Use `gh api` REST only.
+Do not edit other labels, merge, approve or push.
+Do not close issues or pull requests.
+Do not change rulesets, settings, secrets or workflow files.
+Do not delete anything.
+When a write is not on the list, make a `decision` issue instead.
+
+This cloud session blocks GitHub GraphQL.
+Do not use `gh issue`, `gh pr` or `gh repo`.
+`gh auth status` can say the token is invalid. Ignore that.
+
+## Text safety (G5)
+
+Do not write the characters `->` or a bare `>` in an issue body or a comment.
+A desk guard reads them wrong.
+Write the word `to` or `then`.
+
+## Steps
+
+### 1. Check access
+
+Run `gh api repos/<target> --jq .full_name`.
+When it fails, stop.
+Report `gh unavailable` with the exact output.
+
+### 2. Build `aw`
+
+Build `aw` from the faberline/aw checkout:
+`cargo install --locked --path <aw checkout> --root ~/.local/share/aw-rs`.
+Do not run `aw claim`, `aw report` or `aw release`.
+Read `docs/standards/ci.md` in the aw checkout.
+Read `plugins/faberline/skills/aw-worker/SKILL.md` in the aw checkout.
+Now you know the flow.
+
+### 3. Read decisions first
+
+List the closed issues in faberline/aw that have the label `decision`.
+Keep those with a title that starts with `decision(<repo>)`.
+Keep those closed in the last 7 days.
+
+For each answer, check two things.
+The answer names an action that you may do.
+You have not done it yet.
+You have not done it when no comment of yours links the answer.
+Then do it now.
+Comment the link on the affected issue or pull request.
+
+Then follow through.
+Do this for each `decision(<repo>)` or `pipeline(<repo>)` issue closed in the last 24 hours.
+Check that `<target>` really moved:
+
+- The affected issue lost `blocked`.
+- A stage routine claimed it or commented within 2 hours.
+- A caller pin of an aw workflow SHA is updated, when the fix needs it.
+- A failed run is rerun once, when the fix makes a rerun useful.
+
+When the work did not move, write it in the status board under `已解除但沒人接手`.
+When it did not move for more than 2 hours, create a `pipeline` issue.
+
+After a decision removes `blocked`, do the claim check (G4, below).
+
+### 4. Find problems
+
+Look only at these:
+
+- a. Issues whose last aw signal is `blocked`.
+- b. Open pull requests with a failed check.
+  Also open pull requests with no new commit, check or comment in the last 3 hours.
+- c. The newest `ci` run on the default branch, when it failed.
+- d. Issues with a `stage:*` label and an `agent:*` claim label.
+  Their claimed branch has no new commit for 3 hours.
+- e. Blocked issues whose reason is gone (G10, below).
+- f. Stage liveness (G8, below).
+
+### 5. Find root causes before you act
+
+Read the issue, the signal comment, the pull request and the failed job log.
+Group the problems by cause.
+Follow the dependency chain to the first cause.
+Issue A blocks B, and B blocks C.
+Then pick exactly one action for each root cause:
+
+- **Infrastructure failure.**
+  Examples: runner lost, network, registry, timeout, GKE capacity.
+  The job was not rerun yet.
+  Rerun the failed jobs once:
+  `gh api -X POST repos/<target>/actions/runs/<id>/rerun-failed-jobs`.
+  Comment what you saw.
+- **The spec is unclear, too large or wrong.**
+  The fix stays inside the issue's goal.
+  Comment on the issue with the diagnosis.
+  Add a concrete proposal for the planner: scope, split, commands.
+  The spec routine plans.
+  Do not change labels.
+- **A real defect in `<target>` that no open issue covers.**
+  Create one issue with the evidence and no labels.
+- **A defect in aw, the aw-worker skill, `aw ci check` or a shared CI standard.**
+  Create a `pipeline` issue in faberline/aw.
+  Use the title `pipeline(<repo>): <short>`.
+- **It needs the owner or the desk.**
+  Examples: money or billing, rulesets or branch protection, visibility, deletes, secrets, frozen contracts or pinned hashes, product scope, a choice between two valid directions, a label change or issue closure that you may not do.
+  Create a `decision` issue in faberline/aw.
+  Use the title `decision(<repo>): <short>`.
+- **Already reported.**
+  Do not stop there.
+  Check that the tracking issue is still open.
+  Check that it still agrees with the facts.
+  When the facts changed, comment the new facts on the tracking issue.
+  Then apply step 9.
+
+#### Cross-repository cause (G2)
+
+An issue in another repository can block `<target>`.
+An issue in faberline/aw can also block it.
+Then find the faberline/aw issue whose title names that other repository too.
+You may add `urgent` to that issue.
+Comment there with the list of issues it blocks in `<target>`.
+Use links.
+
+#### Cross-repository answers (G7)
+
+Sometimes the answer to a question is in another repository.
+Then paste the full answer text into the issue of `<target>`.
+Add the link.
+A stage routine can read only its own repository.
+A link alone is not enough.
+
+### 6. Search before you create
+
+Before you create any issue, search the target repository.
+Search the open issues.
+Search the issues closed in the last 7 days.
+When an open one exists, add a comment there instead.
+When a closed decision answers the question, follow the decision.
+Do not ask again.
+One root cause gets one issue.
+The issue lists each affected issue and pull request.
+
+### 7. Verify before you propose
+
+Each command, option, file path, label and issue number that you write in an issue must exist.
+Check it with the built `aw --help`, `ls`, `git` or `gh api`.
+Do not propose an `aw` command that you did not find in `--help`.
+Do not leave an unverified fact in an issue or in your final answer.
+One API call can check it.
+
+### 8. Decision issue format
+
+A `decision` issue body is in Traditional Chinese (Taiwan).
+Keep it short and plain.
+It has this format:
+
+- First line: `類型：需要使用者` or `類型：中控可決定`.
+  Use `需要使用者` only in these cases: money or billing; an action that cannot be undone; deletes; rulesets; visibility; secrets; frozen contracts; you have no recommendation.
+  Use `中控可決定` for all other cases.
+- The repository and links to each issue or pull request.
+- What is blocked, since when, and what else it blocks.
+- The facts the owner needs.
+- Options (see G3 and G9).
+  Each option says what happens when the owner picks it.
+- Under each option, an `執行清單`.
+  Write each write that follows, one line each.
+  Each line has: the repository, the issue number, the label to add or remove, the issue to close or create, and the comment in one line.
+
+Put all decisions of this run in one issue.
+
+#### Options (G3)
+
+A `decision` issue has at most two options.
+Put the recommended option first.
+When you have no recommendation, say so.
+Then use `類型：需要使用者`.
+
+#### Numbers in options (G9)
+
+Each number in an option must come from a measurement or a file.
+Examples: a budget, a threshold, a count, a duration.
+Link that measurement or file.
+When there is no measurement, the option says "measure first".
+Then the option proposes the measurement.
+
+### 9. Urgent
+
+A root cause is urgent when one of these is true:
+
+- No pull request in `<target>` can merge.
+- A `p0` issue is blocked.
+- One cause blocks 3 or more issues.
+- Its faberline/aw issue is open for more than 2 hours and has no comment after its creation.
+- A stage routine is dead (G8).
+
+For an urgent root cause, put the label `urgent` on its faberline/aw issue.
+Create a new issue with the label, or add the label to an open one.
+Mark it `緊急` in the status board.
+
+### 10. Status board
+
+Do this in each run, also in a normal run.
+Do it as the last write.
+
+Find the open issue in faberline/aw with the label `status` and the exact title `status(<repo>)`.
+Create it when there is none.
+Replace its body (PATCH) with the current state.
+Write it in Traditional Chinese (Taiwan):
+
+- `更新：<UTC time>` and `總結：正常` or `總結：異常`.
+- `## 根因`.
+  One bullet for each root cause.
+  Each bullet has: `緊急` when urgent; what it is; since when; what it blocks, with the chain; who it waits for (使用者, 中控, a routine, or another repository); the faberline/aw issue link.
+- `## 已解除但沒人接手`.
+- `## 這一輪做了什麼`.
+  Each write of this run, with its link.
+
+Keep no history in the body.
+
+#### Time (G1)
+
+Get the time with `date -u +%Y-%m-%dT%H:%MZ`.
+Run it in the same run.
+Do not estimate the time.
+
+### 11. Limits
+
+Do at most 6 writes in one run.
+The status board is always one of them.
+Keep a gap of at least 2 seconds between API calls.
+
+### 12. Final answer
+
+Write it in Traditional Chinese (Taiwan).
+Keep it short and plain.
+Start with one line: `supervisor <target> cloud run: <正常 or 異常>`.
+The second line is the link to the status board.
+List each root cause and its action, with links.
+Do not send push notifications.
+
+## Extra rules
+
+### Claim check (G4)
+
+An issue can be claimed only when it has all three of these:
+
+- the label `agent:<name>`;
+- a `stage:*` label;
+- no `blocked` label.
+
+Check them after a decision removes `blocked`.
+Check them for each new issue that you report.
+When one is missing, write the issue in the status board under `已解除但沒人接手`.
+Name the missing label.
+Also ask the desk in the faberline/aw issue.
+
+### Nobody picked it up (G6)
+
+Before you report "nobody picked it up", do two checks:
+
+1. Apply the claim check of G4.
+2. Read the last aw signal of the issue.
+
+Then report the exact reason.
+
+### Liveness (G8)
+
+Do not use `updated_at` of an issue to decide that a stage routine works.
+For each stage (`spec`, `tdd`, `review`), find the newest `aw:signal` comment of that stage in `<target>`.
+Note its time.
+
+A stage may have no signal for more than 3 hours.
+Claimable work may exist for that stage.
+Then this is a root cause.
+Do these things:
+
+1. Read the newest comments and the default-branch state to find the error.
+2. Create a `pipeline` issue with `urgent`.
+3. Mark it `緊急` in the status board.
+
+Example failure: lumen stopped for 14 hours.
+`aw claim` exited 1 in each run.
+The supervisor reported `正常`.
+
+### Re-check blocked issues (G10)
+
+In each run, look at each issue with the label `blocked`.
+Check if the reason still holds.
+Examples of a gone reason: the failed check is now green; the dependency issue is now closed; the tag now exists.
+
+When the reason is gone, say so in one of these places:
+
+- the faberline/aw tracking issue;
+- a `decision` issue of type `中控可決定`, with the exact label change in the `執行清單`.
+
+Example failure: core#163 stayed `blocked` after all 46 checks of its pull request became green.
+
+### Release chain (G11)
+
+A blocked issue can wait for a tag or a release of another repository.
+Then name the tracker issue of that release.
+List what still stands before the tag:
+
+- open milestone issues;
+- open pull requests.
+
+Add a link for each.
