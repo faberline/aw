@@ -101,6 +101,18 @@ struct CommentJson {
     created_at: String,
 }
 
+/// A comment from the list of the whole repository, with its issue.
+#[derive(Debug, Deserialize)]
+struct RecentCommentJson {
+    id: u64,
+    body: Option<String>,
+    created_at: String,
+    issue: u64,
+}
+
+const RECENT_COMMENT_JQ: &str =
+    ".[] | {id, body, created_at, issue: (.issue_url | split(\"/\") | last | tonumber)}";
+
 #[derive(Debug, Deserialize)]
 struct PrJson {
     number: u64,
@@ -232,6 +244,29 @@ impl Tracker for GhCli {
                 id: c.id,
                 body: c.body.unwrap_or_default(),
                 created_at: c.created_at,
+            })
+            .collect())
+    }
+
+    fn comments_since(&self, since: &str) -> PortResult<Vec<(u64, Comment)>> {
+        let repo = self.name()?;
+        // Oldest first: a comment that arrives between two pages goes to
+        // the end and moves no row to another page.
+        let path = format!(
+            "repos/{repo}/issues/comments?since={}&sort=created&direction=asc&per_page=100",
+            encode(since)
+        );
+        let out = self.get_all(&path, RECENT_COMMENT_JQ)?;
+        let comments: Vec<RecentCommentJson> = parse_lines(&out, "recent comments")?;
+        Ok(comments
+            .into_iter()
+            .map(|c| {
+                let comment = Comment {
+                    id: c.id,
+                    body: c.body.unwrap_or_default(),
+                    created_at: c.created_at,
+                };
+                (c.issue, comment)
             })
             .collect())
     }
@@ -452,6 +487,21 @@ mod tests {
         assert_eq!(encode("agent:claude"), "agent%3Aclaude");
         assert_eq!(encode("good first issue"), "good%20first%20issue");
         assert_eq!(encode("p0-a_b.c~"), "p0-a_b.c~");
+    }
+
+    #[test]
+    fn recent_comment_lines_carry_the_issue_number() {
+        let out = r#"{"id":5,"body":"hello","created_at":"2026-01-01T00:00:00Z","issue":7}
+{"id":6,"body":null,"created_at":"2026-01-02T00:00:00Z","issue":12}
+"#;
+        let rows: Vec<RecentCommentJson> = parse_lines(out, "recent comments").unwrap();
+        let rows: Vec<(u64, u64, Option<&str>)> = rows
+            .iter()
+            .map(|c| (c.issue, c.id, c.body.as_deref()))
+            .collect();
+        assert_eq!(rows, [(7, 5, Some("hello")), (12, 6, None)]);
+        // The filter reads the number from the issue URL of the comment.
+        assert!(RECENT_COMMENT_JQ.contains("issue_url"));
     }
 
     #[test]

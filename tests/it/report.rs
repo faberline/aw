@@ -751,3 +751,53 @@ fn review_closed_is_an_error_when_the_pull_request_is_gone() {
     assert!(w.tracker.calls().is_empty());
     assert_eq!(w.tracker.claims(7).len(), 1);
 }
+
+/// A spec claim of `claude` that is 7 hours old: older than the recent
+/// comments (6 hours).
+fn long_run(w: &World) {
+    use crate::support::NOW;
+    use aw::domain::work::claim::ClaimMark;
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    w.tracker.issue(2, &["agent:claude", "stage:spec"]);
+    let mark = ClaimMark {
+        agent: "claude".into(),
+        stage: Stage::Spec,
+        branch: "main".into(),
+        pr: None,
+        claimed_at: NOW - 7 * 60 * 60,
+    };
+    w.tracker
+        .add_comment(2, &mark.render(), "2027-01-15T01:00:00Z");
+}
+
+#[test]
+fn report_and_release_find_a_claim_older_than_the_recent_comments() {
+    let w = World::new();
+    long_run(&w);
+    // `aw status` reads the recent comments only.
+    assert_eq!(status(w.services(), "claude", None).unwrap(), None);
+    assert_eq!(
+        *w.tracker.reads.borrow(),
+        ["comments_since 2027-01-15T02:00:00Z"]
+    );
+    // `aw report` then reads each open issue, and finds the claim.
+    w.tracker.reads.borrow_mut().clear();
+    let done = report(w.services(), "claude", None, Outcome::Ready, "the spec").unwrap();
+    assert_eq!((done.issue, done.stage), (2, Stage::Spec));
+    assert_eq!(
+        *w.tracker.reads.borrow(),
+        [
+            "comments_since 2027-01-15T02:00:00Z",
+            "comments #1",
+            "comments #2"
+        ]
+    );
+    // The stage filter applies to the old claim too.
+    let w = World::new();
+    long_run(&w);
+    assert!(release(w.services(), "claude", Some(Stage::Tdd)).is_err());
+    assert!(release(w.services(), "codex", None).is_err());
+    let (released, _) = release(w.services(), "claude", Some(Stage::Spec)).unwrap();
+    assert_eq!(released.issue, 2);
+    assert!(w.tracker.claims(2).is_empty());
+}

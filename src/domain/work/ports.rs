@@ -21,6 +21,10 @@ pub trait Tracker {
     fn repo(&self) -> PortResult<Repo>;
     fn open_issues(&self, label: &str) -> PortResult<Vec<Issue>>;
     fn comments(&self, issue: u64) -> PortResult<Vec<Comment>>;
+    /// The comments on all issues of the repository that changed at or
+    /// after `since` (RFC 3339 UTC), each with its issue number. One list
+    /// request, not one request for each issue.
+    fn comments_since(&self, since: &str) -> PortResult<Vec<(u64, Comment)>>;
     fn comment(&self, issue: u64, body: &str) -> PortResult<()>;
     fn edit_comment(&self, id: u64, body: &str) -> PortResult<()>;
     fn delete_comment(&self, id: u64) -> PortResult<()>;
