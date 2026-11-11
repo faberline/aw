@@ -40,6 +40,25 @@ fn report_rejects_an_unknown_outcome() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("invalid value"));
 }
 
+/// Each outcome a skill tells a run to report is a value the binary takes.
+/// `respec` was an outcome of the use case that the binary refused.
+#[test]
+fn report_takes_each_outcome_of_each_stage() {
+    for outcome in [
+        "ready", "split", "respec", "blocked", "passed", "failed", "closed",
+    ] {
+        // Read the arguments only: no request leaves this test.
+        let args = ["aw", "report", "--agent", "claude", outcome, "-m", "x"];
+        let parsed = aw::interfaces::work::cli::parse(args.iter().map(Into::into));
+        assert!(parsed.is_ok(), "{outcome}");
+    }
+    let help = aw(&["report", "--help"]);
+    let text = String::from_utf8_lossy(&help.stdout);
+    for outcome in ["split", "respec"] {
+        assert!(text.contains(outcome), "{outcome}: {text}");
+    }
+}
+
 #[test]
 fn claim_commands_need_an_agent() {
     for command in ["status", "release", "claim"] {

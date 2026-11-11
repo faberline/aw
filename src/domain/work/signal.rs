@@ -22,6 +22,9 @@ pub enum Outcome {
     /// review closed the pull request without a merge; tdd starts again
     /// from the default branch.
     Closed,
+    /// spec found the issue too large for one pull request; `aw` made the
+    /// child issues that the message names and closed this issue.
+    Split,
 }
 
 impl Outcome {
@@ -33,6 +36,7 @@ impl Outcome {
             Outcome::Passed => "passed",
             Outcome::Failed => "failed",
             Outcome::Closed => "closed",
+            Outcome::Split => "split",
         }
     }
 
@@ -44,6 +48,7 @@ impl Outcome {
             "passed" => Some(Outcome::Passed),
             "failed" => Some(Outcome::Failed),
             "closed" => Some(Outcome::Closed),
+            "split" => Some(Outcome::Split),
             _ => None,
         }
     }
@@ -52,6 +57,7 @@ impl Outcome {
         matches!(
             (stage, self),
             (_, Outcome::Blocked)
+                | (Stage::Spec, Outcome::Split)
                 | (Stage::Spec | Stage::Tdd, Outcome::Ready)
                 | (Stage::Tdd, Outcome::Respec)
                 | (
@@ -63,7 +69,7 @@ impl Outcome {
 
     pub fn allowed(stage: Stage) -> &'static [Outcome] {
         match stage {
-            Stage::Spec => &[Outcome::Ready, Outcome::Blocked],
+            Stage::Spec => &[Outcome::Ready, Outcome::Split, Outcome::Blocked],
             Stage::Tdd => &[Outcome::Ready, Outcome::Respec, Outcome::Blocked],
             Stage::Review => &[
                 Outcome::Passed,
@@ -77,7 +83,7 @@ impl Outcome {
     pub fn needs_message(self) -> bool {
         matches!(
             self,
-            Outcome::Blocked | Outcome::Respec | Outcome::Failed | Outcome::Closed
+            Outcome::Blocked | Outcome::Respec | Outcome::Failed | Outcome::Closed | Outcome::Split
         )
     }
 }
@@ -130,6 +136,13 @@ impl Outcome {
                 return LabelMove {
                     remove: None,
                     add: vec!["blocked".into()],
+                };
+            }
+            // The children carry the work on; the closed parent keeps its labels.
+            (_, Outcome::Split) => {
+                return LabelMove {
+                    remove: None,
+                    add: Vec::new(),
                 };
             }
             (Stage::Tdd, Outcome::Respec) => "stage:spec",
@@ -276,6 +289,20 @@ mod tests {
         assert!(!Outcome::Respec.allowed_in(Stage::Review));
         assert!(Outcome::Respec.needs_message());
         assert_eq!(Outcome::parse("respec"), Some(Outcome::Respec));
+    }
+
+    #[test]
+    fn split_applies_to_spec_only_and_moves_no_label() {
+        assert!(Outcome::Split.allowed_in(Stage::Spec));
+        assert!(!Outcome::Split.allowed_in(Stage::Tdd));
+        assert!(!Outcome::Split.allowed_in(Stage::Review));
+        assert!(Outcome::allowed(Stage::Spec).contains(&Outcome::Split));
+        assert!(Outcome::Split.needs_message());
+        assert_eq!(Outcome::parse("split"), Some(Outcome::Split));
+        assert_eq!(Outcome::Split.to_string(), "split");
+        let m = Outcome::Split.label_move(Stage::Spec);
+        assert_eq!(m.remove, None);
+        assert!(m.add.is_empty());
     }
 
     #[test]

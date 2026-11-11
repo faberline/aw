@@ -5,9 +5,11 @@ use super::active::{active, in_checkout};
 use super::release::finish;
 use super::services::Services;
 use crate::domain::work::claim::Claim;
-use crate::domain::work::ports::{RequiredChecks, judge_required};
+use crate::domain::work::issue::agent_label;
+use crate::domain::work::ports::{NewIssue, RequiredChecks, judge_required};
 use crate::domain::work::pull_request::{body_closing, find_for_issue};
 use crate::domain::work::signal::{Outcome, Signal, names_spec_gap};
+use crate::domain::work::split::{SplitPlan, child_body, child_parent, replaced_by};
 use crate::domain::work::stage::Stage;
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -27,6 +29,9 @@ pub struct Reported {
     /// it is, so the two do not race. The next review run tries again.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub waiting_for: Option<u64>,
+    /// spec split: the child issues that `aw` made.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<u64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }
@@ -75,6 +80,9 @@ pub fn report(
         } else {
             outcome
         };
+    if outcome == Outcome::Split {
+        return split(s, held.comment_id, &claim, message, warnings);
+    }
     let link = match (claim.stage, outcome) {
         (Stage::Tdd, Outcome::Ready) => Some(open_pr(s, &claim, message)?),
         (Stage::Review, Outcome::Passed) => match merge(s, &claim, message, &mut warnings)? {
@@ -114,6 +122,128 @@ pub fn report(
         link,
         updated_branch: false,
         waiting_for: None,
+        children: Vec::new(),
+        warnings,
+    })
+}
+
+/// spec found the issue too large for one pull request. Make the child
+/// issues the message names, link them in the signal and close the issue,
+/// so no person has to make them.
+///
+/// Each child gets the milestone and the priority label of the issue, the
+/// agent label and `stage:spec`. An issue that is itself a child is not
+/// split: that needs the supervisor.
+fn split(
+    s: Services<'_>,
+    comment_id: u64,
+    claim: &Claim,
+    message: &str,
+    mut warnings: Vec<String>,
+) -> Result<Reported> {
+    let issue = claim.issue;
+    let plan = SplitPlan::parse(message).map_err(|why| anyhow::anyhow!("#{issue}: {why}"))?;
+    let parent = s
+        .tracker
+        .issue_detail(issue)
+        .with_context(|| format!("could not read issue #{issue}"))?;
+    if let Some(first) = child_parent(&parent.body) {
+        bail!(
+            "#{issue} is a child of #{first}; a child is not split again. \
+             Report `blocked` and name the decision in one line"
+        );
+    }
+    let mut labels = vec![agent_label(&claim.agent), format!("stage:{}", Stage::Spec)];
+    labels.extend(
+        ["p0", "p1", "p2", "p3"]
+            .iter()
+            .find(|p| parent.labels.iter().any(|l| l == *p))
+            .map(|p| p.to_string()),
+    );
+
+    let mut made: Vec<(u64, String)> = Vec::new();
+    let mut refused = None;
+    for child in &plan.children {
+        let new = NewIssue {
+            title: child.title.clone(),
+            body: child_body(issue, &child.body),
+            labels: labels.clone(),
+            milestone: parent.milestone,
+        };
+        match s.tracker.create_issue(&new) {
+            Ok(number) => made.push((number, child.title.clone())),
+            Err(err) => {
+                refused = Some(err);
+                break;
+            }
+        }
+    }
+    let children: Vec<u64> = made.iter().map(|(number, _)| *number).collect();
+
+    // Nothing was made: the claim stays, and the run can report again.
+    if let Some(err) = &refused
+        && made.is_empty()
+    {
+        bail!("could not make the first child of #{issue}: {err}");
+    }
+    // Some children exist. A second `split` would make them twice, so stop
+    // here and ask a person.
+    let (outcome, note) = match &refused {
+        Some(err) => {
+            let mut note = format!(
+                "The split stopped: `aw` made {} of {} child issues, then could not make \
+                 the next one ({err}).\n\nMade:\n",
+                made.len(),
+                plan.children.len()
+            );
+            for (number, title) in &made {
+                note.push_str(&format!("- #{number} {title}\n"));
+            }
+            note.push_str("\nNot made:\n");
+            for child in &plan.children[made.len()..] {
+                note.push_str(&format!("- {}\n", child.title));
+            }
+            note.push_str("\nA person must make the rest and close this issue.");
+            warnings.push(format!(
+                "#{issue}: made {} of {} children; reported `blocked`",
+                made.len(),
+                plan.children.len()
+            ));
+            (Outcome::Blocked, note)
+        }
+        None => (Outcome::Split, replaced_by(&plan.reason, &made)),
+    };
+    let signal = Signal {
+        stage: claim.stage,
+        agent: claim.agent.clone(),
+        outcome,
+    };
+    s.tracker
+        .edit_comment(comment_id, &signal.render(&note, None))
+        .with_context(|| format!("could not post the signal on issue #{issue}"))?;
+
+    if outcome == Outcome::Split
+        && let Err(err) = s.tracker.close_issue(issue)
+    {
+        // An open `stage:spec` issue would be specified again.
+        warnings.push(format!(
+            "could not close #{issue}: {err}; added `blocked`, so no run takes it. \
+             A person must close it"
+        ));
+        if let Err(err) = s.tracker.add_labels(issue, &["blocked".to_string()]) {
+            warnings.push(format!("could not add blocked to #{issue}: {err}"));
+        }
+    }
+    move_labels(s, claim, outcome, &mut warnings);
+    warnings.extend(finish(s, claim)?);
+    Ok(Reported {
+        issue,
+        stage: claim.stage,
+        outcome,
+        link: None,
+        updated_branch: false,
+        waiting_for: None,
+        children,
         warnings,
     })
 }
@@ -159,6 +289,7 @@ fn updated(
         link: Some(url),
         updated_branch: true,
         waiting_for: None,
+        children: Vec::new(),
         warnings,
     })
 }
@@ -205,6 +336,7 @@ fn waiting(
         link: Some(url),
         updated_branch: false,
         waiting_for: Some(holder),
+        children: Vec::new(),
         warnings,
     })
 }
@@ -213,6 +345,9 @@ fn waiting(
 /// The signal is already posted; a label failure is only a warning.
 fn move_labels(s: Services<'_>, claim: &Claim, outcome: Outcome, warnings: &mut Vec<String>) {
     let change = outcome.label_move(claim.stage);
+    if change.add.is_empty() {
+        return;
+    }
     if let Err(err) = s.tracker.add_labels(claim.issue, &change.add) {
         warnings.push(format!(
             "could not add {} to #{}: {err}",

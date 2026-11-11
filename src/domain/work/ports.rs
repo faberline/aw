@@ -16,6 +16,24 @@ pub struct Repo {
     pub default_branch: String,
 }
 
+/// What `aw` reads of one issue before it splits it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IssueDetail {
+    pub body: String,
+    pub labels: Vec<String>,
+    /// The number of the milestone, which the create request needs.
+    pub milestone: Option<u64>,
+}
+
+/// An issue to make.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewIssue {
+    pub title: String,
+    pub body: String,
+    pub labels: Vec<String>,
+    pub milestone: Option<u64>,
+}
+
 /// The issue tracker and code host (GitHub).
 pub trait Tracker {
     fn repo(&self) -> PortResult<Repo>;
@@ -30,6 +48,12 @@ pub trait Tracker {
     fn delete_comment(&self, id: u64) -> PortResult<()>;
     fn add_labels(&self, issue: u64, labels: &[String]) -> PortResult<()>;
     fn remove_label(&self, issue: u64, label: &str) -> PortResult<()>;
+    /// The body, the labels and the milestone number of one issue.
+    fn issue_detail(&self, issue: u64) -> PortResult<IssueDetail>;
+    /// Make an issue; returns its number.
+    fn create_issue(&self, new: &NewIssue) -> PortResult<u64>;
+    /// Close the issue as not planned: other issues replace it.
+    fn close_issue(&self, issue: u64) -> PortResult<()>;
     fn open_prs(&self) -> PortResult<Vec<PullRequest>>;
     fn create_pr(&self, head: &str, base: &str, title: &str, body: &str)
     -> PortResult<PullRequest>;

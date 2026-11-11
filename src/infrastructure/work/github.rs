@@ -5,7 +5,9 @@ use serde_json::{Value, json as payload};
 
 use super::process::run;
 use crate::domain::work::issue::{Comment, Issue};
-use crate::domain::work::ports::{CheckRun, PortError, PortResult, Repo, Tracker};
+use crate::domain::work::ports::{
+    CheckRun, IssueDetail, NewIssue, PortError, PortResult, Repo, Tracker,
+};
 use crate::domain::work::pull_request::PullRequest;
 
 /// GitHub through `gh api` (REST only), for the named repository or,
@@ -92,6 +94,43 @@ impl From<IssueJson> for Issue {
 const ISSUE_JQ: &str = ".[] | select(.pull_request | not) \
     | {number, title, url: .html_url, labels: [.labels[].name], created_at, \
       milestone: .milestone.title}";
+
+#[derive(Deserialize)]
+struct DetailJson {
+    body: Option<String>,
+    labels: Vec<String>,
+    milestone: Option<u64>,
+}
+
+impl From<DetailJson> for IssueDetail {
+    fn from(d: DetailJson) -> Self {
+        IssueDetail {
+            body: d.body.unwrap_or_default(),
+            labels: d.labels,
+            milestone: d.milestone,
+        }
+    }
+}
+
+const DETAIL_JQ: &str = "{body, labels: [.labels[].name], milestone: .milestone.number}";
+
+/// The JSON body of the request that makes an issue. GitHub refuses a
+/// `null` milestone on create, so the key is absent without one.
+fn new_issue_body(new: &NewIssue) -> Value {
+    let mut body = payload!({ "title": new.title, "body": new.body, "labels": new.labels });
+    if let Some(milestone) = new.milestone {
+        body["milestone"] = payload!(milestone);
+    }
+    body
+}
+
+/// The number in the answer to a create request.
+fn created_number(out: &str, what: &str) -> PortResult<u64> {
+    let created: Value = parse(out, what)?;
+    created["number"]
+        .as_u64()
+        .ok_or_else(|| PortError(format!("{what} returned no number")))
+}
 
 /// One issue comment from the REST API.
 #[derive(Deserialize)]
@@ -304,6 +343,27 @@ impl Tracker for GhCli {
         self.send("DELETE", &path, None).map(|_| ())
     }
 
+    fn issue_detail(&self, issue: u64) -> PortResult<IssueDetail> {
+        let repo = self.name()?;
+        let out = self.get(&format!("repos/{repo}/issues/{issue}"), Some(DETAIL_JQ))?;
+        let detail: DetailJson = parse(&out, "issue")?;
+        Ok(detail.into())
+    }
+
+    fn create_issue(&self, new: &NewIssue) -> PortResult<u64> {
+        let repo = self.name()?;
+        let path = format!("repos/{repo}/issues");
+        let out = self.send("POST", &path, Some(new_issue_body(new)))?;
+        created_number(&out, "issue create")
+    }
+
+    fn close_issue(&self, issue: u64) -> PortResult<()> {
+        let repo = self.name()?;
+        let path = format!("repos/{repo}/issues/{issue}");
+        let body = payload!({ "state": "closed", "state_reason": "not_planned" });
+        self.send("PATCH", &path, Some(body)).map(|_| ())
+    }
+
     fn open_prs(&self) -> PortResult<Vec<PullRequest>> {
         let repo = self.name()?;
         let path = format!("repos/{repo}/pulls?state=open&per_page=100");
@@ -326,10 +386,7 @@ impl Tracker for GhCli {
             &path,
             Some(payload!({ "head": head, "base": base, "title": title, "body": body })),
         )?;
-        let created: Value = parse(&created, "pull request create")?;
-        let number = created["number"]
-            .as_u64()
-            .ok_or_else(|| PortError("pull request create returned no number".into()))?;
+        let number = created_number(&created, "pull request create")?;
         let out = self.get(&format!("repos/{repo}/pulls/{number}"), Some(PR_JQ))?;
         let pr: PrJson = parse(&out, "pull request")?;
         Ok(pr.into())
@@ -516,6 +573,49 @@ mod tests {
         assert_eq!(issues[0].number, 7);
         assert_eq!(issues[0].labels, ["agent:agy", "stage:tdd"]);
         assert_eq!(issues[0].milestone, None);
+    }
+
+    #[test]
+    fn an_issue_detail_keeps_the_body_the_labels_and_the_milestone_number() {
+        let out = r#"{"body":"Text","labels":["p1","stage:spec"],"milestone":4}"#;
+        let detail: IssueDetail = parse::<DetailJson>(out, "issue").unwrap().into();
+        assert_eq!(detail.body, "Text");
+        assert_eq!(detail.labels, ["p1", "stage:spec"]);
+        assert_eq!(detail.milestone, Some(4));
+        let bare = r#"{"body":null,"labels":[],"milestone":null}"#;
+        let detail: IssueDetail = parse::<DetailJson>(bare, "issue").unwrap().into();
+        assert_eq!(detail, IssueDetail::default());
+    }
+
+    #[test]
+    fn a_new_issue_names_its_milestone_only_when_it_has_one() {
+        let mut new = NewIssue {
+            title: "T".into(),
+            body: "B".into(),
+            labels: vec!["stage:spec".into()],
+            milestone: Some(4),
+        };
+        let body = new_issue_body(&new);
+        assert_eq!(body["title"], "T");
+        assert_eq!(body["body"], "B");
+        assert_eq!(body["labels"][0], "stage:spec");
+        assert_eq!(body["milestone"], 4);
+        new.milestone = None;
+        assert!(new_issue_body(&new).get("milestone").is_none());
+    }
+
+    #[test]
+    fn a_create_answer_gives_the_number() {
+        assert_eq!(
+            created_number(r#"{"number":12}"#, "issue create").unwrap(),
+            12
+        );
+        let err = created_number(r#"{"message":"no"}"#, "issue create").unwrap_err();
+        assert!(
+            err.0.contains("issue create returned no number"),
+            "{}",
+            err.0
+        );
     }
 
     #[test]

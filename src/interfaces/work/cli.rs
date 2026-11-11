@@ -98,8 +98,10 @@ enum Command {
     Report {
         #[command(flatten)]
         target: Target,
-        /// spec: ready|blocked. tdd: ready|respec|blocked. review: passed|failed|closed|blocked.
+        /// spec: ready|split|blocked. tdd: ready|respec|blocked. review: passed|failed|closed|blocked.
         /// tdd with an incomplete spec: respec, not blocked.
+        /// spec with an issue too large for one pull request: split; the
+        /// message names 2 to 5 children, each under a line `## Child: <title>`.
         outcome: OutcomeArg,
         /// Report text. tdd ready: the pull request body.
         #[arg(short, long, conflicts_with = "file")]
@@ -257,6 +259,8 @@ impl From<EventArg> for Event {
 #[derive(Clone, Copy, ValueEnum)]
 enum OutcomeArg {
     Ready,
+    Split,
+    Respec,
     Blocked,
     Passed,
     Failed,
@@ -267,6 +271,8 @@ impl From<OutcomeArg> for Outcome {
     fn from(o: OutcomeArg) -> Self {
         match o {
             OutcomeArg::Ready => Outcome::Ready,
+            OutcomeArg::Split => Outcome::Split,
+            OutcomeArg::Respec => Outcome::Respec,
             OutcomeArg::Blocked => Outcome::Blocked,
             OutcomeArg::Passed => Outcome::Passed,
             OutcomeArg::Failed => Outcome::Failed,

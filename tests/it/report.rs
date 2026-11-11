@@ -801,3 +801,185 @@ fn report_and_release_find_a_claim_older_than_the_recent_comments() {
     assert_eq!(released.issue, 2);
     assert!(w.tracker.claims(2).is_empty());
 }
+
+const SPLIT: &str = "Too large: a port and an adapter.\n\n\
+    ## Child: Add the port\nThe trait and its tests.\n\n\
+    ## Child: Add the adapter\nThe `gh` adapter.\nWaits for the port.\n";
+
+fn split_world() -> World {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec", "p1"]);
+    w.tracker.milestones.borrow_mut().insert(1, 4);
+    claim_issue(&w, "claude");
+    w
+}
+
+#[test]
+fn spec_split_makes_the_children_and_closes_the_parent() {
+    let w = split_world();
+    let r = report(w.services(), "claude", None, Outcome::Split, SPLIT).unwrap();
+    assert_eq!(r.outcome, Outcome::Split);
+    assert_eq!(r.children, [201, 202]);
+    assert_eq!(r.link, None);
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert_eq!(
+        w.tracker.calls(),
+        [
+            "create_issue #201 Add the port",
+            "create_issue #202 Add the adapter",
+            "edit_comment #1",
+            "close_issue #1",
+        ]
+    );
+    // Each child: the milestone and the priority of the parent, the agent
+    // label and the label that makes it ready for spec.
+    for (_, new) in w.tracker.created.borrow().iter() {
+        assert_eq!(new.labels, ["agent:claude", "stage:spec", "p1"]);
+        assert_eq!(new.milestone, Some(4));
+        assert!(
+            new.body
+                .starts_with("<!-- aw:child parent=1 -->\nPart of #1.")
+        );
+    }
+    let created = w.tracker.created.borrow();
+    assert!(created[1].1.body.ends_with("Waits for the port."));
+    // One comment on the parent links the children.
+    let comment = w.tracker.last_comment(1);
+    assert_eq!(w.tracker.signals(1)[0].outcome, Outcome::Split);
+    assert!(comment.contains("Too large: a port and an adapter."));
+    assert!(comment.contains("Replaced by:\n- #201 Add the port\n- #202 Add the adapter"));
+    assert!(w.tracker.claims(1).is_empty());
+    assert_eq!(*w.tracker.closed.borrow(), [1]);
+    assert_eq!(status(w.services(), "claude", None).unwrap(), None);
+}
+
+#[test]
+fn a_child_of_a_split_is_ready_for_spec() {
+    let w = split_world();
+    report(w.services(), "claude", None, Outcome::Split, SPLIT).unwrap();
+    match claim(w.services(), "claude", None, &[], &[]).unwrap() {
+        ClaimOutcome::Claimed(c) => {
+            assert_eq!(c.issue, 201);
+            assert_eq!(c.stage, Stage::Spec);
+        }
+        ClaimOutcome::Nothing(why) => panic!("nothing to claim: {why}"),
+    }
+}
+
+#[test]
+fn a_split_without_priority_or_milestone_copies_none() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    claim_issue(&w, "claude");
+    report(w.services(), "claude", None, Outcome::Split, SPLIT).unwrap();
+    for (_, new) in w.tracker.created.borrow().iter() {
+        assert_eq!(new.labels, ["agent:claude", "stage:spec"]);
+        assert_eq!(new.milestone, None);
+    }
+}
+
+#[test]
+fn a_split_makes_at_most_five_children_and_at_least_two() {
+    let w = split_world();
+    let part = |n: usize| format!("## Child: Part {n}\nText {n}.\n");
+    let six: String = (1..=6).map(part).collect();
+    let err = report(w.services(), "claude", None, Outcome::Split, &six).unwrap_err();
+    assert!(err.to_string().contains("at most 5"), "{err}");
+    let one = report(w.services(), "claude", None, Outcome::Split, &part(1)).unwrap_err();
+    assert!(one.to_string().contains("at least 2"), "{one}");
+    assert!(report(w.services(), "claude", None, Outcome::Split, " ").is_err());
+    // Nothing changed: the claim stays and the run can report again.
+    assert!(w.tracker.calls().is_empty(), "{:?}", w.tracker.calls());
+    assert_eq!(w.tracker.claims(1).len(), 1);
+    let five: String = (1..=5).map(part).collect();
+    let r = report(w.services(), "claude", None, Outcome::Split, &five).unwrap();
+    assert_eq!(r.children.len(), 5);
+}
+
+#[test]
+fn a_child_of_a_split_is_not_split_again() {
+    let w = split_world();
+    report(w.services(), "claude", None, Outcome::Split, SPLIT).unwrap();
+    claim_issue(&w, "claude");
+    let err = report(w.services(), "claude", None, Outcome::Split, SPLIT).unwrap_err();
+    let text = err.to_string();
+    assert!(text.contains("#201 is a child of #1"), "{text}");
+    assert!(text.contains("Report `blocked`"), "{text}");
+    assert!(w.tracker.calls().is_empty(), "{:?}", w.tracker.calls());
+    assert_eq!(w.tracker.claims(201).len(), 1);
+    // `blocked` is still open to the run.
+    let r = report(
+        w.services(),
+        "claude",
+        None,
+        Outcome::Blocked,
+        "Decision: one crate or two.",
+    )
+    .unwrap();
+    assert_eq!(r.outcome, Outcome::Blocked);
+}
+
+#[test]
+fn a_split_that_makes_no_child_keeps_the_claim() {
+    let w = split_world();
+    w.tracker.fail_create_from.set(1);
+    let err = report(w.services(), "claude", None, Outcome::Split, SPLIT).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("could not make the first child of #1"),
+        "{err}"
+    );
+    assert!(w.tracker.calls().is_empty(), "{:?}", w.tracker.calls());
+    assert_eq!(w.tracker.claims(1).len(), 1);
+    assert!(w.tracker.signals(1).is_empty());
+}
+
+#[test]
+fn a_split_that_stops_part_way_is_reported_as_blocked() {
+    let w = split_world();
+    w.tracker.fail_create_from.set(2);
+    let r = report(w.services(), "claude", None, Outcome::Split, SPLIT).unwrap();
+    assert_eq!(r.outcome, Outcome::Blocked);
+    assert_eq!(r.children, [201]);
+    assert!(
+        r.warnings[0].contains("made 1 of 2 children"),
+        "{:?}",
+        r.warnings
+    );
+    let comment = w.tracker.last_comment(1);
+    assert_eq!(w.tracker.signals(1)[0].outcome, Outcome::Blocked);
+    assert!(comment.contains("Made:\n- #201 Add the port"), "{comment}");
+    assert!(
+        comment.contains("Not made:\n- Add the adapter"),
+        "{comment}"
+    );
+    assert!(w.tracker.closed.borrow().is_empty());
+    let labels = w.tracker.issues.borrow()[0].labels.clone();
+    assert_eq!(labels, ["agent:claude", "stage:spec", "p1", "blocked"]);
+}
+
+#[test]
+fn a_parent_that_cannot_be_closed_gets_blocked() {
+    let w = split_world();
+    w.tracker.fail_close_issue.set(true);
+    let r = report(w.services(), "claude", None, Outcome::Split, SPLIT).unwrap();
+    assert_eq!(r.outcome, Outcome::Split);
+    assert_eq!(r.children, [201, 202]);
+    assert!(
+        r.warnings[0].contains("could not close #1"),
+        "{:?}",
+        r.warnings
+    );
+    let labels = w.tracker.issues.borrow()[0].labels.clone();
+    assert_eq!(labels, ["agent:claude", "stage:spec", "p1", "blocked"]);
+}
+
+#[test]
+fn split_applies_to_spec_only() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:tdd"]);
+    claim_issue(&w, "claude");
+    let err = report(w.services(), "claude", None, Outcome::Split, SPLIT).unwrap_err();
+    assert!(err.to_string().contains("does not apply to tdd"), "{err}");
+    assert!(w.tracker.created.borrow().is_empty());
+}

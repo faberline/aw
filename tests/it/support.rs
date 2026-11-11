@@ -6,7 +6,9 @@ use std::collections::HashMap;
 use aw::application::work::Services;
 use aw::domain::work::claim::ClaimMark;
 use aw::domain::work::issue::{Comment, Issue};
-use aw::domain::work::ports::{CheckRun, Clock, PortError, PortResult, Repo, Tracker, Workspace};
+use aw::domain::work::ports::{
+    CheckRun, Clock, IssueDetail, NewIssue, PortError, PortResult, Repo, Tracker, Workspace,
+};
 use aw::domain::work::pull_request::PullRequest;
 use aw::domain::work::signal::Signal;
 
@@ -37,6 +39,17 @@ pub struct FakeTracker {
     pub required_unreadable: Cell<bool>,
     /// The newest check runs of these head branches.
     pub runs: RefCell<HashMap<String, Vec<CheckRun>>>,
+    /// The bodies of the issues; an issue without one has an empty body.
+    pub bodies: RefCell<HashMap<u64, String>>,
+    /// The milestone numbers of the issues.
+    pub milestones: RefCell<HashMap<u64, u64>>,
+    /// The issues `create_issue` made, in order.
+    pub created: RefCell<Vec<(u64, NewIssue)>>,
+    /// `create_issue` fails from this call on (1 is the first call).
+    pub fail_create_from: Cell<usize>,
+    pub fail_close_issue: Cell<bool>,
+    /// The issues `close_issue` closed.
+    pub closed: RefCell<Vec<u64>>,
     next_comment_id: Cell<u64>,
 }
 
@@ -234,6 +247,52 @@ impl Tracker for FakeTracker {
         {
             i.labels.retain(|l| l != label);
         }
+        Ok(())
+    }
+
+    fn issue_detail(&self, issue: u64) -> PortResult<IssueDetail> {
+        let issues = self.issues.borrow();
+        let found = issues
+            .iter()
+            .find(|i| i.number == issue)
+            .ok_or_else(|| PortError(format!("no issue #{issue}")))?;
+        Ok(IssueDetail {
+            body: self
+                .bodies
+                .borrow()
+                .get(&issue)
+                .cloned()
+                .unwrap_or_default(),
+            labels: found.labels.clone(),
+            milestone: self.milestones.borrow().get(&issue).copied(),
+        })
+    }
+
+    fn create_issue(&self, new: &NewIssue) -> PortResult<u64> {
+        let call = self.created.borrow().len() + 1;
+        let fail_from = self.fail_create_from.get();
+        if fail_from != 0 && call >= fail_from {
+            return Err(PortError("create refused".into()));
+        }
+        let number = 200 + call as u64;
+        self.record(format!("create_issue #{number} {}", new.title));
+        let labels: Vec<&str> = new.labels.iter().map(String::as_str).collect();
+        self.issue(number, &labels);
+        self.bodies.borrow_mut().insert(number, new.body.clone());
+        if let Some(milestone) = new.milestone {
+            self.milestones.borrow_mut().insert(number, milestone);
+        }
+        self.created.borrow_mut().push((number, new.clone()));
+        Ok(number)
+    }
+
+    fn close_issue(&self, issue: u64) -> PortResult<()> {
+        if self.fail_close_issue.get() {
+            return Err(PortError("close refused".into()));
+        }
+        self.record(format!("close_issue #{issue}"));
+        self.closed.borrow_mut().push(issue);
+        self.issues.borrow_mut().retain(|i| i.number != issue);
         Ok(())
     }
 
