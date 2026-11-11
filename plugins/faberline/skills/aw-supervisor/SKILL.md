@@ -101,6 +101,7 @@ Look only at these:
 - f. Stage liveness (G8, below).
 - g. Review loops (G12, below).
 - h. Parent issues whose children are all done (G13, below).
+- i. Issues with `stage:tdd` and `blocked` whose last signal says the spec is incomplete (G16, below).
 
 ### 5. Find root causes before you act
 
@@ -520,3 +521,45 @@ When the last attempt is less than one hour old, do not rerun.
 Example failure: the defer supervisor opened faberline/aw#294 for `Temporary failure resolving 'azure.archive.ubuntu.com'` as a defer problem.
 The same failure hit tape and surface at the same time.
 It was a problem of the hosted runner.
+
+### tdd blocked on an incomplete spec (G16)
+
+The tdd stage can find that the spec is incomplete.
+The correct report is `respec`: the issue goes back to `stage:spec` without `blocked`.
+A `blocked` report keeps `stage:tdd` and adds `blocked`.
+Then no routine takes the issue.
+The spec routine does not read `stage:tdd`.
+The tdd routine does not take `blocked`.
+This is a pipeline defect, not a question for a person.
+
+For each open issue in `<target>` with `stage:tdd` and `blocked`, read the last aw signal.
+The signal has `stage=tdd` and `outcome=blocked`.
+Its text says that the spec is incomplete, unclear or lacks a point.
+Examples: `spec unclear:`, `spec incomplete`, `the spec is missing points`.
+Then this is a root cause named "tdd blocked on spec".
+
+Open a `decision` issue in faberline/aw in the same run.
+Do not wait for one hour.
+Do not wait for the planner.
+Use `類型：中控可決定`.
+Use one option.
+Write these facts: the link to the signal; its time; the missing points that the signal lists.
+The `執行清單` has these lines for each such issue:
+
+- remove `blocked`;
+- remove `stage:tdd` and add `stage:spec`;
+- the comment text in one line, with the missing points for the new spec.
+
+Search the open faberline/aw issues first (step 6).
+When an open `decision(<repo>)` issue exists, add a comment there with the full `執行清單`.
+Do not change the labels yourself.
+
+Also name the defect.
+Search the open faberline/aw issues with the label `pipeline` for `tdd blocked on spec`.
+When one exists, add one comment there with the issue link and the signal link.
+When none exists, create one `pipeline(<repo>)` issue with these words in the title.
+The fix is in `aw` 0.7.22 and in the aw-worker skill.
+So write the `aw` version of the tdd run when a comment or a log shows it.
+
+Example failure: faberline/relay#134 and faberline/lumen#307 got a tdd `blocked` signal for an incomplete spec on 2026-11-11.
+Each issue waited about 50 minutes for a label move (faberline/aw#305, faberline/aw#307).
