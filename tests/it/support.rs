@@ -19,6 +19,8 @@ pub struct FakeTracker {
     pub prs: RefCell<Vec<PullRequest>>,
     /// Everything the use case changed, in order, e.g. `merge #5`.
     pub calls: RefCell<Vec<String>>,
+    /// The comment reads, in order: `comments #7` or `comments_since <time>`.
+    pub reads: RefCell<Vec<String>>,
     pub fail_request_changes: Cell<bool>,
     pub fail_delete_branch: Cell<bool>,
     /// The merge fails, as a strict ruleset refuses a branch behind base.
@@ -152,12 +154,25 @@ impl Tracker for FakeTracker {
     }
 
     fn comments(&self, issue: u64) -> PortResult<Vec<Comment>> {
+        self.reads.borrow_mut().push(format!("comments #{issue}"));
         Ok(self
             .comments
             .borrow()
             .get(&issue)
             .cloned()
             .unwrap_or_default())
+    }
+
+    fn comments_since(&self, since: &str) -> PortResult<Vec<(u64, Comment)>> {
+        self.reads
+            .borrow_mut()
+            .push(format!("comments_since {since}"));
+        let all = self.comments.borrow();
+        Ok(all
+            .iter()
+            .flat_map(|(issue, cs)| cs.iter().map(|c| (*issue, c.clone())))
+            .filter(|(_, c)| c.created_at.as_str() >= since)
+            .collect())
     }
 
     fn comment(&self, issue: u64, body: &str) -> PortResult<()> {

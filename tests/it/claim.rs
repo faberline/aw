@@ -1,5 +1,5 @@
 use aw::application::work::{ClaimOutcome, claim, status};
-use aw::domain::work::claim::{Claim, STALE_AFTER_SECONDS};
+use aw::domain::work::claim::{Claim, ClaimMark, STALE_AFTER_SECONDS};
 use aw::domain::work::signal::{Outcome, Signal};
 use aw::domain::work::stage::Stage;
 
@@ -482,4 +482,85 @@ fn a_redo_skips_branches_that_already_exist() {
     w.tracker
         .add_comment(7, &spec_ready("aw:redo"), "2026-02-01T00:00:00Z");
     assert_eq!(claimed(&w, "claude").branch, "issue/7-r3");
+}
+
+/// A claim comment of `agent` that is `age` seconds old.
+fn old_mark(agent: &str, stage: Stage, age: i64) -> String {
+    ClaimMark {
+        agent: agent.into(),
+        stage,
+        branch: "main".into(),
+        pr: None,
+        claimed_at: NOW - age,
+    }
+    .render()
+}
+
+/// `NOW` less `RECENT_SECONDS` (two stale periods, 6 hours).
+const RECENT_START: &str = "comments_since 2027-01-15T02:00:00Z";
+/// A time before `RECENT_START`.
+const LONG_AGO: &str = "2027-01-14T20:00:00Z";
+
+#[test]
+fn a_claim_reads_one_list_of_recent_comments_and_the_issue_it_takes() {
+    let w = World::new();
+    w.tracker
+        .issue(1, &["agent:claude", "stage:spec", "p0", "blocked"]);
+    w.tracker.issue(2, &["agent:claude", "stage:done"]);
+    w.tracker.issue(3, &["agent:claude", "stage:tdd", "p0"]);
+    w.tracker.issue(4, &["agent:claude", "stage:spec", "p1"]);
+    w.tracker.issue(5, &["agent:claude", "stage:spec", "p2"]);
+    w.tracker.issue(6, &["agent:claude"]);
+    assert_eq!(claimed_in(&w, "claude", Stage::Spec).issue, 4);
+    // Not one request for each of the six open issues.
+    assert_eq!(*w.tracker.reads.borrow(), [RECENT_START, "comments #4"]);
+
+    // The claim is in the recent comments: the next claim reads no issue.
+    w.tracker.reads.borrow_mut().clear();
+    let why = match claim(w.services(), "claude", Some(Stage::Spec), &[], &[]).unwrap() {
+        ClaimOutcome::Nothing(why) => why,
+        ClaimOutcome::Claimed(c) => panic!("expected nothing, claimed #{}", c.issue),
+    };
+    assert!(why.contains("issue #4 (spec) is still claimed"));
+    assert_eq!(*w.tracker.reads.borrow(), [RECENT_START]);
+}
+
+#[test]
+fn a_claim_passes_over_an_issue_that_has_its_report() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec", "p0"]);
+    w.tracker.issue(2, &["agent:claude", "stage:spec", "p1"]);
+    w.tracker
+        .add_comment(1, &signal(Stage::Spec, "claude", Outcome::Ready), LONG_AGO);
+    assert_eq!(claimed(&w, "claude").issue, 2);
+    assert_eq!(
+        *w.tracker.reads.borrow(),
+        [RECENT_START, "comments #1", "comments #2"]
+    );
+}
+
+#[test]
+fn a_claim_older_than_the_recent_comments_is_replaced_on_its_issue() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    w.tracker
+        .add_comment(1, &old_mark("claude", Stage::Spec, 12 * 60 * 60), LONG_AGO);
+    // Another agent's old claim stays.
+    w.tracker
+        .add_comment(1, &old_mark("codex", Stage::Spec, 12 * 60 * 60), LONG_AGO);
+    let c = claimed(&w, "claude");
+    assert_eq!((c.issue, c.claimed_at), (1, NOW));
+    let ages: Vec<(String, i64)> = w
+        .tracker
+        .claims(1)
+        .into_iter()
+        .map(|m| (m.agent, m.claimed_at))
+        .collect();
+    assert_eq!(
+        ages,
+        [
+            ("codex".to_string(), NOW - 12 * 60 * 60),
+            ("claude".to_string(), NOW)
+        ]
+    );
 }
