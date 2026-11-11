@@ -81,6 +81,16 @@ pub fn collect(g: &Gate<'_>, number: u64) -> PortResult<Value> {
         if related.is_empty() && pull["milestone"]["number"].as_u64() != Some(number) {
             continue;
         }
+        let state = pull["state"].as_str().unwrap_or_default();
+        require(
+            state == "open" || (state == "closed" && pull.get("merged_at").is_some()),
+            "unknown pull request state",
+        )?;
+        if state == "closed" && !merged(&pull) {
+            // Closed and never merged: this work was dropped. Only an open
+            // pull request holds the milestone.
+            continue;
+        }
         let landed = merged(&pull) && ancestry.holds(pull["merge_commit_sha"].as_str(), &head)?;
         let Some(fields) = pull.as_object_mut() else {
             return Err(fail("invalid pull request inventory"));
@@ -140,6 +150,7 @@ pub fn collect(g: &Gate<'_>, number: u64) -> PortResult<Value> {
                 "landed": ancestry.holds(Some(sha), &head)?,
                 "pulls": within,
                 "contract_sha256": digest(tagged_contract),
+                "runs_current_policy": tagged_policy.retains(&policy),
                 "plan_sha256": digest(&tagged_value),
                 "release_blob": tagged_release_blob,
                 "policy_blob": tagged_policy_blob,

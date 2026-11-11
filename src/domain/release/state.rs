@@ -68,6 +68,13 @@ pub fn covers_release(snapshot: &Value, head: &str) -> bool {
         && proof["contract_sha256"].as_str() == Some(&digest(&snapshot["contract"]))
 }
 
+/// Did the full tests of the frozen commit `head` run every workflow and
+/// every job that the current policy requires? A policy that gained a gate
+/// after the candidate makes the candidate too old for the final tag.
+pub fn runs_current_policy(snapshot: &Value, head: &str) -> bool {
+    snapshot["release_commits"][head]["runs_current_policy"] == true
+}
+
 fn landed(pull: &Value) -> bool {
     pull["_landed"] == true
 }
@@ -278,7 +285,7 @@ pub fn evaluate(snapshot: &Value) -> PortResult<Value> {
             }
         }
         "success" if !is_final => {
-            if covers_release(snapshot, rc_sha) {
+            if covers_release(snapshot, rc_sha) && runs_current_policy(snapshot, rc_sha) {
                 update(
                     &mut result,
                     json!({"state": "ready_final", "action": "tag", "tag": final_tag}),
