@@ -43,6 +43,18 @@ fn takes_highest_priority_then_oldest() {
 }
 
 #[test]
+fn takes_bar_work_after_p0_and_before_the_other_work() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec", "p1"]);
+    w.tracker
+        .issue(2, &["agent:claude", "stage:spec", "p3", "bar"]);
+    w.tracker.issue(3, &["agent:codex", "stage:spec", "p0"]);
+    w.tracker.issue(4, &["agent:codex", "stage:spec", "bar"]);
+    assert_eq!(claimed(&w, "claude").issue, 2);
+    assert_eq!(claimed(&w, "codex").issue, 3);
+}
+
+#[test]
 fn skip_passes_over_the_named_issues() {
     let w = World::new();
     w.tracker.issue(1, &["agent:claude", "stage:spec", "p0"]);

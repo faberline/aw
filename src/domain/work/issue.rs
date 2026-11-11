@@ -93,12 +93,19 @@ impl Issue {
     }
 }
 
-/// Claim order: `p0` first, then the lowest milestone version, then the
-/// priority label (unlabeled last), then the oldest issue.
+/// The label of an issue that is inside the internal-use bar of its
+/// repository. A person or the service desk sets it.
+pub const BAR_LABEL: &str = "bar";
+
+/// Claim order: `p0` first, then the issues with the `bar` label, then the
+/// lowest milestone version, then the priority label (unlabeled last),
+/// then the oldest issue. A repository without the `bar` label keeps the
+/// order it had.
 pub fn claim_order(issues: &mut [Issue]) {
     issues.sort_by(|a, b| {
         (a.priority() != 0)
             .cmp(&(b.priority() != 0))
+            .then_with(|| b.has_label(BAR_LABEL).cmp(&a.has_label(BAR_LABEL)))
             .then_with(|| a.milestone_rank().cmp(&b.milestone_rank()))
             .then_with(|| a.priority().cmp(&b.priority()))
             .then_with(|| a.created_at.cmp(&b.created_at))
@@ -290,5 +297,51 @@ mod tests {
         claim_order(&mut issues);
         let order: Vec<u64> = issues.iter().map(|i| i.number).collect();
         assert_eq!(order, [5, 6, 3, 2, 4, 1]);
+    }
+
+    fn order(mut issues: Vec<Issue>) -> Vec<u64> {
+        claim_order(&mut issues);
+        issues.iter().map(|i| i.number).collect()
+    }
+
+    #[test]
+    fn bar_work_comes_after_p0_and_before_the_milestone_version() {
+        // The milestones inside the bar have the higher versions.
+        let issues = vec![
+            issue(1, &["p1"], Some("lumen@0.9.0")),
+            issue(2, &["p3", "bar"], Some("lumen@0.22.0")),
+            issue(3, &["p0"], Some("lumen@0.12.0")),
+            issue(4, &["p1", "bar"], Some("lumen@0.21.0")),
+            issue(5, &["p2", "bar"], None),
+            issue(6, &["p0", "bar"], Some("lumen@0.29.0")),
+            issue(7, &["p1", "bar"], Some("lumen@0.22.0")),
+            issue(8, &[], Some("lumen@0.9.0")),
+        ];
+        // p0 first (the mark, then the version); then the marked issues by
+        // version, priority and age; then the other issues.
+        assert_eq!(order(issues), [6, 3, 4, 7, 2, 5, 1, 8]);
+    }
+
+    #[test]
+    fn without_the_bar_label_the_order_does_not_change() {
+        fn issues(mark: Option<&str>) -> Vec<Issue> {
+            let with = |own: &str, milestone: Option<&str>, number: u64| {
+                let labels: Vec<&str> = [own].into_iter().chain(mark).collect();
+                issue(number, &labels, milestone)
+            };
+            vec![
+                with("p1", None, 1),
+                with("p1", Some("lumen@0.10.0"), 2),
+                with("p3", Some("lumen@0.7.0"), 3),
+                with("p2", Some("Backlog"), 4),
+                with("p0", None, 5),
+                with("p1", Some("lumen@0.7.0"), 6),
+            ]
+        }
+        assert_eq!(order(issues(None)), [5, 6, 3, 2, 4, 1]);
+        // Also when every issue has the mark, and for a label that only
+        // looks like it.
+        assert_eq!(order(issues(Some("bar"))), [5, 6, 3, 2, 4, 1]);
+        assert_eq!(order(issues(Some("bars"))), [5, 6, 3, 2, 4, 1]);
     }
 }

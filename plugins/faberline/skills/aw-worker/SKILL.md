@@ -46,7 +46,7 @@ In a stage run:
   that stage, so the three runs do not block each other.
 - Only the spec run plans. The tdd and review runs skip section 2.
 - The run's own model does the stage work. Do not give it to a subagent.
-- `$AW --version` must print `aw 0.7.22` or newer.
+- `$AW --version` must print `aw 0.7.25` or newer.
 
 Without a stage in the prompt, one run does every stage as described below.
 
@@ -76,7 +76,7 @@ Every issue in the flow has the label `agent:claude`.
 - Never work in a person's checkout, such as `~/faberlines/<repo>`.
 
 Use the Rust `aw`: `AW=~/.local/share/aw-rs/bin/aw`.
-`$AW --version` must print `aw 0.7.22` or newer.
+`$AW --version` must print `aw 0.7.25` or newer.
 An older `aw` has no `respec` outcome or handles it wrongly: install the new one with the command below, then check again.
 `~/.local/bin/aw` can be an old Python tool with the same name; do not use it.
 When no binary passes the check, stop and report it.
@@ -142,7 +142,7 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    - Otherwise keep `blocked` and comment one question for a person.
 4. Triage at most three issues: open, no `stage:` label, no `blocked`
    label and no open sub-issues. Take them in claim order: `p0` first,
-   then the lowest milestone version, then the `pN` label, then the
+   then the label `bar`, then the lowest milestone version, then the `pN` label, then the
    oldest.
    Always add `agent:claude`.
    - Replace a legacy `priority:pN` label with `pN`, or add `p2` when there
@@ -188,8 +188,10 @@ An open issue in the flow keeps exactly one `stage:` label and the label
      only as S8 allows; set `line` in `aw.toml` to the value that COV4
      names. Triage it in the next plan like any issue: `p2`.
 
-`aw claim` takes `p0` first, then the issues of the lowest milestone
-version, so one milestone is cleared before the next one starts.
+`aw claim` takes `p0` first, then the issues with the label `bar`, then
+the issues of the lowest milestone version, so one milestone is cleared
+before the next one starts. A run does not add or remove `bar`; a
+person or the service desk sets it.
 
 Do not edit an issue's title or body. Write specs and notes as comments.
 Each shell command writes to at most one issue. Do not use `for` or
