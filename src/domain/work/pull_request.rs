@@ -15,6 +15,24 @@ fn closes_line(issue: u64) -> String {
     format!("Closes #{issue}")
 }
 
+/// The branch for the next redo of `head`: `issue/7` gives `issue/7-r2`,
+/// and `issue/7-r2` gives `issue/7-r3`.
+pub fn rework_branch(head: &str) -> String {
+    let (base, n) = split_rework(head);
+    format!("{base}-r{}", n + 1)
+}
+
+/// The branch name without its `-r<k>` suffix, and `k` (1 without one).
+fn split_rework(head: &str) -> (&str, u64) {
+    if let Some((base, k)) = head.rsplit_once("-r")
+        && let Ok(k) = k.parse::<u64>()
+        && k >= 2
+    {
+        return (base, k);
+    }
+    (head, 1)
+}
+
 impl PullRequest {
     /// The first non-empty line of the body is `Closes #<issue>`.
     pub fn closes(&self, issue: u64) -> bool {
@@ -25,7 +43,10 @@ impl PullRequest {
     }
 
     pub fn is_for(&self, issue: u64) -> bool {
-        self.head.ends_with(&format!("/issue-{issue}")) || self.closes(issue)
+        split_rework(&self.head)
+            .0
+            .ends_with(&format!("/issue-{issue}"))
+            || self.closes(issue)
     }
 }
 
@@ -96,6 +117,15 @@ mod tests {
         assert!(pr("feature", "\nCloses #7\n\nmore").is_for(7));
         assert!(!pr("codex/issue-17", "Closes #17").is_for(7));
         assert!(!pr("feature", "text\nCloses #7").is_for(7));
+    }
+
+    #[test]
+    fn a_redo_branch_counts_up() {
+        assert_eq!(rework_branch("issue/7"), "issue/7-r2");
+        assert_eq!(rework_branch("issue/7-r2"), "issue/7-r3");
+        assert_eq!(rework_branch("claude/issue-7-r9"), "claude/issue-7-r10");
+        assert!(pr("codex/issue-7-r2", "").is_for(7));
+        assert!(!pr("codex/issue-17-r2", "").is_for(7));
     }
 
     #[test]

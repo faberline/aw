@@ -3,9 +3,9 @@ use anyhow::{Context, Result, bail};
 use super::active::{board, in_checkout};
 use super::services::Services;
 use crate::domain::work::claim::Claim;
-use crate::domain::work::issue::{Issue, awaiting_report, valid_agent};
+use crate::domain::work::issue::{Issue, awaiting_report, redo_requested, valid_agent};
 use crate::domain::work::ports::Repo;
-use crate::domain::work::pull_request::{PullRequest, find_for_issue, work_branch};
+use crate::domain::work::pull_request::{PullRequest, find_for_issue, rework_branch, work_branch};
 use crate::domain::work::signal::{Outcome, Signal};
 use crate::domain::work::stage::Stage;
 
@@ -111,7 +111,7 @@ pub fn claim(
             found
         };
 
-        let claim = Claim {
+        let mut claim = Claim {
             repo: repo.name.clone(),
             agent: agent.to_string(),
             issue: issue.number,
@@ -123,12 +123,16 @@ pub fn claim(
             default_branch: repo.default_branch.clone(),
             claimed_at: now,
         };
+        let mut superseded = None;
         if stage == Stage::Tdd {
-            check_out_work_branch(s, &claim)?;
+            superseded = prepare_work_branch(s, &mut claim, pr.as_ref(), &open.comments)?;
         }
         s.tracker
             .comment(issue.number, &claim.mark().render())
             .with_context(|| format!("could not post the claim on issue #{}", issue.number))?;
+        if let Some(old) = superseded {
+            close_superseded(s, &old, &claim.branch)?;
+        }
         return Ok(ClaimOutcome::Claimed(claim));
     }
 
@@ -182,12 +186,47 @@ fn block(s: Services<'_>, issue: &Issue, agent: &str, text: &str) -> Result<()> 
 }
 
 /// Check out the tdd work branch in a clean checkout.
-fn check_out_work_branch(s: Services<'_>, claim: &Claim) -> Result<()> {
+///
+/// An open pull request branch that is behind the default branch gets
+/// `git merge origin/<default>`: no rebase, no force push. A redo that the
+/// spec asked for (`aw:redo`), or a merge that conflicts, starts a new
+/// branch `<head>-r<k>` from the default branch instead. The pull request
+/// of the old branch is returned; the caller closes it after the claim.
+fn prepare_work_branch(
+    s: Services<'_>,
+    claim: &mut Claim,
+    pr: Option<&PullRequest>,
+    comments: &[crate::domain::work::issue::Comment],
+) -> Result<Option<PullRequest>> {
     let ws = s.workspace;
     if !ws.is_clean()? {
         bail!("the working tree has changes; commit, stash or remove them before a tdd claim");
     }
     ws.fetch().context("git fetch failed")?;
+    let upstream = format!("origin/{}", claim.default_branch);
+    let Some(pr) = pr.filter(|p| p.head != claim.default_branch) else {
+        open_branch(s, claim)?;
+        return Ok(None);
+    };
+    if !redo_requested(comments) {
+        open_branch(s, claim)?;
+        if ws.contains(&upstream)? || ws.merge(&upstream)? {
+            return Ok(None);
+        }
+    }
+    // Redo: a fresh branch from the default branch, never a force push.
+    let mut branch = rework_branch(&pr.head);
+    while ws.has_local_branch(&branch)? || ws.has_remote_branch(&branch)? {
+        branch = rework_branch(&branch);
+    }
+    claim.branch = branch;
+    claim.pr = None;
+    ws.create_branch(&claim.branch, &upstream)?;
+    Ok(Some(pr.clone()))
+}
+
+fn open_branch(s: Services<'_>, claim: &Claim) -> Result<()> {
+    let ws = s.workspace;
     if ws.has_local_branch(&claim.branch)? {
         switch_to(s, &claim.branch)?;
     } else if ws.has_remote_branch(&claim.branch)? {
@@ -195,6 +234,20 @@ fn check_out_work_branch(s: Services<'_>, claim: &Claim) -> Result<()> {
     } else {
         ws.create_branch(&claim.branch, &format!("origin/{}", claim.default_branch))?;
     }
+    Ok(())
+}
+
+/// Point the old pull request at the new branch and close it.
+fn close_superseded(s: Services<'_>, old: &PullRequest, branch: &str) -> Result<()> {
+    s.tracker
+        .pr_comment(
+            old.number,
+            &format!("Superseded: the work restarts from the default branch on `{branch}`."),
+        )
+        .with_context(|| format!("could not comment on #{}", old.number))?;
+    s.tracker
+        .close_pr(old.number)
+        .with_context(|| format!("could not close #{}", old.number))?;
     Ok(())
 }
 

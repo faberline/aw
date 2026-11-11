@@ -122,6 +122,37 @@ impl From<PrJson> for PullRequest {
 
 const PR_JQ: &str = "{number, head: .head.ref, body, url: .html_url}";
 
+const PAGE_SIZE: usize = 100;
+
+/// Read `path` page by page. `fetch(path, jq)` runs one request.
+///
+/// The jq filter may drop rows, so each request first prints the raw row
+/// count of the page (`length`) and then the filtered rows. The loop stops
+/// when a page holds fewer than `PAGE_SIZE` rows. A page of exactly
+/// `PAGE_SIZE` rows makes one more request.
+fn read_pages(
+    path: &str,
+    jq: &str,
+    mut fetch: impl FnMut(&str, &str) -> PortResult<String>,
+) -> PortResult<String> {
+    let page_jq = format!("length, ({jq})");
+    let mut rows = String::new();
+    for page in 1.. {
+        let page_path = format!("{path}&page={page}");
+        let out = fetch(&page_path, &page_jq)?;
+        let (count, rest) = out.split_once('\n').unwrap_or((out.as_str(), ""));
+        let count: usize = count
+            .trim()
+            .parse()
+            .map_err(|_| PortError(format!("unexpected page output from `gh api {page_path}`")))?;
+        rows.push_str(rest);
+        if count < PAGE_SIZE {
+            break;
+        }
+    }
+    Ok(rows)
+}
+
 impl GhCli {
     fn name(&self) -> PortResult<String> {
         Ok(self.repo()?.name)
@@ -137,8 +168,14 @@ impl GhCli {
     }
 
     /// Every page of a list endpoint, one `jq` result per line.
+    ///
+    /// `gh api --paginate` follows the Link header to `repositories/{id}/...`
+    /// URLs, which the cloud proxy refuses. So read page by page on the
+    /// `repos/{owner}/{repo}/...` path instead.
     fn get_all(&self, path: &str, jq: &str) -> PortResult<String> {
-        run("gh", &["api", "--paginate", path, "--jq", jq], None)
+        read_pages(path, jq, |page_path, page_jq| {
+            run("gh", &["api", page_path, "--jq", page_jq], None)
+        })
     }
 
     /// `gh api --method <method> <path>` with a JSON body on stdin.
@@ -385,5 +422,67 @@ mod tests {
     fn bad_output_names_the_call() {
         let err = parse_lines::<PrJson>("not json", "pull request list").unwrap_err();
         assert!(err.0.contains("pull request list"));
+    }
+
+    fn fake_pages(sizes: Vec<usize>) -> (Vec<String>, String) {
+        let mut paths = Vec::new();
+        let out = read_pages("repos/o/r/issues?per_page=100", ".[]", |p, jq| {
+            assert_eq!(jq, "length, (.[])");
+            paths.push(p.to_string());
+            let n = sizes.get(paths.len() - 1).copied().unwrap_or(0);
+            let mut s = format!("{n}\n");
+            for i in 0..n {
+                s.push_str(&format!("{{\"p\":{},\"i\":{i}}}\n", paths.len()));
+            }
+            Ok(s)
+        })
+        .unwrap();
+        (paths, out)
+    }
+
+    #[test]
+    fn all_pages_are_read_on_repos_paths() {
+        let (paths, out) = fake_pages(vec![100, 100, 7]);
+        assert_eq!(paths.len(), 3);
+        assert_eq!(out.lines().count(), 207);
+        assert!(paths.iter().all(|p| p.starts_with("repos/")));
+        assert!(paths[2].ends_with("per_page=100&page=3"));
+    }
+
+    #[test]
+    fn exactly_one_hundred_rows_reads_one_empty_page() {
+        let (paths, out) = fake_pages(vec![100]);
+        assert_eq!(paths.len(), 2);
+        assert_eq!(out.lines().count(), 100);
+    }
+
+    #[test]
+    fn a_short_first_page_is_the_only_page() {
+        let (paths, _) = fake_pages(vec![3]);
+        assert_eq!(paths.len(), 1);
+    }
+
+    #[test]
+    fn rows_dropped_by_the_filter_still_count() {
+        // The page has 100 raw rows but the filter kept none.
+        let mut calls = 0;
+        let out = read_pages("repos/o/r/issues?per_page=100", ".[]", |_, _| {
+            calls += 1;
+            Ok(if calls == 1 { "100\n" } else { "0\n" }.to_string())
+        })
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn bad_page_output_is_an_error() {
+        let err = read_pages(
+            "repos/o/r/x?per_page=100",
+            ".[]",
+            |_, _| Ok("oops\n".into()),
+        )
+        .unwrap_err();
+        assert!(err.0.contains("unexpected page output"));
     }
 }

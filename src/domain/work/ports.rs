@@ -59,6 +59,12 @@ pub trait Workspace {
     fn switch(&self, branch: &str) -> PortResult<()>;
     fn create_branch(&self, branch: &str, start: &str) -> PortResult<()>;
     fn fast_forward(&self, upstream: &str) -> PortResult<()>;
+    /// `upstream` is already part of HEAD, so the branch is not behind it.
+    fn contains(&self, upstream: &str) -> PortResult<bool>;
+    /// Merge `upstream` into HEAD without a rebase. `true` when it merged
+    /// cleanly. On a conflict it aborts the merge, leaves the branch as it
+    /// was and returns `false`.
+    fn merge(&self, upstream: &str) -> PortResult<bool>;
     fn detach(&self, start: &str) -> PortResult<()>;
     /// Push HEAD to `origin/<branch>`. Never a force push.
     fn push(&self, branch: &str) -> PortResult<()>;
