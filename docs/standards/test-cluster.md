@@ -354,9 +354,11 @@ call per cell of a performance matrix. Give each call its own
 workflow run, and two artifacts with the same name fail the upload.
 
 Calls of one repository run one after the other, unless each call has its own
-lane (see [Lanes](#lanes)). Without lanes, set `strategy.max-parallel: 1`: a
-concurrency group keeps only one waiting run and cancels the others. With a
-lane per cell, set `strategy.max-parallel` to at most the pool's `max_nodes`.
+lane (see [Lanes](#lanes)). A call that waits is a job that runs, and it uses
+runner minutes (see [The queue](#the-queue)). So without lanes, set
+`strategy.max-parallel: 1`: then the cells of one matrix do not wait for each
+other on runners. With a lane per cell, set `strategy.max-parallel` to at most
+the pool's `max_nodes`.
 
 ```yaml
   perf:
@@ -398,8 +400,8 @@ A lane lets calls of one repository run at the same time. Set the workflow's
   get and list nodes and PersistentVolumes (ClusterRole
   `faberline-gke-test-reader`), so a test that only reads them needs no
   ClusterRole of its own.
-- Each lane gets its own concurrency group, `gke-test-<owner>/<repo>-lane-<lane>`.
-  Two calls with the same lane wait for each other.
+- Each lane gets its own queue, the Lease `gke-test-<repo>-lane-<lane>` (see
+  [The queue](#the-queue)). Two calls with the same lane wait for each other.
 - Each lane needs its own nodes. Ask for `max_nodes` of at least the number of
   lanes that run at the same time, in every pool that the overlay and the
   test Job use.
@@ -434,16 +436,56 @@ jobs:
       test-job: k8s/gke-test-job
 ```
 
-- Runs of one repository wait for each other (concurrency group
-  `gke-test-<owner>/<repo>`), unless they have different lanes. Runs of
-  different repositories run at the same time.
+- Runs of one repository wait for each other, unless they have different
+  lanes. Runs of different repositories run at the same time. See
+  [The queue](#the-queue).
 - Each run uploads the artifact `gke-test-evidence-<run>-<attempt>`, plus
   `-<evidence-suffix>` when set: the rendered manifests, nodes, events,
   `describe pods`, and logs.
 - A pull request from a fork gets no `id-token`, so it cannot run this.
 
+## The queue
+
+Runs of one repository share its namespace and its cluster-wide CRDs, so only
+one of them may use the cluster at a time. Each call takes a Kubernetes
+Lease before it touches the cluster (`scripts/gke-test/lock.sh`):
+
+- The Lease is `gke-test-<repo>` in the namespace `gke-test-locks`. A lane
+  call takes `gke-test-<repo>-lane-<lane>` instead. `lock.sh` makes the
+  namespace when it is missing. It has no `faberline.dev/test-run` label, so
+  the reaper and the parker ignore it.
+- A call that finds the Lease taken waits and asks again every 20 to 30
+  seconds, for at most `queue-minutes` (default 120). Then it fails with
+  `still waiting after <n> minutes`. Any number of calls can wait. No call
+  cancels another call, waiting or running.
+- The calls do not start in the order in which they arrived: the first call
+  that asks after a release gets the Lease.
+- The last step of the job releases the Lease, also when the job failed or
+  was cancelled. `run.sh` stops before it touches the cluster when the job
+  does not hold the Lease. The backup teardown is skipped then too, because
+  the namespace belongs to another run.
+- A runner that dies cannot release. Its Lease expires `ttl-minutes` plus 15
+  minutes after the run started (the same grace as the reaper), and the next
+  call takes it over.
+- The wait uses runner minutes. The job has no timeout of its own: the wait
+  has `queue-minutes` and the run has `ttl-minutes`. A GitHub-hosted job
+  stops after 360 minutes, so keep the two together below that.
+- `run.sh` by hand (no `LOCK_HOLDER`) takes and releases the same Lease.
+
+The workflow job has no `concurrency` group, and must not get one. GitHub
+keeps only one waiting job in a group: a second waiting job cancels the
+first (`Canceling since a higher priority waiting request ... exists`), and
+the caller's gate goes red although no test failed (aw#293). The caller's own
+workflow may still have a group for its own runs.
+
+To see who holds the cluster:
+`kubectl -n gke-test-locks get leases`. To free a Lease by hand after you
+checked that its run is dead: `kubectl -n gke-test-locks delete lease <name>`.
+
 ## What a run does
 
+0. Waits for the Lease of the repository or the lane (see
+   [The queue](#the-queue)).
 1. Renders the overlay and the test Job and checks them. It also checks
    that the cluster has every pool they select.
 2. Deletes a namespace that an earlier, dead run left behind.
@@ -463,6 +505,7 @@ jobs:
    `faberline.dev/owner-namespace=<namespace>`, deletes the CRDs, and waits
    until no PersistentVolume of the namespace is left. A run whose cleanup
    fails is a failed run. It does not park `system-pool`; the parker does.
+9. Always, as the last step: releases the Lease.
 
 ## The parker
 

@@ -20,7 +20,7 @@ set -euo pipefail
 # Optional:
 #   NAMESPACE      default REPO; must match the overlay's Namespace object
 #   LANE           when set, this run may run beside the other runs of REPO
-#                  (the workflow gives it its own concurrency group). Then
+#                  (it gets its own Lease, see lock.sh). Then
 #                  NAMESPACE must be REPO-<something>, run.sh sets it on the
 #                  overlay, and the overlay may not have cluster-scoped objects,
 #                  because runs that share them would overwrite them
@@ -41,6 +41,9 @@ set -euo pipefail
 #                           blockers.sh may call it stuck (fail fast, aw#222)
 #   SCHEDULING_GRACE_SECONDS  default 300; the same for FailedScheduling
 #   POOLS_FILE     default: infra/gke-test/pools.yaml of the same aw checkout
+#   LOCK_HOLDER    name under which the caller already holds the Lease of
+#                  lock.sh; unset means run.sh takes and releases the Lease
+#   QUEUE_MINUTES  longest wait for that Lease; default 120
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
@@ -78,7 +81,7 @@ SCHEDULING_GRACE_SECONDS="${SCHEDULING_GRACE_SECONDS:-300}"
 # These series take only Hyperdisk. Keep the same list in hyperdisk_only_re of
 # infra/gke-test/main.tf.
 HYPERDISK_ONLY_RE='^(n4|n4a|n4d|c4|c4a|c4d)-'
-export KUBECONFIG REPO NAMESPACE IMAGE EVIDENCE_DIR RUN_LABEL
+export KUBECONFIG REPO NAMESPACE IMAGE EVIDENCE_DIR RUN_LABEL LANE TTL_MINUTES
 
 mkdir -p "$EVIDENCE_DIR"
 rendered="$EVIDENCE_DIR/rendered.yaml"
@@ -323,11 +326,29 @@ on_exit() {
   log "collecting evidence into $EVIDENCE_DIR"
   collect_evidence
   "$SCRIPT_DIR/teardown.sh" || status=1
+  if [[ -n "$own_lock" ]]; then
+    "$SCRIPT_DIR/lock.sh" release || status=1
+  fi
   exit "$status"
 }
 
-# Same-repository runs are serialized by the workflow's concurrency group, so
-# a namespace that is already here is the leftover of a run that died.
+# Runs of one repository (or of one lane) take turns with a Lease (lock.sh).
+# The workflow takes it before this script and releases it after the backup
+# teardown; then LOCK_HOLDER is set, and this script only renews the Lease,
+# and stops when the run does not hold it. A run by hand takes and releases
+# its own Lease.
+own_lock=""
+if [[ -n "${LOCK_HOLDER:-}" ]]; then
+  "$SCRIPT_DIR/lock.sh" renew \
+    || { log "this run does not hold the Lease of $REPO; refusing to touch the cluster"; exit 1; }
+else
+  export LOCK_HOLDER="$RUN_LABEL-$$"
+  "$SCRIPT_DIR/lock.sh" acquire
+  own_lock=1
+  trap '"$SCRIPT_DIR/lock.sh" release' EXIT
+fi
+
+# So a namespace that is already here is the leftover of a run that died.
 if kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
   log "namespace $NAMESPACE is a leftover; deleting it first"
   RENDERED="" "$SCRIPT_DIR/teardown.sh"

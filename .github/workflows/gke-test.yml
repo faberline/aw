@@ -102,6 +102,14 @@ on:
         required: false
         default: 90
         type: number
+      queue-minutes:
+        description: >-
+          Longest wait for the other runs of the repository (or of the lane)
+          before this run starts. The run fails after it. The wait and
+          ttl-minutes together must stay below 360.
+        required: false
+        default: 120
+        type: number
       aw-ref:
         description: Ref of faberline/aw whose scripts/gke-test/ this run uses. Match the ref in `uses:`.
         required: false
@@ -117,15 +125,19 @@ jobs:
   gke-test:
     name: deploy + test on shared GKE
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.ttl-minutes }}
     # Runs of one repository share its namespace and its cluster-wide CRDs,
     # so they queue. Different repositories run at the same time. A run with a
-    # `lane` has its own namespace and no cluster-scoped objects, so it gets
-    # its own group and runs beside the others. Never cancel in progress: a
-    # cancelled runner may skip its own teardown.
-    concurrency:
-      group: gke-test-${{ github.repository }}${{ inputs.lane && format('-lane-{0}', inputs.lane) || '' }}
-      cancel-in-progress: false
+    # `lane` has its own namespace and no cluster-scoped objects, so it has
+    # its own queue and runs beside the others.
+    #
+    # The queue is a Kubernetes Lease in the cluster (scripts/gke-test/lock.sh),
+    # not a `concurrency` group. Do not add a group to this job: GitHub keeps
+    # only one waiting job in a group and cancels the others, which made the
+    # callers' gates red (aw#293). With the Lease every job waits for its turn
+    # and nothing is cancelled.
+    #
+    # No job timeout: the wait has `queue-minutes` and the run has
+    # `ttl-minutes`. A GitHub-hosted job stops after 360 minutes in all.
     env:
       REPO: ${{ github.event.repository.name }}
       OVERLAY: ${{ inputs.overlay }}
@@ -140,6 +152,7 @@ jobs:
       TEST_ENV: ${{ inputs.test-env }}
       RUN_LABEL: gha-${{ github.run_id }}-${{ github.run_attempt }}
       TTL_MINUTES: ${{ inputs.ttl-minutes }}
+      QUEUE_MINUTES: ${{ inputs.queue-minutes }}
       GHCR_USER: ${{ github.actor }}
     steps:
       - uses: actions/checkout@v4
@@ -158,6 +171,9 @@ jobs:
         run: |
           echo "EVIDENCE_DIR=${RUNNER_TEMP}/gke-test-evidence" >> "$GITHUB_ENV"
           echo "KUBECONFIG=${RUNNER_TEMP}/gke-test-kubeconfig" >> "$GITHUB_ENV"
+          # Two calls of one workflow run have the same RUN_LABEL, so the
+          # holder name of the Lease gets a random part.
+          echo "LOCK_HOLDER=${RUN_LABEL}-$(openssl rand -hex 4)" >> "$GITHUB_ENV"
 
       # Values from `terraform -chdir=infra/gke-test output` in faberline/aw.
       - name: Sign in to GCP (Workload Identity Federation)
@@ -176,7 +192,15 @@ jobs:
             --project=axiom-502607 --zone=asia-east1-a
 
       # kubectl, kustomize, yq, and jq come with ubuntu-latest.
+      #
+      # Waits while another run of this repository (or of this lane) holds the
+      # Lease, for at most queue-minutes. The Lease is free again when that
+      # run's last step releases it.
+      - name: Wait for the turn of this run
+        run: .gke-test-aw/scripts/gke-test/lock.sh acquire
+
       - name: Deploy, test, and tear down
+        timeout-minutes: ${{ inputs.ttl-minutes }}
         env:
           GHCR_TOKEN: ${{ github.token }}
         run: .gke-test-aw/scripts/gke-test/run.sh
@@ -192,7 +216,24 @@ jobs:
 
       # run.sh tears down on every in-process exit. This step covers a
       # killed process (timeout-minutes, runner shutdown). The reaper covers
-      # the rest.
+      # the rest. It runs only while this run holds the Lease, and renews it
+      # first: without the Lease (the wait failed, or the job was cancelled in
+      # the wait) the namespace belongs to another run, and a teardown would
+      # delete that run.
       - name: Tear down (backup)
         if: always()
-        run: .gke-test-aw/scripts/gke-test/teardown.sh
+        run: |
+          if .gke-test-aw/scripts/gke-test/lock.sh renew; then
+            .gke-test-aw/scripts/gke-test/teardown.sh
+          else
+            echo "This run does not hold the Lease; nothing to tear down."
+          fi
+
+      # Last step, always: the next waiting run starts when the Lease is gone.
+      # A Lease that stays (a lost runner) expires ttl-minutes plus 15 minutes
+      # after the run started.
+      - name: Release the turn
+        if: always()
+        run: |
+          .gke-test-aw/scripts/gke-test/lock.sh release \
+            || echo "::warning::The Lease was not released; it expires by itself."
