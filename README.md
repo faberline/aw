@@ -119,6 +119,12 @@ the claim in the comments of the open issues with the agent's `agent:` label.
 A claim older than three hours is treated as a dead run: the next `aw claim`
 deletes it and claims again.
 
+To find a claim, `aw` reads one list: the comments of the repository from the
+last six hours. It does not read each open issue. `aw status` and `aw claim`
+do not see a claim older than six hours; `aw claim` deletes such a claim when
+it takes that issue. `aw report` and `aw release` still find it: when the
+list has no claim, they read each open issue.
+
 Exit codes: 0 done, 2 nothing to do, 1 error. JSON goes to stdout; messages
 and warnings go to stderr.
 

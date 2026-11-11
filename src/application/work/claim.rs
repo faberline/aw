@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 
 use super::active::{board, in_checkout};
 use super::services::Services;
-use crate::domain::work::claim::Claim;
+use crate::domain::work::claim::{Claim, STALE_AFTER_SECONDS, latest_mark};
 use crate::domain::work::issue::{Issue, awaiting_report, redo_requested, valid_agent};
 use crate::domain::work::ports::Repo;
 use crate::domain::work::pull_request::{PullRequest, find_for_issue, rework_branch, work_branch};
@@ -59,8 +59,7 @@ pub fn claim(
     let mut needs_checkout = Vec::new();
     let mut needs_other = Vec::new();
 
-    for open in &board.open {
-        let issue = &open.issue;
+    for issue in &board.issues {
         if skip.contains(&issue.number) {
             continue;
         }
@@ -70,8 +69,24 @@ pub fn claim(
         if only.is_some_and(|o| o != stage) {
             continue;
         }
-        if !awaiting_report(stage, agent, &open.comments) {
+        // Read the comments of one issue only when its labels let the
+        // agent take it. Most claims read one issue.
+        let comments = s.tracker.comments(issue.number)?;
+        if !awaiting_report(stage, agent, &comments) {
             continue;
+        }
+        // The list of recent comments can miss a claim (a comment that is
+        // deleted between two pages moves the later rows). The comments of
+        // the issue are the full record: a claim here that is not stale
+        // belongs to a run that still works.
+        let own = latest_mark(&comments, agent);
+        if let Some((_, mark)) = &own
+            && now - mark.claimed_at < STALE_AFTER_SECONDS
+        {
+            return Ok(ClaimOutcome::Nothing(format!(
+                "issue #{} ({}) is still claimed by `{agent}`; run `aw report` or `aw release` first",
+                issue.number, mark.stage
+            )));
         }
         if let Some(need) = issue.missing_need(has) {
             needs_other.push(format!("#{} needs `{need}`", issue.number));
@@ -125,7 +140,14 @@ pub fn claim(
         };
         let mut superseded = None;
         if stage == Stage::Tdd {
-            superseded = prepare_work_branch(s, &mut claim, pr.as_ref(), &open.comments)?;
+            superseded = prepare_work_branch(s, &mut claim, pr.as_ref(), &comments)?;
+        }
+        // A claim of a dead run that is older than the recent comments is
+        // still on the issue. Remove it, so the issue shows one claim.
+        if let Some((old, _)) = own {
+            s.tracker.delete_comment(old).with_context(|| {
+                format!("could not remove the stale claim on #{}", issue.number)
+            })?;
         }
         s.tracker
             .comment(issue.number, &claim.mark().render())

@@ -46,7 +46,7 @@ In a stage run:
   that stage, so the three runs do not block each other.
 - Only the spec run plans. The tdd and review runs skip section 2.
 - The run's own model does the stage work. Do not give it to a subagent.
-- `$AW --version` must print `aw 0.7.23` or newer.
+- `$AW --version` must print `aw 0.7.25` or newer.
 
 Without a stage in the prompt, one run does every stage as described below.
 
@@ -76,7 +76,7 @@ Every issue in the flow has the label `agent:claude`.
 - Never work in a person's checkout, such as `~/faberlines/<repo>`.
 
 Use the Rust `aw`: `AW=~/.local/share/aw-rs/bin/aw`.
-`$AW --version` must print `aw 0.7.23` or newer.
+`$AW --version` must print `aw 0.7.25` or newer.
 An older `aw` has no `respec` outcome or handles it wrongly: install the new one with the command below, then check again.
 `~/.local/bin/aw` can be an old Python tool with the same name; do not use it.
 When no binary passes the check, stop and report it.
