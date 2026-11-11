@@ -94,7 +94,7 @@ enum Command {
     Report {
         #[command(flatten)]
         target: Target,
-        /// spec/tdd: ready|blocked. review: passed|failed|closed|blocked.
+        /// spec: ready|blocked. tdd: ready|respec|blocked. review: passed|failed|closed|blocked.
         outcome: OutcomeArg,
         /// Report text. tdd ready: the pull request body.
         #[arg(short, long, conflicts_with = "file")]

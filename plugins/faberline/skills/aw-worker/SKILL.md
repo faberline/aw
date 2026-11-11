@@ -126,6 +126,7 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    |---|---|---|
    | `stage:spec` | `ready` | `stage:tdd` |
    | `stage:tdd` | `ready` | `stage:review` |
+   | `stage:tdd` | `respec` | `stage:spec` |
    | `stage:review` | `failed` or `closed` | `stage:tdd` |
    | `stage:review` | `passed` | `stage:done`; close the issue if it is still open |
 
@@ -313,7 +314,8 @@ Read code through the GitHub API when you do not need the clone:
 - If you must merge yourself (for example `main` moved during the run), run
   `git merge origin/<default>`, not rebase, and resolve it.
 - When the spec does not meet the spec checklist, do not guess. Report
-  `blocked` with the missing points; the next plan sends it back to spec.
+  `respec` with the missing points: name each missing file or rule exactly.
+  `aw` moves the issue to `stage:spec` and adds no `blocked`.
 - Give the implementation to one subagent with the Agent tool and
   `model: "haiku"`. Its brief has: the clone path and branch; the whole spec;
   on rework, the review findings; the repository rules file to read; and
@@ -328,8 +330,8 @@ Read code through the GitHub API when you do not need the clone:
   run the spec's commands in the foreground. When a check fails or the diff
   leaves the spec, send the findings to the same subagent once
   (SendMessage). Fix small remaining faults yourself. When the work is still
-  not right, or the subagent says the spec is unclear, report `blocked` with
-  the reason.
+  not right, report `blocked` with the reason. When the subagent says the
+  spec is unclear or lacks a file or a rule, report `respec` instead.
 - Format Rust with `cargo fmt`. It reads each crate's edition. When
   `cargo fmt --all -- --check` also fails on files the branch did not
   change, format only the changed files with
