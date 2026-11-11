@@ -108,6 +108,7 @@ Read the issue, the signal comment, the pull request and the failed job log.
 Group the problems by cause.
 Follow the dependency chain to the first cause.
 Issue A blocks B, and B blocks C.
+Before you name a cause for a CI or infrastructure failure, apply G14 (below).
 Then pick exactly one action for each root cause:
 
 - **Infrastructure failure.**
@@ -116,6 +117,7 @@ Then pick exactly one action for each root cause:
   Rerun the failed jobs once:
   `gh api -X POST repos/<target>/actions/runs/<id>/rerun-failed-jobs`.
   Comment what you saw.
+  For a runner or network failure, apply G15 (below) first.
 - **The spec is unclear, too large or wrong.**
   The fix stays inside the issue's goal.
   Comment on the issue with the diagnosis.
@@ -165,6 +167,8 @@ When a closed decision answers the question, follow the decision.
 Do not ask again.
 One root cause gets one issue.
 The issue lists each affected issue and pull request.
+A runner or network failure can hit more than one repository.
+Then search faberline/aw for the error text first (G15, below).
 
 ### 7. Verify before you propose
 
@@ -451,3 +455,68 @@ It stopped core#147 from 11:54Z to 14:30Z on 2026-11-11.
 core#147 is on the release chain to `v0.5.0`.
 The supervisor left a comment for the planner.
 The desk found the problem by hand.
+
+### Verify the cause before you name it (G14)
+
+A failed job can show more than one warning.
+The first warning is often not the cause.
+
+Before a `decision` or `pipeline` issue names a cause for a CI or infrastructure failure, read the evidence:
+
+1. Read the log of the failing step to its end.
+   Use `gh api repos/<target>/actions/jobs/<job_id>/logs`.
+   Do not stop at the first warning or the first error.
+2. Read the related events.
+   For a GKE job, read the autoscaler events and the scheduler events that the job prints.
+   Examples: `max node group size reached`, `FailedScheduling`, `NotTriggerScaleUp`.
+   Read all of them, not only the first warning.
+3. Find the earliest event that explains the others.
+   That event is the cause.
+
+In the issue, write which evidence you read.
+Give the run link, the job name, the step name and the exact line that shows the cause.
+
+Sometimes you cannot read the evidence.
+Examples: the log is expired; the job does not print the events.
+Then write `cause not confirmed` in the issue.
+List what you read and what you could not read.
+Do not offer options that depend on the cause.
+Ask only for the missing evidence.
+
+Example failure: faberline/aw#286 named `FailedAttachVolume` as the cause of a failed GKE test of tape.
+The real cause was the autoscaler event `max node group size reached`.
+The `max_nodes` value of the pool was too small.
+The supervisor read only the first warning.
+
+### One cause, one issue (G15)
+
+A runner or network failure is not a defect of `<target>`.
+Examples: DNS, an apt mirror, a registry, a GitHub outage.
+The same failure can hit other repositories at the same time.
+Each supervisor sees only its own repository.
+
+Before you open a `pipeline` issue for a runner or network failure, do this:
+
+1. Copy the exact error text from the log (G14).
+   Example: `Temporary failure resolving 'azure.archive.ubuntu.com'`.
+2. Search the open issues in faberline/aw for that error text.
+   Use `gh api -X GET search/issues -f q='repo:faberline/aw is:issue is:open "<error text>"'`.
+   Search with the host name alone too.
+3. When an open issue exists, do not create a new one.
+   Add one comment there with the name of `<target>` and the run link.
+   Do not write a second comment for the same run.
+4. When no open issue exists, create one `pipeline` issue.
+   Put the exact error text in the title and in the body.
+   Then the other supervisors can find it.
+
+Mark such a failure as infrastructure, not repository code.
+Write `infrastructure, not <repo> code` in the issue or the comment, and in the status board.
+Do not create an issue in `<target>` for it.
+
+Rerun the failed jobs at most once in each hour.
+Before a rerun, read `run_attempt` and `updated_at` of the run.
+When the last attempt is less than one hour old, do not rerun.
+
+Example failure: the defer supervisor opened faberline/aw#294 for `Temporary failure resolving 'azure.archive.ubuntu.com'` as a defer problem.
+The same failure hit tape and surface at the same time.
+It was a problem of the hosted runner.
