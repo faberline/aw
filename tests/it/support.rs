@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use aw::application::work::Services;
 use aw::domain::work::claim::ClaimMark;
 use aw::domain::work::issue::{Comment, Issue};
-use aw::domain::work::ports::{Clock, PortError, PortResult, Repo, Tracker, Workspace};
+use aw::domain::work::ports::{CheckRun, Clock, PortError, PortResult, Repo, Tracker, Workspace};
 use aw::domain::work::pull_request::PullRequest;
 use aw::domain::work::signal::Signal;
 
@@ -29,10 +29,29 @@ pub struct FakeTracker {
     pub behind_heads: RefCell<HashMap<String, u64>>,
     /// Head branches whose newest check runs failed.
     pub red_heads: RefCell<Vec<String>>,
+    /// The check names the ruleset requires.
+    pub required: RefCell<Vec<String>>,
+    /// Reading the required checks fails.
+    pub required_unreadable: Cell<bool>,
+    /// The newest check runs of these head branches.
+    pub runs: RefCell<HashMap<String, Vec<CheckRun>>>,
     next_comment_id: Cell<u64>,
 }
 
 impl FakeTracker {
+    /// `head` has a finished (`running` false) or running run of `name`.
+    pub fn run(&self, head: &str, name: &str, running: bool) {
+        self.runs
+            .borrow_mut()
+            .entry(head.into())
+            .or_default()
+            .push(CheckRun {
+                name: name.into(),
+                running,
+                failed: false,
+            });
+    }
+
     pub fn issue(&self, number: u64, labels: &[&str]) {
         self.issues.borrow_mut().push(Issue {
             number,
@@ -276,6 +295,25 @@ impl Tracker for FakeTracker {
 
     fn has_failed_checks(&self, head: &str) -> PortResult<bool> {
         Ok(self.red_heads.borrow().iter().any(|h| h == head))
+    }
+
+    fn check_runs(&self, head: &str) -> PortResult<Vec<CheckRun>> {
+        let mut runs = self.runs.borrow().get(head).cloned().unwrap_or_default();
+        if self.red_heads.borrow().iter().any(|h| h == head) {
+            runs.push(CheckRun {
+                name: "red".into(),
+                running: false,
+                failed: true,
+            });
+        }
+        Ok(runs)
+    }
+
+    fn required_checks(&self, _branch: &str) -> PortResult<Vec<String>> {
+        if self.required_unreadable.get() {
+            return Err(PortError("rulesets: forbidden".into()));
+        }
+        Ok(self.required.borrow().clone())
     }
 }
 

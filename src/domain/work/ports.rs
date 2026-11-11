@@ -44,6 +44,52 @@ pub trait Tracker {
     /// The newest check run of some name on the `head` branch failed or
     /// timed out. CI must run again before that branch can merge.
     fn has_failed_checks(&self, head: &str) -> PortResult<bool>;
+    /// The newest check run of each name on the `head` branch.
+    fn check_runs(&self, head: &str) -> PortResult<Vec<CheckRun>>;
+    /// The check names that the repository rulesets require on `branch`
+    /// (the default branch). Empty when no ruleset requires a check.
+    fn required_checks(&self, branch: &str) -> PortResult<Vec<String>>;
+}
+
+/// The newest run of one check on a head commit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckRun {
+    pub name: String,
+    /// The run has not finished (queued or in progress).
+    pub running: bool,
+    /// The run finished with `failure` or `timed_out`.
+    pub failed: bool,
+}
+
+/// What the required checks say about the head of a pull request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequiredChecks {
+    /// Every required check exists and none failed; all have finished.
+    Passed,
+    /// Every required check exists and none failed; some still run.
+    Running,
+    /// A required check is missing or failed. The pull request cannot merge.
+    Blocked,
+}
+
+/// Judge `runs` against the `required` check names.
+pub fn judge_required(required: &[String], runs: &[CheckRun]) -> RequiredChecks {
+    let mut running = false;
+    for name in required {
+        match runs.iter().find(|r| &r.name == name) {
+            None => return RequiredChecks::Blocked,
+            Some(r) if r.failed => return RequiredChecks::Blocked,
+            Some(r) => running |= r.running,
+        }
+    }
+    if runs.iter().any(|r| r.failed) {
+        return RequiredChecks::Blocked;
+    }
+    if running {
+        RequiredChecks::Running
+    } else {
+        RequiredChecks::Passed
+    }
 }
 
 /// The local git checkout. Remote refs are `origin/<branch>`.
@@ -73,4 +119,43 @@ pub trait Workspace {
 pub trait Clock {
     /// Unix seconds.
     fn now(&self) -> i64;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(name: &str, running: bool, failed: bool) -> CheckRun {
+        CheckRun {
+            name: name.into(),
+            running,
+            failed,
+        }
+    }
+
+    #[test]
+    fn required_checks_are_judged_by_presence_failure_and_progress() {
+        let req = vec!["gate".to_string()];
+        assert_eq!(judge_required(&req, &[]), RequiredChecks::Blocked);
+        assert_eq!(
+            judge_required(&req, &[run("lint", false, false)]),
+            RequiredChecks::Blocked
+        );
+        assert_eq!(
+            judge_required(&req, &[run("gate", false, true)]),
+            RequiredChecks::Blocked
+        );
+        assert_eq!(
+            judge_required(&req, &[run("gate", true, false)]),
+            RequiredChecks::Running
+        );
+        assert_eq!(
+            judge_required(&req, &[run("gate", false, false), run("x", false, true)]),
+            RequiredChecks::Blocked
+        );
+        assert_eq!(
+            judge_required(&req, &[run("gate", false, false)]),
+            RequiredChecks::Passed
+        );
+    }
 }
