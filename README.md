@@ -160,6 +160,60 @@ of `aw.toml` and the required status checks of the default-branch ruleset.
 Each check `CI1`–`CI9` is `pass`, `fail`, `excepted` or `skipped`. It exits 1
 when a check fails.
 
+## Milestone release gate
+
+Three commands decide when a milestone gets a release tag. They read one
+repository through `gh`. `--repo` (or `AW_REPO`) names it; the default is the
+`origin` of the current checkout.
+
+```bash
+aw release-status --milestone 8                       # read only; prints the assessment
+aw release-advance --milestone 8 --expected <fingerprint>   # the one write: create the tag
+aw release-preflight --tag v0.5.0-rc.1 --commit <sha>   # inside the tag run; read only
+```
+
+The repository keeps two reviewed files on its default branch:
+
+- `.github/aw-release.json` — the contract. For each milestone: the version,
+  the hash of the milestone goal, the acceptance goals with their issues and
+  checks, and the publication.
+- `.github/aw-release-gates.json` — the policy. For each full-test workflow:
+  the path, the workflow id, the git blob hash of the reviewed definition,
+  and each job name with its kind (`unit`, `functional_e2e`, `performance` or
+  `policy`). The three test kinds must all appear.
+
+`release-status` reads both files at one exact commit of the default branch
+and checks each git blob hash. It prints `AW_RELEASE_ASSESSMENT_V1` with a
+`state`, an `action` and a `fingerprint` of every input.
+
+| State | Meaning | Action |
+|---|---|---|
+| `work` | open issues, or pull requests that are not on the default branch | none |
+| `ready_rc` | all work is landed and no candidate holds it | `tag` (the next `-rc.N`) |
+| `testing` | the latest tag has no complete full-test result | none |
+| `repair` | a full-test job of the latest tag failed | `failure_issue` |
+| `ready_final` | the latest candidate is green | `tag` (the final tag, on the candidate commit) |
+| `ready_publish` | the final tag is green | `publish` |
+| `ready_close` | the release is published | `close` |
+| `complete` | the milestone is closed | none |
+| `hold` | the milestone is closed without a verified final release | none |
+
+A tag passes only when the newest `push` run of that tag and commit, in its
+latest attempt, has exactly the jobs of the policy and each job is
+`completed` with `success`. A missing, skipped, cancelled, extra, stale or
+unknown job does not pass. A run that is not the reviewed workflow at the
+reviewed definition stops the command.
+
+`release-advance` reads everything again. It stops when the fingerprint is
+not `--expected`. For the action `tag` it checks that the reviewed workflow
+at the tag commit starts on this tag, reads everything one more time, creates
+the tag and reads it back. It never moves or deletes a tag. For every other
+action it prints the assessment and exits 2 without a write.
+
+`release-preflight` is the first job of a tag run. It proves that the tag is
+on `--commit`, that the commit holds the approved work, and that the
+milestone waits for this tag. It prints `AW_RELEASE_PREFLIGHT_V1`.
+
 ## Layout
 
 The crate follows the [Rust layout standard](docs/standards/rust-layout.md):
@@ -172,6 +226,12 @@ The crate follows the [Rust layout standard](docs/standards/rust-layout.md):
   `RunLedger` port.
 - `src/application/work/` — the `claim`, `report`, `release` and `status`
   use cases.
+- `src/domain/release/` — the release contract, the gates policy, the tag
+  rules, the state decision and the ports (`Provider`, `WorkflowParser`).
+- `src/application/release/` — the `release-status`, `release-advance` and
+  `release-preflight` use cases.
+- `src/infrastructure/release.rs` — the `gh` adapter and the workflow YAML
+  reader of the release gate.
 - `src/application/run/` — the `record` and `runs` use cases.
 - `src/application/ci.rs` — the `ci check` use case.
 - `src/infrastructure/work/` — `gh` and `git` adapters and the clock.

@@ -218,6 +218,24 @@ One repository moves at a time. The next one starts when the one before is
 merged. The scripts and the candidate frame follow in the same order, after
 their own design step.
 
+## The milestone gate
+
+**In `aw` (0.7.20).** The promotion workflow publishes a candidate. The
+milestone gate decides before that: when a milestone gets its `-rc.N` tag and
+its final tag. It replaces the Python release tool that each repository had
+([aw#284](https://github.com/faberline/aw/issues/284)).
+
+- `aw release-status`, `aw release-advance` and `aw release-preflight`; see
+  the [README](../../README.md#milestone-release-gate).
+- The repository keeps the contract `.github/aw-release.json` and the policy
+  `.github/aw-release-gates.json`. Both are product decisions and stay in the
+  repository.
+- `release-advance` writes only the tag. The actions `publish`, `close` and
+  `failure_issue` are not built yet; the command prints the assessment and
+  exits 2.
+- No repository has the policy file yet. `release-status` stops with
+  `not found` until the repository adds it.
+
 ## Checker
 
 **Not built yet.** `aw release check` runs in a repository checkout, like

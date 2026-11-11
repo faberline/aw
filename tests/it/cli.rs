@@ -53,6 +53,53 @@ fn claim_commands_need_an_agent() {
 }
 
 #[test]
+fn the_release_gate_needs_an_exact_milestone_tag_and_repository() {
+    let usage: [&[&str]; 5] = [
+        &["release-status"],
+        &["release-status", "--milestone", "0"],
+        &["release-advance", "--milestone", "8"],
+        &["release-preflight", "--tag", "v0.5.0"],
+        &["release-preflight", "--commit", "abc"],
+    ];
+    for args in usage {
+        let out = aw(args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(out.stdout.is_empty(), "{args:?}");
+    }
+    // A repository name that is not `owner/name` stops before any request.
+    let calls: [&[&str]; 3] = [
+        &["release-status", "--milestone", "8", "--repo", "o/r/x"],
+        &[
+            "release-advance",
+            "--milestone",
+            "8",
+            "--expected",
+            "0",
+            "--repo",
+            "o/r/x",
+        ],
+        &[
+            "release-preflight",
+            "--tag",
+            "v0.5.0",
+            "--commit",
+            "main",
+            "--repo",
+            "o/r/x",
+        ],
+    ];
+    for args in calls {
+        let out = aw(args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(out.stdout.is_empty(), "{args:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("release:"),
+            "{args:?}"
+        );
+    }
+}
+
+#[test]
 fn stage_rejects_an_unknown_stage() {
     let out = aw(&["claim", "--agent", "claude", "--stage", "done"]);
     assert_eq!(out.status.code(), Some(1));

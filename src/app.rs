@@ -1,17 +1,19 @@
 //! Composition root: wire the real adapters into the use cases.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::application::ci::CiServices;
+use crate::application::release::ReleaseServices;
 use crate::application::run::RunServices;
 use crate::application::work::Services;
 use crate::domain::ci::ports::{BranchRules, CiFiles};
 use crate::infrastructure::ci::files::origin_repo;
 use crate::infrastructure::ci::{GhBranchRules, GitHubFiles, LocalFiles};
+use crate::infrastructure::release::{GhRelease, YamlWorkflows};
 use crate::infrastructure::run::LedgerFile;
 use crate::infrastructure::work::{GhCli, GitCli, SystemClock};
-use crate::interfaces::work::cli::{self, CiTarget, Exit};
+use crate::interfaces::work::cli::{self, CiTarget, Exit, ReleaseCall};
 
 pub fn run() -> ExitCode {
     let parsed = match cli::parse(std::env::args_os()) {
@@ -20,6 +22,9 @@ pub fn run() -> ExitCode {
     };
     if let Some(target) = parsed.ci_target() {
         return exit_code(ci_check(target));
+    }
+    if let Some((repo, call)) = parsed.release_call() {
+        return exit_code(release_gate(repo, &call));
     }
     let tracker = GhCli::new(parsed.repo());
     let workspace = GitCli;
@@ -62,6 +67,23 @@ fn ci_check(target: &CiTarget) -> Exit {
         files: files.as_ref(),
         rules: rules.as_ref().map(|r| r as &dyn BranchRules),
     })
+}
+
+/// The milestone release gate, for `--repo` or the `origin` of the current
+/// checkout.
+fn release_gate(repo: Option<String>, call: &ReleaseCall) -> Exit {
+    let Some(repo) = repo.or_else(|| origin_repo(Path::new("."))) else {
+        eprintln!("aw: no GitHub repository; pass --repo");
+        return Exit::Failed;
+    };
+    let provider = GhRelease::new(repo);
+    cli::run_release(
+        ReleaseServices {
+            provider: &provider,
+            workflows: &YamlWorkflows,
+        },
+        call,
+    )
 }
 
 fn exit_code(exit: Exit) -> ExitCode {

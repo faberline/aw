@@ -9,6 +9,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
 use crate::application::ci::{self, CiServices};
+use crate::application::release::{self, Advanced, ReleaseServices};
 use crate::application::run::{Client, Event, RunServices};
 use crate::application::work::{self, ClaimOutcome, Outcome, Services};
 use crate::domain::work::stage::Stage;
@@ -26,7 +27,10 @@ use crate::interfaces::run::commands;
         aw status  shows the claim the agent holds\n\
         aw hook    records a worker run start or end from a client hook\n\
         aw runs    lists the recent worker runs\n\
-        aw ci check checks ci.yml and the ruleset against docs/standards/ci.md\n\n\
+        aw ci check checks ci.yml and the ruleset against docs/standards/ci.md\n\
+        aw release-status    assesses a milestone release; it only reads\n\
+        aw release-advance   creates the next release tag when the assessment did not change\n\
+        aw release-preflight proves a tag inside its own workflow run; it only reads\n\n\
         The claim is an issue comment on GitHub. spec and review use only GitHub;\n\
         tdd runs in a clean clone of the repository and checks out the work branch.\n\n\
         Exit codes: 0 done, 2 nothing to do, 1 error or a failed check."
@@ -127,8 +131,69 @@ enum Command {
         #[command(subcommand)]
         command: CiCommand,
     },
+    /// Assess a milestone release: the state, the one next action and the
+    /// fingerprint of the inputs. It only reads.
+    ReleaseStatus {
+        #[command(flatten)]
+        milestone: MilestoneArg,
+    },
+    /// Do the one next action of a milestone release. It writes only a
+    /// release-candidate tag or the final tag, and never moves a tag.
+    ReleaseAdvance {
+        #[command(flatten)]
+        milestone: MilestoneArg,
+        /// The `fingerprint` of the assessment you approved. The command
+        /// stops when the inputs changed.
+        #[arg(long, value_name = "SHA256")]
+        expected: String,
+    },
+    /// Prove, inside the workflow run of a tag, that the tag is at the
+    /// commit and that the milestone is ready for it. It only reads.
+    ReleasePreflight {
+        /// `vX.Y.Z` or `vX.Y.Z-rc.N`.
+        #[arg(long)]
+        tag: String,
+        /// The exact 40-character commit of the tag.
+        #[arg(long)]
+        commit: String,
+        /// The milestone number. Default: the one milestone of the release
+        /// contract with the version of the tag.
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        milestone: Option<u64>,
+        /// `owner/name`. Default: the repository of the current checkout.
+        #[arg(long, env = "AW_REPO")]
+        repo: Option<String>,
+    },
     /// Print the version.
     Version,
+}
+
+/// One milestone of one repository.
+#[derive(Args)]
+struct MilestoneArg {
+    /// The number of an existing milestone.
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    milestone: u64,
+    /// `owner/name`. Default: the repository of the current checkout.
+    #[arg(long, env = "AW_REPO")]
+    repo: Option<String>,
+}
+
+/// One call of the milestone release gate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReleaseCall {
+    Status {
+        milestone: u64,
+    },
+    Advance {
+        milestone: u64,
+        expected: String,
+    },
+    Preflight {
+        tag: String,
+        commit: String,
+        milestone: Option<u64>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -252,6 +317,83 @@ impl Cli {
             _ => None,
         }
     }
+
+    /// The `--repo` and the call of a release gate command, if that is the
+    /// command. The composition root builds the adapters and calls
+    /// [`run_release`].
+    pub fn release_call(&self) -> Option<(Option<String>, ReleaseCall)> {
+        match &self.command {
+            Command::ReleaseStatus { milestone: m } => Some((
+                m.repo.clone(),
+                ReleaseCall::Status {
+                    milestone: m.milestone,
+                },
+            )),
+            Command::ReleaseAdvance {
+                milestone: m,
+                expected,
+            } => Some((
+                m.repo.clone(),
+                ReleaseCall::Advance {
+                    milestone: m.milestone,
+                    expected: expected.clone(),
+                },
+            )),
+            Command::ReleasePreflight {
+                tag,
+                commit,
+                milestone,
+                repo,
+            } => Some((
+                repo.clone(),
+                ReleaseCall::Preflight {
+                    tag: tag.clone(),
+                    commit: commit.clone(),
+                    milestone: *milestone,
+                },
+            )),
+            _ => None,
+        }
+    }
+}
+
+/// Run one release gate command: print the JSON result. Exit 2 when
+/// `release-advance` has no write to do in this version.
+pub fn run_release(services: ReleaseServices<'_>, call: &ReleaseCall) -> Exit {
+    let result = match call {
+        ReleaseCall::Status { milestone } => {
+            release::status(services, *milestone).map(|value| (value, Exit::Ok))
+        }
+        ReleaseCall::Advance {
+            milestone,
+            expected,
+        } => release::advance(services, *milestone, expected).map(|done| match done {
+            Advanced::Done(record) => (record, Exit::Ok),
+            Advanced::Nothing(assessment) => {
+                eprintln!(
+                    "aw: no write: state `{}`, action `{}`; this version writes only a tag",
+                    assessment["state"].as_str().unwrap_or("unknown"),
+                    assessment["action"].as_str().unwrap_or("none"),
+                );
+                (assessment, Exit::Nothing)
+            }
+        }),
+        ReleaseCall::Preflight {
+            tag,
+            commit,
+            milestone,
+        } => release::preflight(services, tag, commit, *milestone).map(|value| (value, Exit::Ok)),
+    };
+    match result
+        .map_err(anyhow::Error::from)
+        .and_then(|(value, exit)| print(&value).map(|()| exit))
+    {
+        Ok(exit) => exit,
+        Err(err) => {
+            eprintln!("aw: {err:#}");
+            Exit::Failed
+        }
+    }
 }
 
 /// Run `aw ci check`: print the report, exit 1 when a check fails.
@@ -368,6 +510,11 @@ fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit
         }
         Command::Ci { .. } => {
             anyhow::bail!("`aw ci` needs the CI adapters; the composition root runs it")
+        }
+        Command::ReleaseStatus { .. }
+        | Command::ReleaseAdvance { .. }
+        | Command::ReleasePreflight { .. } => {
+            anyhow::bail!("the release gate needs its adapters; the composition root runs it")
         }
         Command::Version => {
             println!("aw {}", env!("CARGO_PKG_VERSION"));
