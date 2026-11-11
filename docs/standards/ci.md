@@ -190,7 +190,7 @@ It prints a JSON report and exits 1 when a check fails.
 | CI7 | `gate` has `name: gate` and `if: always()`, needs every other job, and its steps check `.lint.result == "success"` and `.result == "success" or .result == "skipped"`. |
 | CI8 | The default-branch ruleset requires `gate` and no other status check. Classic branch protection is not read. |
 | CI9 | Every exception names a check `CI1`–`CI8`, `CI10` or `CI11` and has a reason. |
-| CI10 | A workflow with a `pull_request` trigger has a top-level `concurrency` group. (The check does not read `cancel-in-progress`.) |
+| CI10 | A workflow with a `pull_request` trigger has a top-level `concurrency` group whose `cancel-in-progress` is `true` or an expression that names `pull_request`. |
 | CI11 | Every job has `timeout-minutes`, except a job that calls a reusable workflow with `uses:`. |
 
 ### Exceptions

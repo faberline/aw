@@ -11,6 +11,9 @@ pub struct Workflow {
     pub pull_request: bool,
     /// True when the workflow has a top-level `concurrency:` group.
     pub concurrency: bool,
+    /// True when that group cancels an older run on a pull request:
+    /// `cancel-in-progress: true`, or an expression that names `pull_request`.
+    pub cancels_pull_request: bool,
     /// Job id to job.
     pub jobs: BTreeMap<String, Job>,
 }

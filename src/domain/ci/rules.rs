@@ -306,8 +306,14 @@ fn gate(workflow: &Workflow) -> Result<String, String> {
 fn concurrency(workflow: &Workflow) -> Result<String, String> {
     if !workflow.pull_request {
         Ok("the workflow has no pull_request trigger".into())
+    } else if workflow.concurrency && workflow.cancels_pull_request {
+        Ok("the workflow has a concurrency group that cancels on a pull request".into())
     } else if workflow.concurrency {
-        Ok("the workflow has a concurrency group".into())
+        Err(
+            "the concurrency group does not cancel an older run on a pull request; \
+             set cancel-in-progress to true or to an expression that names pull_request"
+                .into(),
+        )
     } else {
         Err(
             "the workflow runs on pull_request and has no top-level concurrency group; \
@@ -392,6 +398,7 @@ echo "$RESULTS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")'
             name: Some("ci".into()),
             pull_request: true,
             concurrency: true,
+            cancels_pull_request: true,
             ..Workflow::default()
         };
         workflow.jobs.insert(
@@ -611,6 +618,16 @@ echo "$RESULTS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")'
         workflow.pull_request = false;
         let report = check(Some(&workflow), None, &[]);
         assert_eq!(status(&report, "CI10"), Status::Pass);
+    }
+
+    #[test]
+    fn a_concurrency_group_must_cancel_on_a_pull_request() {
+        let mut workflow = standard();
+        workflow.cancels_pull_request = false;
+        let report = check(Some(&workflow), None, &[]);
+        assert_eq!(status(&report, "CI10"), Status::Fail);
+        let finding = report.findings.iter().find(|f| f.rule == "CI10").unwrap();
+        assert!(finding.detail.contains("cancel"), "{}", finding.detail);
     }
 
     #[test]

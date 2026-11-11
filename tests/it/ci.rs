@@ -113,6 +113,18 @@ fn a_pull_request_workflow_without_concurrency_fails_ci10() {
 }
 
 #[test]
+fn a_concurrency_group_that_never_cancels_fails_ci10() {
+    let never = CI.replace(
+        "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+        "cancel-in-progress: false",
+    );
+    let dir = checkout("nocancel", Some(&never), None);
+    let (out, report) = check(&dir, &["--no-ruleset"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(status(&report, "CI10"), "fail");
+}
+
+#[test]
 fn a_job_without_timeout_fails_ci11() {
     let without = CI.replace("    timeout-minutes: 5\n", "");
     let dir = checkout("notimeout", Some(&without), None);
