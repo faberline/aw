@@ -102,6 +102,7 @@ Look only at these:
 - g. Review loops (G12, below).
 - h. Parent issues whose children are all done (G13, below).
 - i. Issues with `stage:tdd` and `blocked` whose last signal says the spec is incomplete (G16, below).
+- j. Issues with `stage:spec` and `blocked` whose last signal proposes a split, and no child exists (G17, below).
 
 ### 5. Find root causes before you act
 
@@ -559,7 +560,49 @@ Search the open faberline/aw issues with the label `pipeline` for `tdd blocked o
 When one exists, add one comment there with the issue link and the signal link.
 When none exists, create one `pipeline(<repo>)` issue with these words in the title.
 The fix is in `aw` 0.7.22 and in the aw-worker skill.
+The command line of `aw` takes `respec` only from 0.7.26; an older `aw` refuses it with `invalid value 'respec'`.
 So write the `aw` version of the tdd run when a comment or a log shows it.
 
 Example failure: faberline/relay#134 and faberline/lumen#307 got a tdd `blocked` signal for an incomplete spec on 2026-11-11.
 Each issue waited about 50 minutes for a label move (faberline/aw#305, faberline/aw#307).
+
+### Split proposed, no children (G17)
+
+The spec stage can find that an issue is too large for one pull request.
+When the split needs no decision, the correct report is `split`.
+`aw` (0.7.26 or later) then makes the child issues and closes the parent.
+A `blocked` report with a split proposal makes no issue.
+The issue keeps `stage:spec` and `blocked`, and no routine takes it.
+This is a pipeline defect, not a question for a person.
+
+For each open issue in `<target>` with `stage:spec` and `blocked`, read the last aw signal.
+The signal has `stage=spec` and `outcome=blocked`.
+Its text says that the issue is too large or names a split: `too large`, `split`, `child issues`, `more than one pull request`.
+Then look for children: issues whose body has `Part of #<n>`, the sub-issues of the issue, and issue links in a later comment.
+When no child exists after one pass of this routine, this is a root cause named "spec split without children".
+
+Read the first line of the signal text.
+
+1. It names a decision (`Decision: ...`): two designs, a change of an acceptance criterion, or money.
+   Open one `decision` issue in faberline/aw for all such issues of `<target>` (G15).
+   Each option is one of the proposed splits.
+   The `執行清單` lists the child issues to make for each option, with title, milestone and priority.
+2. It names no decision.
+   Then the spec run did not use `split`.
+   Open a `decision` issue with `類型：中控可決定` and one option.
+   The `執行清單` has these lines: the child issues to make (title, the milestone and the priority label of the parent, `agent:claude`, `stage:spec`); one comment on the parent with the links; close the parent as replaced.
+   Also name the defect: search the open faberline/aw issues with the label `pipeline` for `spec split without children`.
+   When one exists, add one comment with the issue link and the signal link.
+   When none exists, create one `pipeline(<repo>)` issue with these words in the title.
+   Write the `aw` version of the spec run when a comment or a log shows it.
+3. The signal says `made N of M child issues`.
+   `aw` stopped part way. The `執行清單` lists only the children that are not made.
+
+A child of a split has `<!-- aw:child parent=<n> -->` on the first line of its body.
+A spec run cannot split such a child again; it reports `blocked` with `Decision: split child #<n> again`.
+Treat that as case 1.
+
+Do not make the child issues yourself and do not change the labels.
+
+Example failure: faberline/lumen#311, #307 and #310 on 2026-11-12 (faberline/aw#315) and faberline/keep#70 (faberline/aw#313).
+Each got a spec `blocked` signal with a correct split proposal. No routine made the children.

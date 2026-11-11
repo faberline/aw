@@ -46,7 +46,7 @@ In a stage run:
   that stage, so the three runs do not block each other.
 - Only the spec run plans. The tdd and review runs skip section 2.
 - The run's own model does the stage work. Do not give it to a subagent.
-- `$AW --version` must print `aw 0.7.25` or newer.
+- `$AW --version` must print `aw 0.7.26` or newer.
 
 Without a stage in the prompt, one run does every stage as described below.
 
@@ -76,8 +76,8 @@ Every issue in the flow has the label `agent:claude`.
 - Never work in a person's checkout, such as `~/faberlines/<repo>`.
 
 Use the Rust `aw`: `AW=~/.local/share/aw-rs/bin/aw`.
-`$AW --version` must print `aw 0.7.25` or newer.
-An older `aw` has no `respec` outcome or handles it wrongly: install the new one with the command below, then check again.
+`$AW --version` must print `aw 0.7.26` or newer.
+An older `aw` has no `split` outcome and refuses `respec` on the command line: install the new one with the command below, then check again.
 `~/.local/bin/aw` can be an old Python tool with the same name; do not use it.
 When no binary passes the check, stop and report it.
 Install command: `cargo install --git https://github.com/faberline/aw --root ~/.local/share/aw-rs aw`.
@@ -280,12 +280,45 @@ Read code through the GitHub API when you do not need the clone:
   8. **Traps**: repository rules and known failures that apply, for example
      the CI contract note in "Repository notes".
 - Keep it to one pull request: at most about six files and 400 changed
-  lines. When one pull request is not enough, report `blocked` and say how
-  to split.
+  lines. When one pull request is not enough, split the issue (below).
 - The pull request closes the issue: `aw report ready` always writes
   `Closes #<n>`. Do not write a spec for a slice that must leave the issue
-  open. When the issue needs more than one pull request, report `blocked`
-  and name the child issues, one pull request each.
+  open.
+- **Too large, and the split needs no decision: report `split`.** `aw`
+  makes the child issues; no person and no supervisor is necessary.
+  Write a file and run `$AW report <who> split -F <file>`:
+
+  ```text
+  Too large: <one line that says why>.
+
+  ## Child: <title of the first child>
+  <what it must do, its acceptance criteria, and `Waits for: <title>` when
+  it needs another child first>
+
+  ## Child: <title of the second child>
+  ...
+  ```
+
+  - 2 to 5 children, one pull request each. Each child has a title of its
+    own and a text that a spec run can use without the parent.
+  - The children must cover all acceptance criteria of the parent. Copy
+    each criterion to the child that proves it.
+  - `aw` gives each child the milestone and the priority label of the
+    parent, the `agent:` label and `stage:spec`. It writes the links in one
+    comment on the parent and closes the parent as replaced. Do not make
+    issues, labels or comments for the split yourself.
+  - When `aw` refuses the report (more than 5 children, a child without
+    text, or the issue is itself a child of a split), the claim stays.
+    Correct the file, or report `blocked` as the next point says.
+- **Too large, and the split needs a decision: report `blocked`.** A
+  decision is a choice between two designs, a change of an acceptance
+  criterion, or money. The first line of the message names the decision in
+  one line, for example `Decision: one crate or two for the adapter`. Then
+  write the split that you propose for each choice. The supervisor opens one
+  decision issue from that line.
+- A child of a split is not split again by a spec run. When a child is
+  still too large, report `blocked`; the first line says
+  `Decision: split child #<n> again`.
 - A parent issue can have to stay open, for example a tracker that waits
   for other work. Then split the work into child issues. Each pull request
   has `Closes #<child>`. A pull request must not close the tracker. `aw`
@@ -519,6 +552,8 @@ Read code through the GitHub API when you do not need the clone:
   that this run cannot fix. Write the reason.
   A spec that tdd finds incomplete or unclear is not such a case: the spec
   run can fix it. In tdd, report `respec`.
+  An issue that is too large is not such a case when the split needs no
+  decision: in spec, report `split`.
 - Local runs only: when `aw report` cannot push over HTTPS (no git
   credentials, or a token without the `workflow` scope for a change under
   `.github/workflows/`) and an SSH key works, run the same command once more

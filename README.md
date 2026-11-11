@@ -67,7 +67,7 @@ worker runs without `--has`, so it leaves that issue to a Mac.
 
 | Stage | Where it runs | `aw claim` checks out | `aw report` outcomes |
 | --- | --- | --- | --- |
-| spec | anywhere | nothing | `ready`, `blocked` |
+| spec | anywhere | nothing | `ready`, `split`, `blocked` |
 | tdd | a clean clone of the repository | the head of the open pull request that closes the issue; else `<agent>/issue-<n>`, new from `origin/<default>` or continued from `origin` | `ready`, `respec`, `blocked` |
 | review | anywhere | nothing | `passed`, `failed`, `closed`, `blocked` |
 
@@ -87,8 +87,11 @@ when the tree is clean:
 - `review closed` comments the message on the pull request, closes it
   without a merge and deletes its branch. The next tdd run starts again
   from the default branch. Use it when rework cannot save the pull request.
-- `blocked`, `respec`, `failed` and `closed` need a message: `-m TEXT`, or `-F FILE`
-  (`-` is stdin).
+- `spec split` makes the child issues of an issue that is too large for one
+  pull request, links them in the signal comment and closes the issue as
+  not planned. See "Split" below.
+- `blocked`, `respec`, `split`, `failed` and `closed` need a message: `-m TEXT`,
+  or `-F FILE` (`-` is stdin).
 
 Then `aw report` moves the `stage:` label, so the next `aw claim` can take the
 issue at once. The `agent:` label stays. A label failure is a warning.
@@ -100,6 +103,7 @@ issue at once. The `agent:` label stays. A label failure is a warning.
 | review `failed` or `closed` | `stage:tdd` |
 | review `passed` | `stage:done` |
 | tdd `respec` | `stage:spec`, no `blocked` |
+| spec `split` | no change; the issue is closed |
 | `blocked` | the same stage, plus `blocked` |
 
 `blocked` is for a case that needs a person. An incomplete spec is not one:
@@ -109,6 +113,40 @@ starts with `spec` or `the spec`, after an optional `blocked:`, `tdd:` or
 `tdd blocked:`, and has `unclear`, `incomplete`, `not complete`, `missing`,
 `lacks` or `does not meet`), `aw` reports `respec` instead and prints a
 warning. No routine takes an issue with `stage:tdd` and `blocked`.
+
+### Split
+
+`aw report <who> split -F <file>` is for a spec run that finds the issue too
+large for one pull request, when the split needs no decision of a person.
+The message names the children:
+
+```text
+Too large: two crates and a migration.
+
+## Child: Add the port
+The trait and its tests.
+
+## Child: Add the adapter
+The `gh` adapter. Waits for: Add the port.
+```
+
+- The text before the first `## Child:` line is the reason.
+- A split has 2 to 5 children. Each has a title of its own and a text.
+- Each child gets the milestone and the priority label (`p0` to `p3`) of the
+  issue, `agent:<agent>` and `stage:spec`. Its body starts with
+  `<!-- aw:child parent=<n> -->` and `Part of #<n>`.
+- The signal comment on the issue lists the children. `aw` then closes the
+  issue as not planned. When it cannot close it, it adds `blocked` and
+  prints a warning.
+- An issue that is itself a child is not split again: `aw` refuses the
+  report and the claim stays. Report `blocked` and name the decision.
+- A bad message or a failure on the first child changes nothing; the claim
+  stays. When a later child fails, `aw` reports `blocked` and the signal
+  lists the children that exist and those that do not.
+- The JSON output has `children`, the numbers of the issues.
+
+When the split needs a decision (two designs, a change of an acceptance
+criterion, money), report `blocked` and name the decision in the first line.
 
 The same agent may review its own pull request in a later run. When no open
 pull request closes the issue, `aw` posts a `blocked` signal for review.
