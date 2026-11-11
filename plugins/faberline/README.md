@@ -18,6 +18,7 @@ change. Do not copy these skills into a repository.
 | `/faberline:gh-merge-pr` | Waits for checks, then squash-merges and verifies. |
 | `/faberline:git-land` | Runs all of the above in order. |
 | `/faberline:aw-worker` | Runs one scheduled `aw` issue cycle as this client's agent. |
+| `/faberline:aw-supervisor` | Runs one supervisor pass over the issue flow of one repository. |
 
 Each skill keeps its script next to it, in `skills/<skill>/scripts/`. The skill
 calls it as `${CLAUDE_SKILL_DIR}/scripts/<script>.sh`. Claude Code replaces

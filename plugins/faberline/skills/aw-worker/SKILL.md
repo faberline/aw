@@ -282,6 +282,12 @@ Read code through the GitHub API when you do not need the clone:
   `Closes #<n>`. Do not write a spec for a slice that must leave the issue
   open. When the issue needs more than one pull request, report `blocked`
   and name the child issues, one pull request each.
+- A parent issue can have to stay open, for example a tracker that waits
+  for other work. Then split the work into child issues. Each pull request
+  has `Closes #<child>`. A pull request must not close the tracker. `aw`
+  cannot link a pull request to an issue without closing it. The tracker
+  closes when its children are closed (faberline/aw issue 261).
+
 - When the spec must make tdd start again from the newest default branch
   (the old pull request branch is wrong or dirty), write the line
   `aw:redo` alone on its own line in the spec file. Do not only write
@@ -341,6 +347,9 @@ Read code through the GitHub API when you do not need the clone:
   failure, follow the check's detail: COV3 needs more tests; COV4 names the
   new `line` for `aw.toml`. Never lower `line`.
 - Commit with conventional messages.
+- On rework, do not remove required items from the pull request body.
+  The body keeps the one `Closes #<n>` line. It also keeps each item that
+  `aw ci check` or the review requires. Add to the body; do not drop items.
 - With a clean tree, run `$AW report <who> ready -F <file>` in the clone.
   The file becomes the pull request body after `Closes #<n>`: summary,
   changes, the checks you ran and their results. `aw` writes the
