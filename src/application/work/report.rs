@@ -7,7 +7,7 @@ use super::services::Services;
 use crate::domain::work::claim::Claim;
 use crate::domain::work::ports::{RequiredChecks, judge_required};
 use crate::domain::work::pull_request::{body_closing, find_for_issue};
-use crate::domain::work::signal::{Outcome, Signal};
+use crate::domain::work::signal::{Outcome, Signal, names_spec_gap};
 use crate::domain::work::stage::Stage;
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -62,6 +62,19 @@ pub fn report(
     }
 
     let mut warnings = Vec::new();
+    // tdd cannot fix a spec, but the spec stage can: no person is needed.
+    // A `blocked` label here would leave the issue where no routine takes it.
+    let outcome =
+        if claim.stage == Stage::Tdd && outcome == Outcome::Blocked && names_spec_gap(message) {
+            warnings.push(format!(
+                "#{}: the `blocked` message says the spec is the cause; reported `respec` \
+                 instead, so the issue goes back to stage:spec without `blocked`",
+                claim.issue
+            ));
+            Outcome::Respec
+        } else {
+            outcome
+        };
     let link = match (claim.stage, outcome) {
         (Stage::Tdd, Outcome::Ready) => Some(open_pr(s, &claim, message)?),
         (Stage::Review, Outcome::Passed) => match merge(s, &claim, message, &mut warnings)? {

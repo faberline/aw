@@ -615,6 +615,86 @@ fn blocked_keeps_the_stage_and_adds_blocked() {
 }
 
 #[test]
+fn tdd_blocked_for_a_spec_gap_is_reported_as_respec() {
+    // The two messages of faberline/relay#134 and faberline/lumen#307.
+    for message in [
+        "spec unclear: the issue body does not meet the spec checklist.\n\nMissing points:\n1. Steps",
+        "tdd blocked: the spec is missing points that the tdd checklist needs.\n\n1. the SHA",
+    ] {
+        let w = World::new();
+        w.tracker.issue(1, &["agent:claude", "stage:tdd"]);
+        claim_issue(&w, "claude");
+        let r = report(w.services(), "claude", None, Outcome::Blocked, message).unwrap();
+        assert_eq!(r.outcome, Outcome::Respec);
+        assert!(
+            r.warnings.iter().any(|w| w.contains("reported `respec`")),
+            "{:?}",
+            r.warnings
+        );
+        let labels = w.tracker.issues.borrow()[0].labels.clone();
+        assert_eq!(labels, ["agent:claude", "stage:spec"]);
+        let signals = w.tracker.signals(1);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0].outcome, Outcome::Respec);
+        // The signal keeps the list of the missing points.
+        assert!(w.tracker.last_comment(1).contains(message));
+    }
+}
+
+#[test]
+fn tdd_blocked_for_a_person_stays_blocked() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:tdd"]);
+    claim_issue(&w, "claude");
+    let r = report(
+        w.services(),
+        "claude",
+        None,
+        Outcome::Blocked,
+        "the push was refused for branch claude/issue-1",
+    )
+    .unwrap();
+    assert_eq!(r.outcome, Outcome::Blocked);
+    let labels = w.tracker.issues.borrow()[0].labels.clone();
+    assert_eq!(labels, ["agent:claude", "stage:tdd", "blocked"]);
+}
+
+#[test]
+fn a_spec_gap_message_changes_only_a_tdd_blocked_report() {
+    // review keeps its `spec unclear:` blocked signal for the planner.
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    claim_issue(&w, "claude");
+    let r = report(
+        w.services(),
+        "claude",
+        None,
+        Outcome::Blocked,
+        "spec unclear: the spec names no test",
+    )
+    .unwrap();
+    assert_eq!(r.outcome, Outcome::Blocked);
+    let labels = w.tracker.issues.borrow()[0].labels.clone();
+    assert_eq!(labels, ["agent:claude", "stage:review", "blocked"]);
+
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    claim_issue(&w, "claude");
+    let r = report(
+        w.services(),
+        "claude",
+        None,
+        Outcome::Blocked,
+        "spec incomplete: the owner must choose",
+    )
+    .unwrap();
+    assert_eq!(r.outcome, Outcome::Blocked);
+    let labels = w.tracker.issues.borrow()[0].labels.clone();
+    assert_eq!(labels, ["agent:claude", "stage:spec", "blocked"]);
+}
+
+#[test]
 fn a_stage_reports_and_releases_only_its_own_claim() {
     let w = World::new();
     w.tracker.issue(1, &["agent:claude", "stage:spec"]);
