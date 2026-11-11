@@ -158,6 +158,49 @@ check "blockers: FailedScheduling at 400 s is a blocker" has FailedScheduling < 
 check "blockers: a placed pod is not a blocker" quiet "$TMP/e3.json" "$TMP/prun.json" "$TMP/empty.json"
 check "blockers: empty namespace" quiet "$TMP/empty.json" "$TMP/empty.json" "$TMP/empty.json"
 
+# --- check-cr-storage.sh -------------------------------------------------------
+# A custom resource whose operator renders the PVC (aw#265). The pool n4 takes
+# only Hyperdisk; e2 does not.
+cat >"$TMP/cr-config.yaml" <<'YAML'
+crs:
+  - repo: tape
+    kind: Tape
+    storage_class: [spec, storageClass]
+    size: [spec, storage]
+    pool: [spec, placement, nodeSelector, faberline.dev/pool]
+YAML
+CR_POOLS='{"tape-server":{"machine_type":"n4-standard-2"},"tape-old":{"machine_type":"e2-standard-4"}}'
+HD_RE='^(n4|n4a|n4d|c4|c4a|c4d)-'
+cr_json() { # cr_json <kind> <pool> <spec fields as jq object text>
+  jq -n --arg kind "$1" --arg pool "$2" "[{kind: \$kind, metadata: {name: \"tape\"},
+    spec: ({placement: {nodeSelector: {\"faberline.dev/pool\": \$pool}}} + $3)}]"
+}
+cr_check() { # cr_check <file> [repo]
+  "$GKE/check-cr-storage.sh" "$1" "$TMP/cr-config.yaml" "${2:-tape}" "$CR_POOLS" "$HD_RE"
+}
+cr_json Tape tape-server '{storage: "1Gi"}' >"$TMP/cr-bad.json"
+cr_json Tape tape-server '{storage: "4Gi", storageClass: "dynamic-rwo"}' >"$TMP/cr-ok.json"
+cr_json Tape tape-server '{storage: "4G", storageClass: "dynamic-rwo"}' >"$TMP/cr-4g.json"
+cr_json Tape tape-server '{storage: "1Gi", storageClass: "dynamic-rwo"}' >"$TMP/cr-small.json"
+cr_json Tape tape-server '{storage: "4Gi", storageClass: "standard-rwo"}' >"$TMP/cr-class.json"
+cr_json Tape tape-server '{storageClass: "dynamic-rwo"}' >"$TMP/cr-nosize.json"
+cr_json Tape tape-old '{storage: "1Gi"}' >"$TMP/cr-pd.json"
+cr_json Other tape-server '{storage: "1Gi"}' >"$TMP/cr-other.json"
+cr_has() { grep -q "$1"; }
+check "cr-storage: 1Gi and no storage class fails on both" test "$(cr_check "$TMP/cr-bad.json" | wc -l)" -eq 2
+check "cr-storage: names the missing storage class" cr_has "not set" < <(cr_check "$TMP/cr-bad.json")
+check "cr-storage: names the small size" cr_has "at least 4Gi" < <(cr_check "$TMP/cr-bad.json")
+check "cr-storage: 4Gi with dynamic-rwo passes" test -z "$(cr_check "$TMP/cr-ok.json")"
+check "cr-storage: 4G (below 4Gi) fails" cr_has "at least 4Gi" < <(cr_check "$TMP/cr-4g.json")
+check "cr-storage: dynamic-rwo with 1Gi fails on size only" test "$(cr_check "$TMP/cr-small.json" | wc -l)" -eq 1
+check "cr-storage: standard-rwo fails" cr_has "standard-rwo\|set spec.storageClass" < <(cr_check "$TMP/cr-class.json")
+check "cr-storage: a missing size fails" cr_has "not a size" < <(cr_check "$TMP/cr-nosize.json")
+check "cr-storage: a non-Hyperdisk pool is not checked" test -z "$(cr_check "$TMP/cr-pd.json")"
+check "cr-storage: another kind is not checked" test -z "$(cr_check "$TMP/cr-other.json")"
+check "cr-storage: another repository is not checked" test -z "$(cr_check "$TMP/cr-bad.json" keep)"
+check "cr-storage: the tape row of infra/gke-test/cr-storage.yaml works" \
+  test "$("$GKE/check-cr-storage.sh" "$TMP/cr-bad.json" "$GKE/../../infra/gke-test/cr-storage.yaml" tape "$CR_POOLS" "$HD_RE" | wc -l)" -eq 2
+
 if ((fails > 0)); then
   printf '%s test(s) failed\n' "$fails" >&2
   exit 1

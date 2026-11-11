@@ -1,0 +1,16 @@
+# Operator custom resources whose operator renders a PVC. The storage of such
+# a PVC is not in the manifests, so scripts/gke-test/check-cr-storage.sh reads
+# it from the custom resource. aw owns this file. A repository whose operator
+# renders PVCs adds one row with a pull request here (aw#265).
+#
+# kind           kind of the custom resource
+# storage_class  path (list of keys) of the field for the storage class
+# size           path (list of keys) of the field for the volume size
+# pool           path (list of keys) of the field for the pool; the rules apply only on
+#                a Hyperdisk-only pool. If the field is empty, they apply.
+crs:
+  - repo: tape
+    kind: Tape
+    storage_class: [spec, storageClass]
+    size: [spec, storage]
+    pool: [spec, placement, nodeSelector, faberline.dev/pool]

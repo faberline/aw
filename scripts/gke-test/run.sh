@@ -162,7 +162,15 @@ if [[ -n "$LANE" ]]; then
   (cd "$OVERLAY" && kustomize edit set namespace "$NAMESPACE")
 fi
 render "$OVERLAY" "$rendered"
+# The operator makes the PVC of a custom resource after the run starts, so
+# check_pods cannot see it. Read the storage fields of the resource instead.
+check_cr_storage() {
+  "$SCRIPT_DIR/check-cr-storage.sh" "$1" "$SCRIPT_DIR/../../infra/gke-test/cr-storage.yaml" \
+    "$REPO" "$pools_json" "$HYPERDISK_ONLY_RE"
+}
+
 problems="$(check_pods "$rendered.json")
+$(check_cr_storage "$rendered.json")
 $(jq -r --arg ns "$NAMESPACE" '.[] | select(.kind == "Namespace" and .metadata.name != $ns)
   | "\(.kind)/\(.metadata.name): the overlay namespace must be \($ns)"' "$rendered.json")"
 if [[ -n "$LANE" ]]; then

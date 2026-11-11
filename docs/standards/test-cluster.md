@@ -136,6 +136,17 @@ cluster when one of these is false:
   safe to set before the pool changes. The default `standard-rwo` makes a PD
   disk that an N4 node cannot attach, and the pod stays Pending. Terraform
   gives these pools Hyperdisk boot disks on its own.
+- **Storage in a custom resource.** An operator makes its PVC after the run
+  starts, so the manifests have no PVC to check. `run.sh` reads the storage
+  fields of the custom resource instead
+  (`scripts/gke-test/check-cr-storage.sh`, aw#265). A repository whose
+  operator renders PVCs adds one row to `infra/gke-test/cr-storage.yaml` with
+  the `kind` and the key paths of the storage class, the size, and the pool.
+  When the pool takes only Hyperdisk (same series as above), the storage
+  class must be `dynamic-rwo` and the size at least `4Gi`, the Hyperdisk
+  Balanced minimum. `4G` is too small. A missing field fails too: an absent
+  class gives the default `standard-rwo`. A pool of another series is not
+  checked. The run stops before it spends cluster time.
 - **Image tag.** No `REPLACE_ME` is left. The run sets the image with
   `kustomize edit set image <repo>=<image>`.
 
