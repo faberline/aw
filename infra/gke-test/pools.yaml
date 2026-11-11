@@ -79,14 +79,14 @@ pools:
     spot: false
     max_nodes: 3
   # tape's server pool: the operator's 2 replicas (leader election, required
-  # anti-affinity) and the 1 Tape pod that it renders, one pod per node, plus 1
-  # spare node so the HA suite's drain can move the evicted replica. Each pod
+  # anti-affinity) and the 3 Tape pods that the HA suite renders
+  # (replicasPerShard: 3), one pod per node. There is no spare node. Each pod
   # requests at most 500m and 512Mi.
   - repo: tape
     pool: tape-server
     machine_type: n4-standard-2
     spot: true
-    max_nodes: 4
+    max_nodes: 5
   # The e2e test Job (tape-it, kubectl) requests 250m and 256Mi.
   - repo: tape
     pool: tape-client
