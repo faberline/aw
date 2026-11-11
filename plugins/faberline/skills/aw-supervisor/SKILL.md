@@ -99,6 +99,7 @@ Look only at these:
   Their claimed branch has no new commit for 3 hours.
 - e. Blocked issues whose reason is gone (G10, below).
 - f. Stage liveness (G8, below).
+- g. Review loops (G12, below).
 
 ### 5. Find root causes before you act
 
@@ -199,6 +200,15 @@ Put the recommended option first.
 When you have no recommendation, say so.
 Then use `類型：需要使用者`.
 
+An option can depend on a fact that you can read.
+Examples: a test message, a document, a closed issue, a tag.
+Read it before you open the decision.
+Write the result under the facts (the facts section of the decision).
+An option must not say "needs confirmation" for something you can read in the repositories of the routine.
+Example failure: decision faberline/aw#272 listed the cost "needs confirmation that the old decision no longer applies".
+It left this check to the desk.
+The supervisor could read the old decision and check it.
+
 #### Numbers in options (G9)
 
 Each number in an option must come from a measurement or a file.
@@ -216,6 +226,7 @@ A root cause is urgent when one of these is true:
 - One cause blocks 3 or more issues.
 - Its faberline/aw issue is open for more than 2 hours and has no comment after its creation.
 - A stage routine is dead (G8).
+- A review loop (G12) is on the release chain (G11) or has `p0` or `p1`.
 
 For an urgent root cause, put the label `urgent` on its faberline/aw issue.
 Create a new issue with the label, or add the label to an open one.
@@ -329,3 +340,41 @@ List what still stands before the tag:
 - open pull requests.
 
 Add a link for each.
+
+### Review loop (G12)
+
+A pull request can fail review again and again.
+Each time the finding is small and new.
+Nobody sees the pattern.
+
+For each open issue with the label `stage:tdd` or `stage:review`, do this:
+
+1. Find the current pull request of the issue.
+2. Count the `aw:signal` comments with `stage=review` and `outcome=failed` for that pull request.
+3. When the count is 3 or more, this is a root cause named "review loop".
+   Write it in the status board.
+   It is urgent (step 9) when the issue is on the release chain (G11) or has `p0` or `p1`.
+
+For a review loop, read the last two failed verdicts.
+Write one comment on the product issue in `<target>`.
+Write it once for each head SHA of the pull request.
+Before you write, search the comments for that SHA.
+Do not write a duplicate.
+The comment has:
+
+- the exact list of the findings that remain, each with file and line;
+- the instruction that tdd must check each claim against the code on `main` before it pushes;
+- the name of the pattern, for example: "each fix adds unverified statements".
+
+When the count is 5 or more, or the findings contradict each other or the spec, open one `pipeline(<repo>)` issue in faberline/aw.
+First check for an open one for the same pull request.
+When one is open, add a comment there.
+The issue lists the pull request and the failed verdicts, with links.
+
+Do not edit labels.
+Do not approve or merge.
+
+Example failure: core#163 (pull request 171) got six failed review signals.
+Each had a small new finding.
+The `status(core)` board did not name it.
+The issue is on the release chain to `v0.5.0`.
