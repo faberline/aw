@@ -266,6 +266,127 @@ fn review_passed_behind_base_updates_when_other_review_prs_are_behind_blocked_or
     assert_eq!(w.tracker.calls(), ["update_branch #5", "edit_comment #7"]);
 }
 
+/// #7 (claimed, behind) and #8 (up to date, same priority) at review.
+fn queue_world() -> World {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    w.tracker.issue(8, &["agent:claude", "stage:review"]);
+    w.tracker.pr(6, "claude/issue-8", "Closes #8");
+    claim_issue(&w, "claude");
+    w.tracker.fail_merge.set(true);
+    w.tracker.behind.set(3);
+    w.tracker
+        .behind_heads
+        .borrow_mut()
+        .insert("claude/issue-8".into(), 0);
+    *w.tracker.required.borrow_mut() = vec!["gate".into()];
+    w
+}
+
+#[test]
+fn an_up_to_date_pr_without_the_required_check_does_not_block_the_update() {
+    let w = queue_world();
+    // Old CI names only: `gate` is missing on its head.
+    w.tracker.run("claude/issue-8", "lint", false);
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert!(reported.updated_branch);
+    assert_eq!(reported.waiting_for, None);
+    assert_eq!(w.tracker.calls(), ["update_branch #5", "edit_comment #7"]);
+}
+
+#[test]
+fn an_up_to_date_pr_with_a_failed_required_check_does_not_block_the_update() {
+    let w = queue_world();
+    w.tracker
+        .red_heads
+        .borrow_mut()
+        .push("claude/issue-8".into());
+    w.tracker.run("claude/issue-8", "gate", false);
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert!(reported.updated_branch);
+}
+
+#[test]
+fn an_up_to_date_pr_with_the_required_check_running_blocks_the_update() {
+    let w = queue_world();
+    w.tracker.run("claude/issue-8", "gate", true);
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert!(!reported.updated_branch);
+    assert_eq!(reported.waiting_for, Some(6));
+    assert_eq!(w.tracker.calls(), ["edit_comment #7"]);
+}
+
+#[test]
+fn an_up_to_date_pr_with_the_required_check_green_blocks_the_update() {
+    let w = queue_world();
+    w.tracker.run("claude/issue-8", "gate", false);
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.waiting_for, Some(6));
+}
+
+#[test]
+fn unreadable_required_checks_keep_the_old_rule_and_say_so() {
+    let w = queue_world();
+    w.tracker.required_unreadable.set(true);
+    // Old rule: up to date and not red holds the update back.
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.waiting_for, Some(6));
+    assert!(
+        reported
+            .warnings
+            .iter()
+            .any(|x| x.contains("could not read the required checks"))
+    );
+    // Old rule: a red pull request frees the update, and the note says so.
+    let w = queue_world();
+    w.tracker.required_unreadable.set(true);
+    w.tracker
+        .red_heads
+        .borrow_mut()
+        .push("claude/issue-8".into());
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert!(reported.updated_branch);
+    assert!(
+        w.tracker
+            .last_comment(7)
+            .contains("could not read the required checks")
+    );
+}
+
+#[test]
+fn review_does_not_merge_while_a_higher_priority_pr_waits_for_its_required_checks() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review", "p2"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    w.tracker.issue(8, &["agent:codex", "stage:review", "p0"]);
+    w.tracker.pr(6, "codex/issue-8", "Closes #8");
+    // #8 was just updated: up to date, `gate` runs. #7 would merge now.
+    w.tracker.run("codex/issue-8", "gate", true);
+    *w.tracker.required.borrow_mut() = vec!["gate".into()];
+    claim_issue(&w, "claude");
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.waiting_for, Some(6));
+    assert_eq!(w.tracker.calls(), ["edit_comment #7"]);
+    assert!(w.tracker.last_comment(7).contains("waiting to update"));
+}
+
+#[test]
+fn review_merges_when_the_higher_priority_pr_is_green_or_of_equal_priority() {
+    // Equal priority, required check running: no hold, merge as today.
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    w.tracker.issue(8, &["agent:claude", "stage:review"]);
+    w.tracker.pr(6, "claude/issue-8", "Closes #8");
+    w.tracker.run("claude/issue-8", "gate", true);
+    *w.tracker.required.borrow_mut() = vec!["gate".into()];
+    claim_issue(&w, "claude");
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.waiting_for, None);
+    assert!(w.tracker.calls()[0].starts_with("merge #5"));
+}
+
 #[test]
 fn review_passed_merge_failure_up_to_date_is_an_error() {
     let w = World::new();

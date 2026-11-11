@@ -5,7 +5,7 @@ use serde_json::{Value, json as payload};
 
 use super::process::run;
 use crate::domain::work::issue::{Comment, Issue};
-use crate::domain::work::ports::{PortError, PortResult, Repo, Tracker};
+use crate::domain::work::ports::{CheckRun, PortError, PortResult, Repo, Tracker};
 use crate::domain::work::pull_request::PullRequest;
 
 /// GitHub through `gh api` (REST only), for the named repository or,
@@ -382,11 +382,70 @@ impl Tracker for GhCli {
             .map(|n| n > 0)
             .map_err(|_| PortError(format!("check runs returned `{}`", out.trim())))
     }
+
+    fn check_runs(&self, head: &str) -> PortResult<Vec<CheckRun>> {
+        let repo = self.name()?;
+        let path = format!(
+            "repos/{repo}/commits/{}/check-runs?per_page=100",
+            encode(head)
+        );
+        // A re-run replaces an older run of the same name.
+        let jq = ".check_runs | group_by(.name)[] | max_by(.id) \
+                  | [.name, (.status != \"completed\"), \
+                     (.conclusion == \"failure\" or .conclusion == \"timed_out\")] | @tsv";
+        let out = self.get(&path, Some(jq))?;
+        parse_check_runs(&out)
+    }
+
+    fn required_checks(&self, branch: &str) -> PortResult<Vec<String>> {
+        let repo = self.name()?;
+        // The active rules that apply to the branch, from every ruleset.
+        let path = format!("repos/{repo}/rules/branches/{}", encode(branch));
+        let jq = ".[] | select(.type == \"required_status_checks\") \
+                  | .parameters.required_status_checks[].context";
+        let out = self.get(&path, Some(jq))?;
+        let mut names: Vec<String> = out
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect();
+        names.sort();
+        names.dedup();
+        Ok(names)
+    }
+}
+
+fn parse_check_runs(out: &str) -> PortResult<Vec<CheckRun>> {
+    out.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|line| {
+            let mut f = line.split('\t');
+            match (f.next(), f.next(), f.next()) {
+                (Some(name), Some(running), Some(failed)) => Ok(CheckRun {
+                    name: name.into(),
+                    running: running == "true",
+                    failed: failed == "true",
+                }),
+                _ => Err(PortError(format!("check run returned `{line}`"))),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn check_run_lines_become_check_runs() {
+        let out = "gate\tfalse\tfalse\nlint\ttrue\tfalse\ntest\tfalse\ttrue\n";
+        let runs = parse_check_runs(out).unwrap();
+        assert_eq!(runs.len(), 3);
+        assert!(runs[1].running && !runs[1].failed);
+        assert!(runs[2].failed);
+        assert!(parse_check_runs("broken").is_err());
+    }
 
     #[test]
     fn encode_keeps_plain_characters_and_escapes_the_rest() {
