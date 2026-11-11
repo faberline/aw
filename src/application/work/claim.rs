@@ -75,6 +75,19 @@ pub fn claim(
         if !awaiting_report(stage, agent, &comments) {
             continue;
         }
+        // The list of recent comments can miss a claim (a comment that is
+        // deleted between two pages moves the later rows). The comments of
+        // the issue are the full record: a claim here that is not stale
+        // belongs to a run that still works.
+        let own = latest_mark(&comments, agent);
+        if let Some((_, mark)) = &own
+            && now - mark.claimed_at < STALE_AFTER_SECONDS
+        {
+            return Ok(ClaimOutcome::Nothing(format!(
+                "issue #{} ({}) is still claimed by `{agent}`; run `aw report` or `aw release` first",
+                issue.number, mark.stage
+            )));
+        }
         if let Some(need) = issue.missing_need(has) {
             needs_other.push(format!("#{} needs `{need}`", issue.number));
             continue;
@@ -131,9 +144,7 @@ pub fn claim(
         }
         // A claim of a dead run that is older than the recent comments is
         // still on the issue. Remove it, so the issue shows one claim.
-        if let Some((old, mark)) = latest_mark(&comments, agent)
-            && now - mark.claimed_at >= STALE_AFTER_SECONDS
-        {
+        if let Some((old, _)) = own {
             s.tracker.delete_comment(old).with_context(|| {
                 format!("could not remove the stale claim on #{}", issue.number)
             })?;

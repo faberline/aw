@@ -163,6 +163,8 @@ impl Tracker for FakeTracker {
             .unwrap_or_default())
     }
 
+    // GitHub filters `since` by the update time of a comment. This fake
+    // filters by the creation time; the tests do not edit comments.
     fn comments_since(&self, since: &str) -> PortResult<Vec<(u64, Comment)>> {
         self.reads
             .borrow_mut()

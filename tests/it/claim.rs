@@ -564,3 +564,20 @@ fn a_claim_older_than_the_recent_comments_is_replaced_on_its_issue() {
         ]
     );
 }
+
+/// The list of recent comments can miss a claim that is not stale (a
+/// comment deleted between two pages). The comments of the issue still
+/// show it, so the run does not take the issue a second time.
+#[test]
+fn a_live_claim_that_the_recent_list_misses_still_holds_its_issue() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    // The fake list filters by the time of the comment, so this comment is
+    // not in it. The mark itself is one minute old.
+    w.tracker
+        .add_comment(1, &old_mark("claude", Stage::Spec, 60), LONG_AGO);
+    let why = nothing(&w, "claude");
+    assert!(why.contains("issue #1 (spec) is still claimed"), "{why}");
+    assert_eq!(w.tracker.claims(1).len(), 1);
+    assert!(w.tracker.calls().is_empty());
+}
