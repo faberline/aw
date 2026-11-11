@@ -12,6 +12,9 @@ pub enum Outcome {
     Ready,
     /// The agent cannot finish this stage; the message says why.
     Blocked,
+    /// tdd found that the spec lacks a file or a rule; the issue goes back
+    /// to spec and the message names the exact gap.
+    Respec,
     /// review squash-merged the pull request.
     Passed,
     /// review asked for changes.
@@ -26,6 +29,7 @@ impl Outcome {
         match self {
             Outcome::Ready => "ready",
             Outcome::Blocked => "blocked",
+            Outcome::Respec => "respec",
             Outcome::Passed => "passed",
             Outcome::Failed => "failed",
             Outcome::Closed => "closed",
@@ -36,6 +40,7 @@ impl Outcome {
         match value {
             "ready" => Some(Outcome::Ready),
             "blocked" => Some(Outcome::Blocked),
+            "respec" => Some(Outcome::Respec),
             "passed" => Some(Outcome::Passed),
             "failed" => Some(Outcome::Failed),
             "closed" => Some(Outcome::Closed),
@@ -48,6 +53,7 @@ impl Outcome {
             (stage, self),
             (_, Outcome::Blocked)
                 | (Stage::Spec | Stage::Tdd, Outcome::Ready)
+                | (Stage::Tdd, Outcome::Respec)
                 | (
                     Stage::Review,
                     Outcome::Passed | Outcome::Failed | Outcome::Closed
@@ -57,7 +63,8 @@ impl Outcome {
 
     pub fn allowed(stage: Stage) -> &'static [Outcome] {
         match stage {
-            Stage::Spec | Stage::Tdd => &[Outcome::Ready, Outcome::Blocked],
+            Stage::Spec => &[Outcome::Ready, Outcome::Blocked],
+            Stage::Tdd => &[Outcome::Ready, Outcome::Respec, Outcome::Blocked],
             Stage::Review => &[
                 Outcome::Passed,
                 Outcome::Failed,
@@ -68,7 +75,10 @@ impl Outcome {
     }
 
     pub fn needs_message(self) -> bool {
-        matches!(self, Outcome::Blocked | Outcome::Failed | Outcome::Closed)
+        matches!(
+            self,
+            Outcome::Blocked | Outcome::Respec | Outcome::Failed | Outcome::Closed
+        )
     }
 }
 
@@ -82,6 +92,7 @@ pub struct LabelMove {
 impl Outcome {
     /// The next stage label after `stage` ends with this outcome.
     /// `blocked` keeps the stage and adds `blocked` for a person.
+    /// `respec` moves a tdd issue back to `stage:spec` with no `blocked`.
     pub fn label_move(self, stage: Stage) -> LabelMove {
         let to = match (stage, self) {
             (_, Outcome::Blocked) => {
@@ -90,6 +101,7 @@ impl Outcome {
                     add: vec!["blocked".into()],
                 };
             }
+            (Stage::Tdd, Outcome::Respec) => "stage:spec",
             (Stage::Spec, _) => "stage:tdd",
             (Stage::Tdd, _) => "stage:review",
             (Stage::Review, Outcome::Failed | Outcome::Closed) => "stage:tdd",
@@ -224,5 +236,14 @@ mod tests {
             (some("stage:review"), one("stage:done"))
         );
         assert_eq!(to(Stage::Tdd, Outcome::Blocked), (None, one("blocked")));
+        assert_eq!(
+            to(Stage::Tdd, Outcome::Respec),
+            (some("stage:tdd"), one("stage:spec"))
+        );
+        assert!(Outcome::Respec.allowed_in(Stage::Tdd));
+        assert!(!Outcome::Respec.allowed_in(Stage::Spec));
+        assert!(!Outcome::Respec.allowed_in(Stage::Review));
+        assert!(Outcome::Respec.needs_message());
+        assert_eq!(Outcome::parse("respec"), Some(Outcome::Respec));
     }
 }

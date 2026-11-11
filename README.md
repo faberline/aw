@@ -67,7 +67,7 @@ worker runs without `--has`, so it leaves that issue to a Mac.
 | Stage | Where it runs | `aw claim` checks out | `aw report` outcomes |
 | --- | --- | --- | --- |
 | spec | anywhere | nothing | `ready`, `blocked` |
-| tdd | a clean clone of the repository | the head of the open pull request that closes the issue; else `<agent>/issue-<n>`, new from `origin/<default>` or continued from `origin` | `ready`, `blocked` |
+| tdd | a clean clone of the repository | the head of the open pull request that closes the issue; else `<agent>/issue-<n>`, new from `origin/<default>` or continued from `origin` | `ready`, `respec`, `blocked` |
 | review | anywhere | nothing | `passed`, `failed`, `closed`, `blocked` |
 
 For tdd, `aw claim` refuses a dirty working tree (untracked files included).
@@ -86,7 +86,7 @@ when the tree is clean:
 - `review closed` comments the message on the pull request, closes it
   without a merge and deletes its branch. The next tdd run starts again
   from the default branch. Use it when rework cannot save the pull request.
-- `blocked`, `failed` and `closed` need a message: `-m TEXT`, or `-F FILE`
+- `blocked`, `respec`, `failed` and `closed` need a message: `-m TEXT`, or `-F FILE`
   (`-` is stdin).
 
 Then `aw report` moves the `stage:` label, so the next `aw claim` can take the
@@ -98,6 +98,7 @@ issue at once. The `agent:` label stays. A label failure is a warning.
 | tdd `ready` | `stage:review` |
 | review `failed` or `closed` | `stage:tdd` |
 | review `passed` | `stage:done` |
+| tdd `respec` | `stage:spec`, no `blocked` |
 | `blocked` | the same stage, plus `blocked` |
 
 The same agent may review its own pull request in a later run. When no open

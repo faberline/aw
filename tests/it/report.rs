@@ -451,6 +451,32 @@ fn the_same_agent_claims_the_next_stage_at_once() {
 }
 
 #[test]
+fn tdd_respec_moves_the_issue_back_to_spec_without_blocked() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:tdd"]);
+    claim_issue(&w, "claude");
+    assert!(report(w.services(), "claude", None, Outcome::Respec, " ").is_err());
+    report(
+        w.services(),
+        "claude",
+        None,
+        Outcome::Respec,
+        "spec lacks tests/a.rs",
+    )
+    .unwrap();
+    let labels = w.tracker.issues.borrow()[0].labels.clone();
+    assert_eq!(labels, ["agent:claude", "stage:spec"]);
+}
+
+#[test]
+fn respec_applies_to_tdd_only() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    claim_issue(&w, "claude");
+    assert!(report(w.services(), "claude", None, Outcome::Respec, "x").is_err());
+}
+
+#[test]
 fn blocked_keeps_the_stage_and_adds_blocked() {
     let w = World::new();
     w.tracker.issue(1, &["agent:claude", "stage:spec"]);
