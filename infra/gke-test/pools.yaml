@@ -97,12 +97,14 @@ pools:
   # 128Mi each, no anti-affinity) and one Defer instance that it renders; the
   # direct-install StatefulSet and operator requests must fit the node.
   # The second node is room for the recovery step, which deletes the Defer
-  # pod and waits for its replacement on the same PVC.
+  # pod and waits for its replacement on the same PVC. The third node is for
+  # the operator_recovery suite, which needs up to 3 server nodes
+  # (replicasPerShard change, defer#88).
   - repo: defer
     pool: defer-server
     machine_type: n4-standard-2
     spot: true
-    max_nodes: 2
+    max_nodes: 3
   # The e2e test Job requests at most 250m and 256Mi.
   - repo: defer
     pool: defer-client
