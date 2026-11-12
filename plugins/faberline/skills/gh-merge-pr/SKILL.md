@@ -12,7 +12,6 @@ Merge one pull request, verify it merged, then stop. The mechanics live in
 failing ones, merges with an explicit strategy, and verifies `MERGED`.
 
 `${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
-In Codex or AGY, use the absolute path of that folder instead.
 
 ## Rules
 
@@ -21,8 +20,7 @@ In Codex or AGY, use the absolute path of that folder instead.
 - Strategy: pass `--strategy` from the user's request or discoverable
   repository policy; otherwise the script's `squash` default stands.
 - Pass `--delete-branch` only when the user explicitly asked to delete the
-  branch. Persistent refs (`main`, `app/*`, `lib/*`, `project-mamba`,
-  `project-lumen`, `examples`) stay.
+  branch. Never delete `main`.
 - A `refused: failing checks` exit is final here — report the named checks
   verbatim and stop; fixing them is separate work the user directs.
 - Merging moves `origin/main`; syncing the local branch back is

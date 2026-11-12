@@ -14,13 +14,11 @@ history was rewritten, nothing when already in sync — and never bare
 `--force`.
 
 `${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
-In Codex or AGY, use the absolute path of that folder instead.
 
 ## Rules
 
 - Push only the current branch; the script never touches another ref.
-- A force push to a persistent ref (`main`, `examples`, `project-mamba`,
-  `project-lumen`, `app/*`, `lib/*`) is refused by the script. Pass
+- A force push to `main` is refused by the script. Pass
   `--force-persistent-ok` only after the user has explicitly confirmed that
   exact overwrite in this conversation — never on your own judgment.
 - A rejected push means the remote moved. The script already fetched and
