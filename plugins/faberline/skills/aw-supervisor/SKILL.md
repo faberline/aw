@@ -33,6 +33,7 @@ Do not change rulesets, settings, secrets or workflow files.
 Do not delete anything.
 When a write is not on the list, make a `decision` issue instead.
 One exception: G21 (below) lets you execute a label-only desk decision.
+The routine prompt must list the G21 label writes; without them, G21 does not run.
 
 This cloud session blocks GitHub GraphQL.
 Do not use `gh issue`, `gh pr` or `gh repo`.
