@@ -320,6 +320,16 @@ Note its time.
 
 A stage may have no signal for more than 3 hours.
 Claimable work may exist for that stage.
+Before you report a dead routine, check this:
+a worker releases an issue that waits for an open prerequisite and takes the next one (`aw-worker` section 4).
+A release writes no `aw:signal`.
+So a live routine can look silent.
+Read the newest supervisor, desk or review comment of each claimable issue of that stage.
+Check the state of each issue or pull request that it waits for with `gh api`.
+When every claimable issue of that stage waits for a prerequisite that is still open, this is not an alarm.
+Do not create a `pipeline` issue.
+List those issues and what each waits for on the status board, for example `tdd: #19 waits for PR 140`.
+When one claimable issue does not wait, or a prerequisite is closed, the routine should have taken it.
 Then this is a root cause.
 Do these things:
 
