@@ -219,7 +219,8 @@ modulo the number of repositories. For each repository:
    is not empty, a past run stopped early. Keep its files:
    `git stash push -u -m "aw-worker leftover <UTC time>"`.
 4. `$AW claim <who>`, with one `--skip <issue>` for each issue that this
-   run released because its checks were still running.
+   run released because its checks were still running, or because it waits
+   for an open prerequisite (section 4, "Waiting for an open prerequisite").
    On a Mac (`uname` prints `Darwin`), add `--has mac`. Then `aw` (0.7.13
    or later) also offers the issues labeled `needs:mac`. On any other
    machine do not add it; `aw` passes over those issues.
@@ -233,7 +234,8 @@ last one go back to the first. Pass over a repository where `aw claim`
 exited 1 or 2 in this run. Stop the run when:
 
 - `aw claim` exits 2 in every repository;
-- you released a claim because you could not finish it;
+- you released a claim because you could not finish it (a release for a
+  skipped issue, as in step 4, is not this case: claim again and go on);
 - this run has reported three stages.
 
 ## 4. Do the stage
@@ -246,6 +248,29 @@ Write the report file with the file tool or its own plain command first.
 Then run `$AW report` as a plain command. Do not add `trap`, `rm`,
 `set -e` or other cleanup to it; some clients block shell forms that they
 cannot inspect. Leave the temporary file; the system removes it.
+
+### Waiting for an open prerequisite (spec, tdd and review)
+
+Do this check right after you read the issue and its comments, before any
+other work. Take the newest comment from the supervisor, the desk or a
+review (not your own `aw:claim` or `aw:signal` comment). When it says that
+the issue must wait for another issue or pull request (for example "wait
+for PR 140 to merge"), read the state of that issue or pull request with
+the REST call (`gh api repos/<owner>/<repo>/issues/<n>`, or `.../pulls/<n>`
+for a pull request; a pull request has `merged_at`):
+
+- It is still open: `$AW release <who>`. Remember the issue number and what
+  it waits for. Go to section 3, step 4, and claim again with `--skip` for
+  this issue. Do not stop the run. One waiting issue must not block the
+  rest of the queue.
+- It is closed or merged: the wait is over. Do the stage as usual.
+- The comment names no issue or pull request, or you cannot read its state:
+  do not guess. Do the stage as usual, or report `blocked` with the reason.
+
+Such a release is not "a claim you could not finish". It does not stop the
+run, and it does not count as one of the three reported stages. The
+skipped issue keeps its stage and its labels; do not add `blocked` for it.
+Name each skipped issue and what it waits for in the final answer.
 
 Read code through the GitHub API when you do not need the clone:
 
@@ -573,6 +598,8 @@ Use the user's language. Give:
 - the plan changes: label moves, triage, closed issues;
 - each stage you did: issue, stage, outcome and pull request;
 - why the run stopped;
+- each issue you skipped because it waits for an open issue or pull request,
+  and what it waits for;
 - for each repository, the count of open issues per `stage:` label;
 - a milestone that is ready for release (section 2, step 5);
 - the health: `正常` (normal) or `異常` (abnormal) with the reason.
