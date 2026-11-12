@@ -650,3 +650,21 @@ backup restore drill of `faberline/sift#84`. It is temporary.
 To remove it: delete `infra/gke-test/sift-restore-drill.tf` (and this
 section) in a pull request, then run `terraform apply`. `force_destroy` deletes
 the objects with the bucket.
+
+### Bucket `tape-restore-drill-20261112`
+
+`infra/gke-test/tape-restore-drill.tf` makes one GCS bucket for the one-time
+GKE restore drill of `faberline/tape#76`. It is temporary. The user approved it
+on 2026-11-12 with the same conditions as the sift bucket.
+
+- Region `asia-east1`. Uniform bucket-level access. Public access prevention
+  is enforced. A lifecycle rule deletes objects after 7 days.
+- Only pods that run as Kubernetes service account `tape-restore-drill` in
+  namespace `tape` get `roles/storage.objectAdmin`, on this bucket only. The
+  grant uses the Workload Identity Federation for GKE principal directly.
+- No project-level role changes. `gke-test-tape` and `faberlineGkeTest` stay
+  as they are.
+
+To remove it: after the drill reports, delete
+`infra/gke-test/tape-restore-drill.tf` (and this section) in a pull request,
+then run `terraform apply`.
