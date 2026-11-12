@@ -7,6 +7,13 @@ use std::collections::BTreeMap;
 pub struct Workflow {
     /// The top-level `name:`.
     pub name: Option<String>,
+    /// True when `on:` lists the `pull_request` event.
+    pub pull_request: bool,
+    /// True when the workflow has a top-level `concurrency:` group.
+    pub concurrency: bool,
+    /// True when that group cancels an older run on a pull request:
+    /// `cancel-in-progress: true`, or an expression that names `pull_request`.
+    pub cancels_pull_request: bool,
     /// Job id to job.
     pub jobs: BTreeMap<String, Job>,
 }
@@ -22,6 +29,11 @@ pub struct Job {
     pub condition: Option<String>,
     /// The `run:` text of every step, in order.
     pub runs: Vec<String>,
+    /// True when the job sets `timeout-minutes:`.
+    pub timeout: bool,
+    /// True when the job calls a reusable workflow (`uses:`). GitHub does not
+    /// allow `timeout-minutes:` on such a job; the called workflow has its own.
+    pub reusable: bool,
 }
 
 /// One opt-out from `[[standards.ci.exception]]` in `aw.toml`.

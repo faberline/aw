@@ -11,6 +11,8 @@ use crate::domain::work::ports::{PortError, PortResult};
 #[derive(Deserialize)]
 struct RawWorkflow {
     name: Option<String>,
+    on: Option<Value>,
+    concurrency: Option<Value>,
     #[serde(default)]
     jobs: BTreeMap<String, RawJob>,
 }
@@ -22,6 +24,9 @@ struct RawJob {
     needs: Needs,
     #[serde(rename = "if")]
     condition: Option<Value>,
+    #[serde(rename = "timeout-minutes")]
+    timeout: Option<Value>,
+    uses: Option<String>,
     #[serde(default)]
     steps: Vec<RawStep>,
 }
@@ -54,6 +59,28 @@ fn scalar(value: Value) -> Option<String> {
     }
 }
 
+/// `on:` is one event, a list of events or a map of events.
+fn has_pull_request(on: &Value) -> bool {
+    match on {
+        Value::String(event) => event == "pull_request",
+        Value::Sequence(events) => events.iter().any(has_pull_request),
+        Value::Mapping(events) => events.keys().any(has_pull_request),
+        _ => false,
+    }
+}
+
+/// `concurrency:` cancels a pull request run when `cancel-in-progress` is
+/// `true` or an expression that names `pull_request`.
+fn cancels_pull_request(concurrency: &Value) -> bool {
+    match concurrency.get("cancel-in-progress") {
+        Some(Value::Bool(cancel)) => *cancel,
+        Some(Value::String(expression)) => {
+            expression == "true" || expression.contains("pull_request")
+        }
+        _ => false,
+    }
+}
+
 /// Parse the text of a workflow file.
 pub fn workflow(text: &str) -> PortResult<Workflow> {
     let raw: RawWorkflow = serde_norway::from_str(text)
@@ -71,12 +98,17 @@ pub fn workflow(text: &str) -> PortResult<Workflow> {
                 needs,
                 condition: job.condition.and_then(scalar),
                 runs: job.steps.into_iter().filter_map(|s| s.run).collect(),
+                timeout: job.timeout.is_some(),
+                reusable: job.uses.is_some(),
             };
             (id, job)
         })
         .collect();
     Ok(Workflow {
         name: raw.name,
+        pull_request: raw.on.as_ref().is_some_and(has_pull_request),
+        concurrency: raw.concurrency.is_some(),
+        cancels_pull_request: raw.concurrency.as_ref().is_some_and(cancels_pull_request),
         jobs,
     })
 }
@@ -167,6 +199,42 @@ jobs:
         let gate = &parsed.jobs["gate"];
         assert_eq!(gate.needs, ["lint", "test-workspace"]);
         assert_eq!(gate.condition.as_deref(), Some("${{ always() }}"));
+        assert!(parsed.pull_request);
+        assert!(!parsed.concurrency);
+        assert!(!lint.timeout && !lint.reusable);
+    }
+
+    #[test]
+    fn concurrency_timeout_and_event_forms_are_read() {
+        let parsed = workflow(
+            "name: ci\non: pull_request\nconcurrency:\n  group: g\njobs:\n  a:\n    timeout-minutes: 5\n",
+        )
+        .unwrap();
+        assert!(parsed.pull_request && parsed.concurrency && parsed.jobs["a"].timeout);
+        let call = workflow("jobs:\n  b:\n    uses: ./.github/workflows/x.yml\n").unwrap();
+        assert!(call.jobs["b"].reusable);
+        assert!(!parsed.cancels_pull_request);
+        let cancel = |value: &str| {
+            workflow(&format!(
+                "concurrency:\n  group: g\n  cancel-in-progress: {value}\n"
+            ))
+            .unwrap()
+            .cancels_pull_request
+        };
+        assert!(cancel("true"));
+        assert!(cancel("${{ github.event_name == 'pull_request' }}"));
+        assert!(!cancel("false"));
+        assert!(!cancel("${{ github.ref == 'refs/heads/main' }}"));
+        assert!(!workflow("concurrency: g\n").unwrap().cancels_pull_request);
+        assert!(workflow("on: [push, pull_request]\n").unwrap().pull_request);
+        assert!(!workflow("on: [push]\n").unwrap().pull_request);
+        assert!(
+            !workflow("on:\n  schedule:\n    - cron: '1 * * * *'\n")
+                .unwrap()
+                .pull_request
+        );
+        assert!(!workflow("name: x\n").unwrap().pull_request);
+        assert!(!workflow("on: 3\n").unwrap().pull_request);
     }
 
     #[test]

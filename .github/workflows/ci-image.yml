@@ -25,6 +25,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels the older run. main, the weekly run
+# and a manual run never cancel: they publish the image.
+concurrency:
+  group: ci-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   BASE: ghcr.io/faberline/ci-base
   NODE: ghcr.io/faberline/kindest-node
@@ -35,6 +41,7 @@ env:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -72,6 +79,7 @@ jobs:
     needs: publish
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: read

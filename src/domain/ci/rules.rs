@@ -19,8 +19,8 @@ pub const GATE_CHECKS: [&str; 2] = [
 ];
 
 /// Every rule id, in report order.
-pub const RULES: [&str; 9] = [
-    "CI1", "CI2", "CI3", "CI4", "CI5", "CI6", "CI7", "CI8", "CI9",
+pub const RULES: [&str; 11] = [
+    "CI1", "CI2", "CI3", "CI4", "CI5", "CI6", "CI7", "CI8", "CI9", "CI10", "CI11",
 ];
 
 /// The result of one rule.
@@ -72,6 +72,8 @@ pub fn check(
             results.push(("CI5", test_needs(workflow)));
             results.push(("CI6", e2e_needs(workflow)));
             results.push(("CI7", gate(workflow)));
+            results.push(("CI10", concurrency(workflow)));
+            results.push(("CI11", timeouts(workflow)));
         }
         None => results.push(("CI1", Err(".github/workflows/ci.yml is missing".into()))),
     }
@@ -81,7 +83,7 @@ pub fn check(
         .map(|(rule, result)| finding(rule, result, exceptions))
         .collect();
     if workflow.is_none() {
-        for rule in &RULES[1..7] {
+        for rule in RULES[1..7].iter().chain(&RULES[9..]) {
             findings.push(Finding {
                 rule,
                 status: Status::Skipped,
@@ -98,6 +100,7 @@ pub fn check(
         },
     });
     findings.push(finding("CI9", exception_entries(exceptions), &[]));
+    findings.sort_by_key(|f| RULES.iter().position(|r| *r == f.rule));
 
     let passed = findings.iter().all(|f| f.status != Status::Fail);
     Report { passed, findings }
@@ -300,6 +303,43 @@ fn gate(workflow: &Workflow) -> Result<String, String> {
     }
 }
 
+fn concurrency(workflow: &Workflow) -> Result<String, String> {
+    if !workflow.pull_request {
+        Ok("the workflow has no pull_request trigger".into())
+    } else if workflow.concurrency && workflow.cancels_pull_request {
+        Ok("the workflow has a concurrency group that cancels on a pull request".into())
+    } else if workflow.concurrency {
+        Err(
+            "the concurrency group does not cancel an older run on a pull request; \
+             set cancel-in-progress to true or to an expression that names pull_request"
+                .into(),
+        )
+    } else {
+        Err(
+            "the workflow runs on pull_request and has no top-level concurrency group; \
+             add one per ref with cancel-in-progress on a pull request"
+                .into(),
+        )
+    }
+}
+
+fn timeouts(workflow: &Workflow) -> Result<String, String> {
+    let missing: Vec<&String> = workflow
+        .jobs
+        .iter()
+        .filter(|(_, job)| !job.timeout && !job.reusable)
+        .map(|(id, _)| id)
+        .collect();
+    if missing.is_empty() {
+        Ok("every job sets timeout-minutes".into())
+    } else {
+        Err(format!(
+            "jobs without timeout-minutes: {}",
+            ids(missing.into_iter())
+        ))
+    }
+}
+
 fn ruleset(required: &[String]) -> Result<String, String> {
     if required.len() == 1 && required[0] == "gate" {
         Ok("the ruleset requires only gate".into())
@@ -316,7 +356,7 @@ fn ruleset(required: &[String]) -> Result<String, String> {
 fn exception_entries(exceptions: &[Exception]) -> Result<String, String> {
     let mut problems = Vec::new();
     for exception in exceptions {
-        if !RULES[..8].contains(&exception.check.as_str()) {
+        if exception.check == "CI9" || !RULES.contains(&exception.check.as_str()) {
             problems.push(format!("unknown check {:?}", exception.check));
         }
         if exception.reason.trim().is_empty() {
@@ -344,6 +384,8 @@ mod tests {
             needs: needs.iter().map(|s| s.to_string()).collect(),
             condition: condition.map(str::to_string),
             runs: runs.iter().map(|s| s.to_string()).collect(),
+            timeout: true,
+            reusable: false,
         }
     }
 
@@ -354,6 +396,9 @@ echo "$RESULTS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")'
     fn standard() -> Workflow {
         let mut workflow = Workflow {
             name: Some("ci".into()),
+            pull_request: true,
+            concurrency: true,
+            cancels_pull_request: true,
             ..Workflow::default()
         };
         workflow.jobs.insert(
@@ -561,5 +606,67 @@ echo "$RESULTS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")'
         let finding = report.findings.iter().find(|f| f.rule == "CI9").unwrap();
         assert!(finding.detail.contains("CI99"));
         assert!(finding.detail.contains("no reason"));
+    }
+
+    #[test]
+    fn a_pull_request_workflow_needs_a_concurrency_group() {
+        let mut workflow = standard();
+        workflow.concurrency = false;
+        let report = check(Some(&workflow), None, &[]);
+        assert_eq!(status(&report, "CI10"), Status::Fail);
+        assert!(!report.passed);
+        workflow.pull_request = false;
+        let report = check(Some(&workflow), None, &[]);
+        assert_eq!(status(&report, "CI10"), Status::Pass);
+    }
+
+    #[test]
+    fn a_concurrency_group_must_cancel_on_a_pull_request() {
+        let mut workflow = standard();
+        workflow.cancels_pull_request = false;
+        let report = check(Some(&workflow), None, &[]);
+        assert_eq!(status(&report, "CI10"), Status::Fail);
+        let finding = report.findings.iter().find(|f| f.rule == "CI10").unwrap();
+        assert!(finding.detail.contains("cancel"), "{}", finding.detail);
+    }
+
+    #[test]
+    fn every_job_needs_a_timeout() {
+        let mut workflow = standard();
+        workflow.jobs.get_mut("lint").unwrap().timeout = false;
+        workflow.jobs.get_mut("gate").unwrap().timeout = false;
+        let report = check(Some(&workflow), None, &[]);
+        assert_eq!(status(&report, "CI11"), Status::Fail);
+        let finding = report.findings.iter().find(|f| f.rule == "CI11").unwrap();
+        assert!(finding.detail.contains("gate, lint"), "{}", finding.detail);
+        // A job that calls a reusable workflow cannot set timeout-minutes.
+        let job = workflow.jobs.get_mut("e2e-cluster").unwrap();
+        job.timeout = false;
+        job.reusable = true;
+        let report = check(Some(&workflow), None, &[]);
+        let finding = report.findings.iter().find(|f| f.rule == "CI11").unwrap();
+        assert!(
+            !finding.detail.contains("e2e-cluster"),
+            "{}",
+            finding.detail
+        );
+    }
+
+    #[test]
+    fn the_new_rules_take_exceptions_and_skip_without_a_file() {
+        let mut workflow = standard();
+        workflow.concurrency = false;
+        let exceptions = [Exception {
+            check: "CI10".into(),
+            reason: "one run only".into(),
+        }];
+        let report = check(Some(&workflow), None, &exceptions);
+        assert_eq!(status(&report, "CI10"), Status::Excepted);
+        assert!(report.passed);
+        let report = check(None, None, &[]);
+        assert_eq!(status(&report, "CI10"), Status::Skipped);
+        assert_eq!(status(&report, "CI11"), Status::Skipped);
+        let order: Vec<&str> = report.findings.iter().map(|f| f.rule).collect();
+        assert_eq!(order, RULES);
     }
 }

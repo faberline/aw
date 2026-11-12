@@ -525,6 +525,15 @@ Example failure: the defer supervisor opened faberline/aw#294 for `Temporary fai
 The same failure hit tape and surface at the same time.
 It was a problem of the hosted runner.
 
+### Runs queued with zero jobs (G18)
+
+The whole faberline organization shares 20 concurrent Actions jobs.
+Many runs that stay "queued" with zero jobs mean that the 20 slots are full.
+This is not a GitHub outage.
+A rerun adds to the queue and makes it longer: do not rerun.
+Add the evidence (run links, the repos that wait, the time) as one comment on the one open `pipeline` issue for it (faberline/aw#316).
+Do not open a new issue.
+
 ### tdd blocked on an incomplete spec (G16)
 
 The tdd stage can find that the spec is incomplete.

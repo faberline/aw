@@ -125,6 +125,7 @@ jobs:
   gke-test:
     name: deploy + test on shared GKE
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     # Runs of one repository share its namespace and its cluster-wide CRDs,
     # so they queue. Different repositories run at the same time. A run with a
     # `lane` has its own namespace and no cluster-scoped objects, so it has
@@ -136,8 +137,9 @@ jobs:
     # callers' gates red (aw#293). With the Lease every job waits for its turn
     # and nothing is cancelled.
     #
-    # No job timeout: the wait has `queue-minutes` and the run has
-    # `ttl-minutes`. A GitHub-hosted job stops after 360 minutes in all.
+    # The job timeout is the GitHub limit, 360 minutes, set on purpose: the wait
+    # has `queue-minutes` and the run has `ttl-minutes`, and together they stay
+    # below 360, so the job timeout must not cut the teardown.
     env:
       REPO: ${{ github.event.repository.name }}
       OVERLAY: ${{ inputs.overlay }}

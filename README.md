@@ -210,7 +210,7 @@ aw ci check --repo faberline/core        # the default branch on GitHub
 
 It reads `.github/workflows/ci.yml`, the `[[standards.ci.exception]]` entries
 of `aw.toml` and the required status checks of the default-branch ruleset.
-Each check `CI1`–`CI9` is `pass`, `fail`, `excepted` or `skipped`. It exits 1
+Each check `CI1`–`CI11` is `pass`, `fail`, `excepted` or `skipped`. It exits 1
 when a check fails.
 
 ## Milestone release gate
