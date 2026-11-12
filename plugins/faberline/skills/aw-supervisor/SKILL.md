@@ -103,6 +103,7 @@ Look only at these:
 - h. Parent issues whose children are all done (G13, below).
 - i. Issues with `stage:tdd` and `blocked` whose last signal says the spec is incomplete (G16, below).
 - j. Issues with `stage:spec` and `blocked` whose last signal proposes a split, and no child exists (G17, below).
+- k. Issues whose last aw signal is `blocked` and asks a person a question, with no open `decision` issue that links them (G20, below).
 
 ### 5. Find root causes before you act
 
@@ -259,6 +260,7 @@ Write it in Traditional Chinese (Taiwan):
   Each write of this run, with its link.
 
 Keep no history in the body.
+Read the labels of each issue that the body names in this pass, before the write (G19, below).
 
 #### Time (G1)
 
@@ -606,3 +608,65 @@ Do not make the child issues yourself and do not change the labels.
 
 Example failure: faberline/lumen#311, #307 and #310 on 2026-11-12 (faberline/aw#315) and faberline/keep#70 (faberline/aw#313).
 Each got a spec `blocked` signal with a correct split proposal. No routine made the children.
+
+### Read the labels in this pass (G19)
+
+The status board names issues and says what state they have.
+A label can change between two passes: a stage run adds `blocked`, the desk removes it.
+So a label state from the old board body, from an old comment or from memory can be wrong.
+
+For each issue or pull request that the new board body names, read its current labels in this pass.
+Use `gh api repos/<owner>/<repo>/issues/<n> --jq '[.labels[].name]'`, or one list of the open issues of `<target>` that you read in this pass.
+Do this after the other writes of the pass and before you replace the board body.
+
+- Do not copy a label state from the old board body.
+- Write "has no `blocked` label", "can be claimed" or "is ready" for an issue only when the labels that you read in this pass show it.
+- An issue can be claimed only when it has no `blocked` label, it has a `stage:*` label and it has an `agent:*` label (G4).
+  Also read its last aw signal: when the outcome is `blocked`, the issue is not ready, with or without the label.
+  A `blocked` signal on an issue that has no `blocked` label is a root cause; write it on the board.
+- When you cannot read the labels of an issue (quota, access), do not write a label state for it.
+  Write `標籤未讀取` for that issue.
+
+Example failure: the lumen board (faberline/aw#256) of 2026-11-11 23:11Z said that lumen#321, #323 and #324 had no `blocked` label and could be claimed.
+lumen#323 had a spec signal with the outcome `blocked` from 22:21Z and lumen#324 one from 22:27Z.
+Both issues had the `blocked` label.
+
+### A blocked signal that asks a person (G20)
+
+A stage run reports `blocked` when it needs an answer that it cannot give.
+The signal text then asks a person: `Decision needed`, `Decision: ...`, a question, or two or more options with a recommendation.
+No routine answers such a signal, and the desk acts only on an `執行清單`.
+So a note on the board is not enough.
+
+For each open issue in `<target>` whose last aw signal has the outcome `blocked`, read the signal text.
+When it asks a person, there must be an open `decision` issue in faberline/aw that links the issue.
+Search first (step 6).
+When one exists, do not make a second one; add the new item there as a comment with the full `執行清單`.
+When none exists, open it in the same pass.
+Do not wait for a second pass.
+Put all such signals of this run of `<target>` in the one decision issue of the run (step 8).
+
+The decision item has these parts:
+
+- The type (step 8): `類型：中控可決定`, or `類型：需要使用者` only in the cases that step 8 names.
+  When the signal has a recommendation and no case of step 8 applies, the type is `中控可決定`.
+  When one issue of the run needs the user, the decision issue has `類型：需要使用者` and each item says its own type.
+- The link to the issue and the link to the signal comment, and the time of the signal.
+- The question of the signal in one line.
+- The options (G3, G9).
+  The first option is the recommendation of the signal, with the words of the signal.
+  Say that it is the recommendation of the stage run.
+  When you do not agree with it, keep it as the first option and write your reason under it.
+  When the signal has no recommendation, verify the facts (step 7) and give your own; when you have none, the type is `需要使用者`.
+- Under each option, the `執行清單`: the answer comment for the issue in one line, the label to remove (`blocked`), the `stage:*` label to add when the issue has none (G4), and each issue to create or close.
+
+This rule does not replace G16 and G17.
+A tdd signal that says the spec is incomplete goes to G16.
+A spec signal that proposes a split goes to G17; its case 1 (a `Decision:` line) makes the same decision item as this rule.
+Make one item for one signal, not two.
+
+Do not answer the question on the issue yourself and do not change the labels.
+
+Example failure: lumen#323 (22:21Z) and lumen#324 (22:27Z) on 2026-11-11.
+Each got a spec `blocked` signal with "Decision needed" and a recommendation.
+The pass of 23:11Z opened no decision issue for them.
