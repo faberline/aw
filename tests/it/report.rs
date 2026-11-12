@@ -897,16 +897,56 @@ fn a_split_makes_at_most_five_children_and_at_least_two() {
 }
 
 #[test]
-fn a_child_of_a_split_is_not_split_again() {
+fn a_child_of_a_split_may_split_once_more() {
+    let w = split_world();
+    report(w.services(), "claude", None, Outcome::Split, SPLIT).unwrap();
+    // #201 is a child (depth 1). It keeps the milestone and the priority.
+    claim_issue(&w, "claude");
+    let r = report(w.services(), "claude", None, Outcome::Split, SPLIT).unwrap();
+    assert_eq!(r.outcome, Outcome::Split);
+    assert_eq!(r.children, [203, 204]);
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    let created = w.tracker.created.borrow();
+    for (_, new) in created[2..].iter() {
+        assert_eq!(new.labels, ["agent:claude", "stage:spec", "p1"]);
+        assert_eq!(new.milestone, Some(4));
+        assert!(
+            new.body
+                .starts_with("<!-- aw:child parent=201 -->\nPart of #201.")
+        );
+    }
+    drop(created);
+    // The child closes as replaced, like a first-level parent.
+    assert_eq!(*w.tracker.closed.borrow(), [1, 201]);
+    assert_eq!(w.tracker.signals(201)[0].outcome, Outcome::Split);
+    assert!(
+        w.tracker
+            .last_comment(201)
+            .contains("Replaced by:\n- #203 Add the port\n- #204 Add the adapter")
+    );
+    assert!(w.tracker.claims(201).is_empty());
+}
+
+#[test]
+fn a_grandchild_is_not_split_again() {
     let w = split_world();
     report(w.services(), "claude", None, Outcome::Split, SPLIT).unwrap();
     claim_issue(&w, "claude");
+    report(w.services(), "claude", None, Outcome::Split, SPLIT).unwrap();
+    // #203 is a grandchild (depth 2): #1 to #201 to #203. Take #202 out of
+    // the queue, so the claim goes to #203.
+    w.tracker.issues.borrow_mut().retain(|i| i.number != 202);
+    claim_issue(&w, "claude");
+    let made = w.tracker.calls().len();
     let err = report(w.services(), "claude", None, Outcome::Split, SPLIT).unwrap_err();
     let text = err.to_string();
-    assert!(text.contains("#201 is a child of #1"), "{text}");
+    assert!(
+        text.contains("#203 is a child of #201, which is a child of #1"),
+        "{text}"
+    );
     assert!(text.contains("Report `blocked`"), "{text}");
-    assert!(w.tracker.calls().is_empty(), "{:?}", w.tracker.calls());
-    assert_eq!(w.tracker.claims(201).len(), 1);
+    assert_eq!(w.tracker.calls().len(), made, "{:?}", w.tracker.calls());
+    assert_eq!(w.tracker.claims(203).len(), 1);
     // `blocked` is still open to the run.
     let r = report(
         w.services(),

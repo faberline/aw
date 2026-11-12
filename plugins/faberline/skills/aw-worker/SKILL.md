@@ -308,7 +308,7 @@ Read code through the GitHub API when you do not need the clone:
     comment on the parent and closes the parent as replaced. Do not make
     issues, labels or comments for the split yourself.
   - When `aw` refuses the report (more than 5 children, a child without
-    text, or the issue is itself a child of a split), the claim stays.
+    text, or the issue is itself a grandchild of a split), the claim stays.
     Correct the file, or report `blocked` as the next point says.
 - **Too large, and the split needs a decision: report `blocked`.** A
   decision is a choice between two designs, a change of an acceptance
@@ -316,9 +316,13 @@ Read code through the GitHub API when you do not need the clone:
   one line, for example `Decision: one crate or two for the adapter`. Then
   write the split that you propose for each choice. The supervisor opens one
   decision issue from that line.
-- A child of a split is not split again by a spec run. When a child is
-  still too large, report `blocked`; the first line says
-  `Decision: split child #<n> again`.
+- A child of a split (depth 1) may split once more: report `split` as for
+  any issue (`aw` 0.7.30 or later; an older `aw` refuses it, then report
+  `blocked` with `Decision: split child #<n> again`). `aw` gives the grandchildren (depth 2) the
+  `<!-- aw:child parent=<n> -->` mark, the milestone and the priority label
+  of the child, and closes the child as replaced. A grandchild is not split
+  again by a spec run. When a grandchild is still too large, report
+  `blocked`; the first line says `Decision: split grandchild #<n> again`.
 - A parent issue can have to stay open, for example a tracker that waits
   for other work. Then split the work into child issues. Each pull request
   has `Closes #<child>`. A pull request must not close the tracker. `aw`
