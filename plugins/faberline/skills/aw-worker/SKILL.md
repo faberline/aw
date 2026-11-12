@@ -25,9 +25,6 @@ When the Agent tool is not available, the run does the work itself.
 A small model implements the spec, so a spec must be complete enough for
 that model to do the work from the spec alone.
 
-When this skill runs in a client other than Claude Code, stop and report
-`aw-worker runs only as claude`.
-
 ## Stage runs
 
 The automation can run one worker per stage, each on its own schedule
@@ -46,7 +43,6 @@ In a stage run:
   that stage, so the three runs do not block each other.
 - Only the spec run plans. The tdd and review runs skip section 2.
 - The run's own model does the stage work. Do not give it to a subagent.
-- `$AW --version` must print `aw 0.7.26` or newer.
 
 Without a stage in the prompt, one run does every stage as described below.
 
@@ -77,7 +73,7 @@ Every issue in the flow has the label `agent:claude`.
 
 Use the Rust `aw`: `AW=~/.local/share/aw-rs/bin/aw`.
 `$AW --version` must print `aw 0.7.26` or newer.
-An older `aw` has no `split` outcome and refuses `respec` on the command line: install the new one with the command below, then check again.
+When it is older, install the new one with the command below, then check again.
 `~/.local/bin/aw` can be an old Python tool with the same name; do not use it.
 When no binary passes the check, stop and report it.
 Install command: `cargo install --git https://github.com/faberline/aw --root ~/.local/share/aw-rs aw`.
@@ -117,11 +113,8 @@ Only `aw` writes signals.
 An open issue in the flow keeps exactly one `stage:` label and the label
 `agent:claude`.
 
-1. Move old agent labels: replace `agent:agy` and `agent:codex` with
-   `agent:claude` on every open issue.
-2. Finish old label moves. `aw` 0.7.0 moves labels itself, but older signals
-   did not. When the newest signal has the same stage as the issue's
-   `stage:` label, move it:
+1. Finish a label move that `aw` did not complete. When the newest signal
+   has the same stage as the issue's `stage:` label, move it:
 
    | Stage label | Newest signal outcome | New stage label |
    |---|---|---|
@@ -131,16 +124,16 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    | `stage:review` | `failed` or `closed` | `stage:tdd` |
    | `stage:review` | `passed` | `stage:done`; close the issue if it is still open |
 
-3. For an issue with the `blocked` label or a newest `blocked` signal, fix
+2. For an issue with the `blocked` label or a newest `blocked` signal, fix
    the cause when planning can fix it. Comment the answer, then remove
    `blocked`. A comment after the `blocked` signal lets the same stage claim
-   the issue again (`aw` 0.7.8 or later):
+   the issue again:
    - No open pull request closes the issue: `stage:tdd`.
    - The spec is unclear or too large: `stage:spec`. A review `blocked`
      signal that starts with `spec unclear:` is this case; the new spec
      answers each point of it.
    - Otherwise keep `blocked` and comment one question for a person.
-4. Triage at most three issues: open, no `stage:` label, no `blocked`
+3. Triage at most three issues: open, no `stage:` label, no `blocked`
    label and no open sub-issues. Take them in claim order: `p0` first,
    then the label `bar`, then the lowest milestone version, then the `pN` label, then the
    oldest.
@@ -162,7 +155,7 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    - Obsolete or duplicate: close it with a one-line reason.
    - An issue without a milestone: leave the milestone empty. A person
      sets it.
-5. Check for a release. A release follows the milestones: a milestone is
+4. Check for a release. A release follows the milestones: a milestone is
    ready when all of its issues are closed. Find the open milestone with
    the lowest version in its title (`<repo>@X.Y.Z` or `vX.Y.Z`). It is
    ready when it has 0 open issues and at least 1 closed issue.
@@ -170,7 +163,7 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    - Otherwise do not release. Name the milestone in the final answer as
      ready for release.
    Do not close a milestone. The release closes it.
-6. Open the next coverage issue (standard S8, `docs/standards/coverage.md`
+5. Open the next coverage issue (standard S8, `docs/standards/coverage.md`
    in aw). Do this only when the default branch's `aw.toml` has
    `[standards.coverage]` and no open issue has a title that starts with
    `test(coverage):`.
@@ -221,8 +214,8 @@ modulo the number of repositories. For each repository:
 4. `$AW claim <who>`, with one `--skip <issue>` for each issue that this
    run released because its checks were still running, or because it waits
    for an open prerequisite (section 4, "Waiting for an open prerequisite").
-   On a Mac (`uname` prints `Darwin`), add `--has mac`. Then `aw` (0.7.13
-   or later) also offers the issues labeled `needs:mac`. On any other
+   On a Mac (`uname` prints `Darwin`), add `--has mac`. Then `aw`
+   also offers the issues labeled `needs:mac`. On any other
    machine do not add it; `aw` passes over those issues.
    - Exit 2: nothing to do here. Try the next repository.
    - Exit 1: keep stderr for the report. Try the next repository.
@@ -386,7 +379,7 @@ Read code through the GitHub API when you do not need the clone:
 - Never report `blocked` for an incomplete or unclear spec. `blocked` keeps
   `stage:tdd` and adds `blocked`: the spec run does not read `stage:tdd`,
   and the tdd run does not take `blocked`, so no run takes the issue.
-  As a safety net, `aw` (0.7.22 or later) changes a tdd `blocked` report to
+  As a safety net, `aw` changes a tdd `blocked` report to
   `respec` when its first line says the spec is the cause (for example
   `spec unclear: ...`). Do not rely on it.
 - Give the implementation to one subagent with the Agent tool and
@@ -412,7 +405,7 @@ Read code through the GitHub API when you do not need the clone:
   Never guess the edition: a wrong edition sorts imports differently and
   review fails on CI's `cargo fmt --all -- --check`.
 - When the branch changes `.github/workflows/ci.yml`, run
-  `$AW ci check --dir . --no-ruleset` in the clone (`aw` 0.7.11 or later).
+  `$AW ci check --dir . --no-ruleset` in the clone.
   It checks the CI stages standard, `docs/standards/ci.md` in aw. Every
   check must be `pass`, `excepted` or `skipped`. Fix each `fail`. Put the
   JSON output in a fenced block in the report file below.
@@ -503,31 +496,31 @@ Read code through the GitHub API when you do not need the clone:
 - `blocked` from the diagnosis: `$AW report <who> blocked -F <file>`. Start
   the file with `spec unclear:` and the subagent's reason. The next spec run
   reads it, writes the spec again and moves the issue to `stage:spec`
-  (section 2, step 3). The pull request stays open; the new spec says to
+  (section 2, step 2). The pull request stays open; the new spec says to
   keep it or to start again.
 - `passed`: `$AW report <who> passed -F <file>` with the summary.
   `aw` squash-merges. It does not approve: the verdict is the review.
   A strict ruleset refuses a branch that is behind the default branch.
-  Then `aw` (0.7.3 or later) updates the branch instead of merging. Its JSON
+  Then `aw` updates the branch instead of merging. Its JSON
   has `"updated_branch": true`, the issue stays at `stage:review` and the
   claim becomes a `branch updated` note. CI runs again. This is not a
   failure; do not report `failed` for it.
 - Only one review pull request per repository is brought up to date at a
   time. When another `stage:review` pull request is already up to date with
-  the default branch, `aw` (0.7.7 or later) does not update this branch. Its
+  the default branch, `aw` does not update this branch. Its
   JSON has `"waiting_for": <pr>`, the issue stays at `stage:review` and the
   claim becomes a `waiting to update` note. This is not a failure either.
   An up-to-date pull request counts only when every check that the repo
   ruleset requires exists on its head and none failed; a required check may
-  still run (0.7.19 or later). A pull request with a required check missing
+  still run. A pull request with a required check missing
   or failed cannot merge next, so it does not count and the behind branch
   is updated. When `aw` cannot read the required checks, it keeps the older
   rule (only a failed check frees the update) and the `branch updated` note
   says so. An up-to-date pull request of a lower
   priority label (for example `p2` against `p0`) does not count either; the
-  higher-priority branch is updated at once (0.7.12 or later).
+  higher-priority branch is updated at once.
 - The same applies to a merge. When a pull request of a higher priority was
-  just updated and its required checks still run, `aw` (0.7.19 or later)
+  just updated and its required checks still run, `aw`
   does not merge a lower-priority pull request of the repo. Its JSON has
   `"waiting_for": <pr>` and the claim becomes a `waiting to update` note.
   Merging it would make the `p0` branch behind again.
@@ -540,11 +533,11 @@ Read code through the GitHub API when you do not need the clone:
 - `failed`: `$AW report <who> failed -F <file>` with the findings per file.
   `aw` sends the issue back to tdd.
 - `closed`: `$AW report <who> closed -F <file>` with the reason and its
-  evidence (`aw` 0.7.14 or later). `aw` comments the reason on the pull
+  evidence. `aw` comments the reason on the pull
   request, closes it without a merge, deletes its branch and sends the issue
   back to tdd. The next tdd run starts again from the default branch. When
   the default branch already has the change, say so in the file; the next
-  spec run closes the issue. With an older `aw`, report `failed`.
+  spec run closes the issue.
 
 ## Repository notes
 
@@ -566,10 +559,8 @@ Read code through the GitHub API when you do not need the clone:
 - Work only on the issue that `aw claim` gives. One claim at a time.
 - When you stop with an active claim and cannot finish, run `$AW release <who>`.
 - Never edit or delete a claim or signal comment (`<!-- aw:`). Only `aw` writes them.
-- The claim comment is the only lock in this skill. Do not use the AW session
-  service (MCP `list_sessions`, `read_inbox`, `claim_worktree`) to check for
-  other workers. When that service is unavailable, do not stop: `aw claim`
-  already prevents overlap.
+- The claim comment is the only lock in this skill. `aw claim` prevents
+  overlap; do not check for other workers in another way.
 - Run builds and checks in the foreground and wait for them. Do not end the
   run while a command still runs.
 - When a command is denied by a permission rule, do not work around it. Run
@@ -578,11 +569,9 @@ Read code through the GitHub API when you do not need the clone:
   or a compound command), run the same action once more as one plain
   command. When that is also denied, release.
 - `blocked` is for a decision that only a person can make, or for a refusal
-  that this run cannot fix. Write the reason.
-  A spec that tdd finds incomplete or unclear is not such a case: the spec
-  run can fix it. In tdd, report `respec`.
-  An issue that is too large is not such a case when the split needs no
-  decision: in spec, report `split`.
+  that this run cannot fix. Write the reason. An incomplete or unclear spec
+  is `respec` (tdd). A too-large issue whose split needs no decision is
+  `split` (spec).
 - Local runs only: when `aw report` cannot push over HTTPS (no git
   credentials, or a token without the `workflow` scope for a change under
   `.github/workflows/`) and an SSH key works, run the same command once more
@@ -601,5 +590,5 @@ Use the user's language. Give:
 - each issue you skipped because it waits for an open issue or pull request,
   and what it waits for;
 - for each repository, the count of open issues per `stage:` label;
-- a milestone that is ready for release (section 2, step 5);
+- a milestone that is ready for release (section 2, step 4);
 - the health: `正常` (normal) or `異常` (abnormal) with the reason.

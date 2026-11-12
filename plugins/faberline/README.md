@@ -69,48 +69,6 @@ claude plugin marketplace update faberline
 Or turn on auto-update: `/plugin` > **Marketplaces** > `faberline` >
 **Enable auto-update**.
 
-## Codex and AGY
-
-The same skills load in Codex and AGY. These clients do not set
-`${CLAUDE_SKILL_DIR}`, so each skill tells the model to use the absolute
-path of its own folder instead.
-
-Codex reads the same marketplace. Run once:
-
-```bash
-codex plugin marketplace add faberline/aw
-codex plugin add faberline@faberline
-```
-
-Codex keeps a copy. Get changes with `codex plugin marketplace upgrade`.
-
-Antigravity reads `.antigravity-plugin/plugin.json`. Its plugin loader can
-install a GitHub source or a local plugin directory. For a local AW checkout:
-
-```bash
-agy plugin install /absolute/path/to/aw/plugins/faberline
-agy plugin list --json
-agy plugin validate --strict /absolute/path/to/installed/faberline
-```
-
-Use the path that `list` reports for the final command. Verify the installed
-revision and enabled state. Check the installed client's help before using
-an update command. Do not assume it accepts a custom marketplace name.
-The [Antigravity plugin guide](https://antigravity.google/docs/plugins)
-documents its supported loaders and validation.
-
-Antigravity also loads global plugin directories from
-`~/.gemini/config/plugins/`. If its CLI is unavailable, an authorized file
-sync can update that installed directory from a verified AW commit.
-Keep a full backup, refuse concurrent file changes, and verify file hashes,
-script permissions and references. Do not overwrite a dirty source checkout.
-Report native CLI validation and runtime activation as unrun when unavailable.
-
-All installed copies remain outputs of the same AW source. They are not
-independent skill implementations. See the repository's
-[AGENTS.md](https://github.com/faberline/aw/blob/main/AGENTS.md) for update,
-ownership and acceptance rules.
-
 ## Issue work
 
 Issue work runs through the `aw` CLI in the
