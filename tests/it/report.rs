@@ -752,17 +752,17 @@ fn review_closed_is_an_error_when_the_pull_request_is_gone() {
     assert_eq!(w.tracker.claims(7).len(), 1);
 }
 
-/// A spec claim of `claude` that is 7 hours old: older than the recent
-/// comments (6 hours).
-fn long_run(w: &World) {
+/// A claim of `claude` on issue 2 that is 7 hours old: older than the
+/// recent comments (6 hours). Issue 1 is open and has no claim.
+fn long_run(w: &World, stage: Stage, branch: &str) {
     use crate::support::NOW;
     use aw::domain::work::claim::ClaimMark;
     w.tracker.issue(1, &["agent:claude", "stage:spec"]);
     w.tracker.issue(2, &["agent:claude", "stage:spec"]);
     let mark = ClaimMark {
         agent: "claude".into(),
-        stage: Stage::Spec,
-        branch: "main".into(),
+        stage,
+        branch: branch.into(),
         pr: None,
         claimed_at: NOW - 7 * 60 * 60,
     };
@@ -770,20 +770,28 @@ fn long_run(w: &World) {
         .add_comment(2, &mark.render(), "2027-01-15T01:00:00Z");
 }
 
+/// The state of a tdd run that took 7 hours: the checkout is on the work
+/// branch of the claim.
+fn long_tdd_run(w: &World) {
+    long_run(w, Stage::Tdd, "claude/issue-2");
+    *w.workspace.head.borrow_mut() = Some("claude/issue-2".into());
+}
+
 #[test]
-fn report_and_release_find_a_claim_older_than_the_recent_comments() {
+fn report_and_release_find_a_tdd_claim_older_than_the_recent_comments_on_its_branch() {
     let w = World::new();
-    long_run(&w);
+    long_tdd_run(&w);
     // `aw status` reads the recent comments only.
     assert_eq!(status(w.services(), "claude", None).unwrap(), None);
     assert_eq!(
         *w.tracker.reads.borrow(),
         ["comments_since 2027-01-15T02:00:00Z"]
     );
-    // `aw report` then reads each open issue, and finds the claim.
+    // `aw report` then reads each open issue, and finds the claim: the
+    // checkout is on the branch of the claim.
     w.tracker.reads.borrow_mut().clear();
-    let done = report(w.services(), "claude", None, Outcome::Ready, "the spec").unwrap();
-    assert_eq!((done.issue, done.stage), (2, Stage::Spec));
+    let done = report(w.services(), "claude", None, Outcome::Blocked, "a question").unwrap();
+    assert_eq!((done.issue, done.stage), (2, Stage::Tdd));
     assert_eq!(
         *w.tracker.reads.borrow(),
         [
@@ -794,12 +802,108 @@ fn report_and_release_find_a_claim_older_than_the_recent_comments() {
     );
     // The stage filter applies to the old claim too.
     let w = World::new();
-    long_run(&w);
-    assert!(release(w.services(), "claude", Some(Stage::Tdd)).is_err());
+    long_tdd_run(&w);
+    assert!(release(w.services(), "claude", Some(Stage::Spec)).is_err());
     assert!(release(w.services(), "codex", None).is_err());
-    let (released, _) = release(w.services(), "claude", Some(Stage::Spec)).unwrap();
+    let (released, _) = release(w.services(), "claude", Some(Stage::Tdd)).unwrap();
     assert_eq!(released.issue, 2);
     assert!(w.tracker.claims(2).is_empty());
+}
+
+#[test]
+fn report_and_release_find_a_review_claim_older_than_the_recent_comments_on_its_branch() {
+    let w = World::new();
+    long_run(&w, Stage::Review, "claude/issue-2");
+    *w.workspace.head.borrow_mut() = Some("claude/issue-2".into());
+    let (released, _) = release(w.services(), "claude", None).unwrap();
+    assert_eq!((released.issue, released.stage), (2, Stage::Review));
+    assert!(w.tracker.claims(2).is_empty());
+}
+
+#[test]
+fn a_dead_claim_on_another_issue_is_not_the_claim_of_this_run() {
+    // The live claim was missing from the recent comments, so a second
+    // run took issue 1. The checkout is on the branch of issue 1; the old
+    // claim of issue 2 names another branch.
+    for stage in [Stage::Tdd, Stage::Review] {
+        let w = World::new();
+        long_run(&w, stage, "claude/issue-2");
+        *w.workspace.head.borrow_mut() = Some("claude/issue-1".into());
+        let err = report(w.services(), "claude", None, Outcome::Blocked, "a question").unwrap_err();
+        assert_eq!(
+            format!("{err:#}"),
+            "`claude` holds no claim; run `aw claim` first"
+        );
+        let err = release(w.services(), "claude", None).unwrap_err();
+        assert_eq!(format!("{err:#}"), "`claude` holds no claim");
+        // Nothing was written.
+        assert_eq!(w.tracker.claims(2).len(), 1);
+        assert!(w.tracker.calls().is_empty());
+    }
+}
+
+#[test]
+fn an_old_claim_is_refused_without_a_checkout_on_its_branch() {
+    // Detached HEAD.
+    let w = World::new();
+    long_tdd_run(&w);
+    *w.workspace.head.borrow_mut() = None;
+    assert!(release(w.services(), "claude", None).is_err());
+    // The directory is a checkout of another repository, on a branch of
+    // the same name.
+    let w = World::new();
+    long_tdd_run(&w);
+    *w.workspace.origin.borrow_mut() = Some("other/repo".into());
+    assert!(release(w.services(), "claude", None).is_err());
+    // The directory is not a git checkout.
+    let w = World::new();
+    long_tdd_run(&w);
+    *w.workspace.origin.borrow_mut() = None;
+    assert!(release(w.services(), "claude", None).is_err());
+    assert_eq!(w.tracker.claims(2).len(), 1);
+}
+
+#[test]
+fn a_spec_claim_older_than_the_recent_comments_is_not_found() {
+    // A spec claim names the default branch and a spec run never changes
+    // the checkout, so nothing tells this run from a dead run on another
+    // issue. Whatever branch the checkout is on, the fallback refuses it.
+    for head in [Some("main"), Some("claude/issue-2"), None] {
+        let w = World::new();
+        long_run(&w, Stage::Spec, "main");
+        *w.workspace.head.borrow_mut() = head.map(String::from);
+        let err = report(w.services(), "claude", None, Outcome::Ready, "the spec").unwrap_err();
+        assert_eq!(
+            format!("{err:#}"),
+            "`claude` holds no claim; run `aw claim` first"
+        );
+        assert!(release(w.services(), "claude", Some(Stage::Spec)).is_err());
+        assert_eq!(w.tracker.claims(2).len(), 1);
+        assert!(w.tracker.calls().is_empty());
+    }
+}
+
+#[test]
+fn a_dead_spec_claim_does_not_hide_the_tdd_claim_of_this_run() {
+    // Without a stage, each old claim is judged for its own stage.
+    let w = World::new();
+    long_tdd_run(&w);
+    w.tracker.issue(3, &["agent:claude", "stage:spec"]);
+    use crate::support::NOW;
+    use aw::domain::work::claim::ClaimMark;
+    let spec = ClaimMark {
+        agent: "claude".into(),
+        stage: Stage::Spec,
+        branch: "main".into(),
+        pr: None,
+        // Newer than the tdd claim, but a spec claim is refused.
+        claimed_at: NOW - 6 * 60 * 60 - 60,
+    };
+    w.tracker
+        .add_comment(3, &spec.render(), "2027-01-15T01:30:00Z");
+    let (released, _) = release(w.services(), "claude", None).unwrap();
+    assert_eq!((released.issue, released.stage), (2, Stage::Tdd));
+    assert_eq!(w.tracker.claims(3).len(), 1);
 }
 
 const SPLIT: &str = "Too large: a port and an adapter.\n\n\

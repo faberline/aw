@@ -163,8 +163,13 @@ deletes it and claims again.
 To find a claim, `aw` reads one list: the comments of the repository from the
 last six hours. It does not read each open issue. `aw status` and `aw claim`
 do not see a claim older than six hours; `aw claim` deletes such a claim when
-it takes that issue. `aw report` and `aw release` still find it: when the
-list has no claim, they read each open issue.
+it takes that issue. `aw report` and `aw release` still find a tdd or review
+claim of that age: when the list has no claim, they read each open issue.
+That fallback could meet the dead claim of another run (an old claim on
+another issue), so it accepts a claim only when its branch is the current
+branch of the checkout of the repository. A spec claim names the default
+branch and a spec run never changes the checkout, so the fallback refuses
+every old spec claim: `aw report` and `aw release` say "holds no claim".
 
 Exit codes: 0 done, 2 nothing to do, 1 error. JSON goes to stdout; messages
 and warnings go to stderr.

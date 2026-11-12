@@ -125,6 +125,9 @@ pub trait Workspace {
     /// `owner/name` of the GitHub `origin`, or `None` when the current
     /// directory is not a git checkout with such a remote.
     fn origin_repo(&self) -> PortResult<Option<String>>;
+    /// The branch that HEAD is on, or `None` when HEAD is detached or the
+    /// current directory is not a git checkout.
+    fn current_branch(&self) -> PortResult<Option<String>>;
     /// No staged, unstaged or untracked changes.
     fn is_clean(&self) -> PortResult<bool>;
     fn fetch(&self) -> PortResult<()>;
