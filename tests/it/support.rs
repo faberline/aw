@@ -50,6 +50,8 @@ pub struct FakeTracker {
     pub fail_close_issue: Cell<bool>,
     /// The issues `close_issue` closed.
     pub closed: RefCell<Vec<u64>>,
+    /// The labels of the closed issues: GitHub still serves a closed issue.
+    closed_labels: RefCell<HashMap<u64, Vec<String>>>,
     next_comment_id: Cell<u64>,
 }
 
@@ -252,10 +254,15 @@ impl Tracker for FakeTracker {
 
     fn issue_detail(&self, issue: u64) -> PortResult<IssueDetail> {
         let issues = self.issues.borrow();
-        let found = issues
-            .iter()
-            .find(|i| i.number == issue)
-            .ok_or_else(|| PortError(format!("no issue #{issue}")))?;
+        let labels = match issues.iter().find(|i| i.number == issue) {
+            Some(found) => found.labels.clone(),
+            None => self
+                .closed_labels
+                .borrow()
+                .get(&issue)
+                .cloned()
+                .ok_or_else(|| PortError(format!("no issue #{issue}")))?,
+        };
         Ok(IssueDetail {
             body: self
                 .bodies
@@ -263,7 +270,7 @@ impl Tracker for FakeTracker {
                 .get(&issue)
                 .cloned()
                 .unwrap_or_default(),
-            labels: found.labels.clone(),
+            labels,
             milestone: self.milestones.borrow().get(&issue).copied(),
         })
     }
@@ -292,7 +299,12 @@ impl Tracker for FakeTracker {
         }
         self.record(format!("close_issue #{issue}"));
         self.closed.borrow_mut().push(issue);
-        self.issues.borrow_mut().retain(|i| i.number != issue);
+        let mut issues = self.issues.borrow_mut();
+        if let Some(found) = issues.iter().find(|i| i.number == issue) {
+            let labels = found.labels.clone();
+            self.closed_labels.borrow_mut().insert(issue, labels);
+        }
+        issues.retain(|i| i.number != issue);
         Ok(())
     }
 

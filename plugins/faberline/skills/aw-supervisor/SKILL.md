@@ -32,6 +32,7 @@ Do not close issues or pull requests.
 Do not change rulesets, settings, secrets or workflow files.
 Do not delete anything.
 When a write is not on the list, make a `decision` issue instead.
+One exception: G21 (below) lets you execute a label-only desk decision.
 
 This cloud session blocks GitHub GraphQL.
 Do not use `gh issue`, `gh pr` or `gh repo`.
@@ -84,6 +85,9 @@ Check that `<target>` really moved:
 
 When the work did not move, write it in the status board under `已解除但沒人接手`.
 When it did not move for more than 2 hours, create a `pipeline` issue.
+
+A decision that has a comment "executed by supervisor" is done (G21, below).
+Do not do its actions again.
 
 After a decision removes `blocked`, do the claim check (G4, below).
 
@@ -610,8 +614,11 @@ Read the first line of the signal text.
    `aw` stopped part way. The `執行清單` lists only the children that are not made.
 
 A child of a split has `<!-- aw:child parent=<n> -->` on the first line of its body.
-A spec run cannot split such a child again; it reports `blocked` with `Decision: split child #<n> again`.
+From `aw` 0.7.30 a child (depth 1) can split once more: a spec run reports `split` and `aw` makes the grandchildren.
+A grandchild (depth 2) cannot split again; its spec run reports `blocked` with `Decision: split grandchild #<n> again`.
 Treat that as case 1.
+An older `aw` also refuses a child; its spec run reports `blocked` with `Decision: split child #<n> again`.
+Treat that as case 1 too.
 
 Do not make the child issues yourself and do not change the labels.
 
@@ -675,7 +682,66 @@ A spec signal that proposes a split goes to G17; its case 1 (a `Decision:` line)
 Make one item for one signal, not two.
 
 Do not answer the question on the issue yourself and do not change the labels.
+The one exception is G21 (below).
 
 Example failure: lumen#323 (22:21Z) and lumen#324 (22:27Z) on 2026-11-11.
 Each got a spec `blocked` signal with "Decision needed" and a recommendation.
 The pass of 23:11Z opened no decision issue for them.
+
+### Execute a label-only desk decision (G21)
+
+The desk is sometimes offline.
+A `decision` item of type `中控可決定` can then wait for hours, only for one label removal.
+Example failure: faberline/core#147 waited from 09:40Z to 14:0xZ for one label removal, and the p0 issue faberline/relay#138 waited 9 hours (faberline/aw#326, #328, #330, #331, #333 and #334).
+So in this case the supervisor executes the item itself and does not wait for the desk.
+
+Apply G21 to an item only when all of these are true:
+
+1. The item has the type `類型：中控可決定` and exactly one option.
+2. That option is the recommendation of the stage run (G20), or a verified "the cause is gone" (step 7, G10, G14).
+3. Its `執行清單` has only these actions, on issues that exist: remove the label `blocked`; add one `stage:*` label, or change the `stage:*` label to another one; post a comment.
+4. The item is not of type `類型：需要使用者`.
+
+Never apply G21 to an item whose `執行清單` has any other action.
+These are never in G21:
+
+- create or close an issue in a product repository (this includes the children of a split, G17);
+- merge or approve a pull request, or change a pull request;
+- rerun a workflow that costs money, or any other action that costs money;
+- change a milestone;
+- any change to a ruleset, a setting, a secret, a workflow file, a routine or a schedule.
+
+An item with such an action keeps waiting for the desk.
+An item of type `需要使用者` keeps waiting for the user.
+When one `decision` issue has items of both kinds, execute only the items that pass the four checks.
+
+Before you execute an item, in the same pass:
+
+1. Read the current labels of the issue (G19) and its last aw signal.
+   When the labels no longer match what the item expects (another session already moved the issue, `blocked` is already gone, or a `stage:*` label is already set), do not execute.
+   Write the new state in a comment on the decision issue.
+2. Read the cause again (step 7, G14).
+   Check that the cause is still gone, or that the recommendation of the stage run is still true.
+   Read it from the repository, the run or the signal, not from the old decision text.
+   When it is not true any more, do not execute.
+   Say so in a comment on the decision issue.
+3. Check that the issue has a `stage:*` label and an `agent:*` label after the write (G4).
+   When the list does not give the label and the issue has none, do not execute.
+
+Then execute the list, in the order of the list, with `gh api` REST.
+The writes of one executed item count as one write for the limit of step 11.
+When the limit is reached, leave the rest for the next pass.
+After the writes, read the labels again (G19) and do the claim check (G4).
+
+Then write on the decision issue one comment that starts with `executed by supervisor`.
+It lists each write with its link, and the time (G1).
+Close the decision issue when every item in it is executed, or is an item that the supervisor passed over because its cause is gone.
+When some items stay open, do not close it.
+The comment says which items wait, and for whom.
+This close is the one close that the supervisor may do.
+It never closes any other issue or pull request.
+
+When a write fails, stop the item, write the error in the comment, and keep the decision issue open for the desk.
+Do not retry more than once.
+
+Add each executed item to the status board under `這一輪做了什麼`, with the link.

@@ -132,8 +132,8 @@ pub fn report(
 /// so no person has to make them.
 ///
 /// Each child gets the milestone and the priority label of the issue, the
-/// agent label and `stage:spec`. An issue that is itself a child is not
-/// split: that needs the supervisor.
+/// agent label and `stage:spec`. A top-level issue and a child (depth 1) may
+/// split; a grandchild (depth 2) is not split: that needs the supervisor.
 fn split(
     s: Services<'_>,
     comment_id: u64,
@@ -148,10 +148,18 @@ fn split(
         .issue_detail(issue)
         .with_context(|| format!("could not read issue #{issue}"))?;
     if let Some(first) = child_parent(&parent.body) {
-        bail!(
-            "#{issue} is a child of #{first}; a child is not split again. \
-             Report `blocked` and name the decision in one line"
-        );
+        // A child (depth 1) may split once more. A grandchild (depth 2) may
+        // not: its parent is a child too.
+        let grand = s
+            .tracker
+            .issue_detail(first)
+            .with_context(|| format!("could not read issue #{first}, the parent of #{issue}"))?;
+        if let Some(root) = child_parent(&grand.body) {
+            bail!(
+                "#{issue} is a child of #{first}, which is a child of #{root}; a grandchild \
+                 is not split again. Report `blocked` and name the decision in one line"
+            );
+        }
     }
     let mut labels = vec![agent_label(&claim.agent), format!("stage:{}", Stage::Spec)];
     labels.extend(

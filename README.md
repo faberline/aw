@@ -138,8 +138,11 @@ The `gh` adapter. Waits for: Add the port.
 - The signal comment on the issue lists the children. `aw` then closes the
   issue as not planned. When it cannot close it, it adds `blocked` and
   prints a warning.
-- An issue that is itself a child is not split again: `aw` refuses the
-  report and the claim stays. Report `blocked` and name the decision.
+- A child (depth 1) may split once more into grandchildren (depth 2). The
+  grandchildren carry `<!-- aw:child parent=<child> -->`, the milestone and
+  the priority label of the child, and the child closes as replaced. A
+  grandchild is not split again: `aw` refuses the report and the claim stays.
+  Report `blocked` and name the decision.
 - A bad message or a failure on the first child changes nothing; the claim
   stays. When a later child fails, `aw` reports `blocked` and the signal
   lists the children that exist and those that do not.
