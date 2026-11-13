@@ -586,15 +586,6 @@ Example failure: the defer supervisor opened faberline/aw#294 for `Temporary fai
 The same failure hit tape and surface at the same time.
 It was a problem of the hosted runner.
 
-### Runs queued with zero jobs (G18)
-
-The whole faberline organization shares 20 concurrent Actions jobs.
-Many runs that stay "queued" with zero jobs mean that the 20 slots are full.
-This is not a GitHub outage.
-A rerun adds to the queue and makes it longer: do not rerun.
-Add the evidence (run links, the repos that wait, the time) as one comment on the one open `pipeline` issue for it (faberline/aw#316).
-Do not open a new issue.
-
 ### tdd blocked on an incomplete spec (G16)
 
 The tdd stage can find that the spec is incomplete.
@@ -631,9 +622,7 @@ Also name the defect.
 Search the open faberline/aw issues with the label `pipeline` for `tdd blocked on spec`.
 When one exists, add one comment there with the issue link and the signal link.
 When none exists, create one `pipeline(<repo>)` issue with these words in the title.
-The fix is in `aw` 0.7.22 and in the aw-worker skill.
-The command line of `aw` takes `respec` only from 0.7.26; an older `aw` refuses it with `invalid value 'respec'`.
-So write the `aw` version of the tdd run when a comment or a log shows it.
+Write the `aw` version of the tdd run when a comment or a log shows it: an `aw` older than 0.7.26 refuses `respec`.
 
 Example failure: faberline/relay#134 and faberline/lumen#307 got a tdd `blocked` signal for an incomplete spec on 2026-11-11.
 Each issue waited about 50 minutes for a label move (faberline/aw#305, faberline/aw#307).
@@ -642,7 +631,7 @@ Each issue waited about 50 minutes for a label move (faberline/aw#305, faberline
 
 The spec stage can find that an issue is too large for one pull request.
 When the split needs no decision, the correct report is `split`.
-`aw` (0.7.26 or later) then makes the child issues and closes the parent.
+`aw` then makes the child issues and closes the parent.
 A `blocked` report with a split proposal makes no issue.
 The issue keeps `stage:spec` and `blocked`, and no routine takes it.
 This is a pipeline defect, not a question for a person.
@@ -681,6 +670,18 @@ Do not make the child issues yourself and do not change the labels.
 
 Example failure: faberline/lumen#311, #307 and #310 on 2026-11-12 (faberline/aw#315) and faberline/keep#70 (faberline/aw#313).
 Each got a spec `blocked` signal with a correct split proposal. No routine made the children.
+
+### Runs queued with zero jobs (G18)
+
+The whole faberline organization shares 20 concurrent Actions jobs.
+Many runs that stay "queued" with zero jobs mean that the 20 slots are full.
+This is not a GitHub outage.
+A rerun adds to the queue and makes it longer: do not rerun.
+Add the evidence (run links, the repos that wait, the time) as one comment on the one open `pipeline` issue for it in faberline/aw (step 6).
+When none is open, write the evidence on the status board only.
+Do not open a new issue.
+
+Example failure: faberline/aw#316.
 
 ### Read the labels in this pass (G19)
 

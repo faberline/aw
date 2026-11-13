@@ -12,7 +12,6 @@ in `${CLAUDE_SKILL_DIR}/scripts/rebase.sh`; your job is the one thing it cannot 
 conflicts correctly.
 
 `${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
-In Codex or AGY, use the absolute path of that folder instead.
 
 ## Rules
 

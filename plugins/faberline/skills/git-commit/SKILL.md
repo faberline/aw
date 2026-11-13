@@ -12,15 +12,12 @@ The mechanics live in `${CLAUDE_SKILL_DIR}/scripts/commit.sh`; your job is the t
 cannot do — read the diff and author the message.
 
 `${CLAUDE_SKILL_DIR}` is the folder of this SKILL.md. Claude Code sets it.
-In Codex or AGY, use the absolute path of that folder instead.
 
 ## Rules
 
-- Inspect the complete diff before writing the message; never commit content
-  you have not read.
+- Inspect the complete diff before writing the message.
 - Write a conventional commit message `<type>(<scope>): <summary>`, with a
-  body when the change is non-trivial. Do not add generated-with or
-  co-authored trailers unless the user explicitly asks.
+  body when the change is non-trivial.
 - When the user scoped the commit to certain paths, pass exactly those paths
   to the script; it stages everything otherwise.
 - Do not work around a `refused:` exit — an in-progress merge/rebase means

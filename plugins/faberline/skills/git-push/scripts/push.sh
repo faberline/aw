@@ -7,10 +7,9 @@
 #   rewritten (N M>0)  -> git push --force-with-lease
 #   in sync (0 0)      -> nothing to push
 #   behind only (0 M)  -> refused (nothing local to publish)
-# Never bare --force. A force push to a persistent ref (main, examples,
-# project-mamba, project-lumen, app/*, lib/*) is refused unless
-# --force-persistent-ok is passed, which the caller may only do after
-# explicit user confirmation.
+# Never bare --force. A force push to the persistent ref main is refused
+# unless --force-persistent-ok is passed, which the caller may only do
+# after explicit user confirmation.
 #
 # usage: push.sh [--force-persistent-ok]
 # exit: 0 pushed or nothing to push; 2 refused; 4 rejected by the remote
@@ -43,7 +42,7 @@ EOF
     exit 2
   elif [ "$behind" -gt 0 ]; then
     case "$branch" in
-      main|examples|project-mamba|project-lumen|app/*|lib/*)
+      main)
         if [ "$allow_persistent" != true ]; then
           echo "refused: force-push to persistent ref $branch needs explicit user" >&2
           echo "confirmation; rerun with --force-persistent-ok only after getting it" >&2
