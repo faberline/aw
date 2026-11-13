@@ -641,9 +641,12 @@ on 2026-11-12 with the same conditions as the sift bucket.
 
 - Region `asia-east1`. Uniform bucket-level access. Public access prevention
   is enforced. A lifecycle rule deletes objects after 7 days.
-- Only pods that run as Kubernetes service account `tape-restore-drill` in
-  namespace `tape` get `roles/storage.objectAdmin`, on this bucket only. The
-  grant uses the Workload Identity Federation for GKE principal directly.
+- Only pods that run as one of two Kubernetes service accounts in namespace
+  `tape` get `roles/storage.objectAdmin`, on this bucket only:
+  `tape-restore-drill` (the restore Job) and `tape-backup` (the backup
+  CronJob that tape-operator makes for the Tape CR `tape`). The user approved
+  the second grant on 2026-11-12 (`faberline/aw#346`). Each grant uses the
+  Workload Identity Federation for GKE principal directly.
 - No project-level role changes. `gke-test-tape` and `faberlineGkeTest` stay
   as they are.
 
