@@ -409,6 +409,8 @@ pub struct FakeWorkspace {
     /// `owner/name` of `origin`, or `None` outside a git checkout.
     pub origin: RefCell<Option<String>>,
     pub clean: Cell<bool>,
+    /// The branch HEAD is on, or `None` when detached.
+    pub head: RefCell<Option<String>>,
     pub local: RefCell<Vec<String>>,
     pub remote: RefCell<Vec<String>>,
     pub calls: RefCell<Vec<String>>,
@@ -426,6 +428,7 @@ impl Default for FakeWorkspace {
         FakeWorkspace {
             origin: RefCell::new(Some("o/r".into())),
             clean: Cell::new(true),
+            head: RefCell::new(Some("main".into())),
             local: RefCell::new(vec!["main".into()]),
             remote: RefCell::new(vec!["main".into()]),
             calls: RefCell::new(Vec::new()),
@@ -449,6 +452,10 @@ impl FakeWorkspace {
 impl Workspace for FakeWorkspace {
     fn origin_repo(&self) -> PortResult<Option<String>> {
         Ok(self.origin.borrow().clone())
+    }
+
+    fn current_branch(&self) -> PortResult<Option<String>> {
+        Ok(self.head.borrow().clone())
     }
 
     fn is_clean(&self) -> PortResult<bool> {
