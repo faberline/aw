@@ -633,6 +633,28 @@ repositories are not isolated from each other beyond namespaces and pools.
 
 ## Temporary resources
 
+### Bucket `sift-restore-drill-20261111`
+
+`infra/gke-test/sift-restore-drill.tf` makes one GCS bucket for the second
+backup restore drill of `faberline/sift#94`, after the fix in
+`faberline/sift#98`. It is temporary. The user approved one run, at most
+300 TWD, on 2026-11-12 (`faberline/aw#339`). The bucket name is the same as for
+the first drill, because the sift drill script names it.
+
+- Region `asia-east1`. Uniform bucket-level access. Public access prevention
+  is enforced. A lifecycle rule deletes objects after 7 days.
+- Only pods that run as Kubernetes service account `sift-restore-drill` in
+  namespace `sift` get `roles/storage.objectAdmin`, on this bucket only. The
+  grant uses the Workload Identity Federation for GKE principal directly, so
+  the pod needs no annotation and there is no extra Google service account.
+- No project-level role changes. `gke-test-sift` and `faberlineGkeTest` stay
+  as they are.
+
+To remove it: after the drill run ends, delete
+`infra/gke-test/sift-restore-drill.tf` (and this section) in a pull request,
+then run `terraform apply`. `force_destroy` deletes the objects with the
+bucket.
+
 ### Bucket `tape-restore-drill-20261112`
 
 `infra/gke-test/tape-restore-drill.tf` makes one GCS bucket for the one-time
