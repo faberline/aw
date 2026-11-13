@@ -83,7 +83,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
-          toolchain: stable
+          toolchain: 1.99.1
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo fmt --all -- --check
@@ -98,7 +98,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
-          toolchain: stable
+          toolchain: 1.99.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo test --workspace --locked
 
@@ -118,6 +118,18 @@ jobs:
           echo "$RESULTS" | jq -e '.lint.result == "success"' > /dev/null
           echo "$RESULTS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' > /dev/null
 ```
+
+## Toolchain
+
+Each repository pins its Rust toolchain in `rust-toolchain.toml`.
+The `toolchain:` input of `dtolnay/rust-toolchain` in `ci.yml` must name the same version, not `stable`.
+A shared action must not set a toolchain; it follows the file of the caller.
+A move to a newer toolchain is its own pull request.
+That pull request gives a new measured coverage baseline when the measure changes.
+
+Example failure: on 2026-11-12 about 18:35Z `stable` moved from 1.99.1 to 1.100.0.
+The measured coverage of aw and lumen fell under the baseline (COV3) and clippy failed in relay.
+Every pull request was red, with no change in its code.
 
 ## Queue
 
