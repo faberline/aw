@@ -250,6 +250,7 @@ Mark it `緊急` in the status board.
 
 Do this in each run, also in a normal run.
 Do it as the last write.
+An unchanged state is not a reason to skip it (G22, below).
 
 Find the open issue in faberline/aw with the label `status` and the exact title `status(<repo>)`.
 Create it when there is none.
@@ -280,6 +281,11 @@ The status board is always one of them.
 Keep a gap of at least 2 seconds between API calls.
 
 ### 12. Final answer
+
+Before you write it, run this end-of-run check:
+the PATCH of the status board in this run is done, and its `更新：` time is from `date -u` of this run (G22).
+When it is not done, do it now.
+A run that ends without this PATCH is a failed run.
 
 Write it in Traditional Chinese (Taiwan).
 Keep it short and plain.
@@ -356,6 +362,30 @@ Note its merge time (`merged_at`) or its close time (`closed_at`).
 A pull request can be closed but not merged.
 Then say so in the facts, and check that the work it carried is not needed.
 Write these facts in the decision.
+
+#### A wait for a fix in another repository (pin check)
+
+An issue can wait for a fix in another repository.
+This repository can pin that repository by tag.
+Then the wait condition is met only when both are true:
+
+- a tag that contains the fix exists in the other repository;
+- this repository pins that tag.
+
+A closed upstream issue is not enough.
+A fix that is only on the `main` branch of the other repository is not enough.
+In the same pass, check both facts and write both in the decision:
+
+- the pin: the `tag =` lines in `Cargo.toml` of this repository;
+- the upstream tags: `gh api repos/<owner>/<repo>/tags` and the commit that holds the fix.
+
+When one fact is missing, the reason is not gone.
+Do not remove `blocked`.
+Do not recommend to remove it.
+Say what is missing: a new upstream tag, or a pin change in this repository.
+Example failure: decision faberline/aw#347 (relay) recommended to remove `blocked` from relay#18 and relay#11 because faberline/core#214 was closed.
+The same decision said that relay pins core tag `v0.4.14` and that the fixes were only on core `main`.
+The desk chose the other option.
 
 When the reason is gone, a note is not enough.
 Make the item with its `執行清單` (below).
@@ -766,6 +796,7 @@ Before you execute an item, in the same pass:
    Write the new state in a comment on the decision issue.
 2. Read the cause again (step 7, G14).
    Check that the cause is still gone, or that the recommendation of the stage run is still true.
+   When the issue waits for a fix in another repository, apply the pin check of G10 again.
    Read it from the repository, the run or the signal, not from the old decision text.
    When it is not true any more, do not execute.
    Say so in a comment on the decision issue.
@@ -789,3 +820,21 @@ When a write fails, stop the item, write the error in the comment, and keep the 
 Do not retry more than once.
 
 Add each executed item to the status board under `這一輪做了什麼`, with the link.
+
+### The status board is written in every run (G22)
+
+Step 10 says to write the status board in each run.
+An unchanged state is not a reason to skip the write.
+"Nothing has changed since the last board" is not a reason.
+"No new write is needed" is not a reason.
+
+In every run, PATCH the body of `status(<repo>)` with a new `更新：<UTC time>`.
+Get the time with `date -u` in this run (G1).
+Write the new time even when every other line of the body is the same.
+The old time shows that the supervisor did not run, so it must not stay.
+A run that ends without this PATCH is a failed run.
+Say so in the final answer and write `異常`.
+
+Example failure: the som supervisor run of 2026-11-12 16:54Z ended with "Nothing has changed since the last board ... No new write is needed".
+It made no write.
+The board faberline/aw#253 stayed at `更新：2026-11-12T15:56Z`.
