@@ -55,6 +55,31 @@ fn takes_bar_work_after_p0_and_before_the_other_work() {
 }
 
 #[test]
+fn a_ci_fix_review_is_claimed_before_bar_reviews_and_after_p0() {
+    // relay, 2026-11-12: the review of the repair of a red `lint` on main
+    // (p1, no `bar`) waited behind `bar` reviews that could not pass.
+    for (p0, expected) in [(false, 155), (true, 24)] {
+        let w = World::new();
+        w.tracker
+            .issue(16, &["agent:claude", "stage:review", "p1", "bar"]);
+        w.tracker
+            .issue(51, &["agent:claude", "stage:review", "p1", "bar"]);
+        w.tracker
+            .issue(155, &["agent:claude", "stage:review", "p1", "ci-fix"]);
+        if p0 {
+            w.tracker
+                .issue(24, &["agent:claude", "stage:review", "p0", "bar"]);
+            w.tracker.pr(25, "claude/issue-24", "Closes #24");
+        }
+        w.tracker.pr(17, "claude/issue-16", "Closes #16");
+        w.tracker.pr(52, "claude/issue-51", "Closes #51");
+        w.tracker.pr(156, "claude/issue-155", "Closes #155");
+        let c = claimed(&w, "claude");
+        assert_eq!((c.issue, c.stage), (expected, Stage::Review));
+    }
+}
+
+#[test]
 fn skip_passes_over_the_named_issues() {
     let w = World::new();
     w.tracker.issue(1, &["agent:claude", "stage:spec", "p0"]);

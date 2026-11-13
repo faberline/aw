@@ -94,11 +94,12 @@ When review passes but a strict ruleset refuses a branch that is behind
 `main`, `aw` updates the branch instead of merging. The issue stays at
 review, CI runs again and the next review run merges it.
 
-`aw claim` takes `p0` first, then the issues with the label `bar`
-(inside the internal-use bar), then the issues of the open milestone with
+`aw claim` takes `p0` first, then the issues with the label `ci-fix` (the
+repair of a red required check on the default branch), then the issues
+with the label `bar` (inside the internal-use bar), then the issues of the open milestone with
 the lowest version (`<repo>@X.Y.Z` or `vX.Y.Z`), then the priority label,
-then the oldest issue. A repository that does not use `bar` keeps the
-order without it. A milestone is ready for release when all of its
+then the oldest issue. A repository that does not use `ci-fix` or `bar` keeps
+the order without them. A milestone is ready for release when all of its
 issues are closed. The plan step names it in the run's final answer, or
 follows `.github/aw-release.json` when the repository has one.
 
