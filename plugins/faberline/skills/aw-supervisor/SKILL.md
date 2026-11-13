@@ -689,6 +689,11 @@ Example failure: faberline/aw#316.
 
 G18 only sees runs with zero jobs.
 A queue can also be slow while every run has jobs: the work is short, the wait is long.
+
+Known cause: the faberline organization has 20 concurrent Actions jobs for all repositories.
+The organization is on the GitHub Free plan. The user decided on 2026-11-13 not to upgrade.
+A long wall time with normal job times is this queue.
+
 Do this once in each pass, with one read for each item and no polling loop:
 
 1. Take the latest completed `ci` run on `main` and the oldest unfinished (`queued` or `in_progress`) `ci` run of `<target>`.
@@ -697,9 +702,14 @@ Do this once in each pass, with one read for each item and no polling loop:
 3. Write on the board, under `## CI 排隊`: the run wall time (first `created_at` to last job `completed_at`, or to now for an unfinished run), the longest single job, and the two counts.
 4. When the wall time is more than 2 times the longest job, or a run has waited more than 60 minutes, the summary is `總結：排隊` with these numbers. It is never `總結：正常`.
    An other root cause can still make it `總結：異常`.
-5. Do not rerun and do not open an issue in each pass.
-   Look for an open `pipeline` issue in faberline/aw that tracks organization Actions capacity.
-   When there is none, open one (label `pipeline`). When there is one, link it and add the evidence as one comment (G18).
+5. Do not rerun a queued or slow run.
+   When the wait matches the known cause, do not open a new `pipeline` issue.
+   Write the numbers of step 3 on the board, and link the open CI-load issues of `<target>`.
+   Examples: faberline/lumen#371 and faberline/core#309.
+   Read the state of each cited issue first (G24). Do not cite a closed issue as active.
+   Open a `pipeline` issue only when one of these is true, and say which one on the board:
+   - There is evidence of a different cause. Examples: a run has zero jobs for more than 30 minutes, a runner error, or the wait stays after the CI-load issues are merged. G18 still applies to runs with zero jobs.
+   - No CI-load issue exists for `<target>`. Open one (label `pipeline`) and link it.
 6. Also count the open PRs of `<target>` that are `behind` main and whose failed required check ran before the latest fix on `main`.
    Write the count and the two oldest PR numbers.
    Use the PR list you already read; read the check run time of a PR only when it is `behind` and has a failed check.
