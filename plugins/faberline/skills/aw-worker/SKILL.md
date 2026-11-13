@@ -135,8 +135,8 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    - Otherwise keep `blocked` and comment one question for a person.
 3. Triage at most three issues: open, no `stage:` label, no `blocked`
    label and no open sub-issues. Take them in claim order: `p0` first,
-   then the label `bar`, then the lowest milestone version, then the `pN` label, then the
-   oldest.
+   then the label `ci-fix`, then the label `bar`, then the lowest milestone version, then
+   the `pN` label, then the oldest.
    Always add `agent:claude`.
    - Replace a legacy `priority:pN` label with `pN`, or add `p2` when there
      is none. Use only `pN` labels.
@@ -181,10 +181,14 @@ An open issue in the flow keeps exactly one `stage:` label and the label
      only as S8 allows; set `line` in `aw.toml` to the value that COV4
      names. Triage it in the next plan like any issue: `p2`.
 
-`aw claim` takes `p0` first, then the issues with the label `bar`, then
-the issues of the lowest milestone version, so one milestone is cleared
-before the next one starts. A run does not add or remove `bar`; a
-person or the service desk sets it.
+`aw claim` takes `p0` first, then the issues with the label `ci-fix`, then
+the issues with the label `bar`, then the issues of the lowest milestone
+version, so one milestone is cleared before the next one starts. `ci-fix`
+marks an issue that repairs a red required check on the default branch:
+while that check is red no pull request can merge, so the repair must not
+wait behind `bar` issues that cannot pass until it merges. A run does not
+add or remove `ci-fix` or `bar`; a person, the service desk or the
+supervisor sets them.
 
 Do not edit an issue's title or body. Write specs and notes as comments.
 Each shell command writes to at most one issue. Do not use `for` or

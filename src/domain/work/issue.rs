@@ -97,14 +97,21 @@ impl Issue {
 /// repository. A person or the service desk sets it.
 pub const BAR_LABEL: &str = "bar";
 
-/// Claim order: `p0` first, then the issues with the `bar` label, then the
-/// lowest milestone version, then the priority label (unlabeled last),
-/// then the oldest issue. A repository without the `bar` label keeps the
-/// order it had.
+/// The label of an issue that repairs a red required check on the default
+/// branch. While that check is red no pull request of the repository can
+/// merge, so the repair must not wait behind `bar` issues that cannot pass
+/// until it merges. A person or the supervisor sets it.
+pub const CI_FIX_LABEL: &str = "ci-fix";
+
+/// Claim order: `p0` first, then the issues with the `ci-fix` label, then
+/// the issues with the `bar` label, then the lowest milestone version, then
+/// the priority label (unlabeled last), then the oldest issue. A repository
+/// without the `ci-fix` or `bar` label keeps the order it had.
 pub fn claim_order(issues: &mut [Issue]) {
     issues.sort_by(|a, b| {
         (a.priority() != 0)
             .cmp(&(b.priority() != 0))
+            .then_with(|| b.has_label(CI_FIX_LABEL).cmp(&a.has_label(CI_FIX_LABEL)))
             .then_with(|| b.has_label(BAR_LABEL).cmp(&a.has_label(BAR_LABEL)))
             .then_with(|| a.milestone_rank().cmp(&b.milestone_rank()))
             .then_with(|| a.priority().cmp(&b.priority()))
@@ -320,6 +327,48 @@ mod tests {
         // p0 first (the mark, then the version); then the marked issues by
         // version, priority and age; then the other issues.
         assert_eq!(order(issues), [6, 3, 4, 7, 2, 5, 1, 8]);
+    }
+
+    #[test]
+    fn a_ci_fix_comes_after_p0_and_before_bar_work() {
+        // relay, 2026-11-12: the repair of a red `lint` on main (relay#155,
+        // p1, no `bar`) waited behind `bar` issues that could not pass.
+        let issues = vec![
+            issue(1, &["p1", "bar"], Some("relay@0.9.0")),
+            issue(2, &["p2", "bar"], Some("relay@0.9.0")),
+            issue(155, &["p1", "ci-fix"], None),
+            issue(3, &["p0"], None),
+            issue(4, &["p3"], Some("relay@0.1.0")),
+            issue(5, &["p0", "ci-fix"], None),
+            issue(6, &["p3", "ci-fix", "bar"], Some("relay@0.9.0")),
+        ];
+        // p0 (a repair first), then the repairs by the usual order (the
+        // `bar` and the milestone, then the priority), then the `bar`
+        // issues, then the rest.
+        assert_eq!(order(issues), [5, 3, 6, 155, 1, 2, 4]);
+    }
+
+    #[test]
+    fn a_ci_fix_does_not_pass_p0_and_a_lookalike_label_does_not_count() {
+        let issues = vec![
+            issue(1, &["p1", "ci-fix"], None),
+            issue(2, &["p0"], None),
+            issue(3, &["p1", "bar"], None),
+            issue(4, &["p1", "ci-fixes"], None),
+            issue(5, &["p1", "ci"], None),
+        ];
+        assert_eq!(order(issues), [2, 1, 3, 4, 5]);
+    }
+
+    #[test]
+    fn without_the_ci_fix_label_the_order_does_not_change() {
+        let issues = vec![
+            issue(1, &["p1"], Some("lumen@0.9.0")),
+            issue(2, &["p3", "bar"], Some("lumen@0.22.0")),
+            issue(3, &["p0"], Some("lumen@0.12.0")),
+            issue(4, &["p2"], None),
+        ];
+        assert_eq!(order(issues), [3, 2, 1, 4]);
     }
 
     #[test]
