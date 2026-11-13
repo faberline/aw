@@ -41,7 +41,7 @@ workspace.
 | `<repo>-access` | yes | who may do what; wraps `service-auth` | `service-auth` |
 | `<repo>-replication` | yes | the raft cluster; wraps `raft-runtime` | `raft-runtime` |
 | `<repo>-storage` | yes | the data on disk: the log, snapshots, segments, blobs | |
-| `<repo>-operator` | yes | the Kubernetes operator: CRD, reconcile, render | `kube` |
+| `<repo>-operator` | yes | the Kubernetes operator: CRD, reconcile, render. It goes away later, see [Moving operations into core](#moving-operations-into-core). | `kube` |
 | `<repo>-client` | no | the generated client that other repositories use | |
 | `<repo>-bench` | no | the benchmark driver | |
 | `<repo>-<context>` | 1 to 3 | the product: what makes this service different | |
@@ -116,3 +116,49 @@ its S5 pull request. Each pull request passed. All of them merged on
 | `relay` | SV1, SV2, SV3 (all six) | faberline/relay#57 splits the package into the six crates. | none |
 | `lumen` | SV1, SV2, SV3 (all six) | faberline/lumen#159 splits the package into `lumen`, `lumen-shared-kernel`, `lumen-access`, `lumen-operator`, and `lumen-index`. faberline/lumen#160 adds `lumen-replication`. faberline/lumen#161 adds `lumen-storage`. Its rust-arch exceptions rely on the checker fix in faberline/aw#66. | none |
 | `keep` | SV1, SV3, SV4, SV6, SV7 | faberline/keep#7 replaces `keep-core`, `keep-engine`, and `keep-http` with contexts and adds `ddd.toml`. | SV7: the `gke-test` overlay lands in faberline/keep#6. |
+
+## Moving operations into core
+
+Core [ADR 0002](https://github.com/faberline/core/blob/main/docs/adr/0002-core-owned-service-operations.md)
+moves operations into `core`. An app keeps its product logic. `core` decides
+how the service runs: topology, scaling, membership, resharding, routing,
+rollout, certificates, backup, placement, and monitoring.
+
+This changes the skeleton. The checker does not change yet.
+
+### Target shape
+
+- There is no `<repo>-operator` package. Each app still runs its own operator
+  process, but that process runs the engine from `core`. The CRD kind does not
+  change.
+- The assembly `<repo>` has `src/profile.rs`. It implements the
+  `ServiceProfile` of `core`: the kind, the env prefix, the product config, the
+  capabilities, and the alert rules.
+- The assembly also implements the data-plane hooks: request classification,
+  the merge of scattered results, bucket data, and domain readiness.
+- No app package depends on `kube` or `k8s-openapi` directly.
+- The app's `k8s` command generates `k8s/base/` and `k8s/operator/`. The
+  repository commits the output, and a drift test compares the two.
+
+### When the checker changes
+
+The checker changes when the first repository removes its `-operator`
+package. The ADR plans this for `tape`, in phase 3. That change does these
+things:
+
+- `-operator` is no longer a required package (`REQUIRED` in
+  `saas_service.py`), and SV5 no longer checks it. While repositories move,
+  `-operator` is a transition slot. It is not one of the three product
+  contexts of SV4.
+- New check SV9: no app package depends on `kube` or `k8s-openapi` directly.
+- New check SV10: `crates/<repo>/src/profile.rs` exists.
+
+Each repository that has not moved then adds an `aw.toml` exception for each
+new finding. The reason names the ADR phase in which the repository moves.
+
+The checker does not change now because the engine does not exist yet. No
+repository can pass SV9 or SV10 today. The new checks would stop S5 from
+becoming active.
+
+[Core reuse](core-reuse.md) changes when the engine and the `shard-routing`
+crate exist, in phases 1 and 4 of the ADR.
