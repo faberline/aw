@@ -257,7 +257,8 @@ Create it when there is none.
 Replace its body (PATCH) with the current state.
 Write it in Traditional Chinese (Taiwan):
 
-- `更新：<UTC time>` and `總結：正常` or `總結：異常`.
+- `更新：<UTC time>` and `總結：正常`, `總結：異常` or `總結：排隊` (G23: slow CI queue, with the numbers).
+- `## CI 排隊` (G23): wall time, longest job, queued and in-progress runs, and the `behind` PR count.
 - `## 根因`.
   One bullet for each root cause.
   Each bullet has: `緊急` when urgent; what it is; since when; what it blocks, with the chain; who it waits for (使用者, 中控, a routine, or another repository); the faberline/aw issue link.
@@ -267,6 +268,7 @@ Write it in Traditional Chinese (Taiwan):
 
 Keep no history in the body.
 Read the labels of each issue that the body names in this pass, before the write (G19, below).
+Read the state of each issue that the body or a decision cites as open, closed, blocked or urgent in this pass (G24, below).
 
 #### Time (G1)
 
@@ -682,6 +684,42 @@ When none is open, write the evidence on the status board only.
 Do not open a new issue.
 
 Example failure: faberline/aw#316.
+
+### Queue wait: slow ci runs (G23)
+
+G18 only sees runs with zero jobs.
+A queue can also be slow while every run has jobs: the work is short, the wait is long.
+Do this once in each pass, with one read for each item and no polling loop:
+
+1. Take the latest completed `ci` run on `main` and the oldest unfinished (`queued` or `in_progress`) `ci` run of `<target>`.
+   Read the jobs of each run once (`gh api repos/<owner>/<repo>/actions/runs/<id>/jobs`).
+2. Count the `queued` and `in_progress` runs of `<target>` (one list read).
+3. Write on the board, under `## CI 排隊`: the run wall time (first `created_at` to last job `completed_at`, or to now for an unfinished run), the longest single job, and the two counts.
+4. When the wall time is more than 2 times the longest job, or a run has waited more than 60 minutes, the summary is `總結：排隊` with these numbers. It is never `總結：正常`.
+   An other root cause can still make it `總結：異常`.
+5. Do not rerun and do not open an issue in each pass.
+   Look for an open `pipeline` issue in faberline/aw that tracks organization Actions capacity.
+   When there is none, open one (label `pipeline`). When there is one, link it and add the evidence as one comment (G18).
+6. Also count the open PRs of `<target>` that are `behind` main and whose failed required check ran before the latest fix on `main`.
+   Write the count and the two oldest PR numbers.
+   Use the PR list you already read; read the check run time of a PR only when it is `behind` and has a failed check.
+
+Example failure: the lumen board (faberline/aw#256) of 2026-11-13 12:14Z said `正常`.
+Its `ci` runs took 60 to 128 minutes for 192 job-minutes of work (longest job 30 minutes), 23 runs were queued in the organization, and about 20 open PRs carried old failures and were `behind` main.
+
+### Read the state of a cited issue (G24)
+
+A board or a decision can say that an issue is open, closed, blocked or urgent.
+That state can change between two passes. A copied state can be wrong.
+
+Before the board or a decision cites any issue (in faberline/aw or in another repository) as open, closed, blocked or urgent, read its state and labels in this pass.
+Use `gh api repos/<owner>/<repo>/issues/<n> --jq '{state, labels: [.labels[].name]}'`, one read for each issue.
+Write the state that you read.
+Do not copy a state from the old board or from memory.
+A closed issue is not written as open, and not as a root cause that is still active.
+When you cannot read it, write `狀態未讀取`.
+
+Example failure: the lumen board (faberline/aw#256) of 2026-11-13 cited faberline/aw#351 as `urgent，仍開著`. It had been closed some hours before.
 
 ### Read the labels in this pass (G19)
 
