@@ -1,0 +1,13 @@
+name: Verified issue-conformance findings
+description: Authenticate a completed pinned review and publish one informational linked-issue comment.
+runs:
+  using: composite
+  steps:
+    - name: Verify exact receipt and reconcile issue findings
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        AW_ACTION_REF: ${{ github.action_ref }}
+      run: |
+        set -euo pipefail
+        exec python3 -I -B "$GITHUB_ACTION_PATH/../../../plugins/faberline/skills/issue-ci/scripts/claude_findings.py"
