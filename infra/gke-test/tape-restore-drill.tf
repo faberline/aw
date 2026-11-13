@@ -3,9 +3,12 @@
 # faberline/sift#84). Remove this file, then apply, when the drill reports.
 # See "Temporary resources" in docs/standards/test-cluster.md.
 #
-# Only pods that run as the Kubernetes service account `tape-restore-drill`
-# in namespace `tape` can use the bucket. Workload Identity Federation for
-# GKE names that account as the IAM principal directly, so no Google service
+# Only pods that run as one of two Kubernetes service accounts in namespace
+# `tape` can use the bucket: `tape-restore-drill` (the restore Job) and
+# `tape-backup` (the backup CronJob that tape-operator renders for the Tape CR
+# `tape`; its name is `<CR name>-backup`). The user approved the second one
+# on 2026-11-12 (faberline/aw#346). Workload Identity Federation for GKE
+# names each account as the IAM principal directly, so no Google service
 # account and no pod annotation is needed. No project-level role changes.
 
 locals {
@@ -41,4 +44,13 @@ resource "google_storage_bucket_iam_member" "tape_restore_drill" {
   bucket = google_storage_bucket.tape_restore_drill.name
   role   = "roles/storage.objectAdmin"
   member = "principal://iam.googleapis.com/projects/${data.google_project.this.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/tape/sa/tape-restore-drill"
+}
+
+# The backup CronJob of the Tape CR `tape` runs as `tape-backup`
+# (crates/tape-operator/src/render/backup.rs in faberline/tape). The Tape CR
+# has no field to change it (faberline/aw#346).
+resource "google_storage_bucket_iam_member" "tape_restore_drill_backup" {
+  bucket = google_storage_bucket.tape_restore_drill.name
+  role   = "roles/storage.objectAdmin"
+  member = "principal://iam.googleapis.com/projects/${data.google_project.this.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/tape/sa/tape-backup"
 }
