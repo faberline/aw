@@ -85,6 +85,11 @@ impl Board {
 /// than `RECENT_SECONDS`). Only then read each open issue, so the report
 /// of a long run still finds its claim. `aw status` and `aw claim` run
 /// in every worker run, so they read the recent comments only.
+///
+/// That fallback can meet a dead claim of another run: an old claim on
+/// another issue, left when the live claim was missing from the recent
+/// comments. So the fallback accepts a claim only when it is certainly
+/// the claim of this run (see `is_own_old_claim`).
 pub(crate) fn active(s: Services<'_>, agent: &str, stage: Option<Stage>) -> Result<Option<Active>> {
     let board = board(s, agent)?;
     if let Some(active) = board.active(agent, stage) {
@@ -97,7 +102,60 @@ pub(crate) fn active(s: Services<'_>, agent: &str, stage: Option<Stage>) -> Resu
             marks.push((issue, id, mark));
         }
     }
-    Ok(newest(&board.repo, marks.into_iter(), stage))
+    newest_own(s, &board.repo, marks, stage)
+}
+
+/// The newest of the old claims in `marks` that belong to this run.
+fn newest_own(
+    s: Services<'_>,
+    repo: &Repo,
+    marks: Vec<(&Issue, u64, ClaimMark)>,
+    stage: Option<Stage>,
+) -> Result<Option<Active>> {
+    // Ask git only when there is an old claim to judge.
+    let mut head: Option<Option<String>> = None;
+    let mut own = Vec::new();
+    for (issue, id, mark) in marks {
+        if stage.is_some_and(|wanted| mark.stage != wanted) {
+            continue;
+        }
+        // spec and review never change the checkout, tdd does: the
+        // checkout is the only evidence of which run holds a claim.
+        if mark.stage == Stage::Spec {
+            continue;
+        }
+        if head.is_none() {
+            head = Some(if in_checkout(s, &repo.name)? {
+                s.workspace.current_branch()?
+            } else {
+                None
+            });
+        }
+        if is_own_old_claim(
+            mark.stage,
+            &mark.branch,
+            head.as_ref().and_then(Option::as_deref),
+        ) {
+            own.push((issue, id, mark));
+        }
+    }
+    Ok(newest(repo, own.into_iter(), stage))
+}
+
+/// Does an old claim (found only by reading each open issue) belong to
+/// the run that reports now? `head` is the branch of the checkout of the
+/// repository, `None` when there is no such checkout or HEAD is detached.
+///
+/// - spec: no. A spec claim names the default branch, and a spec run
+///   never changes the checkout, so nothing tells this run from a dead
+///   run on another issue. Refuse: the report says "holds no claim".
+/// - tdd and review: only when the branch of the claim is the branch of
+///   the checkout. A claim for another issue has another branch.
+fn is_own_old_claim(stage: Stage, branch: &str, head: Option<&str>) -> bool {
+    match stage {
+        Stage::Spec => false,
+        Stage::Tdd | Stage::Review => head == Some(branch),
+    }
 }
 
 /// True when the current directory is a checkout of `repo`. tdd needs one.
@@ -105,4 +163,37 @@ pub(crate) fn in_checkout(s: Services<'_>, repo: &str) -> Result<bool> {
     Ok(s.workspace
         .origin_repo()?
         .is_some_and(|origin| origin.eq_ignore_ascii_case(repo)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_old_spec_claim_is_never_own() {
+        assert!(!is_own_old_claim(Stage::Spec, "main", Some("main")));
+        assert!(!is_own_old_claim(Stage::Spec, "main", None));
+    }
+
+    #[test]
+    fn an_old_tdd_or_review_claim_is_own_only_on_the_branch_of_the_checkout() {
+        for stage in [Stage::Tdd, Stage::Review] {
+            assert!(is_own_old_claim(
+                stage,
+                "claude/issue-2",
+                Some("claude/issue-2")
+            ));
+            assert!(!is_own_old_claim(
+                stage,
+                "claude/issue-2",
+                Some("claude/issue-1")
+            ));
+            assert!(!is_own_old_claim(
+                stage,
+                "claude/issue-2",
+                Some("claude/issue-2-x")
+            ));
+            assert!(!is_own_old_claim(stage, "claude/issue-2", None));
+        }
+    }
 }

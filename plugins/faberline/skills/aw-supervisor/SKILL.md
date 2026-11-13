@@ -33,6 +33,7 @@ Do not change rulesets, settings, secrets or workflow files.
 Do not delete anything.
 When a write is not on the list, make a `decision` issue instead.
 One exception: G21 (below) lets you execute a label-only desk decision.
+The routine prompt must list the G21 label writes; without them, G21 does not run.
 
 This cloud session blocks GitHub GraphQL.
 Do not use `gh issue`, `gh pr` or `gh repo`.
@@ -357,9 +358,21 @@ Then say so in the facts, and check that the work it carried is not needed.
 Write these facts in the decision.
 
 When the reason is gone, a note is not enough.
-The supervisor may not change the label, so the desk must do it.
+Make the item with its `執行清單` (below).
+Then test it against the four checks of G21.
+When it passes all four, execute it in this same pass under G21.
+Do not open a `decision` issue for it, and do not wait for the desk.
+Every prerequisite closed with `stage:done` is the usual case.
+The fix is label-only (remove `blocked`), the type is `類型：中控可決定` and it has one option.
+This passes the four checks.
+Re-read the labels and the cause first, as G21 says.
+G21 keeps all its limits.
+
+When the item fails a G21 check, the supervisor may not change the label, so the desk must do it.
+An example is an `執行清單` with an action that G21 does not allow.
+Another is a cause that you cannot verify from the repository, the run or the signal.
 The desk acts only on an `執行清單`.
-Open one `decision` issue for each run of `<target>`.
+Open one `decision` issue for each run of `<target>` for these items.
 Put each stale `blocked` issue of this run in that one issue.
 Use `類型：中控可決定`.
 Use one option.
@@ -375,9 +388,13 @@ Then you may add the item there in a comment.
 The comment must have the full `執行清單`.
 A comment that only says "the reason is gone" is not enough.
 Do not create a second decision issue for the same blocked issue.
-Do not change the label yourself.
+Do not change the label yourself, except under G21.
 
 Example failure: core#163 stayed `blocked` after all 46 checks of its pull request became green.
+Example failure: the lumen supervisor found every prerequisite of a `blocked` issue closed with `stage:done`.
+It opened faberline/aw#342 for the label removal.
+The item passed all four G21 checks.
+The desk had to execute it by hand one pass later.
 
 ### Release chain (G11)
 
@@ -725,6 +742,22 @@ These are never in G21:
 An item with such an action keeps waiting for the desk.
 An item of type `需要使用者` keeps waiting for the user.
 When one `decision` issue has items of both kinds, execute only the items that pass the four checks.
+
+An item that you find in this same pass is also in G21.
+Do not first open a `decision` issue and wait for the desk.
+Make the item, test the four checks, and execute it in the same pass.
+Example: a G10 check finds that every prerequisite of a `blocked` issue is closed with `stage:done`.
+The fix is label-only, the type is `類型：中控可決定` and there is one option.
+Then do this in the same pass:
+
+1. Read the labels of the blocked issue again (G19).
+2. Comment the evidence on the blocked issue: each prerequisite, its state and its `closed_at`.
+3. Remove `blocked`.
+4. Add the item to the status board under `這一輪做了什麼`, with the link.
+
+Open no `decision` issue for it.
+The limits do not change: label-only, one option, re-read before writing, no merge, no paid action.
+When a check fails, make the `decision` issue as before.
 
 Before you execute an item, in the same pass:
 

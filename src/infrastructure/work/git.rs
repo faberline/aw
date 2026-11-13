@@ -44,6 +44,16 @@ impl Workspace for GitCli {
             .and_then(|url| github_repo(&url)))
     }
 
+    fn current_branch(&self) -> PortResult<Option<String>> {
+        // Detached HEAD, or outside a checkout: git fails, so no branch.
+        Ok(
+            run("git", &["symbolic-ref", "--short", "--quiet", "HEAD"], None)
+                .ok()
+                .map(|branch| branch.trim().to_string())
+                .filter(|branch| !branch.is_empty()),
+        )
+    }
+
     fn is_clean(&self) -> PortResult<bool> {
         Ok(run(
             "git",
@@ -123,7 +133,16 @@ impl Workspace for GitCli {
 
 #[cfg(test)]
 mod tests {
-    use super::github_repo;
+    use super::{GitCli, github_repo};
+    use crate::domain::work::ports::Workspace;
+
+    #[test]
+    fn the_current_branch_is_a_name_or_none_for_a_detached_head() {
+        // A checkout on a branch, or detached (CI checks out a merge
+        // commit): never an empty name, never an error.
+        let branch = GitCli.current_branch().unwrap();
+        assert!(branch.is_none_or(|name| !name.is_empty() && !name.contains('\n')));
+    }
 
     #[test]
     fn reads_owner_and_name_from_github_urls() {
