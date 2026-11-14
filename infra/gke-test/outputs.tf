@@ -32,3 +32,16 @@ output "pools" {
     }
   }
 }
+
+output "ci" {
+  description = "ci-on-gke phase 1: pool, namespace, Kubernetes service account, Google service account, sccache bucket."
+  value = {
+    node_pool       = google_container_node_pool.ci.name
+    node_selector   = { (local.pool_label_key) = local.ci_pool_name }
+    toleration      = { key = local.pool_label_key, operator = "Equal", value = local.ci_pool_name, effect = "NoSchedule" }
+    namespace       = local.ci_namespace
+    k8s_service_acc = local.ci_ksa
+    gcp_service_acc = google_service_account.ci_job.email
+    sccache_bucket  = google_storage_bucket.sccache.name
+  }
+}

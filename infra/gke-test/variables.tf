@@ -39,3 +39,9 @@ variable "monthly_budget" {
   type        = number
   default     = 3000
 }
+
+variable "ci_monthly_budget" {
+  description = "Monthly budget of the ci-on-gke pool and its sccache bucket (label faberline-ci=aw-ci), in TWD. Separate from monthly_budget."
+  type        = number
+  default     = 1500
+}
