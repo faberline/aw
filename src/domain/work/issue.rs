@@ -104,15 +104,16 @@ pub const BAR_LABEL: &str = "bar";
 pub const CI_FIX_LABEL: &str = "ci-fix";
 
 /// Claim order: `p0` first, then the issues with the `ci-fix` label, then
-/// the issues with the `bar` label, then the lowest milestone version, then
-/// the priority label (unlabeled last), then the oldest issue. A repository
-/// without the `ci-fix` or `bar` label keeps the order it had.
+/// the issues with the `bar` label, then `p1` (with or without a
+/// milestone), then the lowest milestone version (compared as semver), then the
+/// priority label (unlabeled last), then the oldest issue.
 pub fn claim_order(issues: &mut [Issue]) {
     issues.sort_by(|a, b| {
         (a.priority() != 0)
             .cmp(&(b.priority() != 0))
             .then_with(|| b.has_label(CI_FIX_LABEL).cmp(&a.has_label(CI_FIX_LABEL)))
             .then_with(|| b.has_label(BAR_LABEL).cmp(&a.has_label(BAR_LABEL)))
+            .then_with(|| (a.priority() > 1).cmp(&(b.priority() > 1)))
             .then_with(|| a.milestone_rank().cmp(&b.milestone_rank()))
             .then_with(|| a.priority().cmp(&b.priority()))
             .then_with(|| a.created_at.cmp(&b.created_at))
@@ -197,6 +198,38 @@ mod tests {
             created_at: format!("2026-01-{number:02}T00:00:00Z"),
             milestone: milestone.map(String::from),
         }
+    }
+
+    fn order_of(mut v: Vec<Issue>) -> Vec<u64> {
+        claim_order(&mut v);
+        v.iter().map(|i| i.number).collect()
+    }
+
+    #[test]
+    fn p1_without_milestone_beats_p2_with_milestone() {
+        let v = vec![
+            issue(1, &["p2"], Some("defer@1.0.0")),
+            issue(2, &["p1"], None),
+        ];
+        assert_eq!(order_of(v), vec![2, 1]);
+    }
+
+    #[test]
+    fn a_lower_milestone_beats_a_higher_one_at_the_same_priority() {
+        let v = vec![
+            issue(1, &["p2"], Some("defer@1.0.0")),
+            issue(2, &["p2"], Some("defer@0.7.0")),
+        ];
+        assert_eq!(order_of(v), vec![2, 1]);
+    }
+
+    #[test]
+    fn milestone_0_10_0_sorts_after_0_9_0() {
+        let v = vec![
+            issue(1, &["p2"], Some("core@0.10.0")),
+            issue(2, &["p2"], Some("core@0.9.0")),
+        ];
+        assert_eq!(order_of(v), vec![2, 1]);
     }
 
     fn comment(body: &str, at: &str) -> Comment {
@@ -292,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn the_lowest_milestone_comes_first_after_p0() {
+    fn p1_then_the_lowest_milestone_come_first_after_p0() {
         let mut issues = vec![
             issue(1, &["p1"], None),
             issue(2, &["p1"], Some("lumen@0.10.0")),
@@ -303,7 +336,7 @@ mod tests {
         ];
         claim_order(&mut issues);
         let order: Vec<u64> = issues.iter().map(|i| i.number).collect();
-        assert_eq!(order, [5, 6, 3, 2, 4, 1]);
+        assert_eq!(order, [5, 6, 2, 1, 3, 4]);
     }
 
     fn order(mut issues: Vec<Issue>) -> Vec<u64> {
@@ -387,10 +420,10 @@ mod tests {
                 with("p1", Some("lumen@0.7.0"), 6),
             ]
         }
-        assert_eq!(order(issues(None)), [5, 6, 3, 2, 4, 1]);
+        assert_eq!(order(issues(None)), [5, 6, 2, 1, 3, 4]);
         // Also when every issue has the mark, and for a label that only
         // looks like it.
-        assert_eq!(order(issues(Some("bar"))), [5, 6, 3, 2, 4, 1]);
-        assert_eq!(order(issues(Some("bars"))), [5, 6, 3, 2, 4, 1]);
+        assert_eq!(order(issues(Some("bar"))), [5, 6, 2, 1, 3, 4]);
+        assert_eq!(order(issues(Some("bars"))), [5, 6, 2, 1, 3, 4]);
     }
 }
