@@ -1,0 +1,176 @@
+# One CI stage as a batch of Kubernetes Jobs on the shared GKE test cluster.
+# aw owns this file. A repository calls it once per stage from ci.yml:
+#
+#   jobs:
+#     lint:
+#       name: lint
+#       permissions: { id-token: write, contents: read, packages: read }
+#       uses: faberline/aw/.github/workflows/ci-stage.yml@main
+#       with:
+#         stage: lint
+#
+# The runner does not compile and does not test. It signs in to GKE, wakes the
+# cluster, applies the work Jobs of the stage from the manifest, waits, and
+# collects the logs and the results (scripts/gke-test/batch.sh).
+# Full contract: docs/standards/ci-on-gke.md.
+name: ci-stage
+
+on:
+  workflow_call:
+    inputs:
+      stage:
+        description: The stage to run, lint, test or e2e.
+        required: true
+        type: string
+      manifest:
+        description: Path of the manifest in the calling repository.
+        required: false
+        default: .github/ci/jobs.yaml
+        type: string
+      timeout-minutes:
+        description: >-
+          Longest time of the batch, in minutes: the largest `timeout` of the
+          stage in the manifest plus 20 minutes for the queue and the node
+          scale-up. The run fails before it applies anything when this is too
+          small.
+        required: false
+        default: 60
+        type: number
+      sccache-bucket:
+        description: >-
+          Cloud Storage bucket of sccache (`terraform -chdir=infra/gke-test
+          output ci` in aw). Empty means the work Jobs compile without sccache.
+        required: false
+        default: ""
+        type: string
+      gcp-service-account:
+        description: >-
+          Google service account that the work Jobs use for the bucket through
+          Workload Identity. Empty means the Jobs run as the default service
+          account of the namespace, without the annotation.
+        required: false
+        default: ""
+        type: string
+      aw-ref:
+        description: Ref of faberline/aw whose scripts/gke-test/ this run uses. Match the ref in `uses:`.
+        required: false
+        default: main
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+  packages: read
+
+jobs:
+  batch:
+    name: batch
+    runs-on: ubuntu-latest
+    # The batch step has the real limit, `timeout-minutes` of the caller. The
+    # job limit is the GitHub maximum on purpose, so it never cuts the
+    # collection of the logs and the teardown. No `concurrency` group: every
+    # batch has its own namespace.
+    timeout-minutes: 360
+    env:
+      REPO: ${{ github.event.repository.name }}
+      STAGE: ${{ inputs.stage }}
+      MANIFEST: ${{ inputs.manifest }}
+      RUN_LABEL: gha-${{ github.run_id }}-${{ github.run_attempt }}
+      NAMESPACE: ci-${{ github.event.repository.name }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.stage }}
+      SOURCE_REPOSITORY: ${{ github.repository }}
+      SOURCE_SHA: ${{ github.sha }}
+      STAGE_TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+      SCCACHE_BUCKET: ${{ inputs.sccache-bucket }}
+      CI_GCP_SERVICE_ACCOUNT: ${{ inputs.gcp-service-account }}
+      GHCR_USER: ${{ github.actor }}
+    steps:
+      # The work Jobs run the code of the commit in the cluster. Code from a
+      # fork must never get there. A public repository can get a pull request
+      # from a fork, so it may start a batch only by hand.
+      - name: Refuse a run that may carry code from outside
+        env:
+          EVENT: ${{ github.event_name }}
+          PRIVATE: ${{ github.event.repository.private }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          case "$EVENT" in
+            pull_request | push | workflow_dispatch) ;;
+            *) echo "::error::ci-stage runs only on pull_request, push and workflow_dispatch; got $EVENT"; exit 1 ;;
+          esac
+          if [[ "$EVENT" == pull_request && "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]]; then
+            echo "::error::a pull request from a fork ($HEAD_REPOSITORY) never runs in the cluster"; exit 1
+          fi
+          if [[ "$PRIVATE" != true && "$EVENT" != workflow_dispatch ]]; then
+            echo "::error::a public repository may start a batch only with workflow_dispatch"; exit 1
+          fi
+
+      # Only the manifest. The work Jobs fetch the source themselves.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: ${{ inputs.manifest }}
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: faberline/aw
+          ref: ${{ inputs.aw-ref }}
+          path: .ci-aw
+          persist-credentials: false
+          # batch.sh reads pools.yaml to check which pools this repository owns.
+          sparse-checkout: |
+            scripts/gke-test
+            infra/gke-test/pools.yaml
+          sparse-checkout-cone-mode: false
+
+      - name: Prepare run folders
+        run: |
+          echo "EVIDENCE_DIR=${RUNNER_TEMP}/ci-stage-evidence" >> "$GITHUB_ENV"
+          echo "KUBECONFIG=${RUNNER_TEMP}/ci-stage-kubeconfig" >> "$GITHUB_ENV"
+
+      # Values from `terraform -chdir=infra/gke-test output` in faberline/aw.
+      - name: Sign in to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          workload_identity_provider: projects/406744653021/locations/global/workloadIdentityPools/faberline-github/providers/github-oidc
+          service_account: gke-test-${{ github.event.repository.name }}@axiom-502607.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+        with:
+          install_components: gke-gcloud-auth-plugin
+
+      - name: Get cluster credentials
+        run: |
+          gcloud container clusters get-credentials faberline-test \
+            --project=axiom-502607 --zone=asia-east1-a
+
+      # kubectl, yq and jq come with ubuntu-latest. The token goes to the
+      # Secret ci-source of the namespace and nowhere else.
+      - name: Apply the batch, wait, collect, tear down
+        timeout-minutes: ${{ inputs.timeout-minutes }}
+        env:
+          SOURCE_TOKEN: ${{ github.token }}
+        run: .ci-aw/scripts/gke-test/batch.sh
+
+      - name: Upload logs and results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-${{ inputs.stage }}-logs
+          path: ${{ env.EVIDENCE_DIR }}
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 14
+
+      # batch.sh tears down on every in-process exit. This step covers a
+      # killed process (the step timeout, a cancelled run). The reaper covers
+      # the rest. The namespace name holds the run id, the attempt and the
+      # stage, so this never deletes another run.
+      - name: Tear down (backup)
+        if: always()
+        run: |
+          if [[ -s "${KUBECONFIG:-}" ]]; then
+            RENDERED="" .ci-aw/scripts/gke-test/teardown.sh
+          else
+            echo "This run did not reach the cluster; nothing to tear down."
+          fi

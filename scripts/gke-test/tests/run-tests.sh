@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Tests for resize_pool (common.sh), blockers.sh, check-cr-storage.sh, and
-# lock.sh. No cluster needed: gcloud and kubectl are fakes on PATH. Run: scripts/gke-test/tests/run-tests.sh
+# Tests for resize_pool (common.sh), blockers.sh, check-cr-storage.sh,
+# lock.sh and batch.sh. No cluster needed: gcloud and kubectl are fakes on PATH. Run: scripts/gke-test/tests/run-tests.sh
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GKE="$HERE/.."
@@ -335,6 +335,241 @@ check "workflow: the release step always runs, and is last" test \
   "$(yq '.jobs.gke-test.steps[-1] | (.if == "always()" and (.run | contains("lock.sh release")))' "$WF")" = true
 check "workflow: the backup teardown runs only with the lease" test \
   "$(yq '.jobs.gke-test.steps[] | select(.name == "Tear down (backup)") | .run | contains("lock.sh renew")' "$WF")" = true
+
+# --- batch.sh ------------------------------------------------------------------
+
+export B="$TMP/b"
+mkdir -p "$B/bin"
+# The fake cluster. It writes every call to $B/calls and every object that
+# comes through stdin to $B/stdin-objects. The namespace exists while $B/ns
+# does. `get jobs` answers $B/jobs-<n>.json for call n when that file exists,
+# else $B/jobs.json.
+cat >"$B/bin/kubectl" <<'FAKE'
+#!/usr/bin/env bash
+echo "kubectl $*" >>"$B/calls"
+case "$*" in
+  "get namespace "*) [[ -f "$B/ns" ]]; exit ;;
+  "create namespace "*) touch "$B/ns" ;;
+  "delete namespace "*) rm -f "$B/ns"; echo "$3" >>"$B/deleted" ;;
+  "get pv "*) echo '{"items":[]}' ;;
+  "get nodes "*) echo '{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}' ;;
+  *"create -f -") cat >>"$B/stdin-objects" ;;
+  *"get jobs"*)
+    n=$(( $(cat "$B/job-calls" 2>/dev/null || echo 0) + 1 ))
+    echo "$n" >"$B/job-calls"
+    if [[ -f "$B/jobs-$n.json" ]]; then cat "$B/jobs-$n.json"; else cat "$B/jobs.json"; fi ;;
+  *"get pods -o json") cat "$B/pods.json" ;;
+  *"get events"*) echo "no events" ;;
+  *" logs "*) echo "log line of $4" ;;
+esac
+exit 0
+FAKE
+cat >"$B/bin/gcloud" <<'FAKE'
+#!/usr/bin/env bash
+case "$*" in
+  "container node-pools list"*) tr ' ' '\n' <<<"${FAKE_POOLS-pool-aw-ci pool-som-client}" ;;
+esac
+exit 0
+FAKE
+chmod +x "$B/bin/kubectl" "$B/bin/gcloud"
+
+cat >"$B/jobs.yaml" <<'YAML'
+version: 1
+image: ghcr.io/faberline/ci-rust:1.99.1
+jobs:
+  - name: fmt-clippy
+    stage: lint
+    command: cargo fmt --all -- --check
+    timeout: 20m
+  - name: unit
+    stage: test
+    command: |
+      cargo test --workspace --locked
+    resources: { cpu: 4, memory: 12Gi }
+    timeout: 40m
+    env: { RUST_BACKTRACE: 1 }
+  - name: doc
+    stage: test
+    command: cargo test --doc
+    pool: som-client
+    image: ghcr.io/faberline/ci-rust@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    timeout: 15m
+  - name: image-server
+    stage: e2e
+    kind: image
+    timeout: 30m
+YAML
+cat >"$B/pools.yaml" <<'YAML'
+pools:
+  - { repo: som, pool: som-client, machine_type: n4-standard-2, spot: true, max_nodes: 1 }
+  - { repo: keep, pool: keep-server, machine_type: n4-standard-2, spot: true, max_nodes: 1 }
+YAML
+TOKEN_VALUE="tok3n-that-must-not-leak"
+SHA="0123456789abcdef0123456789abcdef01234567"
+
+batch() { # batch <stage> [render]; the FAKE_ and other values pass through
+  rm -rf "$B/ev" "$B/calls" "$B/deleted" "$B/stdin-objects" "$B/ns" "$B/job-calls" "$B/summary"
+  PATH="$B/bin:$PATH" KUBECONFIG="$B/kubeconfig" REPO=som STAGE="$1" \
+    MANIFEST="${BATCH_MANIFEST:-$B/jobs.yaml}" EVIDENCE_DIR="$B/ev" POOLS_FILE="$B/pools.yaml" \
+    SOURCE_REPOSITORY=faberline/som SOURCE_SHA="$SHA" SOURCE_TOKEN="$TOKEN_VALUE" \
+    RUN_LABEL=gha-1-1 GHCR_USER=bot BATCH_SLEEP=true GITHUB_STEP_SUMMARY="$B/summary" \
+    "$GKE/batch.sh" ${2:+"$2"} >"$B/out" 2>"$B/err"
+}
+rendered() { jq -e "$1" "$B/ev/jobs.json" >/dev/null; }
+result_of() { jq -r --arg n "$1" '.[] | select(.name == $n) | .result' "$B/ev/results.json"; }
+bjob() { # bjob <name> <condition type or ""> [reason]
+  jq -n --arg n "$1" --arg t "$2" --arg r "${3:-}" '{
+    metadata: {name: $n},
+    status: ({startTime: "2027-01-15T08:00:00Z"}
+      + (if $t == "" then {} else {conditions: [{type: $t, status: "True", reason: $r,
+          lastTransitionTime: "2027-01-15T08:03:00Z"}]} end)
+      + (if $t == "Complete" then {completionTime: "2027-01-15T08:02:00Z"} else {} end))}'
+}
+bpod() { # bpod <name> <job> <exit code> [waiting reason]
+  jq -n --arg n "$1" --arg j "$2" --argjson c "$3" --arg w "${4:-}" '{
+    metadata: {name: $n, creationTimestamp: "2020-01-01T00:00:00Z", labels: {"job-name": $j}},
+    status: {containerStatuses: [{name: "work", state:
+      (if $w != "" then {waiting: {reason: $w}} else {terminated: {exitCode: $c}} end)}]}}'
+}
+
+# The manifest and the rendered Jobs.
+check "batch: render writes the Jobs of the stage only" batch test render
+check "batch: one Job per entry, named <stage>-<name>" rendered \
+  '[.items[].metadata.name] == ["test-unit", "test-doc"]'
+check "batch: the timeout is the Job deadline" rendered '.items[0].spec.activeDeadlineSeconds == 2400'
+check "batch: the default pool is aw-ci, with its toleration" rendered \
+  '.items[0].spec.template.spec | .nodeSelector["faberline.dev/pool"] == "aw-ci" and .tolerations[0].value == "aw-ci"'
+check "batch: a Job may use a pool of its repository" rendered \
+  '.items[1].spec.template.spec.nodeSelector["faberline.dev/pool"] == "som-client"'
+check "batch: requests come from the manifest, defaults else" rendered \
+  '[.items[].spec.template.spec.containers[0].resources.requests] == [{cpu: "4", memory: "12Gi"}, {cpu: "2", memory: "6Gi"}]'
+check "batch: env of the manifest reaches the work container" rendered \
+  '.items[0].spec.template.spec.containers[0].env | any(.name == "RUST_BACKTRACE" and .value == "1")'
+check "batch: only the init container mounts the Secret" rendered \
+  'all(.items[].spec.template.spec; (.initContainers[0].volumeMounts | any(.name == "ci-source"))
+     and (.containers[0].volumeMounts | all(.name != "ci-source")) and .automountServiceAccountToken == false)'
+check "batch: a preemption retries, a test failure does not" rendered \
+  '.items[0].spec.podFailurePolicy.rules | (.[0].action == "Ignore" and .[0].onPodConditions[0].type == "DisruptionTarget"
+     and .[1].action == "FailJob")'
+check "batch: no sccache without a bucket" rendered \
+  '.items[0].spec.template.spec.containers[0].env | all(.name != "RUSTC_WRAPPER")'
+check "batch: a bucket turns sccache on" env SCCACHE_BUCKET=cache-bucket CI_GCP_SERVICE_ACCOUNT=ci@example.test \
+  bash -c "$(declare -f batch rendered); B='$B' GKE='$GKE' SHA='$SHA' TOKEN_VALUE=x; batch test render && rendered '
+    .items[0].spec.template.spec | .serviceAccountName == \"ci-job\"
+      and (.containers[0].env | any(.name == \"SCCACHE_GCS_BUCKET\" and .value == \"cache-bucket\"))'"
+check "batch: render needs no cluster" test ! -e "$B/calls"
+if STAGE_TIMEOUT_MINUTES=50 batch test render; then
+  fail "batch: the stage timeout must hold the largest Job timeout plus 20 minutes"
+else
+  check "batch: the stage timeout must hold the largest Job timeout plus 20 minutes" grep -q 'needs timeout-minutes 60' "$B/err"
+fi
+if batch e2e render; then
+  fail "batch: a kind that is not implemented fails its stage"
+else
+  check "batch: a kind that is not implemented fails its stage" grep -q 'kind image is not implemented' "$B/err"
+fi
+cat >"$B/bad.yaml" <<'YAML'
+version: 2
+jobs:
+  - { name: Bad_Name, stage: build, command: "", image: "rust:latest", pool: keep-server, timeout: 40, bogus: 1 }
+  - { name: twin, stage: test, command: "true", image: "rust:1", timeout: 5m, resources: { cpu: lots, memory: 2G } }
+  - { name: twin, stage: test, command: "true", timeout: 5m, env: { "bad-key": 1 } }
+YAML
+if BATCH_MANIFEST="$B/bad.yaml" batch test render; then
+  fail "batch: a bad manifest fails before anything is applied"
+else
+  pass "batch: a bad manifest fails before anything is applied"
+fi
+for want in 'version must be 1' 'Bad_Name: name must be' 'stage must be lint, test or e2e' 'unknown field bogus' \
+  'command is required' 'never latest' 'pool keep-server is not aw-ci and not a pool of som' \
+  'timeout is required' 'twin: the name is used more than once' 'resources.cpu must be' \
+  'resources.memory must be' 'twin: no image' 'env bad-key must be'; do
+  check "batch: manifest rule: $want" grep -q "$want" "$B/err"
+done
+
+# A run: one Job passes, one fails, one times out.
+{ bjob test-unit Complete; bjob test-doc Failed PodFailurePolicy; } | items >"$B/jobs.json"
+{ bpod test-unit-aaa test-unit 0; bpod test-doc-bbb test-doc 101; } | items >"$B/pods.json"
+if batch test; then fail "batch: a failed Job fails the stage"; else pass "batch: a failed Job fails the stage"; fi
+check "batch: results name each Job" test "$(result_of unit),$(result_of doc)" = success,failure
+check "batch: results keep the exit code and the time" jq -e \
+  '.[] | select(.name == "doc") | .exit_code == 101 and .seconds == 180 and .pool == "som-client"' "$B/ev/results.json"
+check "batch: one log file per Job" grep -q 'log line of test-doc-bbb' "$B/ev/doc.log"
+check "batch: the failed Job comes first in the log" test \
+  "$(grep -n '^::group::' "$B/out" | head -n 1)" = '1:::group::test/doc: failure (3 min)'
+check "batch: each log is a folded group with commands stopped" test \
+  "$(grep -c '^::group::' "$B/out"),$(grep -c '^::endgroup::' "$B/out"),$(grep -c '^::stop-commands::' "$B/out")" = 2,2,2
+check "batch: the summary table has a row per Job" test "$(grep -c '^| `' "$B/summary")" = 2
+check "batch: the summary names the result" grep -q '^| `doc` | failure | 3 | som-client | 0 |$' "$B/summary"
+check "batch: the namespace is ci-<repo>-<run>-<stage>, with its labels" grep -q \
+  'label namespace ci-som-gha-1-1-test faberline.dev/test-run=gha-1-1 faberline.dev/expires=[0-9]* faberline.dev/ci-stage=test' "$B/calls"
+check "batch: the namespace is deleted after a failed stage" test "$(cat "$B/deleted")" = ci-som-gha-1-1-test
+check "batch: the namespace exists before the wake" test \
+  "$(grep -n 'create namespace' "$B/calls" | cut -d: -f1)" -lt "$(grep -n 'kube-system wait' "$B/calls" | cut -d: -f1)"
+check "batch: the token is in the Secret ci-source" test \
+  "$(jq -rs '.[] | select(.metadata.name == "ci-source") | .data.token | @base64d' "$B/stdin-objects")" = "$TOKEN_VALUE"
+check "batch: the token is in the pull Secret" test \
+  "$(jq -rs '.[] | select(.metadata.name == "ghcr-pull") | .data[".dockerconfigjson"] | @base64d | fromjson
+     | .auths["ghcr.io"].password' "$B/stdin-objects")" = "$TOKEN_VALUE"
+if grep -rqF "$TOKEN_VALUE" "$B/out" "$B/err" "$B/calls" "$B/ev" "$B/summary"; then
+  fail "batch: the token is in no log, argument, Job spec or artifact"
+else
+  pass "batch: the token is in no log, argument, Job spec or artifact"
+fi
+if grep -rqF "$(printf '%s' "$TOKEN_VALUE" | base64)" "$B/out" "$B/err" "$B/calls" "$B/ev"; then
+  fail "batch: the encoded token is in no log, argument, Job spec or artifact"
+else
+  pass "batch: the encoded token is in no log, argument, Job spec or artifact"
+fi
+
+{ bjob test-unit Complete; bjob test-doc Failed DeadlineExceeded; } | items >"$B/jobs.json"
+if batch test; then fail "batch: a Job past its timeout fails the stage"; else
+  check "batch: a Job past its timeout fails the stage" test "$(result_of doc)" = timeout
+fi
+
+# All Jobs pass. The first answer of the cluster shows them still running.
+{ bjob test-unit ""; bjob test-doc ""; } | items >"$B/jobs-1.json"
+{ bjob test-unit Complete; bjob test-doc Complete; } | items >"$B/jobs.json"
+{ bpod test-unit-aaa test-unit 0; bpod test-doc-bbb test-doc 0; } | items >"$B/pods.json"
+check "batch: waits, then passes when every Job passes" batch test
+check "batch: it waited for the Jobs" test "$(cat "$B/job-calls")" -ge 3
+check "batch: the namespace is deleted after a passed stage" test "$(cat "$B/deleted")" = ci-som-gha-1-1-test
+rm -f "$B/jobs-1.json"
+
+# A pod that cannot pull its image fails its Job without the timeout.
+{ bjob test-unit Complete; bjob test-doc ""; } | items >"$B/jobs.json"
+{ bpod test-unit-aaa test-unit 0; bpod test-doc-bbb test-doc 0 ImagePullBackOff; } | items >"$B/pods.json"
+if batch test; then fail "batch: an image that cannot be pulled fails fast"; else
+  check "batch: an image that cannot be pulled fails fast" test "$(result_of doc)" = image-error
+fi
+
+# Nothing to do, and a pool that the cluster does not have.
+cat >"$B/lint-only.yaml" <<'YAML'
+version: 1
+image: ghcr.io/faberline/ci-rust:1.99.1
+jobs:
+  - { name: fmt, stage: lint, command: "cargo fmt --check", timeout: 5m }
+YAML
+check "batch: a stage without a Job passes at once" env BATCH_MANIFEST="$B/lint-only.yaml" \
+  bash -c "$(declare -f batch); B='$B' GKE='$GKE' SHA='$SHA' TOKEN_VALUE=x; batch test"
+check "batch: a stage without a Job does not touch the cluster" test ! -e "$B/calls"
+if FAKE_POOLS="pool-keep-server" batch test; then
+  fail "batch: a missing node pool stops the run before the namespace"
+else
+  check "batch: a missing node pool stops the run before the namespace" test ! -e "$B/calls"
+fi
+
+# ci-stage.yml: the guard comes first, and the teardown always runs.
+CS="$GKE/../../.github/workflows/ci-stage.yml"
+check "ci-stage: the first step refuses forks and public repositories" test \
+  "$(yq '.jobs.batch.steps[0].run | (contains("from a fork") and contains("public repository"))' "$CS")" = true
+check "ci-stage: the token goes only to the batch step" test \
+  "$(yq '[.jobs.batch.steps[] | select(.env.SOURCE_TOKEN != null) | .run] | length' "$CS")" = 1
+check "ci-stage: the checkouts keep no credentials" test \
+  "$(yq '[.jobs.batch.steps[] | select(.uses == "actions/checkout*") | .with.persist-credentials] | all_c(. == false)' "$CS")" = true
+check "ci-stage: the backup teardown always runs, and is last" test \
+  "$(yq '.jobs.batch.steps[-1] | (.if == "always()" and (.run | contains("teardown.sh")))' "$CS")" = true
+check "ci-stage: no concurrency group" test "$(yq '.jobs.batch | has("concurrency")' "$CS")" = false
 
 if ((fails > 0)); then
   printf '%s test(s) failed\n' "$fails" >&2
