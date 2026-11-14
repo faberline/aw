@@ -3,7 +3,7 @@ name: ci-image
 # Publishes the shared CI images to GHCR:
 # - ghcr.io/faberline/ci-base: Rust stable, uv, kind and kubectl.
 # - ghcr.io/faberline/ci-rust: the image of the work Jobs of ci-on-gke: a
-#   pinned Rust toolchain, sccache and kubectl (docs/standards/ci-on-gke.md).
+#   pinned Rust toolchain, sccache, kubectl, cargo-llvm-cov, cargo-deny and Node.js (docs/standards/ci-on-gke.md).
 # - ghcr.io/faberline/kindest-node: a copy of the kind node image, so a
 #   kind cluster does not pull from Docker Hub.
 # A pull request only builds the image. main and the weekly run publish it.

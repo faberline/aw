@@ -232,16 +232,22 @@ any other credential of the repository.
 
 ### Security rules
 
-- **Private repositories only.** A public repository can get pull requests
-  from forks, and their code would run in the cluster. `kit` is public and
-  stays on GitHub-hosted runners. `ci-stage.yml` lets a public repository
-  start a batch only from `workflow_dispatch`, which needs write access.
-  `aw` is public; its proof workflow uses this.
+- **Code reaches the cluster only from a branch of the same repository.**
+  Pushing such a branch needs write access. A fork pull request is refused
+  by the first step of `ci-stage.yml`, in a public repository and in a
+  private one. It must stay red, or the repository defines its own
+  GitHub-hosted fallback for it. A public repository may use ci-on-gke: being
+  public does not matter, the source of the code does. `kit` stays on
+  GitHub-hosted runners by the user's decision, not because it is public.
+- **Each calling repository must set** (Settings, Actions, General, "Fork pull
+  request workflows from outside collaborators"): *Require approval for all
+  outside collaborators*. `ci-stage.yml` never runs on `pull_request_target`.
 - The Secret is made from standard input with `kubectl create`. The token is
   not in a command line, not in the Job spec and not in an annotation. Only
   the init container mounts the Secret; the main container cannot read it.
-- Only `pull_request` from the same repository, `push` to `main` and
-  `workflow_dispatch` start a batch. A pull request from a fork never does.
+- Only `pull_request` from the same repository, `push` to the default branch
+  and `workflow_dispatch` start a batch. A pull request from a fork never
+  does, and a push to another branch does not either.
 - **A work Job has no cluster rights.** It runs as the namespace's
   `default` ServiceAccount with `automountServiceAccountToken: false`, no
   Role and no RoleBinding. The `cluster-admin` identity of the repository
