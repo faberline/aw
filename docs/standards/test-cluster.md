@@ -67,9 +67,13 @@ tears down.
   `<repo>-<role>`, for example `lumen-server` for the server and
   `lumen-client` for the test Job. Terraform refuses another name.
 - Cost cap: the sum of `max_nodes` over all rows, while tests run. Idle cost
-  is 0 nodes. Each node has a 16 GB Hyperdisk Balanced boot disk. All 12
-  repository pools allow up to 24 nodes in total; the system pool adds one.
-  The 25 boot disks alone can require 400 GB of Hyperdisk capacity. Data
+  is 0 nodes. Each node has a 16 GB Hyperdisk Balanced boot disk. All 16
+  repository pools (keep, lumen, tape, defer, relay, sift and core, each with
+  a server and a client pool, lumen also two perf pools) allow up to 33 nodes
+  in total; the system pool adds one. The 34 boot disks alone can require
+  544 GB of Hyperdisk capacity. In the worst case all pools, the system pool
+  and `pool-aw-ci` run at once: 33 + 1 + 8 nodes, 84 vCPU, inside the quota
+  CPUS_ALL_REGIONS 96 (checked 2026-11-15; regional CPUS is 100). Data
   PVCs consume additional capacity. Check Hyperdisk capacity, IOPS,
   throughput and CPU quotas before applying or running tests.
 
@@ -99,6 +103,14 @@ defined in `infra/gke-test/ci.tf`, not in `pools.yaml`:
   of the project is unchanged.
 - Quota: eight n4-standard-2 nodes need 16 vCPU. The quota CPUS_ALL_REGIONS
   (32, and the pools above already allow 60) needs to be 96 for this.
+
+## Pools of `core`
+
+`core` has `core-server` (3 nodes, one per replica of the `service-k8s`
+render) and `core-client` (1 node, the drill and test Job), both
+n4-standard-2 Spot, 0 to `max_nodes` (core#379). It still runs its CI Jobs on
+`pool-aw-ci`. Its `gke-test-core` deployer is one account: `core` is a row of
+`pools.yaml`, so it is no longer in `local.ci_only_repos`.
 
 ## Add a repository
 
@@ -660,7 +672,7 @@ with no real data, and every repository belongs to the same owner, so
 repositories are not isolated from each other beyond namespaces and pools.
 
 A repository that has no pool and runs only ci-on-gke Jobs on `pool-aw-ci`
-(today `som` and `core`) is listed in `local.ci_only_repos` in
+(today `som`) is listed in `local.ci_only_repos` in
 `infra/gke-test/main.tf`. It gets the same `gke-test-<repo>` service account,
 Workload Identity binding, and `cluster-admin` binding as a repository with
 a pool. `aw` has none, because it has no service to test on the cluster.
