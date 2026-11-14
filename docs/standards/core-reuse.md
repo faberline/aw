@@ -5,7 +5,7 @@ organization. Every Rust repository uses a `core` crate when one does the job.
 A repository does not write its own copy.
 
 Status: **active standard S4, 2026-10-15**. The checker is
-`aw standards check`. It is on `aw` main. See the
+`aw standards check`. It is in the Rust `aw` since version 0.7.34. See the
 [definition](README.md#what-a-standard-is).
 
 ## Rules
@@ -77,7 +77,10 @@ aw standards check --core ~/faberlines/core --repo ~/faberlines/keep
 
 `--repo` repeats. `--core` defaults to a `core` folder next to the first
 repository. `--format json` prints a `core-reuse-report/1` document. The exit
-code is 0 for pass, 1 for a finding, and 2 for a usage error.
+code is 0 for pass, 1 for a finding, and 2 for a usage error (a folder that
+is not a git checkout, or a `core` checkout without a `vX.Y.Z` tag). CR1 to
+CR8 all run; no rule is left unchecked. The default output is text, one line
+per finding.
 
 The checker reads only tracked `Cargo.toml` and `build.rs` files. It skips
 `vendor/`, `fixtures/`, `testdata/`, and `target/`. The current release is the

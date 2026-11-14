@@ -6,14 +6,16 @@ use std::process::ExitCode;
 use crate::application::ci::CiServices;
 use crate::application::release::ReleaseServices;
 use crate::application::run::RunServices;
+use crate::application::standards::{RepoTarget, StandardsServices};
 use crate::application::work::Services;
 use crate::domain::ci::ports::{BranchRules, CiFiles};
 use crate::infrastructure::ci::files::origin_repo;
 use crate::infrastructure::ci::{GhBranchRules, GitHubFiles, LocalFiles};
 use crate::infrastructure::release::{GhRelease, YamlWorkflows};
 use crate::infrastructure::run::LedgerFile;
+use crate::infrastructure::standards::{LocalCore, LocalRepo, is_checkout};
 use crate::infrastructure::work::{GhCli, GitCli, SystemClock};
-use crate::interfaces::work::cli::{self, CiTarget, Exit, ReleaseCall};
+use crate::interfaces::work::cli::{self, CiTarget, Exit, ReleaseCall, StandardsTarget};
 
 pub fn run() -> ExitCode {
     let parsed = match cli::parse(std::env::args_os()) {
@@ -22,6 +24,9 @@ pub fn run() -> ExitCode {
     };
     if let Some(target) = parsed.ci_target() {
         return exit_code(ci_check(target));
+    }
+    if let Some(target) = parsed.standards_target() {
+        return exit_code(standards_check(target));
     }
     if let Some((repo, call)) = parsed.release_call() {
         return exit_code(release_gate(repo, &call));
@@ -67,6 +72,48 @@ fn ci_check(target: &CiTarget) -> Exit {
         files: files.as_ref(),
         rules: rules.as_ref().map(|r| r as &dyn BranchRules),
     })
+}
+
+/// `aw standards check`: the repositories of `--repo` (default `.`) against
+/// the `core` checkout of `--core` (default: `core` next to the first one).
+fn standards_check(target: &StandardsTarget) -> Exit {
+    let dirs = if target.repo.is_empty() {
+        vec![PathBuf::from(".")]
+    } else {
+        target.repo.clone()
+    };
+    let core_dir = target.core.clone().unwrap_or_else(|| {
+        let first = std::fs::canonicalize(&dirs[0]).unwrap_or_else(|_| dirs[0].clone());
+        first
+            .parent()
+            .map_or_else(|| PathBuf::from("core"), |p| p.join("core"))
+    });
+    for dir in dirs.iter().chain(std::iter::once(&core_dir)) {
+        if !is_checkout(dir) {
+            eprintln!("aw: {} is not a git checkout", dir.display());
+            return Exit::Nothing;
+        }
+    }
+    let core_id = std::fs::canonicalize(&core_dir).ok();
+    let files: Vec<LocalRepo> = dirs.iter().map(LocalRepo::new).collect();
+    let repos = dirs
+        .iter()
+        .zip(&files)
+        .map(|(dir, files)| RepoTarget {
+            name: dir.display().to_string(),
+            is_core: core_id.is_some() && std::fs::canonicalize(dir).ok() == core_id,
+            files,
+        })
+        .collect();
+    let core = LocalCore::new(&core_dir);
+    cli::run_standards(
+        StandardsServices {
+            core: &core,
+            core_name: core_dir.display().to_string(),
+            repos,
+        },
+        target.format,
+    )
 }
 
 /// The milestone release gate, for `--repo` or the `origin` of the current
