@@ -222,6 +222,21 @@ of `aw.toml` and the required status checks of the default-branch ruleset.
 Each check `CI1`–`CI11` is `pass`, `fail`, `excepted` or `skipped`. It exits 1
 when a check fails.
 
+## Standards check
+
+`aw standards check` checks local checkouts against the
+[core reuse standard](docs/standards/core-reuse.md) (S4, rules `CR0`–`CR8`).
+It reads only tracked `Cargo.toml` and `build.rs` files.
+
+```bash
+aw standards check                                    # the current checkout; core in ../core
+aw standards check --core ~/faberlines/core --repo ~/faberlines/keep
+aw standards check --repo ../keep --repo ../tape --format json
+```
+
+It exits 0 for a pass, 1 for a finding and 2 for a usage error.
+`[[standards.core_reuse.exception]]` entries of `aw.toml` waive one check.
+
 ## Milestone release gate
 
 Three commands decide when a milestone gets a release tag. They read one

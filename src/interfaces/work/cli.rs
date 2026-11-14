@@ -11,6 +11,7 @@ use serde::Serialize;
 use crate::application::ci::{self, CiServices};
 use crate::application::release::{self, Advanced, ReleaseServices};
 use crate::application::run::{Client, Event, RunServices};
+use crate::application::standards::{self, StandardsServices};
 use crate::application::work::{self, ClaimOutcome, Outcome, Services};
 use crate::domain::work::stage::Stage;
 use crate::interfaces::run::commands;
@@ -28,6 +29,7 @@ use crate::interfaces::run::commands;
         aw hook    records a worker run start or end from a client hook\n\
         aw runs    lists the recent worker runs\n\
         aw ci check checks ci.yml and the ruleset against docs/standards/ci.md\n\
+        aw standards check checks Cargo.toml files against docs/standards/core-reuse.md\n\
         aw release-status    assesses a milestone release; it only reads\n\
         aw release-advance   creates the next release tag when the assessment did not change\n\
         aw release-preflight proves a tag inside its own workflow run; it only reads\n\n\
@@ -134,6 +136,11 @@ enum Command {
         #[command(subcommand)]
         command: CiCommand,
     },
+    /// Check repositories against the shared standards of docs/standards/.
+    Standards {
+        #[command(subcommand)]
+        command: StandardsCommand,
+    },
     /// Assess a milestone release: the state, the one next action and the
     /// fingerprint of the inputs. It only reads.
     ReleaseStatus {
@@ -222,6 +229,37 @@ pub struct CiTarget {
     /// Do not read the ruleset; its check is skipped.
     #[arg(long)]
     pub no_ruleset: bool,
+}
+
+#[derive(Subcommand)]
+enum StandardsCommand {
+    /// Check the core-reuse standard (docs/standards/core-reuse.md, CR0 to
+    /// CR8) on the tracked Cargo.toml and build.rs files of local checkouts.
+    /// Exit codes: 0 pass, 1 a finding, 2 a usage error.
+    Check(StandardsTarget),
+}
+
+/// Where `aw standards check` reads from.
+#[derive(Args, Clone, Debug, Default)]
+pub struct StandardsTarget {
+    /// A repository checkout. Repeat it for more. Default: `.`.
+    #[arg(long, value_name = "DIR")]
+    pub repo: Vec<PathBuf>,
+    /// The `faberline/core` checkout. Default: the `core` folder next to
+    /// the first repository.
+    #[arg(long, value_name = "DIR")]
+    pub core: Option<PathBuf>,
+    /// `text` prints one line per finding; `json` prints a
+    /// `core-reuse-report/1` document.
+    #[arg(long, value_enum, default_value_t = ReportFormat::Text)]
+    pub format: ReportFormat,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum ReportFormat {
+    #[default]
+    Text,
+    Json,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -325,6 +363,16 @@ impl Cli {
         }
     }
 
+    /// The target of `aw standards check`, if that is the command.
+    pub fn standards_target(&self) -> Option<&StandardsTarget> {
+        match &self.command {
+            Command::Standards {
+                command: StandardsCommand::Check(target),
+            } => Some(target),
+            _ => None,
+        }
+    }
+
     /// The `--repo` and the call of a release gate command, if that is the
     /// command. The composition root builds the adapters and calls
     /// [`run_release`].
@@ -417,6 +465,34 @@ pub fn run_ci(services: CiServices<'_>) -> Exit {
         Err(err) => {
             eprintln!("aw: {err:#}");
             Exit::Failed
+        }
+    }
+}
+
+/// Run `aw standards check`: print the report; exit 1 when a repository
+/// has a finding and 2 when a checkout cannot be read.
+pub fn run_standards(services: StandardsServices<'_>, format: ReportFormat) -> Exit {
+    let result = standards::check(services).map_err(anyhow::Error::from);
+    let report = match result {
+        Ok(report) => report,
+        Err(err) => {
+            eprintln!("aw: {err:#}");
+            return Exit::Nothing;
+        }
+    };
+    let printed = match format {
+        ReportFormat::Json => print(&report),
+        ReportFormat::Text => {
+            println!("{}", standards::render(&report));
+            Ok(())
+        }
+    };
+    match printed {
+        Ok(()) if report.ok => Exit::Ok,
+        Ok(()) => Exit::Failed,
+        Err(err) => {
+            eprintln!("aw: {err:#}");
+            Exit::Nothing
         }
     }
 }
@@ -517,6 +593,9 @@ fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit
         }
         Command::Ci { .. } => {
             anyhow::bail!("`aw ci` needs the CI adapters; the composition root runs it")
+        }
+        Command::Standards { .. } => {
+            anyhow::bail!("`aw standards` needs its adapters; the composition root runs it")
         }
         Command::ReleaseStatus { .. }
         | Command::ReleaseAdvance { .. }

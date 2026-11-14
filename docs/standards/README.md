@@ -53,8 +53,8 @@ A candidate becomes active when its checker is on `aw` main.
 **Most checkers are not available now.** On 2026-11-06 `aw` became a Rust
 issue CLI and the Python engine was removed, with `scripts/meta/` and every
 `aw standards` command in the table. The rules still apply; check them by
-hand until a checker is ported to the Rust `aw`. `aw ci check` (S7) is the
-first checker in the Rust `aw`.
+hand until a checker is ported to the Rust `aw`. Two checkers are in the Rust
+`aw` now: `aw ci check` (S7) and `aw standards check` (S4, since `aw` 0.7.34).
 For DEV-PIPELINE-1, each consumer also needs its own verified adoption evidence.
 This specification covers ordinary PR development only. Release pipelines
 will be defined separately.
