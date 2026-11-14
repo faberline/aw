@@ -36,6 +36,8 @@ One exception: G21 (below) lets you execute a label-only desk decision.
 The routine prompt must list the G21 label writes; without them, G21 does not run.
 Another exception: G28 (below) lets you add three labels to a product issue that you open for a red `main`.
 The routine prompt must list the G28 label writes; without them, G28 does not run.
+Another exception: G33 (below) lets you answer a blocked test issue of the known class "core v0.5.0 leader no-op" and remove `blocked`.
+The routine prompt must list the G21 label writes for it; without them, G33 does not run, and the item goes to the desk.
 G25 (ghost runs) and G27 (the CI queue tracker) do not add writes. G27 only adds comments on faberline/aw#372.
 
 This cloud session blocks GitHub GraphQL.
@@ -114,6 +116,7 @@ Look only at these:
 - k. Issues whose last aw signal is `blocked` and asks a person a question, with no open `decision` issue that links them (G20, below).
 - l. Queued runs with zero jobs for more than 24 hours (ghost runs, G25, below).
   List them only. A ghost run is not a problem.
+- m. Issues with a `stage:*` label and no `blocked` label that nobody touched for more than 2 hours (pickup age, G34, below).
 
 ### 5. Find root causes before you act
 
@@ -273,6 +276,7 @@ Write it in Traditional Chinese (Taiwan):
   Each bullet has: `緊急` when urgent; what it is; since when; what it blocks, with the chain; who it waits for (使用者, 中控, a routine, or another repository); the faberline/aw issue link.
 - `## 規格卡住` (G31): each open issue whose last signal is `stage=spec outcome=blocked`, one line each: the issue link, the age of the signal (from `date -u`, in hours or days), `split` or `Decision`, and the link of the open decision item. Write `none` when there are none.
 - `## 已解除但沒人接手`.
+- `## 排隊太久` (G34): each issue with a `stage:*` label, without `blocked`, not touched for more than 2 hours, one line each. Write `none` when there are none.
 - `## 這一輪做了什麼`.
   Each write of this run, with its link.
 
@@ -1026,3 +1030,87 @@ Open a new issue only for a different cause.
 Its title names the cause, and its body says why the queue rule (G23) does not cover it.
 
 Example failure: faberline/aw#377 (kit) opened a second issue for this cause. It was closed into faberline/aw#372.
+
+### One cause, one decision (G32)
+
+A new `blocked` signal can have a different cause from the open decision that you want to add it to.
+Do not append it there.
+A `decision` issue is about one cause.
+Its title, its facts and its `執行清單` name that cause and its issues.
+An item about another cause hides in a thread that the desk reads for something else.
+
+Before you add an item to an open `decision(<repo>)` issue (step 6, G20, G31), do this:
+
+1. Read the title and the facts of that open decision.
+   Find the issue or the cause that it is about.
+2. Compare it with the cause of the new signal.
+   Write the cause of the new signal in one line.
+3. When the cause is the same, add the item there as a comment with the full `執行清單`.
+4. When the cause is different, open a new `decision(<repo>)` issue for it.
+   Several signals of this run that share the same new cause go in the one new issue.
+   Do not open a second issue for a cause that already has an open decision (step 6, G15).
+
+Another issue of the same repository is not the same cause.
+Another repository is not the same cause.
+Two issues have the same cause only when the same fact explains both blocked signals.
+
+Example failure: on 2026-11-14 a relay#187 item was appended to faberline/aw#381.
+That decision is about relay#30.
+relay#187 has another cause and needed its own decision.
+
+### Precedent class: core v0.5.0 leader no-op (G33)
+
+core v0.5.0 makes a new leader append a no-op entry to the log (core `docs/operations/release-notes-0.5.0/raft.md`).
+A test that expects the old index values then fails.
+This is a known class.
+The desk answered it twice: faberline/aw#415 and faberline/aw#418.
+
+When a stage run reports `blocked` on a test failure, apply this class only when all of these are true:
+
+1. The test fails only because the new leader appends a no-op entry.
+   The failing assertions are index values (log index, commit index, match index and the like), and each observed value is higher by the no-op.
+2. The fix is only to change the expected index values, with a one-line comment that names the no-op.
+3. The assertions on engine behavior stay as they are.
+   No test is deleted, skipped, ignored or loosened.
+   No threshold, timeout or test structure changes.
+4. You verified the observed values from the test output of the stage run: read the failed job log (G14) and write each expected value, each observed value and the line that shows it.
+   Include the no-op that a new leader writes before the next publish.
+   Example failure: the first desk answer on faberline/aw#418 missed it, and the expected values were wrong by one.
+   Do not copy the values from the signal text without reading the log.
+
+When all four are true, you may answer and remove `blocked` yourself, in the same pass, under the limits of G21:
+re-read the labels and the last signal first (G19); the write is a comment and the removal of `blocked` (and a `stage:*` label when the issue has none, G4); then do the claim check (G4).
+The comment gives the expected value for each assertion, the observed values with the log line, the link of the stage run, and the precedent (faberline/aw#415, faberline/aw#418).
+No `decision` issue is needed.
+Add the write to the status board under `這一輪做了什麼`, with the link.
+
+Anything wider goes to the desk as before (G20): a change of test structure, a threshold, a deleted or skipped test, a change of an engine assertion, or a value that you cannot verify from the log.
+When one value of the signal does not match the log, the whole item goes to the desk.
+Do not apply this class to a test that fails for another cause, even when it looks like it.
+
+### Pickup age on the board (G34)
+
+A claimable issue can wait for a stage routine and nobody sees how long.
+G8 checks the stage as a whole. This rule checks each issue.
+
+For each open issue in `<target>` that has a `stage:*` label and no `blocked` label, do this:
+
+1. Read the time of the last touch: the newest of its last comment, its last label change and its last commit on its claimed branch.
+   Do not use `updated_at` alone (G8).
+   Get the time now with `date -u` (G1).
+2. When it was not touched for more than 2 hours, list it on the board under `## 排隊太久`.
+   One line has: the issue link, the hours since the last touch, the stage, and the queue depth of that stage.
+   The queue depth is the count of open issues of `<target>` with the same `stage:*` label and no `blocked` label, read in this pass (G19).
+3. Say whether the routine of that stage produced anything in the last 2 hours: a pull request, a comment or an `aw:signal` of that stage in `<target>`.
+   Write `routine 有產出` or `routine 沒產出`.
+
+When the routine of that stage produced nothing in 2 hours, a board line is not enough.
+This is a `pipeline` report to the desk.
+Search the open faberline/aw issues with the label `pipeline` for the stage and `<repo>` first (step 6).
+When one is open, add one comment with the new numbers.
+When none is open, create one `pipeline(<repo>)` issue in the same pass.
+The issue has: the stage, the issues in the list with the hours, the queue depth, the time of the last output of the routine, and the claim check of each issue (G4, G6, G30).
+Check G8 first: when every issue waits for an open prerequisite, this is not an alarm and not a pipeline issue.
+
+Do not claim issues, do not change labels, and do not run the stage.
+Do not use the 2 hours as a reason to rerun anything.
