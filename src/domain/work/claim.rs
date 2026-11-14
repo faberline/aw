@@ -65,7 +65,7 @@ impl Claim {
 }
 
 /// The claim comment. Its first line is machine readable:
-/// `<!-- aw:claim stage=tdd agent=agy branch=agy/issue-7 pr=- at=1800000000 -->`.
+/// `<!-- aw:claim stage=tdd agent=bot branch=bot/issue-7 pr=- at=1800000000 -->`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClaimMark {
     pub agent: String,
@@ -138,9 +138,9 @@ mod tests {
 
     fn mark(pr: Option<u64>) -> ClaimMark {
         ClaimMark {
-            agent: "agy".into(),
+            agent: "bot".into(),
             stage: Stage::Tdd,
-            branch: "agy/issue-7".into(),
+            branch: "bot/issue-7".into(),
             pr,
             claimed_at: 1_800_000_000,
         }
@@ -159,7 +159,7 @@ mod tests {
         let text = mark(Some(51)).render();
         assert_eq!(
             text.lines().next().unwrap(),
-            "<!-- aw:claim stage=tdd agent=agy branch=agy/issue-7 pr=51 at=1800000000 -->"
+            "<!-- aw:claim stage=tdd agent=bot branch=bot/issue-7 pr=51 at=1800000000 -->"
         );
         assert!(text.contains("**claimed**"));
     }
@@ -168,11 +168,11 @@ mod tests {
     fn other_comments_are_not_claims() {
         assert_eq!(ClaimMark::parse("hello"), None);
         assert_eq!(
-            ClaimMark::parse("<!-- aw:signal stage=tdd agent=agy outcome=ready -->"),
+            ClaimMark::parse("<!-- aw:signal stage=tdd agent=bot outcome=ready -->"),
             None
         );
         assert_eq!(
-            ClaimMark::parse("<!-- aw:claim stage=tdd agent=agy -->"),
+            ClaimMark::parse("<!-- aw:claim stage=tdd agent=bot -->"),
             None
         );
     }
@@ -185,13 +185,13 @@ mod tests {
             created_at: at.into(),
         };
         let mut other = mark(None);
-        other.agent = "codex".into();
+        other.agent = "other".into();
         let comments = vec![
             comment(1, mark(None), "2026-01-01T00:00:00Z"),
             comment(2, mark(Some(5)), "2026-01-02T00:00:00Z"),
             comment(3, other, "2026-01-03T00:00:00Z"),
         ];
-        assert_eq!(latest_mark(&comments, "agy").map(|(id, _)| id), Some(2));
+        assert_eq!(latest_mark(&comments, "bot").map(|(id, _)| id), Some(2));
         assert_eq!(latest_mark(&comments, "claude"), None);
     }
 }

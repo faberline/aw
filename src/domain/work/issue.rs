@@ -26,7 +26,7 @@ pub fn agent_label(agent: &str) -> String {
     format!("agent:{agent}")
 }
 
-/// Agent ids are short lowercase names such as `claude` or `codex`.
+/// Agent ids are short lowercase names such as `claude`.
 pub fn valid_agent(agent: &str) -> bool {
     !agent.is_empty()
         && agent

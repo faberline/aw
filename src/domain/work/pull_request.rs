@@ -113,9 +113,9 @@ mod tests {
 
     #[test]
     fn matches_by_branch_or_closes_line() {
-        assert!(pr("codex/issue-7", "").is_for(7));
+        assert!(pr("other/issue-7", "").is_for(7));
         assert!(pr("feature", "\nCloses #7\n\nmore").is_for(7));
-        assert!(!pr("codex/issue-17", "Closes #17").is_for(7));
+        assert!(!pr("other/issue-17", "Closes #17").is_for(7));
         assert!(!pr("feature", "text\nCloses #7").is_for(7));
     }
 
@@ -124,8 +124,8 @@ mod tests {
         assert_eq!(rework_branch("issue/7"), "issue/7-r2");
         assert_eq!(rework_branch("issue/7-r2"), "issue/7-r3");
         assert_eq!(rework_branch("claude/issue-7-r9"), "claude/issue-7-r10");
-        assert!(pr("codex/issue-7-r2", "").is_for(7));
-        assert!(!pr("codex/issue-17-r2", "").is_for(7));
+        assert!(pr("other/issue-7-r2", "").is_for(7));
+        assert!(!pr("other/issue-17-r2", "").is_for(7));
     }
 
     #[test]

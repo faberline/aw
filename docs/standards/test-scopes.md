@@ -42,9 +42,8 @@ run ([rust-tests.md](rust-tests.md#four-kinds-of-test)).
 - **Rule.** Push only when scope 1 passed on what you push.
 - **Who enforces it.** The agent's hook, not git. Before the agent runs
   `git push`, its tool hook runs scope 1 and blocks the push when a test
-  fails: a `PreToolUse` hook on `Bash` in Claude Code, and the same kind of
-  hook in Codex. The hook config is in the repository, so every agent session
-  gets it. Do not use a git `pre-push` hook: it runs for every person and
+  fails: a `PreToolUse` hook on `Bash` in Claude Code. The hook config is in
+  the repository, so every agent session gets it. Do not use a git `pre-push` hook: it runs for every person and
   tool, and `git push --no-verify` skips it anyway. A person who pushes by
   hand runs scope 1 by hand; scope 2 catches what it misses.
 

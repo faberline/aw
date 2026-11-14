@@ -265,16 +265,12 @@ pub enum ReportFormat {
 #[derive(Clone, Copy, ValueEnum)]
 enum ClientArg {
     Claude,
-    Codex,
-    Agy,
 }
 
 impl From<ClientArg> for Client {
     fn from(c: ClientArg) -> Self {
         match c {
             ClientArg::Claude => Client::Claude,
-            ClientArg::Codex => Client::Codex,
-            ClientArg::Agy => Client::Agy,
         }
     }
 }

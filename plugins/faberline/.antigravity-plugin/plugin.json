@@ -1,4 +1,0 @@
-{
-  "name": "faberline",
-  "description": "Shared faberline skills: commit, rebase, push and pull-request flow. Issue work runs through the `aw` CLI."
-}
