@@ -659,6 +659,14 @@ with `bind` and `escalate`, which equal `cluster-admin`. This is a test cluster
 with no real data, and every repository belongs to the same owner, so
 repositories are not isolated from each other beyond namespaces and pools.
 
+A repository that has no pool and runs only ci-on-gke Jobs on `pool-aw-ci`
+(today `som` and `core`) is listed in `local.ci_only_repos` in
+`infra/gke-test/main.tf`. It gets the same `gke-test-<repo>` service account,
+Workload Identity binding, and `cluster-admin` binding as a repository with
+a pool. `aw` has none, because it has no service to test on the cluster.
+No repository variable or secret is needed: `ci-stage.yml` and `gke-test.yml`
+hard-code the provider and build the service account name from the repository.
+
 ## Temporary resources
 
 ### Bucket `tape-restore-drill-20261112`

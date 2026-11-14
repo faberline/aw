@@ -34,10 +34,16 @@ locals {
   # same list in HYPERDISK_ONLY_RE of scripts/gke-test/run.sh.
   hyperdisk_only_re = "^(n4|n4a|n4d|c4|c4a|c4d)-"
 
+  # Repositories that run only ci-on-gke Jobs (on pool-aw-ci, see ci.tf) and
+  # have no pool of their own in pools.yaml. They get the same deployer as a
+  # repository with a pool. `aw` is not here on purpose (user decision,
+  # 2026-11-14).
+  ci_only_repos = ["som", "core"]
+
   # Every identity that signs in from GitHub Actions: one per repository in
-  # pools.yaml, plus the reaper. Keys are GitHub repository names under
-  # var.github_owner.
-  deployers = toset([for p in values(local.pools) : p.repo])
+  # pools.yaml and in ci_only_repos, plus the reaper. Keys are GitHub
+  # repository names under var.github_owner.
+  deployers = toset(concat([for p in values(local.pools) : p.repo], local.ci_only_repos))
 }
 
 # --- Cluster ------------------------------------------------------------------
