@@ -38,7 +38,7 @@ locals {
   # have no pool of their own in pools.yaml. They get the same deployer as a
   # repository with a pool. `aw` is not here on purpose (user decision,
   # 2026-11-14).
-  ci_only_repos = ["som", "core"]
+  ci_only_repos = ["som"]
 
   # Every identity that signs in from GitHub Actions: one per repository in
   # pools.yaml and in ci_only_repos, plus the reaper. Keys are GitHub

@@ -137,3 +137,16 @@ pools:
     machine_type: n4-standard-2
     spot: true
     max_nodes: 1
+  # core's server pool: the service-k8s render runs 3 replicas, one pod per
+  # node (required anti-affinity), so there is no spare node (core#379).
+  - repo: core
+    pool: core-server
+    machine_type: n4-standard-2
+    spot: true
+    max_nodes: 3
+  # The drill and e2e test Job (core#379).
+  - repo: core
+    pool: core-client
+    machine_type: n4-standard-2
+    spot: true
+    max_nodes: 1
