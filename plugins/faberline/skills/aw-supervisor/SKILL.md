@@ -34,6 +34,9 @@ Do not delete anything.
 When a write is not on the list, make a `decision` issue instead.
 One exception: G21 (below) lets you execute a label-only desk decision.
 The routine prompt must list the G21 label writes; without them, G21 does not run.
+Another exception: G28 (below) lets you add three labels to a product issue that you open for a red `main`.
+The routine prompt must list the G28 label writes; without them, G28 does not run.
+G25 (ghost runs) and G27 (the CI queue tracker) do not add writes. G27 only adds comments on faberline/aw#372.
 
 This cloud session blocks GitHub GraphQL.
 Do not use `gh issue`, `gh pr` or `gh repo`.
@@ -109,6 +112,8 @@ Look only at these:
 - i. Issues with `stage:tdd` and `blocked` whose last signal says the spec is incomplete (G16, below).
 - j. Issues with `stage:spec` and `blocked` whose last signal proposes a split, and no child exists (G17, below).
 - k. Issues whose last aw signal is `blocked` and asks a person a question, with no open `decision` issue that links them (G20, below).
+- l. Queued runs with zero jobs for more than 24 hours (ghost runs, G25, below).
+  List them only. A ghost run is not a problem.
 
 ### 5. Find root causes before you act
 
@@ -134,6 +139,8 @@ Then pick exactly one action for each root cause:
   Do not change labels.
 - **A real defect in `<target>` that no open issue covers.**
   Create one issue with the evidence and no labels.
+  One exception: a red `main` issue gets three labels under G28 (below).
+  Write the body from a file and read it back (G26).
 - **A defect in aw, the aw-worker skill, `aw ci check` or a shared CI standard.**
   Create a `pipeline` issue in faberline/aw.
   Use the title `pipeline(<repo>): <short>`.
@@ -255,10 +262,12 @@ An unchanged state is not a reason to skip it (G22, below).
 Find the open issue in faberline/aw with the label `status` and the exact title `status(<repo>)`.
 Create it when there is none.
 Replace its body (PATCH) with the current state.
+Write the body to a file and post it from that file (G26).
 Write it in Traditional Chinese (Taiwan):
 
 - `更新：<UTC time>` and `總結：正常`, `總結：異常` or `總結：排隊` (G23: slow CI queue, with the numbers).
 - `## CI 排隊` (G23): wall time, longest job, queued and in-progress runs, and the `behind` PR count.
+- `ghost runs` (G25): the ghost run ids, one line. Write `none` when there are none.
 - `## 根因`.
   One bullet for each root cause.
   Each bullet has: `緊急` when urgent; what it is; since when; what it blocks, with the chain; who it waits for (使用者, 中控, a routine, or another repository); the faberline/aw issue link.
@@ -679,9 +688,9 @@ The whole faberline organization shares 20 concurrent Actions jobs.
 Many runs that stay "queued" with zero jobs mean that the 20 slots are full.
 This is not a GitHub outage.
 A rerun adds to the queue and makes it longer: do not rerun.
-Add the evidence (run links, the repos that wait, the time) as one comment on the one open `pipeline` issue for it in faberline/aw (step 6).
-When none is open, write the evidence on the status board only.
-Do not open a new issue.
+Ghost runs (G25) are not counted here.
+Add the evidence (run links, the repos that wait, the time) to the one tracker, faberline/aw#372 (G27), only when the numbers changed.
+Do not open a new issue for this cause.
 
 Example failure: faberline/aw#316.
 
@@ -697,25 +706,29 @@ A long wall time with normal job times is this queue.
 Do this once in each pass, with one read for each item and no polling loop:
 
 1. Take the latest completed `ci` run on `main` and the oldest unfinished (`queued` or `in_progress`) `ci` run of `<target>`.
+   Skip ghost runs (G25): a ghost run is never the oldest unfinished run.
    Read the jobs of each run once (`gh api repos/<owner>/<repo>/actions/runs/<id>/jobs`).
-2. Count the `queued` and `in_progress` runs of `<target>` (one list read).
+2. Count the `queued` and `in_progress` runs of `<target>` (one list read), without the ghost runs (G25).
 3. Write on the board, under `## CI 排隊`: the run wall time (first `created_at` to last job `completed_at`, or to now for an unfinished run), the longest single job, and the two counts.
 4. When the wall time is more than 2 times the longest job, or a run has waited more than 60 minutes, the summary is `總結：排隊` with these numbers. It is never `總結：正常`.
    An other root cause can still make it `總結：異常`.
 5. Do not rerun a queued or slow run.
    When the wait matches the known cause, do not open a new `pipeline` issue.
-   Write the numbers of step 3 on the board, and link the open CI-load issues of `<target>`.
-   Examples: faberline/lumen#371 and faberline/core#309.
+   Write the numbers of step 3 on the board.
+   The one tracker of this cause is faberline/aw#372 (G27). Link it on the board.
+   Examples of CI-load issues: faberline/lumen#371 and faberline/core#309.
    Read the state of each cited issue first (G24). Do not cite a closed issue as active.
-   Open a `pipeline` issue only when one of these is true, and say which one on the board:
-   - There is evidence of a different cause. Examples: a run has zero jobs for more than 30 minutes, a runner error, or the wait stays after the CI-load issues are merged. G18 still applies to runs with zero jobs.
-   - No CI-load issue exists for `<target>`. Open one (label `pipeline`) and link it.
+   Open a `pipeline` issue only when a different cause exists, and say which one on the board:
+   - There is evidence of a different cause. Examples: a run has zero jobs for more than 30 minutes (ghost runs of G25 do not count), a runner error, or the wait stays after the CI-load issues are merged. G18 still applies to runs with zero jobs.
+   - aw#372 is closed or missing (G24). Do not open a new issue for the same cause. Open one `decision` issue that asks the desk to reopen aw#372 or to name another tracker.
 6. Also count the open PRs of `<target>` that are `behind` main and whose failed required check ran before the latest fix on `main`.
    Write the count and the two oldest PR numbers.
    Use the PR list you already read; read the check run time of a PR only when it is `behind` and has a failed check.
 
 Example failure: the lumen board (faberline/aw#256) of 2026-11-13 12:14Z said `正常`.
 Its `ci` runs took 60 to 128 minutes for 192 job-minutes of work (longest job 30 minutes), 23 runs were queued in the organization, and about 20 open PRs carried old failures and were `behind` main.
+
+Example failure: faberline/aw#377 (kit) opened a second issue for the same queue. It was closed into faberline/aw#372.
 
 ### Read the state of a cited issue (G24)
 
@@ -869,6 +882,26 @@ Do not retry more than once.
 
 Add each executed item to the status board under `這一輪做了什麼`, with the link.
 
+### Label a red-main issue you open (G28)
+
+Use this rule only when all of these are true:
+
+- the run opens an issue in `<target>` because the `ci` run on `main` is red;
+- the body has the failing required job, the run link and the failing step;
+- no open issue in `<target>` covers the failure (step 6).
+
+Then add these three labels to that new issue, in the same run: `stage:spec`, `agent:claude` and `p1`.
+Report the new issue on the status board under `這一輪做了什麼`, with its link.
+Do not open a `decision` issue for this.
+
+This rule has limits:
+
+- It applies only to an issue that this run created for a red `main`.
+- Do not add or change a `stage:*` or `agent:*` label on any other issue. G21 is the only other label change.
+- When the fix needs a choice between two options, open a `decision` issue as before (step 5).
+
+Example where the desk added only these three labels: faberline/aw#376 (defer#164). Another: faberline/aw#379 (defer#172).
+
 ### The status board is written in every run (G22)
 
 Step 10 says to write the status board in each run.
@@ -886,3 +919,59 @@ Say so in the final answer and write `異常`.
 Example failure: the som supervisor run of 2026-11-12 16:54Z ended with "Nothing has changed since the last board ... No new write is needed".
 It made no write.
 The board faberline/aw#253 stayed at `更新：2026-11-12T15:56Z`.
+
+### Ghost runs (G25)
+
+A ghost run is a workflow run that has all three of these:
+
+- its state is `queued`;
+- it has zero jobs (`total_count` of the jobs list is 0);
+- it was created more than 24 hours ago (`created_at`, compared with `date -u`).
+
+`gh run cancel` answers "Cannot cancel a workflow run that is completed".
+A force-cancel answers 409.
+A ghost run uses no job slot.
+
+For each ghost run:
+
+- Do not count it in the queued number (G18, G23).
+- Do not report it as a blocked queue or as the oldest unfinished run.
+- Do not try to cancel or delete it.
+- List its run id once on the status board under `ghost runs` (step 10).
+- Do not open an issue for it.
+
+Known examples: defer 43097629607; tape 43098636145 and 43097866510; core 43098026400.
+
+### Post the body from a file (G26)
+
+Write each issue or comment body to a file in this run.
+Post it with `gh api ... -F body=@<file>`.
+Use a capital `-F`. Lowercase `-f` does not read the file. It posts the path as the text.
+`gh issue` and `gh pr` are blocked in this session, so `gh api` is the only way to post.
+
+After each create or comment, read the body back:
+
+- for an issue: `gh api repos/<owner>/<repo>/issues/<n> --jq .body`;
+- for a comment: `gh api <comment API url> --jq .body`, using the URL that the create returned.
+
+The body must hold the real text.
+It must not be a path, and it must not start with `@`.
+When it is wrong, fix it in the same run (PATCH with `-F body=@<file>`).
+
+Example failure: faberline/aw#374 had a body that was only a file path.
+
+### One tracker for CI queue time (G27)
+
+The CI queue of the 20-job organization limit has one tracker: faberline/aw#372, titled `pipeline(org): ci runs queue for the 20-job organization limit`.
+
+For this cause, each supervisor does this:
+
+- Read the last comment of `<target>` on faberline/aw#372.
+- When the run id, wall time or longest job changed, add one comment with the new numbers.
+  When they did not change, add no comment.
+- Do not open a new `pipeline` issue for the same cause.
+
+Open a new issue only for a different cause.
+Its title names the cause, and its body says why the queue rule (G23) does not cover it.
+
+Example failure: faberline/aw#377 (kit) opened a second issue for this cause. It was closed into faberline/aw#372.
