@@ -4,7 +4,8 @@
 # account with cluster-admin (see local.deployers in main.tf). The CI pool
 # belongs to no single repository and needs no new deployer.
 #
-# Cost: Spot n4-standard-8, 0 to 2 nodes, 0 nodes while no CI Job runs. The
+# Cost: Spot n4-standard-2, 0 to 8 nodes (16 vCPU at most), 0 nodes while no
+# CI Job runs. The
 # pool, its VMs, and the bucket carry the label faberline-ci=aw-ci, so the
 # budget below counts only them.
 
@@ -24,7 +25,7 @@ resource "google_container_node_pool" "ci" {
 
   autoscaling {
     min_node_count  = 0
-    max_node_count  = 2
+    max_node_count  = 8
     location_policy = "ANY"
   }
   management {
@@ -35,9 +36,9 @@ resource "google_container_node_pool" "ci" {
     enable_private_nodes = true
   }
   node_config {
-    machine_type    = "n4-standard-8"
+    machine_type    = "n4-standard-2"
     spot            = true
-    disk_size_gb    = 100
+    disk_size_gb    = 50
     disk_type       = "hyperdisk-balanced"
     service_account = google_service_account.nodes.email
     oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]

@@ -78,7 +78,7 @@ tears down.
 ci-on-gke (aw#390) runs CI work as Kubernetes Jobs. It has its own resources,
 defined in `infra/gke-test/ci.tf`, not in `pools.yaml`:
 
-- Pool `pool-aw-ci`: n4-standard-8 Spot, 0 to 2 nodes, 100 GB Hyperdisk
+- Pool `pool-aw-ci`: n4-standard-2 Spot, 0 to 8 nodes, 50 GB Hyperdisk
   Balanced boot disk, label and taint `faberline.dev/pool=aw-ci`. It scales to
   0 on its own, like every other pool; the parker and the reaper act only on
   `system-pool`.
@@ -97,7 +97,7 @@ defined in `infra/gke-test/ci.tf`, not in `pools.yaml`:
 - Cost: pool, VMs and bucket carry the label `faberline-ci=aw-ci`. A separate
   budget alert of 1500 TWD a month counts only that label. The 3000 TWD budget
   of the project is unchanged.
-- Quota: two n4-standard-8 nodes need 16 vCPU. The quota CPUS_ALL_REGIONS
+- Quota: eight n4-standard-2 nodes need 16 vCPU. The quota CPUS_ALL_REGIONS
   (32, and the pools above already allow 60) needs to be 96 for this.
 
 ## Add a repository

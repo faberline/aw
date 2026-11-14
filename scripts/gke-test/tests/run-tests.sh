@@ -442,7 +442,7 @@ check "batch: the default pool is aw-ci, with its toleration" rendered \
 check "batch: a Job may use a pool of its repository" rendered \
   '.items[1].spec.template.spec.nodeSelector["faberline.dev/pool"] == "som-client"'
 check "batch: requests come from the manifest, defaults else" rendered \
-  '[.items[].spec.template.spec.containers[0].resources.requests] == [{cpu: "4", memory: "12Gi"}, {cpu: "2", memory: "6Gi"}]'
+  '[.items[].spec.template.spec.containers[0].resources.requests] == [{cpu: "4", memory: "12Gi"}, {cpu: "1500m", memory: "5Gi"}]'
 check "batch: env of the manifest reaches the work container" rendered \
   '.items[0].spec.template.spec.containers[0].env | any(.name == "RUST_BACKTRACE" and .value == "1")'
 check "batch: only the init container mounts the Secret" rendered \
