@@ -17,7 +17,7 @@ repository uses it yet. It is not a standard and has no checker; see the
 | Reusable workflow | `.github/workflows/ci-stage.yml` | See [The caller](#the-caller). |
 | Work Job image | `ghcr.io/faberline/ci-rust:<rust version>`, from `ci/rust/Dockerfile` | Rust, `rustfmt`, `clippy`, `llvm-tools`, sccache, kubectl, user 1000. |
 | Proof | `.github/workflows/ci-stage-proof.yml` and `.github/ci/proof-jobs.yaml` | Started by hand. |
-| Pool `aw-ci`, sccache bucket, identity | `infra/gke-test/` | A separate change. `ci-stage.yml` takes the bucket and the service account as inputs. |
+| Pool `aw-ci`, sccache bucket, identity | `infra/gke-test/ci.tf` | Applied. `ci-stage.yml` takes the bucket and the service account as inputs. |
 
 Not built yet. The text below describes the design for these parts:
 
@@ -267,7 +267,12 @@ than today. Two caches:
    compiler version in each cache key. The Kubernetes ServiceAccount `ci-job`
    of the batch namespace maps to one Google service account (input
    `gcp-service-account`) with object read and write on the bucket.
-   Objects older than 14 days are deleted by a lifecycle rule.
+   Objects older than 30 days are deleted by a lifecycle rule.
+   Open point: the Workload Identity binding in `infra/gke-test/ci.tf` is
+   for the fixed namespace `aw-ci`. A batch runs in its own namespace, so
+   the binding does not cover its `ci-job` yet, and sccache cannot write.
+   The binding must cover the batch namespaces before a repository sets
+   `gcp-service-account`.
 2. **Cargo registry cache.** A `tar.zst` of `~/.cargo/registry/index` and
    `~/.cargo/registry/cache`, stored in the same bucket under
    `<repo>/cargo-registry/<sha256 of Cargo.lock>`. A Job restores it when it
