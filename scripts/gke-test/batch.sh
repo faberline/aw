@@ -136,9 +136,9 @@ check_manifest() {
                 | if $p != $ci_pool and $pools[$p] != $repo
                     then "\($w): pool \($p) is not \($ci_pool) and not a pool of \($repo) in infra/gke-test/pools.yaml of aw"
                   else empty end),
-               (if (.resources.cpu? // "2" | tostring | test("^([0-9]+(\\.[0-9]+)?|[0-9]+m)$")) | not
-                  then "\($w): resources.cpu must be a number of CPUs, for example \"4\" or 500m" else empty end),
-               (if (.resources.memory? // "6Gi" | s | test("^[0-9]+(Mi|Gi)$")) | not
+               (if (.resources.cpu? // "1500m" | tostring | test("^([0-9]+(\\.[0-9]+)?|[0-9]+m)$")) | not
+                  then "\($w): resources.cpu must be a number of CPUs, for example \"2\" or 1500m" else empty end),
+               (if (.resources.memory? // "5Gi" | s | test("^[0-9]+(Mi|Gi)$")) | not
                   then "\($w): resources.memory must be <n>Mi or <n>Gi" else empty end),
                (if (.timeout | s | test("^[1-9][0-9]*m$")) | not
                   then "\($w): timeout is required, as <n>m" else empty end),
@@ -262,8 +262,8 @@ jq --arg stage "$STAGE" --arg ns "$NAMESPACE" --arg repo "$REPO" --arg ci_pool "
                     + ((.env // {}) | to_entries | map({ name: .key, value: (.value | tostring) }))
                   ),
                   resources: { requests: {
-                    cpu: (.resources.cpu // "2" | tostring),
-                    memory: (.resources.memory // "6Gi")
+                    cpu: (.resources.cpu // "1500m" | tostring),
+                    memory: (.resources.memory // "5Gi")
                   } },
                   securityContext: $locked,
                   volumeMounts: [ { name: "work", mountPath: "/work" } ]
