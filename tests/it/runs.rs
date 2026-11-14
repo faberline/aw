@@ -308,9 +308,10 @@ fn the_hook_command_exits_0_on_bad_input_and_prints_nothing() {
     assert!(empty.stdout.is_empty());
     assert!(!dir.join("runs.jsonl").exists());
 
-    // `claude` is the only client.
+    // `claude` is the only client. The command fails before it reads stdin,
+    // so the test writes nothing to it: a write could meet a closed pipe.
     for old in ["codex", "agy"] {
-        let out = aw(&dir, &["hook", old, "start"], "{}");
+        let out = aw(&dir, &["hook", old, "start"], "");
         assert_eq!(out.status.code(), Some(1), "aw hook {old}");
     }
     let _ = std::fs::remove_dir_all(&dir);
