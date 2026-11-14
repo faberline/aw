@@ -902,6 +902,20 @@ This rule has limits:
 
 Example where the desk added only these three labels: faberline/aw#376 (defer#164). Another: faberline/aw#379 (defer#172).
 
+### Milestone of a red-main issue (G29)
+
+An open issue that tracks a red `main` in `<target>` and has no milestone gets the current in-progress milestone of `<target>` (the open milestone with the lowest version that has open issues).
+Report the change on the status board under `這一輪做了什麼`, with the link.
+Do not change an issue that already has a milestone.
+The routine prompt must allow this milestone write; without it, only name the missing milestone on the board.
+
+### A claimable issue that stays unclaimed (G30)
+
+An issue is claimable when it is open, has a `stage:*` label and `agent:claude`, and has no `blocked` label.
+When a claimable issue stays unclaimed for two rounds in a row, the board names the cause on one line.
+Pick one: claim order (higher issues come first), label (missing or wrong), lock (another claim), or routine not run.
+Write `cause unknown` only when none of the four fits.
+
 ### The status board is written in every run (G22)
 
 Step 10 says to write the status board in each run.

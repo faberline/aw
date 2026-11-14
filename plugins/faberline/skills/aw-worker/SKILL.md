@@ -135,8 +135,9 @@ An open issue in the flow keeps exactly one `stage:` label and the label
    - Otherwise keep `blocked` and comment one question for a person.
 3. Triage at most three issues: open, no `stage:` label, no `blocked`
    label and no open sub-issues. Take them in claim order: `p0` first,
-   then the label `ci-fix`, then the label `bar`, then the lowest milestone version, then
-   the `pN` label, then the oldest.
+   then the label `ci-fix`, then the label `bar`, then `p1` (with or without a milestone), then the
+   lowest milestone version (compared as semver), then the `pN` label, then
+   the oldest.
    Always add `agent:claude`.
    - Replace a legacy `priority:pN` label with `pN`, or add `p2` when there
      is none. Use only `pN` labels.
