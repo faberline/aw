@@ -73,6 +73,26 @@ tears down.
   PVCs consume additional capacity. Check Hyperdisk capacity, IOPS,
   throughput and CPU quotas before applying or running tests.
 
+## The CI pool
+
+ci-on-gke (aw#390) runs CI work as Kubernetes Jobs. It has its own resources,
+defined in `infra/gke-test/ci.tf`, not in `pools.yaml`:
+
+- Pool `pool-aw-ci`: n4-standard-8 Spot, 0 to 2 nodes, 100 GB Hyperdisk
+  Balanced boot disk, label and taint `faberline.dev/pool=aw-ci`. It scales to
+  0 on its own, like every other pool; the parker and the reaper act only on
+  `system-pool`.
+- Namespace `aw-ci`, Kubernetes service account `ci-job` (no RBAC role),
+  bound by Workload Identity to the Google service account
+  `gke-ci-job@axiom-502607.iam.gserviceaccount.com`. That account can read
+  and write only the bucket `axiom-502607-aw-ci-sccache` (sccache, asia-east1,
+  objects deleted after 30 days, not public).
+- Cost: pool, VMs and bucket carry the label `faberline-ci=aw-ci`. A separate
+  budget alert of 1500 TWD a month counts only that label. The 3000 TWD budget
+  of the project is unchanged.
+- Quota: two n4-standard-8 nodes need 16 vCPU. The quota CPUS_ALL_REGIONS
+  (32, and the pools above already allow 60) needs to be 96 for this.
+
 ## Add a repository
 
 1. **Pools.** Open a pull request on `aw` that adds rows to
@@ -406,7 +426,8 @@ A lane lets calls of one repository run at the same time. Set the workflow's
   lanes that run at the same time, in every pool that the overlay and the
   test Job use.
 - All repositories share the project quota (CPUS_ALL_REGIONS 32, E2_CPUS 24
-  in asia-east1). Nodes are private and connect out through one Cloud NAT, so
+  in asia-east1; a request to raise CPUS_ALL_REGIONS to 96 is in progress for
+  ci-on-gke, see [The CI pool](#the-ci-pool)). Nodes are private and connect out through one Cloud NAT, so
   the external-IP quota does not limit them. A node over the quota
   stays Pending until the call times out. Keep the lanes of one matrix, plus
   the other repositories that test at that time, inside that limit.
