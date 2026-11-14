@@ -84,14 +84,18 @@ jobs:
       CI_GCP_SERVICE_ACCOUNT: ${{ inputs.gcp-service-account }}
       GHCR_USER: ${{ github.actor }}
     steps:
-      # The work Jobs run the code of the commit in the cluster. Code from a
-      # fork must never get there. A public repository can get a pull request
-      # from a fork, so it may start a batch only by hand.
+      # The work Jobs run the code of the commit in the cluster. Code from
+      # outside the repository must never get there. Code reaches the cluster
+      # only from a branch of this repository, which needs write access: a
+      # pull request from the same repository, a push to the default branch,
+      # or a manual run. A fork never runs, in a public repository or in a
+      # private one. This job never uses pull_request_target.
       - name: Refuse a run that may carry code from outside
         env:
           EVENT: ${{ github.event_name }}
-          PRIVATE: ${{ github.event.repository.private }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           case "$EVENT" in
             pull_request | push | workflow_dispatch) ;;
@@ -100,8 +104,8 @@ jobs:
           if [[ "$EVENT" == pull_request && "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]]; then
             echo "::error::a pull request from a fork ($HEAD_REPOSITORY) never runs in the cluster"; exit 1
           fi
-          if [[ "$PRIVATE" != true && "$EVENT" != workflow_dispatch ]]; then
-            echo "::error::a public repository may start a batch only with workflow_dispatch"; exit 1
+          if [[ "$EVENT" == push && ( -z "$DEFAULT_BRANCH" || "$REF" != "refs/heads/$DEFAULT_BRANCH" ) ]]; then
+            echo "::error::a push starts a batch only on the default branch; got $REF"; exit 1
           fi
 
       # Only the manifest. The work Jobs fetch the source themselves.

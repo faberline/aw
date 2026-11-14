@@ -561,8 +561,37 @@ fi
 
 # ci-stage.yml: the guard comes first, and the teardown always runs.
 CS="$GKE/../../.github/workflows/ci-stage.yml"
-check "ci-stage: the first step refuses forks and public repositories" test \
-  "$(yq '.jobs.batch.steps[0].run | (contains("from a fork") and contains("public repository"))' "$CS")" = true
+check "ci-stage: the first step refuses forks and other pushes, and has no private rule" test \
+  "$(yq '.jobs.batch.steps[0].run | (contains("from a fork") and contains("default branch") and (contains("PRIVATE") | not) and (contains("pull_request_target") | not))' "$CS")" = true
+check "ci-stage: nothing in the workflow uses pull_request_target or the private flag" test \
+  "$(grep -v '^ *#' "$CS" | grep -c 'pull_request_target\|repository\.private' || true)" = 0
+yq '.jobs.batch.steps[0].run' "$CS" >"$TMP/guard.sh"
+guard() { # guard <event> <head repo> <ref> [repository]; the status is the step's
+  (
+    export EVENT="$1" HEAD_REPOSITORY="$2" REF="$3" GITHUB_REPOSITORY="${4:-faberline/som}" DEFAULT_BRANCH=main
+    bash "$TMP/guard.sh" >/dev/null 2>&1
+  )
+}
+# The repository is public in every case: the guard does not read the flag.
+if guard pull_request someone/som refs/pull/1/merge; then
+  fail "ci-stage: a fork pull request on a public repository is refused"
+else
+  pass "ci-stage: a fork pull request on a public repository is refused"
+fi
+check "ci-stage: a same-repository pull request on a public repository runs" \
+  guard pull_request faberline/som refs/pull/1/merge
+if guard push "" refs/heads/feature; then
+  fail "ci-stage: a push to a branch other than the default is refused"
+else
+  pass "ci-stage: a push to a branch other than the default is refused"
+fi
+check "ci-stage: a push to the default branch runs" guard push "" refs/heads/main
+check "ci-stage: workflow_dispatch runs" guard workflow_dispatch "" refs/heads/feature
+if guard pull_request_target faberline/som refs/heads/main; then
+  fail "ci-stage: pull_request_target is refused"
+else
+  pass "ci-stage: pull_request_target is refused"
+fi
 check "ci-stage: the token goes only to the batch step" test \
   "$(yq '[.jobs.batch.steps[] | select(.env.SOURCE_TOKEN != null) | .run] | length' "$CS")" = 1
 check "ci-stage: the checkouts keep no credentials" test \
