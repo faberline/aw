@@ -1,24 +1,8 @@
-# Tool run caches and state written under the cwd; process output, never source.
-# Guard waivers (.guard/waivers.json) are source.
+# What aw writes under the checkout; never source.
 .aw/
-.qc/
-.meter/
-.guard/*
-!.guard/waivers.json
-.vat/
-.rig/
-.arena/
-.local/
-.benchmarks/
-.baselines/
-.jet/
-.vite/
-.tdc/state.toml
-mutants.out
-mutants.out.old
 
-# Per-run scratch left by dispatched agents; only agents/, skills/ and plugins/
-# are source under .agents/.
+# Agent session files; only agents/, skills/ and plugins/ are source under
+# .agents/.
 .agents/*
 !.agents/agents/
 !.agents/skills/
@@ -29,16 +13,18 @@ mutants.out.old
 .mcp.json
 .playwright-mcp/
 
-# Build output, Python, Node and environment files.
+# Build output and environment files.
 /target/
+.env
+.env.*
+!.env.example
+
+# Caches of the old Python aw. aw is Rust now and writes none of these, but
+# old checkouts still hold them. Remove these lines when the checkouts are clean.
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
-node_modules/
-.env
-.env.*
-!.env.example
 
 # Editors and OS.
 .vscode/
