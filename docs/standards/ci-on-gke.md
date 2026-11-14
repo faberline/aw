@@ -3,10 +3,33 @@
 GitHub Actions is the control plane. The real CI work runs to completion as
 Kubernetes Jobs in the [shared GKE test cluster](test-cluster.md).
 
-Status: **draft, 2026-11-14**. Nothing in this file is in use yet. No
-workflow, script or infra file follows it. It is not a standard and has no
-checker; see the [definition](README.md#what-a-standard-is). Design issue:
-[aw#390](https://github.com/faberline/aw/issues/390).
+Status: **draft, 2026-11-14**. Phase 1 of
+[aw#390](https://github.com/faberline/aw/issues/390) built the software in
+`aw`: the batch runner, the reusable workflow and the image. No product
+repository uses it yet. It is not a standard and has no checker; see the
+[definition](README.md#what-a-standard-is).
+
+## What exists now
+
+| Part | Where | State |
+|---|---|---|
+| Batch runner | `scripts/gke-test/batch.sh` | Runs work Jobs of kind `command`. |
+| Reusable workflow | `.github/workflows/ci-stage.yml` | See [The caller](#the-caller). |
+| Work Job image | `ghcr.io/faberline/ci-rust:<rust version>`, from `ci/rust/Dockerfile` | Rust, `rustfmt`, `clippy`, `llvm-tools`, sccache, kubectl, user 1000. |
+| Proof | `.github/workflows/ci-stage-proof.yml` and `.github/ci/proof-jobs.yaml` | Started by hand. |
+| Pool `aw-ci`, sccache bucket, identity | `infra/gke-test/` | A separate change. `ci-stage.yml` takes the bucket and the service account as inputs. |
+
+Not built yet. The text below describes the design for these parts:
+
+- Kinds `image` and `suite`. A stage that has such a Job fails before
+  anything is applied.
+- `paths`. The runner prints a warning and runs the Job.
+- The Cargo registry cache.
+- The egress `NetworkPolicy` of a work Job.
+- The check that a request fits one node. A Job that does not fit stays
+  Pending and ends as `timeout`.
+- Re-run of only the failed Jobs.
+- The rules of `aw ci check`.
 
 ## Why
 
@@ -54,10 +77,11 @@ Every repository that adopts this file has exactly these jobs in `ci.yml`:
 
 1. Check out the manifest only (a sparse checkout of one file).
 2. Sign in to GKE through Workload Identity Federation as `gke-test-<repo>`.
-3. Wake the cluster (`scripts/gke-test/wake.sh`).
-4. Create the namespace of the batch and the source Secret (see
-   [Source and token](#source-and-token)).
-5. Apply the batch.
+3. Create the namespace of the batch with its labels.
+4. Wake the cluster (`scripts/gke-test/wake.sh`). The namespace comes first,
+   so the parker does not park the cluster again.
+5. Create the source Secret (see [Source and token](#source-and-token)) and
+   apply the batch.
 6. Wait until every work Job of the batch has finished or timed out.
 7. Collect logs and results (see [Results and logs](#results-and-logs)).
 8. Delete the namespace, also when the run fails or is cancelled.
@@ -69,8 +93,59 @@ Every repository that adopts this file has exactly these jobs in `ci.yml`:
 - Install a toolchain, `cargo`, `docker` or language runtime.
 - Read secrets other than its own `GITHUB_TOKEN` and its GKE identity.
 
-A stage job that needs more than `kubectl`, `gcloud`, `jq` and the `aw`
+A stage job that needs more than `kubectl`, `gcloud`, `jq`, `yq` and the `aw`
 scripts is doing work that belongs in a work Job.
+
+## The caller
+
+`ci.yml` of a repository has one job per stage. Each calls `ci-stage.yml`:
+
+```yaml
+jobs:
+  lint:
+    name: lint
+    permissions: { id-token: write, contents: read, packages: read }
+    uses: faberline/aw/.github/workflows/ci-stage.yml@main
+    with:
+      stage: lint
+      timeout-minutes: 40          # largest timeout of the stage plus 20
+      sccache-bucket: axiom-502607-aw-ci-sccache
+
+  test-gke:
+    name: test
+    needs: [lint]
+    permissions: { id-token: write, contents: read, packages: read }
+    uses: faberline/aw/.github/workflows/ci-stage.yml@main
+    with:
+      stage: test
+      timeout-minutes: 60
+      sccache-bucket: axiom-502607-aw-ci-sccache
+
+  gate:
+    name: gate
+    if: always()
+    needs: [lint, test-gke]
+    # unchanged from ci.md
+```
+
+| Input | Default | Meaning |
+|---|---|---|
+| `stage` | required | `lint`, `test` or `e2e`. |
+| `manifest` | `.github/ci/jobs.yaml` | Path of the manifest. |
+| `timeout-minutes` | `60` | Limit of the batch. The largest `timeout` of the stage plus 20 minutes must fit in it. |
+| `sccache-bucket` | empty | The sccache bucket. Empty means no sccache. |
+| `gcp-service-account` | empty | Google service account of the work Jobs for the bucket. When set, the Jobs run as the Kubernetes service account `ci-job` with the Workload Identity annotation. |
+| `aw-ref` | `main` | Ref of `aw` for the scripts. Match the ref in `uses:`. |
+
+- The two cache inputs have no default on purpose. The names come from
+  `terraform -chdir=infra/gke-test output ci` in `aw`.
+- The repository needs the sign-in identity `gke-test-<repo>`. Today it
+  exists only for a repository with a row in `infra/gke-test/pools.yaml`.
+- The check on the pull request is `<job name> / batch`. Only `gate` is
+  required, so the name does not matter to the ruleset.
+- To check a manifest without a cluster, run
+  `scripts/gke-test/batch.sh render` from an `aw` checkout. It writes the
+  Jobs to `EVIDENCE_DIR/jobs.json`.
 
 ## The manifest
 
@@ -130,8 +205,11 @@ Fields:
 
 Rules:
 
-- The stage job's `timeout-minutes` is the largest `timeout` of the stage
-  plus 20 minutes for the queue and the node scale-up.
+- The `timeout-minutes` input of the stage job is at least the largest
+  `timeout` of the stage plus 20 minutes for the queue and the node scale-up.
+  The runner checks this.
+- A Job entry of kind `command` may have only the fields of the table. An
+  unknown field fails the stage.
 - A stage with no Job after selection passes at once.
 - A manifest that breaks a rule fails the stage before anything is applied.
 
@@ -156,7 +234,12 @@ any other credential of the repository.
 
 - **Private repositories only.** A public repository can get pull requests
   from forks, and their code would run in the cluster. `kit` is public and
-  stays on GitHub-hosted runners.
+  stays on GitHub-hosted runners. `ci-stage.yml` lets a public repository
+  start a batch only from `workflow_dispatch`, which needs write access.
+  `aw` is public; its proof workflow uses this.
+- The Secret is made from standard input with `kubectl create`. The token is
+  not in a command line, not in the Job spec and not in an annotation. Only
+  the init container mounts the Secret; the main container cannot read it.
 - Only `pull_request` from the same repository, `push` to `main` and
   `workflow_dispatch` start a batch. A pull request from a fork never does.
 - **A work Job has no cluster rights.** It runs as the namespace's
@@ -176,11 +259,14 @@ any other credential of the repository.
 Without a shared cache every work Job compiles from zero, and CI gets slower
 than today. Two caches:
 
-1. **sccache on Cloud Storage.** One bucket for all repositories (name chosen
-   in phase 1). Each work Job sets `RUSTC_WRAPPER=sccache`,
-   `SCCACHE_GCS_BUCKET`, `SCCACHE_GCS_KEY_PREFIX=<repo>/<toolchain>` and
-   `CARGO_INCREMENTAL=0`. A Kubernetes ServiceAccount of the `aw-ci` pool maps
-   to one Google service account with object read and write on the bucket.
+1. **sccache on Cloud Storage.** One bucket for all repositories. The caller
+   gives its name in the input `sccache-bucket`. Each work Job then sets
+   `RUSTC_WRAPPER=sccache`, `SCCACHE_GCS_BUCKET`,
+   `SCCACHE_GCS_KEY_PREFIX=<repo>`, `SCCACHE_GCS_RW_MODE=READ_WRITE` and
+   `CARGO_INCREMENTAL=0`. The prefix has no toolchain part: sccache puts the
+   compiler version in each cache key. The Kubernetes ServiceAccount `ci-job`
+   of the batch namespace maps to one Google service account (input
+   `gcp-service-account`) with object read and write on the bucket.
    Objects older than 14 days are deleted by a lifecycle rule.
 2. **Cargo registry cache.** A `tar.zst` of `~/.cargo/registry/index` and
    `~/.cargo/registry/cache`, stored in the same bucket under
@@ -200,8 +286,10 @@ start and end time, and the node pool.
   `::group::<stage>/<name>: <result> (<minutes> min)`, the log,
   `::endgroup::`. Failed Jobs come first.
 - **Artifact.** `ci-<stage>-logs`: one `<name>.log` per work Job and
-  `results.json` with one row per Job (`name`, `result`, `exit_code`,
-  `started_at`, `finished_at`, `pool`, `retries`). Kept 14 days.
+  `results.json` with one row per Job (`name`, `job`, `result`, `exit_code`,
+  `started_at`, `finished_at`, `seconds`, `pool`, `retries`, `pods`), the
+  applied `jobs.json` and `summary.md`. Kept 14 days. `result` is one of
+  `success`, `failure`, `timeout`, `image-error` and `not-finished`.
 - **Job summary.** One table: Job, result, time, pool. The pull request page
   shows only the 4 stage jobs, so this table is where a reader starts.
 - **Result.** The stage job fails when any work Job failed, timed out or was
@@ -209,8 +297,12 @@ start and end time, and the node pool.
   it.
 - **Spot preemption.** A pod that GKE stops for a Spot preemption does not
   count as a failure. The Job's `podFailurePolicy` ignores the
-  `DisruptionTarget` condition, so Kubernetes starts the pod again, at most
-  twice. A test failure is never retried.
+  `DisruptionTarget` condition, so Kubernetes starts the pod again. These
+  restarts have no count limit; the `timeout` of the Job is the limit. A
+  test failure is never retried: any exit code other than 0 fails the Job
+  at once.
+- **Image error.** A pod that cannot pull its image for 3 minutes ends the
+  batch with the result `image-error`. It does not wait for the timeout.
 
 ### Re-run
 
@@ -264,9 +356,10 @@ does not run `docker`.
   `faberline.dev/ci-stage=<stage>`. So the parker does not park
   `system-pool` while a batch runs, and the reaper deletes a dead batch.
 - **Lease.** Stages `lint` and `test` do not take the repository's Lease:
-  they create only namespaced objects in their own namespace. Stage `e2e`
-  takes the Lease (or a lane Lease) as `run.sh` does today, because suites
-  share CRDs and the repository namespace.
+  they create only namespaced objects in their own namespace. A stage with a
+  `suite` Job takes the Lease (or a lane Lease) as `run.sh` does today,
+  because suites share CRDs and the repository namespace. `batch.sh` runs
+  no `suite` Job yet, so it takes no Lease.
 - **Quota.** Every node of `aw-ci` counts against `CPUS_ALL_REGIONS` with the
   test pools. See the numbers on aw#390.
 

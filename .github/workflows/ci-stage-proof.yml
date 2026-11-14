@@ -1,0 +1,25 @@
+# Proof of ci-on-gke (aw#390): one small batch through ci-stage.yml, started by
+# hand. The batch has a Job that fails on purpose, so a red run is the correct
+# result: check the summary table, the logs and that the namespace is gone.
+# This is not the CI of aw; ci.yml is.
+name: ci-stage-proof
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-gke:
+    name: test
+    permissions:
+      id-token: write
+      contents: read
+      packages: read
+    uses: ./.github/workflows/ci-stage.yml
+    with:
+      stage: test
+      manifest: .github/ci/proof-jobs.yaml
+      timeout-minutes: 30
+      aw-ref: ${{ github.sha }}
