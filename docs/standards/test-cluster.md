@@ -87,6 +87,13 @@ defined in `infra/gke-test/ci.tf`, not in `pools.yaml`:
   `gke-ci-job@axiom-502607.iam.gserviceaccount.com`. That account can read
   and write only the bucket `axiom-502607-aw-ci-sccache` (sccache, asia-east1,
   objects deleted after 30 days, not public).
+- Any pod of this cluster, in any namespace (for example a per-run
+  `ci-<repo>-<run_id>-<attempt>-<stage>`), may read and write that bucket
+  with `roles/storage.objectUser`, granted on the bucket to the cluster's
+  Workload Identity pool. A Job needs no annotation and no Google service
+  account: it uses its Kubernetes service account, and sccache with
+  `SCCACHE_GCS_BUCKET=axiom-502607-aw-ci-sccache` finds the credentials
+  from the metadata server. There is no project-level role.
 - Cost: pool, VMs and bucket carry the label `faberline-ci=aw-ci`. A separate
   budget alert of 1500 TWD a month counts only that label. The 3000 TWD budget
   of the project is unchanged.
@@ -426,7 +433,7 @@ A lane lets calls of one repository run at the same time. Set the workflow's
   lanes that run at the same time, in every pool that the overlay and the
   test Job use.
 - All repositories share the project quota (CPUS_ALL_REGIONS 32, E2_CPUS 24
-  in asia-east1; a request to raise CPUS_ALL_REGIONS to 96 is in progress for
+  in asia-east1; a request to raise CPUS_ALL_REGIONS to 96 was sent on 2026-11-14 for
   ci-on-gke, see [The CI pool](#the-ci-pool)). Nodes are private and connect out through one Cloud NAT, so
   the external-IP quota does not limit them. A node over the quota
   stays Pending until the call times out. Keep the lanes of one matrix, plus

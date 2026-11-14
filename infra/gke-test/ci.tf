@@ -97,6 +97,17 @@ resource "google_storage_bucket_iam_member" "ci_job_sccache" {
   member = "serviceAccount:${google_service_account.ci_job.email}"
 }
 
+# Jobs of a run use their own namespace `ci-<repo>-<run_id>-<attempt>-<stage>`,
+# so no fixed namespace/KSA pair fits. Grant this one bucket to every
+# workload of this cluster's Workload Identity pool (a Kubernetes service
+# account of any namespace, direct access without a Google service account).
+# Bucket level only: no project role.
+resource "google_storage_bucket_iam_member" "ci_cluster_sccache" {
+  bucket = google_storage_bucket.sccache.name
+  role   = "roles/storage.objectUser"
+  member = "principalSet://iam.googleapis.com/projects/${data.google_project.this.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/*"
+}
+
 resource "kubernetes_namespace_v1" "ci" {
   metadata {
     name = local.ci_namespace
