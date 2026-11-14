@@ -9,6 +9,7 @@ use aw::application::run::{
 use aw::domain::run::hook::is_worker_prompt;
 use aw::domain::run::ports::RunLedger;
 use aw::domain::run::record::{rfc3339, shorten};
+use aw::infrastructure::run::LedgerFile;
 
 use crate::support::{FixedClock, NOW};
 
@@ -312,5 +313,59 @@ fn the_hook_command_exits_0_on_bad_input_and_prints_nothing() {
         let out = aw(&dir, &["hook", old, "start"], "{}");
         assert_eq!(out.status.code(), Some(1), "aw hook {old}");
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_ledger_file_appends_lines_and_skips_what_it_cannot_read() {
+    let dir = workers_dir("file");
+    let ledger = LedgerFile::in_dir(&dir.join("deep"));
+    assert_eq!(ledger.path(), dir.join("deep").join("runs.jsonl"));
+    // No file yet is an empty ledger.
+    assert!(ledger.read_all().unwrap().is_empty());
+
+    let f = Fixture::new();
+    let record = f.written(
+        Client::Claude,
+        Event::Start,
+        r#"{"session_id":"s1","cwd":"/w/claude/core","prompt":"go"}"#,
+    );
+    // The first append makes the folder.
+    ledger.append(&record).unwrap();
+    ledger.append(&record).unwrap();
+    let mut text = std::fs::read_to_string(ledger.path()).unwrap();
+    assert_eq!(text.lines().count(), 2);
+
+    // A line that is not a record, such as one of a removed client, is skipped.
+    text.push_str("{\"client\":\"gone\",\"event\":\"start\"}\nnot json\n");
+    std::fs::write(ledger.path(), text).unwrap();
+    assert_eq!(ledger.read_all().unwrap(), [record.clone(), record]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_ledger_path_that_cannot_be_used_is_an_error() {
+    let dir = workers_dir("unusable");
+    // `runs.jsonl` is a folder: it can be neither read nor appended to.
+    std::fs::create_dir_all(dir.join("runs.jsonl")).unwrap();
+    let ledger = LedgerFile::in_dir(&dir);
+    let err = ledger.read_all().unwrap_err();
+    assert!(err.to_string().contains("could not read"), "{err}");
+
+    let f = Fixture::new();
+    let record = f.written(
+        Client::Claude,
+        Event::Start,
+        r#"{"session_id":"s1","cwd":"/w/claude/core"}"#,
+    );
+    let err = ledger.append(&record).unwrap_err();
+    assert!(err.to_string().contains("could not append to"), "{err}");
+
+    // The folder of the ledger is a file: it cannot be made.
+    std::fs::write(dir.join("file"), "").unwrap();
+    let err = LedgerFile::in_dir(&dir.join("file").join("sub"))
+        .append(&record)
+        .unwrap_err();
+    assert!(err.to_string().contains("could not create"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
