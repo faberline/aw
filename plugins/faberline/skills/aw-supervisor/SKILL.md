@@ -110,7 +110,7 @@ Look only at these:
 - g. Review loops (G12, below).
 - h. Parent issues whose children are all done (G13, below).
 - i. Issues with `stage:tdd` and `blocked` whose last signal says the spec is incomplete (G16, below).
-- j. Issues with `stage:spec` and `blocked` whose last signal proposes a split, and no child exists (G17, below).
+- j. Issues with `stage:spec` and `blocked` whose last signal proposes a split, and no child exists (G17, below). The same round, not later (G31, below).
 - k. Issues whose last aw signal is `blocked` and asks a person a question, with no open `decision` issue that links them (G20, below).
 - l. Queued runs with zero jobs for more than 24 hours (ghost runs, G25, below).
   List them only. A ghost run is not a problem.
@@ -271,6 +271,7 @@ Write it in Traditional Chinese (Taiwan):
 - `## 根因`.
   One bullet for each root cause.
   Each bullet has: `緊急` when urgent; what it is; since when; what it blocks, with the chain; who it waits for (使用者, 中控, a routine, or another repository); the faberline/aw issue link.
+- `## 規格卡住` (G31): each open issue whose last signal is `stage=spec outcome=blocked`, one line each: the issue link, the age of the signal (from `date -u`, in hours or days), `split` or `Decision`, and the link of the open decision item. Write `none` when there are none.
 - `## 已解除但沒人接手`.
 - `## 這一輪做了什麼`.
   Each write of this run, with its link.
@@ -651,7 +652,8 @@ For each open issue in `<target>` with `stage:spec` and `blocked`, read the last
 The signal has `stage=spec` and `outcome=blocked`.
 Its text says that the issue is too large or names a split: `too large`, `split`, `child issues`, `more than one pull request`.
 Then look for children: issues whose body has `Part of #<n>`, the sub-issues of the issue, and issue links in a later comment.
-When no child exists after one pass of this routine, this is a root cause named "spec split without children".
+When no child exists, this is a root cause named "spec split without children".
+Do not wait for a second pass or for a time threshold (G31).
 
 Read the first line of the signal text.
 
@@ -806,6 +808,41 @@ The one exception is G21 (below).
 Example failure: lumen#323 (22:21Z) and lumen#324 (22:27Z) on 2026-11-11.
 Each got a spec `blocked` signal with "Decision needed" and a recommendation.
 The pass of 23:11Z opened no decision issue for them.
+
+### A spec blocked signal is raised in the same round (G31)
+
+A spec `blocked` signal waits for a person or for the desk.
+No routine answers it, so each hour of delay is a lost hour (G17, G20).
+Example failure: lumen#288, #289, #290, #291 and #299 got a spec `blocked` signal with a split on 2026-11-11 and no child issue.
+The lumen supervisor raised the decision on 2026-11-14 (faberline/aw#394), more than 2 days later.
+Another: sift#66 on 2026-11-14 10:10Z, a `Decision:` line with a recommended choice.
+
+In each round, for each open issue in `<target>` with `blocked` whose last `aw:signal` is `stage=spec outcome=blocked`, do this.
+This rule sets the timing of G17 and G20. It does not replace their item format or their G21 limits.
+
+1. The signal proposes a split and the issue has no child.
+   A child exists when the sub-issues API of the issue is not empty (`gh api repos/<owner>/<repo>/issues/<n>/sub_issues`), or when an issue body starts with `Part of #<n>`.
+   Raise the decision in this same round.
+   Use the type `類型：中控可決定`.
+   The `執行清單` is the split: the child issues to make (G17 case 2).
+   Do not wait for a time threshold.
+2. The signal has a `Decision:` line with a recommended choice.
+   Raise the decision in this same round (G17 case 1, G20).
+   Copy the recommended choice as option A, in the words of the signal.
+   Before you copy it, verify the facts that the choice depends on (step 7, G3).
+   Write the result under the facts.
+   When a fact does not hold, say so under option A and give your own option, or use `類型：需要使用者` when you have none (G3).
+3. Search for a precedent before you open a new decision.
+   Search closed `decision` issues in faberline/aw, of any age, for the same pattern in the same repo.
+   Example: `gh api -X GET search/issues -f q='repo:faberline/aw is:issue is:closed label:decision "decision(<repo>)" split'`.
+   Read the best matches.
+   When one has the same pattern, cite it in the facts of the new decision, with its link and its chosen option, so the desk can apply it at once (faberline/aw#315 is the example for a split without children).
+   A precedent never replaces the new decision. Cite it, then raise the item.
+4. Put all items of the run in the one decision issue of the run (step 8), or add them as a comment to the open `decision(<repo>)` issue (step 6), as G20 says.
+   Make one item for one signal.
+5. The board lists these issues under `## 規格卡住` (step 10), with the age of the signal.
+
+The limits of G17 stay: do not make the child issues and do not change the labels, except under G21.
 
 ### Execute a label-only desk decision (G21)
 
