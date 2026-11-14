@@ -32,9 +32,9 @@ pub fn record(
         return Ok(Recorded::Skipped("the hook input has no session id"));
     };
     let clone = input
-        .dirs
-        .iter()
-        .find_map(|dir| clone_of(s.root, Path::new(dir)));
+        .cwd
+        .as_deref()
+        .and_then(|dir| clone_of(s.root, Path::new(dir)));
     let worker = clone.is_some()
         || match event {
             Event::Start => input.prompt.as_deref().is_some_and(is_worker_prompt),

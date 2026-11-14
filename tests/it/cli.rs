@@ -35,7 +35,7 @@ fn a_bad_agent_id_fails_before_touching_github() {
 
 #[test]
 fn report_rejects_an_unknown_outcome() {
-    let out = aw(&["report", "--agent", "codex", "done"]);
+    let out = aw(&["report", "--agent", "other", "done"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("invalid value"));
 }

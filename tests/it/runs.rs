@@ -73,38 +73,51 @@ fn rfc3339_formats_unix_seconds_in_utc() {
 fn a_start_in_a_worker_clone_is_recorded() {
     let f = Fixture::new();
     let r = f.written(
-        Client::Codex,
+        Client::Claude,
         Event::Start,
-        r#"{"session_id":"s1","cwd":"/w/codex/core","prompt":"anything","transcript_path":"/t.jsonl"}"#,
+        r#"{"session_id":"s1","cwd":"/w/claude/core","prompt":"anything","transcript_path":"/t.jsonl"}"#,
     );
     assert_eq!(r.at, "2027-01-15T08:00:00Z");
     assert_eq!(r.session, "s1");
-    assert_eq!(r.clone.as_deref(), Some("codex/core"));
+    assert_eq!(r.clone.as_deref(), Some("claude/core"));
     assert_eq!(r.prompt.as_deref(), Some("anything"));
     assert_eq!(r.transcript.as_deref(), Some("/t.jsonl"));
     assert_eq!(f.ledger.0.borrow().len(), 1);
 }
 
 #[test]
-fn an_antigravity_payload_uses_its_camel_case_fields() {
+fn an_end_keeps_the_reason_and_an_error_that_is_not_a_string() {
     let f = Fixture::new();
-    let r = f.written(
-        Client::Agy,
-        Event::Start,
-        r#"{"conversationId":"c1","workspacePaths":["file:///w/agy/core"],"lastUserInput":"執行 aw-worker skill。","transcriptPath":"/t"}"#,
-    );
-    assert_eq!(r.session, "c1");
-    assert_eq!(r.clone.as_deref(), Some("agy/core"));
-    assert_eq!(r.prompt.as_deref(), Some("執行 aw-worker skill。"));
-
     let end = f.written(
-        Client::Agy,
+        Client::Claude,
         Event::End,
-        r#"{"conversationId":"c1","workspacePaths":["file:///w/agy/core"],"terminationReason":"completed","error":{"code":3}}"#,
+        r#"{"session_id":"s1","cwd":"/w/claude/core","prompt":"not kept","reason":"completed","error":{"code":3},"transcript_path":"","last_assistant_message":null}"#,
     );
     assert_eq!(end.reason.as_deref(), Some("completed"));
     assert_eq!(end.error.as_deref(), Some(r#"{"code":3}"#));
     assert_eq!(end.prompt, None);
+    assert_eq!(end.transcript, None);
+    assert_eq!(end.last_message, None);
+}
+
+#[test]
+fn empty_values_and_the_old_camel_case_names_are_not_read() {
+    let f = Fixture::new();
+    // An empty list or object is no value.
+    let end = f.written(
+        Client::Claude,
+        Event::End,
+        r#"{"session_id":"s1","cwd":"/w/claude/core","reason":[],"error":{}}"#,
+    );
+    assert_eq!(end.reason, None);
+    assert_eq!(end.error, None);
+    // Only the Claude Code field names count.
+    let other = f.hook(
+        Client::Claude,
+        Event::Start,
+        r#"{"conversationId":"c1","workspacePaths":["file:///w/claude/core"],"lastUserInput":"執行 aw-worker skill。"}"#,
+    );
+    assert!(matches!(other, Recorded::Skipped(_)));
 }
 
 #[test]
@@ -155,11 +168,11 @@ fn an_end_outside_the_clones_needs_a_recorded_start() {
     );
     assert_eq!(end.at, "2027-01-15T08:10:00Z");
     assert_eq!(end.last_message.as_deref(), Some("done"));
-    // The same session id from another client is a different run.
+    // An end of a session that has no recorded start is not a worker run.
     let other = f.hook(
-        Client::Codex,
+        Client::Claude,
         Event::End,
-        r#"{"session_id":"s4","cwd":"/a"}"#,
+        r#"{"session_id":"s5","cwd":"/a"}"#,
     );
     assert!(matches!(other, Recorded::Skipped(_)));
 }
@@ -167,7 +180,7 @@ fn an_end_outside_the_clones_needs_a_recorded_start() {
 #[test]
 fn input_without_a_session_id_is_skipped() {
     let f = Fixture::new();
-    let r = f.hook(Client::Codex, Event::Start, r#"{"cwd":"/w/codex/core"}"#);
+    let r = f.hook(Client::Claude, Event::Start, r#"{"cwd":"/w/claude/core"}"#);
     assert!(matches!(r, Recorded::Skipped(_)));
 }
 
@@ -278,23 +291,26 @@ fn the_hook_command_writes_the_ledger_and_runs_reads_it() {
 }
 
 #[test]
-fn the_hook_command_exits_0_on_bad_input_and_answers_antigravity() {
+fn the_hook_command_exits_0_on_bad_input_and_prints_nothing() {
     let dir = workers_dir("bad");
-    let end = aw(&dir, &["hook", "agy", "end"], "not json");
+    let end = aw(&dir, &["hook", "claude", "end"], "not json");
     assert_eq!(end.status.code(), Some(0));
-    assert_eq!(
-        String::from_utf8_lossy(&end.stdout).trim(),
-        r#"{"decision":""}"#
-    );
+    assert!(end.stdout.is_empty());
     assert!(String::from_utf8_lossy(&end.stderr).contains("not JSON"));
 
-    let start = aw(&dir, &["hook", "agy", "start"], "{}");
+    let start = aw(&dir, &["hook", "claude", "start"], "{}");
     assert_eq!(start.status.code(), Some(0));
-    assert_eq!(String::from_utf8_lossy(&start.stdout).trim(), "{}");
+    assert!(start.stdout.is_empty());
 
-    let codex = aw(&dir, &["hook", "codex", "start"], "");
-    assert_eq!(codex.status.code(), Some(0));
-    assert!(codex.stdout.is_empty());
+    let empty = aw(&dir, &["hook", "claude", "start"], "");
+    assert_eq!(empty.status.code(), Some(0));
+    assert!(empty.stdout.is_empty());
     assert!(!dir.join("runs.jsonl").exists());
+
+    // `claude` is the only client.
+    for old in ["codex", "agy"] {
+        let out = aw(&dir, &["hook", old, "start"], "{}");
+        assert_eq!(out.status.code(), Some(1), "aw hook {old}");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }

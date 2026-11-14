@@ -29,13 +29,13 @@ moves the `stage:` label (see below).
 marker that only `aw` writes:
 
 ```text
-<!-- aw:claim stage=tdd agent=agy branch=agy/issue-7 pr=- at=1800000000 -->
+<!-- aw:claim stage=tdd agent=claude branch=claude/issue-7 pr=- at=1800000000 -->
 ```
 
 `aw report` edits that comment into the signal comment:
 
 ```text
-<!-- aw:signal stage=tdd agent=agy outcome=ready -->
+<!-- aw:signal stage=tdd agent=claude outcome=ready -->
 ```
 
 After `agent` reports on a stage, `aw claim` skips the issue for that agent
@@ -45,9 +45,9 @@ as a signal.
 ## One run
 
 ```bash
-aw claim --agent codex --repo faberline/core   # or AW_AGENT, AW_REPO
+aw claim --agent claude --repo faberline/core   # or AW_AGENT, AW_REPO
 # … do what the issue asks …
-aw report --agent codex --repo faberline/core ready -F summary.md
+aw report --agent claude --repo faberline/core ready -F summary.md
 ```
 
 `claim`, `report`, `release` and `status` take `--agent` (or `AW_AGENT`) and
@@ -177,17 +177,13 @@ and warnings go to stderr.
 
 ## Worker runs
 
-Each agent client runs `aw hook` from its own hooks. The command writes one
+Claude Code runs `aw hook` from its hooks. The command writes one
 line per worker run event to the run ledger, `<workers dir>/runs.jsonl`. The
 workers directory is `$AW_WORKERS_DIR`, or `~/faberlines/.aw-workers`.
 
 ```bash
 aw hook claude start   # Claude Code UserPromptSubmit
 aw hook claude end     # Claude Code Stop
-aw hook codex start    # Codex UserPromptSubmit
-aw hook codex end      # Codex Stop
-aw hook agy start      # Antigravity SessionStart
-aw hook agy end        # Antigravity Stop
 aw runs -n 20          # the last 20 runs as JSON, oldest first
 ```
 
@@ -199,8 +195,8 @@ aw runs -n 20          # the last 20 runs as JSON, oldest first
 - an end of a session that already has a recorded start.
 
 `aw hook` always exits 0, so it never blocks a prompt. Errors go to stderr.
-It prints nothing for Claude Code and Codex, because their prompt hooks add
-stdout to the model context. For Antigravity it prints the JSON reply.
+It prints nothing on stdout, because a Claude Code prompt hook adds stdout
+to the model context. `claude` is the only client.
 
 `aw runs` groups the ledger by session. A run is `ended` when its last
 record is an end, else `open`. An old `open` run crashed or hangs. No new run

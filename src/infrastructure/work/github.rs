@@ -563,7 +563,7 @@ mod tests {
 
     #[test]
     fn issue_lines_become_issues() {
-        let out = r#"{"number":7,"title":"T","url":"https://github.com/o/r/issues/7","labels":["agent:agy","stage:tdd"],"created_at":"2026-01-01T00:00:00Z"}
+        let out = r#"{"number":7,"title":"T","url":"https://github.com/o/r/issues/7","labels":["agent:bot","stage:tdd"],"created_at":"2026-01-01T00:00:00Z"}
 
 {"number":8,"title":"U","url":"u","labels":[],"created_at":"2026-01-02T00:00:00Z"}
 "#;
@@ -571,7 +571,7 @@ mod tests {
         let issues: Vec<Issue> = issues.into_iter().map(Issue::from).collect();
         assert_eq!(issues.len(), 2);
         assert_eq!(issues[0].number, 7);
-        assert_eq!(issues[0].labels, ["agent:agy", "stage:tdd"]);
+        assert_eq!(issues[0].labels, ["agent:bot", "stage:tdd"]);
         assert_eq!(issues[0].milestone, None);
     }
 
@@ -620,10 +620,10 @@ mod tests {
 
     #[test]
     fn a_pull_request_without_a_body_has_an_empty_body() {
-        let out = r#"{"number":3,"head":"agy/issue-7","body":null,"url":"https://github.com/o/r/pull/3"}"#;
+        let out = r#"{"number":3,"head":"bot/issue-7","body":null,"url":"https://github.com/o/r/pull/3"}"#;
         let prs: Vec<PrJson> = parse_lines(out, "pull request list").unwrap();
         let pr = PullRequest::from(prs.into_iter().next().unwrap());
-        assert_eq!(pr.head, "agy/issue-7");
+        assert_eq!(pr.head, "bot/issue-7");
         assert_eq!(pr.body, "");
     }
 
