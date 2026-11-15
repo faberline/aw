@@ -2,6 +2,7 @@ mod ci;
 mod claim;
 mod cli;
 mod coverage;
+mod meta;
 mod process;
 mod release_gate;
 mod release_workflow;
