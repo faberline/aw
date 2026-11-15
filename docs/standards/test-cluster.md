@@ -52,12 +52,20 @@ tears down.
 - Cluster `faberline-test`, zone `asia-east1-a`, project
   `axiom-502607`. The free tier covers the management fee of one zonal cluster
   only, so there is no second cluster.
-- `system-pool`: one n4-standard-2 on-demand (not Spot) node for kube-system.
+- `system-pool`: one e2-standard-2 on-demand (not Spot) node for kube-system
+  (2 vCPU, 8 GB, 16 GB PD Balanced boot disk; see
+  [Machine series and cost](#machine-series-and-cost)).
   It has no autoscaling. A test run sets it to 1 node (`scripts/gke-test/wake.sh`).
   The parker sets it to 0 when no test namespace is left; see
   [The parker](#the-parker). Teardown leaves it up, so the next call (for
   example the next test suite) does not wait for a new system node. Idle cost:
   one node for 5 to 15 minutes after the last run.
+- **Minimum 0 is the rule.** Every node pool has a minimum of 0 nodes, and a
+  cold start is accepted (owner decision, 2026-11-15). A minimum above 0, or a
+  script that keeps a pool at 1 or more while no test runs, needs a written
+  reason in this file and the owner's approval. Do not lengthen or shorten a
+  test timeout to hide a cold start: a job that fails only because a cold
+  node starts too slowly is reported as an issue in `faberline/aw`.
 - `pool-<pool>`: one pool per row of `infra/gke-test/pools.yaml`. Its machine
   type is `n4-standard-2` (2 vCPU, 8 GB memory). It has 0 to
   `max_nodes` nodes, label `faberline.dev/pool=<pool>`, and taint
@@ -67,15 +75,39 @@ tears down.
   `<repo>-<role>`, for example `lumen-server` for the server and
   `lumen-client` for the test Job. Terraform refuses another name.
 - Cost cap: the sum of `max_nodes` over all rows, while tests run. Idle cost
-  is 0 nodes. Each node has a 16 GB Hyperdisk Balanced boot disk. All 16
+  is 0 nodes. Each repository node has a 16 GB Hyperdisk Balanced boot disk. All 16
   repository pools (keep, lumen, tape, defer, relay, sift and core, each with
   a server and a client pool, lumen also two perf pools) allow up to 33 nodes
-  in total; the system pool adds one. The 34 boot disks alone can require
-  544 GB of Hyperdisk capacity. In the worst case all pools, the system pool
+  in total; the system pool adds one. The 33 repository boot disks alone can require
+  528 GB of Hyperdisk capacity. In the worst case all pools, the system pool
   and `pool-aw-ci` run at once: 33 + 1 + 8 nodes, 84 vCPU, inside the quota
   CPUS_ALL_REGIONS 96 (checked 2026-11-15; regional CPUS is 100). Data
   PVCs consume additional capacity. Check Hyperdisk capacity, IOPS,
   throughput and CPU quotas before applying or running tests.
+
+## Machine series and cost
+
+Price check of 2026-11-15, asia-east1 (Taiwan), public Cloud Billing catalog,
+USD per hour for 2 vCPU and 8 GB:
+
+| Series | On-demand | Spot |
+|---|---|---|
+| n4-standard-2 | 0.1050 | 0.0399 |
+| e2-standard-2 | 0.0776 (26% less) | 0.0415 (4% more) |
+
+Rules that follow:
+
+- E2 is cheaper only on-demand. A Spot E2 node costs more than a Spot N4 node
+  here, and E2 CPUs are older, so a job runs longer. Every pool that is Spot
+  stays on N4.
+- Only `system-pool` is on-demand and measures nothing, so it is
+  `e2-standard-2`. E2 takes PD Balanced boot disks, not Hyperdisk (main.tf
+  picks the disk type from the series).
+- The two lumen perf pools are on-demand but keep N4: a performance result is
+  valid only on the hardware profile it was recorded on. Do not move a pool
+  that runs a perf threshold or baseline to another series.
+- `dynamic-rwo` works on E2 nodes (it makes a PD Balanced disk there), so a
+  PVC needs no change when a pool moves between series.
 
 ## The CI pool
 

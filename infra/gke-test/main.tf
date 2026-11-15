@@ -5,6 +5,9 @@
 # .github/workflows/gke-test.yml. See docs/standards/test-cluster.md.
 #
 # Cost model: no node runs while no test runs.
+# Rule (owner decision, 2026-11-15): every node pool has a minimum of 0
+# nodes and a cold start is accepted. A minimum above 0 needs a written reason
+# and the owner's approval.
 # - pool-<pool>: autoscaled 0..max_nodes, tainted, so it holds only the pods
 #   that select it and the autoscaler takes it back to 0 on its own. A
 #   repository can have more than one, for example <repo> and <repo>-client.
@@ -113,6 +116,11 @@ resource "google_container_cluster" "test" {
 # GCE preempted the Spot node twice in two minutes during tape run
 # 39253766861; the test lost DNS and the job lost its log stream
 # ("No agent available"). The node runs only while a test runs.
+# e2-standard-2 (same 2 vCPU, 8 GB as the N4 pools): on-demand E2 costs about
+# 26% less than on-demand N4 in asia-east1 (aw#390 cost review, 2026-11-15).
+# E2 takes pd-balanced boot disks, not Hyperdisk. No test measures speed on
+# this node. Spot E2 is not cheaper than Spot N4 here, so the repo pools stay
+# on N4; see docs/standards/test-cluster.md.
 resource "google_container_node_pool" "system" {
   project            = var.project_id
   name               = "system-pool"
@@ -128,10 +136,10 @@ resource "google_container_node_pool" "system" {
     enable_private_nodes = true
   }
   node_config {
-    machine_type    = "n4-standard-2"
+    machine_type    = "e2-standard-2"
     spot            = false
     disk_size_gb    = 16
-    disk_type       = "hyperdisk-balanced"
+    disk_type       = "pd-balanced"
     service_account = google_service_account.nodes.email
     oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
     metadata        = { disable-legacy-endpoints = "true" }

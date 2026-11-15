@@ -4,7 +4,9 @@
 # higher max_nodes with a pull request here. Terraform in this folder reads
 # the file with yamldecode and makes `pool-<pool>`:
 #
-# - min 0 nodes, max `max_nodes`; the autoscaler adds a node only while a pod
+# - min 0 nodes (owner decision, 2026-11-15: every node pool has a minimum of
+#   0 and a cold start is accepted; a minimum above 0 needs a written reason
+#   and the owner's approval), max `max_nodes`; the autoscaler adds a node only while a pod
 #   for that pool is Pending, and removes it about 10 minutes after the test
 #   namespace is gone.
 # - label `faberline.dev/pool=<pool>` and taint
@@ -24,7 +26,11 @@
 # Fields:
 #   repo          GitHub repository name under faberline; also the namespace.
 #   pool          Pool name: `<repo>-<role>`, for example `keep-server`.
-#   machine_type  n4-standard-2 for every pool (2 vCPU, 8 GB memory).
+#   machine_type  n4-standard-2 for every pool (2 vCPU, 8 GB memory). E2 is
+#                 not used for these pools: Spot E2 costs about 4% more than
+#                 Spot N4 in asia-east1, and the lumen perf pools must keep
+#                 their measured hardware profile. Only `system-pool` (on-demand,
+#                 not in this file) is e2-standard-2; see main.tf.
 #                 Pod requests must fit after GKE system reservations.
 #                 N4 uses Hyperdisk boot disks. A PVC on these pools uses
 #                 storageClassName dynamic-rwo. Results from larger machines
