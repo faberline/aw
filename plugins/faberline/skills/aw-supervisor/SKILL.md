@@ -1114,3 +1114,64 @@ Check G8 first: when every issue waits for an open prerequisite, this is not an 
 
 Do not claim issues, do not change labels, and do not run the stage.
 Do not use the 2 hours as a reason to rerun anything.
+
+### Pinned workflow (G35)
+
+A caller workflow pins a reusable workflow of faberline/aw with `uses: faberline/aw/.github/workflows/<file>@<ref>`.
+Branches can pin different refs.
+When a failure comes from such a reusable workflow, read the workflow and its scripts at the ref that the caller pins.
+Do not read them at `main`.
+Use `gh api -H 'Accept: application/vnd.github.raw' "repos/faberline/aw/contents/<path>?ref=<ref>"`.
+
+Compare two pins: the pin on the failed branch and the pin on the default branch.
+When the pins differ, say so in the facts, and name the first commit that the old pin lacks.
+Example: tape branches with the old pin `gke-test.yml@bfa0a46` had no Lease queue.
+They deleted the shared namespace of another run.
+`main` already had the Lease queue, so a read at `main` hid the cause.
+
+### Priority proposal (G36)
+
+A long stage queue can have one issue at its head that blocks many others.
+When the queue of a stage is long (G34 names the depth), do this:
+
+1. For each open issue in the queue, count the open issues that wait for it.
+   An issue waits when its body has a `Waits for: #<n>` line or a comment says it must wait for the issue.
+2. Pick the issue with the highest count.
+3. Propose a higher priority for it to the desk in a `decision` issue (step 8).
+   Write the count and the link of each issue that waits.
+   Name the exact label change.
+   Do not change the priority label yourself.
+
+### Claim and release loop (G37)
+
+For the tdd stage, read the effects of the last two runs of the stage.
+It is a root cause when one of these is true:
+
+- The same issue was claimed and released without a signal in two runs or more.
+- The stage has claimable issues (G30) and no new pull request for 3 hours.
+
+For each run, find the issue that it takes first (claim order) and the reason why it is released.
+Read the claim and release comments and the final answer of the run.
+Report it as a `pipeline` issue with `urgent` (G15 and step 9 apply).
+Example: lumen tdd made no pull request for 7 hours.
+Each run claimed lumen 369 first.
+Its spec needs lumen 373, which was not merged.
+Each run released it and stopped.
+
+Check G8 first: a live wait for an open prerequisite is not this case unless the run also stops with nothing done.
+
+### Waits-for check (G38)
+
+In each run, list the open issues of `<target>` with a `stage:tdd` label whose body has a line that starts with `Waits for:`.
+For each one, read the state of each named sibling issue (G24).
+
+- The named issue is open and the issue has no `blocked` label: ask the desk to add `blocked`.
+  Use a `decision` issue of type `中控可決定` (step 8).
+  Write the exact label change: add `blocked` to `<repo>#<n>`.
+  Name the sibling and its state.
+- The named issue is merged and the issue still has `blocked`: ask the desk to remove `blocked`, in the same way.
+  This extends G10.
+
+A line that names only a title (no `#<number>`) is a spec gap: find the issue by title in `<target>` and say so in the facts.
+Do not change the label yourself, unless G21 lets you.
+Put the issues of one repository in one `decision` issue (G32).

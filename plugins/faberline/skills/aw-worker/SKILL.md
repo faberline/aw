@@ -267,8 +267,9 @@ for a pull request; a pull request has `merged_at`):
 
 Such a release is not "a claim you could not finish". It does not stop the
 run, and it does not count as one of the three reported stages. The
-skipped issue keeps its stage and its labels; do not add `blocked` for it.
-Name each skipped issue and what it waits for in the final answer.
+skipped issue keeps its stage and its labels. Do not add `blocked` for a wait
+that a comment names. A tdd spec with a false precondition is another case:
+see "tdd, a false precondition" below. Name each skipped issue and what it waits for in the final answer.
 
 Read code through the GitHub API when you do not need the clone:
 
@@ -302,6 +303,11 @@ Read code through the GitHub API when you do not need the clone:
   7. **Out of scope**: what not to change.
   8. **Traps**: repository rules and known failures that apply, for example
      the CI contract note in "Repository notes".
+- **A precondition on another open issue.** When the spec needs a file or
+  an interface that another open issue supplies, write one line that starts
+  with `Waits for: #<number>`, with the issue number. A title is not enough:
+  the supervisor and the tdd run read the number. Write one such line for
+  each issue.
 - Keep it to one pull request: at most about six files and 400 changed
   lines. When one pull request is not enough, split the issue (below).
 - The pull request closes the issue: `aw report ready` always writes
@@ -381,6 +387,24 @@ Read code through the GitHub API when you do not need the clone:
   `$AW report <who> respec -F <file>`. The file lists the missing points,
   one numbered line each: name each missing file, rule, test or value
   exactly. `aw` moves the issue to `stage:spec` and adds no `blocked`.
+- **A false precondition (a missing file or interface from another issue).**
+  The spec needs a file or an interface that is not on the default branch,
+  and another issue supplies it. Do not only release the claim: the next run
+  would take the same issue first and stop, and the whole queue stops.
+  1. Check it: read the default branch (`gh api` contents or tree), and read
+     the state of the issue that supplies the item.
+  2. Post a comment on the issue. Name the missing item and the issue that
+     supplies it: `Blocked: <item> is not on <default>. It comes from #<n>.`
+  3. Add the label `blocked` to that one issue, with one `gh api` call for
+     that issue: `gh api -X POST repos/<repo>/issues/<issue>/labels -f 'labels[]=blocked'`.
+  4. Run `$AW release <who>`.
+  5. In the same run, run `$AW claim <who>` one more time, with `--skip
+     <issue>`. Do the stage for the issue that it gives. Do not stop the run
+     with nothing done when other claimable issues exist.
+  I checked `aw report --help` and `aw release --help`: no `aw` command posts
+  the comment and adds the label. `aw report blocked` is for a decision that
+  only a person can make, so do not use it here. Add `blocked` to no other
+  issue. The supervisor or the desk removes it when the supplier merges.
 - Never report `blocked` for an incomplete or unclear spec. `blocked` keeps
   `stage:tdd` and adds `blocked`: the spec run does not read `stage:tdd`,
   and the tdd run does not take `blocked`, so no run takes the issue.
