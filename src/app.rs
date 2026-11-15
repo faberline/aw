@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::application::ci::CiServices;
+use crate::application::meta::MetaServices;
 use crate::application::release::ReleaseServices;
 use crate::application::run::RunServices;
 use crate::application::standards::{RepoTarget, StandardsServices};
@@ -11,11 +12,14 @@ use crate::application::work::Services;
 use crate::domain::ci::ports::{BranchRules, CiFiles};
 use crate::infrastructure::ci::files::origin_repo;
 use crate::infrastructure::ci::{GhBranchRules, GitHubFiles, LocalFiles};
+use crate::infrastructure::meta::LocalMeta;
 use crate::infrastructure::release::{GhRelease, YamlWorkflows};
 use crate::infrastructure::run::LedgerFile;
 use crate::infrastructure::standards::{LocalCore, LocalRepo, is_checkout};
 use crate::infrastructure::work::{GhCli, GitCli, SystemClock};
-use crate::interfaces::work::cli::{self, CiTarget, Exit, ReleaseCall, StandardsTarget};
+use crate::interfaces::work::cli::{
+    self, CiTarget, Exit, MetaTarget, ReleaseCall, StandardsTarget,
+};
 
 pub fn run() -> ExitCode {
     let parsed = match cli::parse(std::env::args_os()) {
@@ -24,6 +28,9 @@ pub fn run() -> ExitCode {
     };
     if let Some(target) = parsed.ci_target() {
         return exit_code(ci_check(target));
+    }
+    if let Some(target) = parsed.meta_target() {
+        return exit_code(meta_check(target));
     }
     if let Some(target) = parsed.standards_target() {
         return exit_code(standards_check(target));
@@ -114,6 +121,25 @@ fn standards_check(target: &StandardsTarget) -> Exit {
         },
         target.format,
     )
+}
+
+/// `aw meta check`: the READMEs of `paths` (default `.`) in the checkout
+/// that holds `--dir` (default: the current directory).
+fn meta_check(target: &MetaTarget) -> Exit {
+    let dir = target.dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    let repo = match LocalMeta::open(&dir) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("aw: {err}");
+            return Exit::Nothing;
+        }
+    };
+    let paths = if target.paths.is_empty() {
+        vec![".".to_string()]
+    } else {
+        target.paths.clone()
+    };
+    cli::run_meta(MetaServices { repo: &repo }, &paths, target.format)
 }
 
 /// The milestone release gate, for `--repo` or the `origin` of the current

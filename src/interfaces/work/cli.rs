@@ -9,6 +9,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
 use crate::application::ci::{self, CiServices};
+use crate::application::meta::{self, MetaServices};
 use crate::application::release::{self, Advanced, ReleaseServices};
 use crate::application::run::{Client, Event, RunServices};
 use crate::application::standards::{self, StandardsServices};
@@ -30,6 +31,7 @@ use crate::interfaces::run::commands;
         aw runs    lists the recent worker runs\n\
         aw ci check checks ci.yml and the ruleset against docs/standards/ci.md\n\
         aw standards check checks Cargo.toml files against docs/standards/core-reuse.md\n\
+        aw meta check checks project README files against the README contract\n\
         aw release-status    assesses a milestone release; it only reads\n\
         aw release-advance   creates the next release tag when the assessment did not change\n\
         aw release-preflight proves a tag inside its own workflow run; it only reads\n\n\
@@ -141,6 +143,11 @@ enum Command {
         #[command(subcommand)]
         command: StandardsCommand,
     },
+    /// Check the project documents of a checkout against their contract.
+    Meta {
+        #[command(subcommand)]
+        command: MetaCommand,
+    },
     /// Assess a milestone release: the state, the one next action and the
     /// fingerprint of the inputs. It only reads.
     ReleaseStatus {
@@ -229,6 +236,30 @@ pub struct CiTarget {
     /// Do not read the ruleset; its check is skipped.
     #[arg(long)]
     pub no_ruleset: bool,
+}
+
+#[derive(Subcommand)]
+enum MetaCommand {
+    /// Check a README against the README contract (rules R1 to R12): the
+    /// required headings, the capability index and details, the sources,
+    /// the gates and the links. Repository values come from the `[meta]`
+    /// table of `aw.toml`. Exit codes: 0 pass, 1 a finding, 2 a usage error.
+    Check(MetaTarget),
+}
+
+/// What `aw meta check` reads.
+#[derive(Args, Clone, Debug, Default)]
+pub struct MetaTarget {
+    /// A README.md, or a folder that holds one, relative to the top of the
+    /// checkout. Default: `.`.
+    pub paths: Vec<String>,
+    /// A folder inside the checkout. Default: the current directory.
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
+    /// `text` prints one block per README; `json` prints a
+    /// `meta-report/1` document.
+    #[arg(long, value_enum, default_value_t = ReportFormat::Text)]
+    pub format: ReportFormat,
 }
 
 #[derive(Subcommand)]
@@ -354,6 +385,16 @@ impl Cli {
         match &self.command {
             Command::Ci {
                 command: CiCommand::Check(target),
+            } => Some(target),
+            _ => None,
+        }
+    }
+
+    /// The target of `aw meta check`, if that is the command.
+    pub fn meta_target(&self) -> Option<&MetaTarget> {
+        match &self.command {
+            Command::Meta {
+                command: MetaCommand::Check(target),
             } => Some(target),
             _ => None,
         }
@@ -493,6 +534,33 @@ pub fn run_standards(services: StandardsServices<'_>, format: ReportFormat) -> E
     }
 }
 
+/// Run `aw meta check`: print the report; exit 1 when a README has a
+/// finding and 2 when a README cannot be read.
+pub fn run_meta(services: MetaServices<'_>, paths: &[String], format: ReportFormat) -> Exit {
+    let report = match meta::check(services, paths) {
+        Ok(report) => report,
+        Err(err) => {
+            eprintln!("aw: {:#}", anyhow::Error::from(err));
+            return Exit::Nothing;
+        }
+    };
+    let printed = match format {
+        ReportFormat::Json => print(&report),
+        ReportFormat::Text => {
+            println!("{}", meta::render(&report));
+            Ok(())
+        }
+    };
+    match printed {
+        Ok(()) if report.ok => Exit::Ok,
+        Ok(()) => Exit::Failed,
+        Err(err) => {
+            eprintln!("aw: {err:#}");
+            Exit::Nothing
+        }
+    }
+}
+
 /// Run one parsed command.
 pub fn run(services: Services<'_>, runs: RunServices<'_>, cli: Cli) -> Exit {
     match execute(services, runs, cli.command) {
@@ -589,6 +657,9 @@ fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit
         }
         Command::Ci { .. } => {
             anyhow::bail!("`aw ci` needs the CI adapters; the composition root runs it")
+        }
+        Command::Meta { .. } => {
+            anyhow::bail!("`aw meta` needs its adapter; the composition root runs it")
         }
         Command::Standards { .. } => {
             anyhow::bail!("`aw standards` needs its adapters; the composition root runs it")

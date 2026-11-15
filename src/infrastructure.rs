@@ -1,4 +1,5 @@
 pub mod ci;
+pub mod meta;
 pub mod release;
 pub mod run;
 pub mod standards;

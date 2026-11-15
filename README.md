@@ -233,6 +233,26 @@ aw standards check --repo ../keep --repo ../tape --format json
 It exits 0 for a pass, 1 for a finding and 2 for a usage error.
 `[[standards.core_reuse.exception]]` entries of `aw.toml` waive one check.
 
+## Meta check
+
+`aw meta check` checks the `README.md` of a project against the README
+contract: the required headings, the capability index and details, the
+sources, the gates and the links (rules `R1`–`R12`). It is the Rust port of
+the defer `scripts/meta/readme_contract.py`. It only reads.
+
+```bash
+aw meta check                  # README.md of the current checkout
+aw meta check apps/x crates/y  # folders or README.md files, from the top of the checkout
+aw meta check --dir ../defer --format json
+```
+
+It exits 0 for a pass, 1 for a finding and 2 for a usage error. A gate shape
+that the check cannot resolve is a warning. `aw.toml` sets the repository
+values under `[meta]`: `source_prefixes` (default `apps`, `libs`, `crates`,
+`core`, `models`), `root_source` (default `[project] name`, the token for the
+repository root) and `core_source` (the `Cargo.lock` source prefix of the
+`core` crates).
+
 ## Milestone release gate
 
 Three commands decide when a milestone gets a release tag. They read one
@@ -316,6 +336,8 @@ The crate follows the [Rust layout standard](docs/standards/rust-layout.md):
   reader of the release gate.
 - `src/application/run/` — the `record` and `runs` use cases.
 - `src/application/ci.rs` — the `ci check` use case.
+- `src/domain/meta/`, `src/application/meta.rs`, `src/infrastructure/meta.rs` — the
+  README contract of `meta check`, its use case and the checkout adapter.
 - `src/infrastructure/work/` — `gh` and `git` adapters and the clock.
 - `src/infrastructure/run/` — the ledger file.
 - `src/infrastructure/ci/` — `ci.yml` and `aw.toml` parsing, local and GitHub
