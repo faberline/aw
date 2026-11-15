@@ -309,6 +309,13 @@ Read code through the GitHub API when you do not need the clone:
   the supervisor, `aw claim` and the tdd run read the number. Write one such
   line for each issue. A `Waits for:` line with no issue number is a spec
   gap: `aw claim` does not skip that issue and the supervisor reports it.
+  The issue body must have this line on its own line, and the spec signal
+  must repeat it. Use `Waits for: #N`, with commas for more than one number
+  (`Waits for: #12, #15`), and `owner/repo#N` for another repository. A title
+  or free text alone is not permitted. When the prerequisite has no issue
+  yet, do not write a `Waits for:` line with text only: say in the signal that
+  the prerequisite has no issue. The body line and the signal must name the
+  same numbers.
 - Keep it to one pull request: at most about six files and 400 changed
   lines. When one pull request is not enough, split the issue (below).
 - The pull request closes the issue: `aw report ready` always writes

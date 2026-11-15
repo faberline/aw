@@ -1190,6 +1190,7 @@ A `Waits for:` line with no issue number (only a title or text) is a spec gap.
 Find the issue by title in `<target>` and say so in the facts, and report it as a spec gap on the status board.
 The spec skill must write the issue number (`aw-worker`, spec step).
 Do not change the label for this line.
+When the body `Waits for:` line has no number but the latest aw signal on the issue has `Waits for: #N` (as in aw#498), open one `中控可決定` decision (step 8) that asks the desk to fix the body line and add `blocked`; do not add `blocked` yourself.
 Put the issues of one repository in one `decision` issue (G32).
 
 ### An old pin is not a pipeline cause (G39)
