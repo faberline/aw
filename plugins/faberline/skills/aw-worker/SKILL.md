@@ -46,6 +46,45 @@ In a stage run:
 
 Without a stage in the prompt, one run does every stage as described below.
 
+### The review run: count, then one after another
+
+The organization can run only 20 Actions jobs at the same time. Each merge
+makes the other open pull requests behind, and each branch update starts CI
+again. So a review run works through the waiting pull requests in a line and
+brings only one branch up to date at a time. The three-stage limit of section 3
+does not apply to a review run; the rules below replace it.
+
+1. Before the first claim, count the pull requests of the repository that wait
+   for review. Use REST only (no GraphQL; cloud sessions block it):
+   `gh api "repos/<repo>/issues?state=open&labels=stage:review,agent:claude&per_page=100" --jq '[.[] | select(.pull_request == null)] | length'`
+   (the label is on the issue, not on the pull request; the filter drops any
+   pull request that appears in the list). Write the count and the
+   repository in the final answer as `review waiting: <n>`.
+2. The count is 0: stop the run. The count is 1 or more: review them one
+   after another. `aw claim` gives the order (priority label, then oldest).
+   Repeat claim, review and report until `aw claim` exits 2, or until 40
+   minutes have passed since the run started. Check the time before each new
+   claim. Do not start a claim after 40 minutes; finish the one in hand.
+   Reason for 40: the review routine of a repository runs once an hour, so the
+   next run starts about 60 minutes later; 40 minutes plus the last review
+   (up to about 15 minutes) ends before that start, and two runs of the
+   same repository do not overlap.
+3. After each merge the other pull requests are behind. Update the branch of
+   only the next pull request in the order, and only when you report
+   `passed` for it: `aw` updates the branch then (`"updated_branch": true`).
+   Never update all waiting branches. Never run `gh` or `git` to update a
+   branch yourself.
+4. After `"updated_branch": true` or `"waiting_for"`, claim again with
+   `--skip <issue>` for that issue. While the updated pull request waits for
+   CI, you may review the next one (read and judge it). If the verdict is
+   `passed`, `aw` returns `"waiting_for"` and does not start a second update
+   in this repository. Skip that issue too, and go on or stop when only skipped
+   issues are left. Never wait in a loop for CI; a later run merges it.
+5. A pull request whose required checks are queued, missing, skipped or
+   cancelled is not a pass. Do not report `passed` for it and do not bypass
+   with admin rights. Release it (`$AW release <who>`), skip it and name it
+   and the checks in the final answer. A failed check is `failed` as before.
+
 ## Stages
 
 | Labels on the issue | Work |
@@ -234,7 +273,8 @@ exited 1 or 2 in this run. Stop the run when:
 - `aw claim` exits 2 in every repository;
 - you released a claim because you could not finish it (a release for a
   skipped issue, as in step 4, is not this case: claim again and go on);
-- this run has reported three stages.
+- this run has reported three stages (a review run does not use this limit;
+  see "The review run" in "Stage runs").
 
 ## 4. Do the stage
 
@@ -619,6 +659,9 @@ Use the user's language. Give:
 - the plan changes: label moves, triage, closed issues;
 - each stage you did: issue, stage, outcome and pull request;
 - why the run stopped;
+- in a review run: `review waiting: <n>` (the count before the first claim), how
+  many pull requests you reviewed, and each one you left because of a required
+  check that was queued, missing, skipped or cancelled;
 - each issue you skipped because it waits for an open issue or pull request,
   and what it waits for;
 - for each repository, the count of open issues per `stage:` label;
