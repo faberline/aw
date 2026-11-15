@@ -46,6 +46,47 @@ In a stage run:
 
 Without a stage in the prompt, one run does every stage as described below.
 
+### Backpressure: count downstream before the first claim
+
+When a stage below is stuck, a stage above does no new work. Each stage
+looks at all stages below it, not only the next one. The review stage is the
+lowest stage; it has no backpressure rule.
+
+The two limits are set here, in one place. The desk chose them; they are not
+the user's words. To change a limit, change only its line:
+
+| Name | Value | Used by |
+|---|---|---|
+| `BACKPRESSURE_REVIEW_LIMIT` | 3 | tdd run, spec run |
+| `BACKPRESSURE_TDD_LIMIT` | 5 | spec run |
+
+Per repository, before the first claim, count with REST (one list call for
+each label, no polling). Count open issues that do not have the label
+`blocked` and are not pull requests:
+
+- `review_waiting`: issues with `stage:review`;
+- `tdd_waiting`: issues with `stage:tdd` (the spec run only).
+
+Call: `gh api --paginate "repos/<repo>/issues?state=open&labels=stage:review,agent:claude&per_page=100" --jq '[.[] | select(.pull_request | not) | select(any(.labels[]; .name == "blocked") | not)] | length'`
+(use `stage:tdd` for the second count).
+
+- tdd run: when `review_waiting >= BACKPRESSURE_REVIEW_LIMIT`, claim nothing
+  in that repository. Final answer: `backpressure: review waiting <n>, tdd skipped`.
+- spec run: when `review_waiting >= BACKPRESSURE_REVIEW_LIMIT` or
+  `tdd_waiting >= BACKPRESSURE_TDD_LIMIT`, claim nothing in that repository
+  and do not plan (section 2). Final answer:
+  `backpressure: tdd waiting <n>, review waiting <m>, spec skipped`.
+- Work that the run already owns is finished, not dropped: a claim that
+  `aw status` shows (section 3, step 2) and a leftover that the skill tells
+  the run to resume. Backpressure only stops a new `aw claim`.
+- A skipped repository changes no label and writes no issue comment. The run
+  goes on with the next repository. It stops when every repository is
+  skipped or has nothing to claim.
+- A skipped repository reports no stage, so it does not count toward the
+  three-stage limit of section 3. An issue that waits for an open
+  prerequisite (section 4) still counts in the numbers above; it is a
+  waiting issue.
+
 ### The review run: count, then one after another
 
 The organization can run only 20 Actions jobs at the same time. Each merge
@@ -659,6 +700,8 @@ Use the user's language. Give:
 - the plan changes: label moves, triage, closed issues;
 - each stage you did: issue, stage, outcome and pull request;
 - why the run stopped;
+- in a tdd or spec run: each repository skipped by backpressure, with the
+  `backpressure:` line above;
 - in a review run: `review waiting: <n>` (the count before the first claim), how
   many pull requests you reviewed, and each one you left because of a required
   check that was queued, missing, skipped or cancelled;
