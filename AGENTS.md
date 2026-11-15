@@ -27,6 +27,21 @@ AW is the shared source for Faberline standards and agent skills.
 - Use the outcome that `aw-worker` names: `split` for an issue that is too large,
   `respec` for an unclear spec in tdd, `blocked` only for a decision that a person must make.
 
+## Cost control
+
+The shared GKE test cluster costs the owner money. Cost control is a standing
+requirement. Full rules: [cost control standard](docs/standards/cost-control.md).
+
+- A change that starts GKE nodes states its expected cost.
+- A pull request runs only the GKE suites its diff can affect. A docs-only
+  pull request starts no GKE node. `main` and release candidates run all.
+- Use the cheapest machine and Spot nodes. Write the reason for any larger or
+  on-demand machine in `infra/gke-test/pools.yaml`.
+- Pools scale to zero. A job deletes its namespace at the end. Rerun only failed work.
+- A new paid run, node pool, quota, bucket or cost above the cap needs the
+  owner's approval first, with a number in TWD. Stop and report at 80% of the cap.
+- Never weaken a test, threshold, coverage ratchet or timeout to save cost.
+
 ## Rust
 
 - Layout: [Rust layout standard](docs/standards/rust-layout.md).
