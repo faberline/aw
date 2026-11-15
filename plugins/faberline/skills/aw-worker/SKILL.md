@@ -185,7 +185,8 @@ is `<owner>/<name>`:
 
 ## 2. Plan
 
-Do this in each repository before the first claim.
+Do this in each repository before the first claim, except where backpressure
+skips the spec run ("Backpressure" in "Stage runs").
 
 A signal is a comment whose first line is
 `<!-- aw:signal stage=<stage> agent=<agent> outcome=<outcome> -->`.
