@@ -1175,3 +1175,35 @@ For each one, read the state of each named sibling issue (G24).
 A line that names only a title (no `#<number>`) is a spec gap: find the issue by title in `<target>` and say so in the facts.
 Do not change the label yourself, unless G21 lets you.
 Put the issues of one repository in one `decision` issue (G32).
+### An old pin is not a pipeline cause (G39)
+
+This rule adds to G35. A product repository can call a reusable workflow of another repository.
+The call is `uses: owner/repo/.github/workflows/x.yml@<ref>`.
+The file on the default branch of the source repository can differ from the file at `<ref>`.
+A fix on the default branch does not reach a caller that pins an old ref.
+
+When a job of a reusable workflow fails or is cancelled, do this:
+
+1. Read the workflow file at the ref that the caller pins, not at the default branch.
+   Read the `uses:` line in the caller workflow of `<target>` to get the ref.
+   When the caller has an `aw-ref` input, read that ref too. It selects the aw files that the job uses.
+2. Compare the pinned ref with the default branch of the source repository.
+   Find a fix there for the symptom.
+3. When the default branch has a fix for the symptom, the cause is `old pin`.
+   Open an issue in the product repository to bump the pin to a ref that has the fix.
+   Search the open issues of `<target>` for the same bump first (G32). When one is open, add one comment with the new run links.
+4. Do not file a `pipeline` issue in faberline/aw with "cause not confirmed" for an `old pin`.
+   Do not read only aw `main` and then say the cause is not confirmed (G35).
+
+Signature of the aw#293 class:
+- Two GKE jobs of different runs are cancelled in the same second.
+- The jobs have no steps, and their logs return 404.
+- The pinned `gke-test.yml` has a `concurrency` group.
+
+The fix of this class is the Lease queue (aw#297, in `efe1a96`). Compare the pinned ref with it.
+When the pin is older than the fix, the cause is `old pin`.
+
+Evidence: faberline/aw#437 was filed as "cause not confirmed" because the supervisor read `gke-test.yml` on aw `main`.
+The tape `ci.yml` pinned `gke-test.yml@bfa0a46`. That ref still has the `concurrency` group. See faberline/tape#138.
+
+When the pinned file already has the fix, this rule does not apply. Go on with the normal cause search.
