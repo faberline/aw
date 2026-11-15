@@ -60,6 +60,12 @@ tears down.
   [The parker](#the-parker). Teardown leaves it up, so the next call (for
   example the next test suite) does not wait for a new system node. Idle cost:
   one node for 5 to 15 minutes after the last run.
+- **Minimum 0 is the rule.** Every node pool has a minimum of 0 nodes, and a
+  cold start is accepted (owner decision, 2026-11-15). A minimum above 0, or a
+  script that keeps a pool at 1 or more while no test runs, needs a written
+  reason in this file and the owner's approval. Do not lengthen or shorten a
+  test timeout to hide a cold start: a job that fails only because a cold
+  node starts too slowly is reported as an issue in `faberline/aw`.
 - `pool-<pool>`: one pool per row of `infra/gke-test/pools.yaml`. Its machine
   type is `n4-standard-2` (2 vCPU, 8 GB memory). It has 0 to
   `max_nodes` nodes, label `faberline.dev/pool=<pool>`, and taint

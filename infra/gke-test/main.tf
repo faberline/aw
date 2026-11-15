@@ -5,6 +5,9 @@
 # .github/workflows/gke-test.yml. See docs/standards/test-cluster.md.
 #
 # Cost model: no node runs while no test runs.
+# Rule (owner decision, 2026-11-15): every node pool has a minimum of 0
+# nodes and a cold start is accepted. A minimum above 0 needs a written reason
+# and the owner's approval.
 # - pool-<pool>: autoscaled 0..max_nodes, tainted, so it holds only the pods
 #   that select it and the autoscaler takes it back to 0 on its own. A
 #   repository can have more than one, for example <repo> and <repo>-client.

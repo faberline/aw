@@ -4,7 +4,9 @@
 # higher max_nodes with a pull request here. Terraform in this folder reads
 # the file with yamldecode and makes `pool-<pool>`:
 #
-# - min 0 nodes, max `max_nodes`; the autoscaler adds a node only while a pod
+# - min 0 nodes (owner decision, 2026-11-15: every node pool has a minimum of
+#   0 and a cold start is accepted; a minimum above 0 needs a written reason
+#   and the owner's approval), max `max_nodes`; the autoscaler adds a node only while a pod
 #   for that pool is Pending, and removes it about 10 minutes after the test
 #   namespace is gone.
 # - label `faberline.dev/pool=<pool>` and taint
