@@ -350,6 +350,15 @@ impl Tracker for GhCli {
         Ok(detail.into())
     }
 
+    fn issue_is_open(&self, repo: Option<&str>, issue: u64) -> PortResult<bool> {
+        let repo = match repo {
+            Some(r) => r.to_string(),
+            None => self.name()?,
+        };
+        let out = self.get(&format!("repos/{repo}/issues/{issue}"), Some(".state"))?;
+        Ok(out.trim().trim_matches('"') == "open")
+    }
+
     fn create_issue(&self, new: &NewIssue) -> PortResult<u64> {
         let repo = self.name()?;
         let path = format!("repos/{repo}/issues");

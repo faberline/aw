@@ -223,6 +223,13 @@ Put the recommended option first.
 When you have no recommendation, say so.
 Then use `類型：需要使用者`.
 
+Do not recommend `stage:spec` or `stage:tdd` for an issue whose work is an operation:
+a `workflow_dispatch`, a paid run, a tag, or a manual drill.
+A spec run or a tdd run changes files and opens a pull request. It cannot dispatch a workflow or run an operation.
+Say that the desk or the owner must run it.
+List the inputs that the operation needs, and say which of them are unknown.
+Example failure: the tape supervisor recommended `stage:spec` for tape#20 (a manual `workflow_dispatch` of a release candidate), and the spec routine correctly refused.
+
 An option can depend on a fact that you can read.
 Examples: a test message, a document, a closed issue, a tag.
 Read it before you open the decision.
@@ -1165,16 +1172,26 @@ Check G8 first: a live wait for an open prerequisite is not this case unless the
 In each run, list the open issues of `<target>` with a `stage:tdd` label whose body has a line that starts with `Waits for:`.
 For each one, read the state of each named sibling issue (G24).
 
-- The named issue is open and the issue has no `blocked` label: ask the desk to add `blocked`.
-  Use a `decision` issue of type `中控可決定` (step 8).
-  Write the exact label change: add `blocked` to `<repo>#<n>`.
-  Name the sibling and its state.
-- The named issue is merged and the issue still has `blocked`: ask the desk to remove `blocked`, in the same way.
+- The named issue is open and the issue has no `blocked` label: add `blocked` yourself, in the same pass (G21 exception below).
+  Post one comment on the issue that names each open prerequisite, for example: `blocked: waits for #125 (open)`.
+  Do not open a `decision` issue for this.
+  Do not add `blocked` when the issue has no numbered `Waits for:` line, or when every named issue is closed.
+- The named issue is merged and the issue still has `blocked`: ask the desk to remove `blocked`, in the same way as before.
+  Use a `decision` issue of type `中控可決定` (step 8) and write the exact label change.
   This extends G10.
 
-A line that names only a title (no `#<number>`) is a spec gap: find the issue by title in `<target>` and say so in the facts.
-Do not change the label yourself, unless G21 lets you.
+G38 exception to G21: this is the only case where the supervisor adds `blocked`.
+It applies only to an issue with a `stage:tdd` label and a `Waits for:` line with numbered prerequisites that are open (G24).
+All other uses of adding `blocked` stay with the desk.
+The routine prompt must list this label write; without it, ask the desk with a `decision` issue (step 8).
+`aw claim` also passes over such an issue without a label, so the label is for the planner and the status board.
+
+A `Waits for:` line with no issue number (only a title or text) is a spec gap.
+Find the issue by title in `<target>` and say so in the facts, and report it as a spec gap on the status board.
+The spec skill must write the issue number (`aw-worker`, spec step).
+Do not change the label for this line.
 Put the issues of one repository in one `decision` issue (G32).
+
 ### An old pin is not a pipeline cause (G39)
 
 This rule adds to G35. A product repository can call a reusable workflow of another repository.

@@ -7,3 +7,4 @@ pub mod pull_request;
 pub mod signal;
 pub mod split;
 pub mod stage;
+pub mod waits;

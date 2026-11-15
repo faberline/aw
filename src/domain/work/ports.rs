@@ -50,6 +50,8 @@ pub trait Tracker {
     fn remove_label(&self, issue: u64, label: &str) -> PortResult<()>;
     /// The body, the labels and the milestone number of one issue.
     fn issue_detail(&self, issue: u64) -> PortResult<IssueDetail>;
+    /// The issue is open. `repo` is `owner/name`; `None` is this repository.
+    fn issue_is_open(&self, repo: Option<&str>, issue: u64) -> PortResult<bool>;
     /// Make an issue; returns its number.
     fn create_issue(&self, new: &NewIssue) -> PortResult<u64>;
     /// Close the issue as not planned: other issues replace it.

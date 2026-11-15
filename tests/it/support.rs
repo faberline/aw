@@ -51,6 +51,8 @@ pub struct FakeTracker {
     /// The issues `close_issue` closed.
     pub closed: RefCell<Vec<u64>>,
     /// The labels of the closed issues: GitHub still serves a closed issue.
+    /// Open issues of other repositories, as `owner/name#number`.
+    pub foreign_open: RefCell<Vec<String>>,
     closed_labels: RefCell<HashMap<u64, Vec<String>>>,
     next_comment_id: Cell<u64>,
 }
@@ -272,6 +274,13 @@ impl Tracker for FakeTracker {
                 .unwrap_or_default(),
             labels,
             milestone: self.milestones.borrow().get(&issue).copied(),
+        })
+    }
+
+    fn issue_is_open(&self, repo: Option<&str>, issue: u64) -> PortResult<bool> {
+        Ok(match repo {
+            Some(r) if r != "o/r" => self.foreign_open.borrow().contains(&format!("{r}#{issue}")),
+            _ => self.issues.borrow().iter().any(|i| i.number == issue),
         })
     }
 

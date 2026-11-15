@@ -116,6 +116,47 @@ pub fn child_body(parent: u64, text: &str) -> String {
     )
 }
 
+/// Turn each `Waits for: <title>` line that names the title of a child made
+/// earlier into `Waits for: #<number>`, so `aw claim` can read it. A line
+/// that already has a number, or names no earlier child, stays as it is.
+pub fn number_waits(text: &str, made: &[(u64, String)]) -> String {
+    let lines: Vec<String> = text
+        .lines()
+        .map(|line| {
+            let Some(rest) = line.trim_start().strip_prefix_ignore_case("waits for:") else {
+                return line.to_string();
+            };
+            if rest.contains('#') {
+                return line.to_string();
+            }
+            let want = rest.trim().trim_end_matches('.').to_lowercase();
+            let numbers: Vec<String> = made
+                .iter()
+                .filter(|(_, title)| !title.is_empty() && want.contains(&title.to_lowercase()))
+                .map(|(n, _)| format!("#{n}"))
+                .collect();
+            if numbers.is_empty() {
+                line.to_string()
+            } else {
+                format!("Waits for: {}", numbers.join(", "))
+            }
+        })
+        .collect();
+    lines.join("\n")
+}
+
+trait StripPrefixIgnoreCase {
+    fn strip_prefix_ignore_case(&self, prefix: &str) -> Option<&str>;
+}
+
+impl StripPrefixIgnoreCase for str {
+    fn strip_prefix_ignore_case(&self, prefix: &str) -> Option<&str> {
+        let head = self.get(..prefix.len())?;
+        head.eq_ignore_ascii_case(prefix)
+            .then(|| &self[prefix.len()..])
+    }
+}
+
 /// The parent of a child issue, read from the mark in its body. An issue
 /// that `aw` did not make from a split gives `None`.
 pub fn child_parent(body: &str) -> Option<u64> {
@@ -219,5 +260,15 @@ mod tests {
             replaced_by("", &made[..1]),
             "Replaced by:\n- #8 Add the port\n"
         );
+    }
+
+    #[test]
+    fn a_waits_title_becomes_the_number_of_the_earlier_child() {
+        let made = vec![(21, "Add the port".to_string())];
+        let out = number_waits(
+            "Text\nWaits for: Add the port.\nWaits for: #5\nWaits for: other",
+            &made,
+        );
+        assert_eq!(out, "Text\nWaits for: #21\nWaits for: #5\nWaits for: other");
     }
 }
