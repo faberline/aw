@@ -17,8 +17,11 @@ Cluster setup is in [test-cluster.md](test-cluster.md). CI design is in
 3. **Cheapest valid machine.** Use the cheapest machine type and Spot nodes
    that still give a valid result. A larger machine or an on-demand node
    needs a written reason in `infra/gke-test/pools.yaml`.
-4. **Scale to zero.** A node pool scales to zero when idle. A job deletes its
-   namespace when it ends. No job keeps a node only to wait.
+4. **Scale to zero.** The minimum of every node pool is 0 nodes. The owner
+   accepts a slower cold start. A cold start is not a reason to keep a node.
+   A minimum above 0 needs a written reason in `infra/gke-test/pools.yaml`
+   and the owner's approval. A job deletes its namespace when it ends. No job
+   keeps a node only to wait.
 5. **Rerun the failed work only.** A rerun starts only the failed work when
    the tooling permits it.
 6. **Approval first.** These need the owner's approval before they start,

@@ -37,7 +37,10 @@ requirement. Full rules: [cost control standard](docs/standards/cost-control.md)
   pull request starts no GKE node. `main` and release candidates run all.
 - Use the cheapest machine and Spot nodes. Write the reason for any larger or
   on-demand machine in `infra/gke-test/pools.yaml`.
-- Pools scale to zero. A job deletes its namespace at the end. Rerun only failed work.
+- The minimum of every node pool is 0. A slower cold start is accepted and is
+  not a reason to keep a node. A minimum above 0 needs a written reason in
+  `infra/gke-test/pools.yaml` and the owner's approval.
+- A job deletes its namespace at the end. Rerun only failed work.
 - A new paid run, node pool, quota, bucket or cost above the cap needs the
   owner's approval first, with a number in TWD. Stop and report at 80% of the cap.
 - Never weaken a test, threshold, coverage ratchet or timeout to save cost.
