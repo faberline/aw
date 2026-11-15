@@ -9,7 +9,7 @@ use crate::domain::work::issue::agent_label;
 use crate::domain::work::ports::{NewIssue, RequiredChecks, judge_required};
 use crate::domain::work::pull_request::{body_closing, find_for_issue};
 use crate::domain::work::signal::{Outcome, Signal, names_spec_gap};
-use crate::domain::work::split::{SplitPlan, child_body, child_parent, replaced_by};
+use crate::domain::work::split::{SplitPlan, child_body, child_parent, number_waits, replaced_by};
 use crate::domain::work::stage::Stage;
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -174,7 +174,7 @@ fn split(
     for child in &plan.children {
         let new = NewIssue {
             title: child.title.clone(),
-            body: child_body(issue, &child.body),
+            body: child_body(issue, &number_waits(&child.body, &made)),
             labels: labels.clone(),
             milestone: parent.milestone,
         };

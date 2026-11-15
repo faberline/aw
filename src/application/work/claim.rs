@@ -8,6 +8,7 @@ use crate::domain::work::ports::Repo;
 use crate::domain::work::pull_request::{PullRequest, find_for_issue, rework_branch, work_branch};
 use crate::domain::work::signal::{Outcome, Signal};
 use crate::domain::work::stage::Stage;
+use crate::domain::work::waits;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ClaimOutcome {
@@ -90,6 +91,9 @@ pub fn claim(
         }
         if let Some(need) = issue.missing_need(has) {
             needs_other.push(format!("#{} needs `{need}`", issue.number));
+            continue;
+        }
+        if waits_on_open_issue(s, issue, &repo.name)? {
             continue;
         }
         if stage == Stage::Tdd {
@@ -176,6 +180,40 @@ pub fn claim(
         ));
     }
     Ok(ClaimOutcome::Nothing(why))
+}
+
+/// An issue whose `Waits for:` line names an issue that is still open is
+/// passed over before any claim, so one waiting issue does not block the
+/// queue. A line with no issue number gives a warning and does not wait.
+fn waits_on_open_issue(s: Services<'_>, issue: &Issue, repo: &str) -> Result<bool> {
+    let body = s.tracker.issue_detail(issue.number)?.body;
+    let waits = waits::parse(&body);
+    for text in &waits.without_number {
+        eprintln!(
+            "aw: warning: #{} has a `Waits for:` line with no issue number (`{text}`); not skipped",
+            issue.number
+        );
+    }
+    let mut open = Vec::new();
+    for p in &waits.prerequisites {
+        let same = p.repo.as_deref().is_none_or(|r| r == repo);
+        let still_open = s
+            .tracker
+            .issue_is_open(if same { None } else { p.repo.as_deref() }, p.number)
+            .with_context(|| format!("could not read {} for #{}", p.show(), issue.number))?;
+        if still_open {
+            open.push(p.show());
+        }
+    }
+    if open.is_empty() {
+        return Ok(false);
+    }
+    eprintln!(
+        "aw: skipped #{}: waits for {}, still open",
+        issue.number,
+        open.join(", ")
+    );
+    Ok(true)
 }
 
 fn branch_for(

@@ -618,3 +618,65 @@ fn a_live_claim_that_the_recent_list_misses_still_holds_its_issue() {
     assert_eq!(w.tracker.claims(1).len(), 1);
     assert!(w.tracker.calls().is_empty());
 }
+
+#[test]
+fn waits_for_closed_prerequisites_is_claimed() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    w.tracker
+        .bodies
+        .borrow_mut()
+        .insert(1, "Waits for: #9".into());
+    // #9 is not an open issue, so it is closed.
+    assert_eq!(claimed(&w, "claude").issue, 1);
+}
+
+#[test]
+fn an_open_prerequisite_skips_the_issue_and_takes_the_next() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec", "p0"]);
+    w.tracker.issue(2, &["agent:claude", "stage:spec"]);
+    w.tracker.issue(9, &[]);
+    w.tracker
+        .bodies
+        .borrow_mut()
+        .insert(1, "Waits for: #9".into());
+    w.tracker.clear_calls();
+    assert_eq!(claimed(&w, "claude").issue, 2);
+    assert!(
+        w.tracker.claims(1).is_empty(),
+        "no claim on the waiting issue"
+    );
+    assert!(!w.tracker.calls().iter().any(|c| c.contains("#1")));
+}
+
+#[test]
+fn a_cross_repo_prerequisite_is_read_in_its_repository() {
+    for (open, expected) in [(true, 2), (false, 1)] {
+        let w = World::new();
+        w.tracker.issue(1, &["agent:claude", "stage:spec", "p0"]);
+        w.tracker.issue(2, &["agent:claude", "stage:spec"]);
+        w.tracker
+            .bodies
+            .borrow_mut()
+            .insert(1, "Waits for: faberline/core#7".into());
+        if open {
+            w.tracker
+                .foreign_open
+                .borrow_mut()
+                .push("faberline/core#7".into());
+        }
+        assert_eq!(claimed(&w, "claude").issue, expected);
+    }
+}
+
+#[test]
+fn a_waits_line_with_no_number_warns_and_is_claimed() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    w.tracker
+        .bodies
+        .borrow_mut()
+        .insert(1, "Waits for: the port adapter".into());
+    assert_eq!(claimed(&w, "claude").issue, 1);
+}

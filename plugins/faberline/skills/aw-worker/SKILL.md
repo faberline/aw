@@ -306,8 +306,9 @@ Read code through the GitHub API when you do not need the clone:
 - **A precondition on another open issue.** When the spec needs a file or
   an interface that another open issue supplies, write one line that starts
   with `Waits for: #<number>`, with the issue number. A title is not enough:
-  the supervisor and the tdd run read the number. Write one such line for
-  each issue.
+  the supervisor, `aw claim` and the tdd run read the number. Write one such
+  line for each issue. A `Waits for:` line with no issue number is a spec
+  gap: `aw claim` does not skip that issue and the supervisor reports it.
 - Keep it to one pull request: at most about six files and 400 changed
   lines. When one pull request is not enough, split the issue (below).
 - The pull request closes the issue: `aw report ready` always writes
@@ -321,8 +322,10 @@ Read code through the GitHub API when you do not need the clone:
   Too large: <one line that says why>.
 
   ## Child: <title of the first child>
-  <what it must do, its acceptance criteria, and `Waits for: <title>` when
-  it needs another child first>
+  <what it must do, its acceptance criteria, and `Waits for: <title of an earlier child>` when
+  it needs another child first (`aw` replaces the title with the issue
+  number of that child, so list the children in the order of the work;
+  for a prerequisite outside the split write `Waits for: #<number>`)>
 
   ## Child: <title of the second child>
   ...
