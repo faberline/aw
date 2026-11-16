@@ -874,3 +874,112 @@ fn rework_only_tdd_keeps_the_priority_before_the_wait() {
         ClaimOutcome::Nothing(why) => panic!("expected a claim: {why}"),
     }
 }
+
+// faberline/aw#542: the first merge error is kept, and one issue that cannot
+// be prepared does not stop the run.
+
+fn two_returned(w: &World) {
+    for (n, pr) in [(7, 51), (8, 52)] {
+        w.workspace.remote.borrow_mut().push(format!("issue/{n}"));
+        w.tracker
+            .pr(pr, &format!("issue/{n}"), &format!("Closes #{n}"));
+        w.tracker.issue(n, &["agent:claude", "stage:tdd"]);
+    }
+    w.workspace.behind.set(true);
+}
+
+#[test]
+fn a_merge_error_without_a_conflict_is_reported_with_its_own_text() {
+    let w = World::new();
+    tdd_with_pr(&w, "issue/7");
+    w.workspace.behind.set(true);
+    *w.workspace.merge_error.borrow_mut() = Some("untracked files would be overwritten".into());
+    let why = nothing(&w, "claude");
+    assert!(why.contains("no open"), "{why}");
+    let comments = aw::domain::work::ports::Tracker::comments(&w.tracker, 7).unwrap();
+    let text = &comments.last().unwrap().body;
+    assert!(
+        text.contains("untracked files would be overwritten"),
+        "{text}"
+    );
+    assert!(text.contains("git merge origin/main failed"), "{text}");
+    // A merge that fails is not a conflict: no new branch, no closed PR.
+    let calls = w.workspace.calls();
+    assert!(!calls.iter().any(|c| c.contains("issue/7-r2")), "{calls:?}");
+    assert!(!w.tracker.calls().iter().any(|c| c.starts_with("close_pr")));
+    assert!(w.tracker.claims(7).is_empty());
+}
+
+#[test]
+fn one_issue_that_cannot_be_prepared_is_skipped_and_the_next_is_taken() {
+    let w = World::new();
+    two_returned(&w);
+    *w.workspace.merge_error.borrow_mut() = Some("fatal: refusing to merge".into());
+    let c = claimed(&w, "claude");
+    assert_eq!(c.issue, 8);
+    assert!(w.tracker.claims(7).is_empty());
+    assert!(w.tracker.calls().contains(&"comment #7".to_string()));
+    // The checkout was prepared once for the run.
+    let fetches = w.workspace.calls().iter().filter(|c| *c == "fetch").count();
+    assert_eq!(fetches, 1);
+}
+
+#[test]
+fn rework_only_skips_a_bad_returned_issue_and_takes_the_next() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:other", "stage:tdd"]);
+    w.tracker.issue(8, &["agent:other", "stage:tdd"]);
+    for (n, pr) in [(7, 51), (8, 52)] {
+        w.workspace.remote.borrow_mut().push(format!("issue/{n}"));
+        w.tracker
+            .pr(pr, &format!("issue/{n}"), &format!("Closes #{n}"));
+    }
+    w.workspace.behind.set(true);
+    *w.workspace.merge_error.borrow_mut() = Some("boom".into());
+    match rework(&w, Stage::Tdd).unwrap() {
+        ClaimOutcome::Claimed(c) => assert_eq!(c.issue, 8),
+        ClaimOutcome::Nothing(why) => panic!("expected a claim: {why}"),
+    }
+}
+
+// faberline/aw#538: `expedite` is new work that backpressure lets through.
+
+#[test]
+fn rework_only_takes_a_new_expedite_issue_in_spec_and_tdd() {
+    for (stage, label) in [(Stage::Spec, "stage:spec"), (Stage::Tdd, "stage:tdd")] {
+        let w = World::new();
+        w.tracker.issue(1, &["agent:other", label, "p1"]);
+        w.tracker
+            .issue(2, &["agent:other", label, "p1", "expedite"]);
+        match rework(&w, stage).unwrap() {
+            ClaimOutcome::Claimed(c) => assert_eq!((c.issue, c.stage), (2, stage)),
+            ClaimOutcome::Nothing(why) => panic!("expected a claim: {why}"),
+        }
+    }
+}
+
+#[test]
+fn rework_only_still_refuses_new_work_without_the_expedite_label() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:other", "stage:spec", "p0"]);
+    w.tracker.issue(2, &["agent:other", "stage:spec", "ci-fix"]);
+    assert!(matches!(
+        rework(&w, Stage::Spec).unwrap(),
+        ClaimOutcome::Nothing(_)
+    ));
+}
+
+#[test]
+fn an_expedite_issue_goes_before_other_work_but_after_p0() {
+    let w = World::new();
+    w.tracker
+        .issue(1, &["agent:claude", "stage:spec", "p1", "ci-fix"]);
+    w.tracker
+        .issue(2, &["agent:claude", "stage:spec", "p1", "expedite"]);
+    assert_eq!(claimed(&w, "claude").issue, 2);
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec", "p0"]);
+    w.tracker
+        .issue(2, &["agent:claude", "stage:spec", "p1", "expedite"]);
+    assert_eq!(claimed(&w, "claude").issue, 1);
+}

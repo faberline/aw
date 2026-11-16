@@ -430,6 +430,8 @@ pub struct FakeWorkspace {
     pub behind: Cell<bool>,
     /// Merging `origin/<default>` conflicts.
     pub conflicts: Cell<bool>,
+    /// The next merge fails once with this error and no `MERGE_HEAD`: not a conflict.
+    pub merge_error: RefCell<Option<String>>,
 }
 
 impl Default for FakeWorkspace {
@@ -444,6 +446,7 @@ impl Default for FakeWorkspace {
             switch_fails: Cell::new(false),
             behind: Cell::new(false),
             conflicts: Cell::new(false),
+            merge_error: RefCell::new(None),
         }
     }
 }
@@ -512,6 +515,9 @@ impl Workspace for FakeWorkspace {
 
     fn merge(&self, upstream: &str) -> PortResult<bool> {
         self.record(format!("merge {upstream}"));
+        if let Some(error) = self.merge_error.borrow_mut().take() {
+            return Err(PortError(error));
+        }
         Ok(!self.conflicts.get())
     }
 

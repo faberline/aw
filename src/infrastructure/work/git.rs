@@ -36,6 +36,23 @@ pub(crate) fn github_repo(url: &str) -> Option<String> {
     Some(format!("{owner}/{name}"))
 }
 
+/// `git merge upstream` through `git`. A failed merge that left `MERGE_HEAD`
+/// is a conflict: abort it and return `false`. A failed merge without
+/// `MERGE_HEAD` has nothing to abort and is not a conflict (for example an
+/// untracked file in the way, unrelated histories or a hook): its own
+/// error goes up, so the cause is not lost behind `git merge --abort`.
+fn merge_with(git: &dyn Fn(&[&str]) -> PortResult<String>, upstream: &str) -> PortResult<bool> {
+    let merge = ["merge", "--no-ff", "--no-edit", "--quiet", upstream];
+    let Err(error) = git(&merge) else {
+        return Ok(true);
+    };
+    if git(&["rev-parse", "--quiet", "--verify", "MERGE_HEAD"]).is_err() {
+        return Err(error);
+    }
+    git(&["merge", "--abort"])?;
+    Ok(false)
+}
+
 impl Workspace for GitCli {
     fn origin_repo(&self) -> PortResult<Option<String>> {
         // Outside a checkout, or without `origin`, git fails: no repo.
@@ -109,12 +126,7 @@ impl Workspace for GitCli {
     }
 
     fn merge(&self, upstream: &str) -> PortResult<bool> {
-        let args = ["merge", "--no-ff", "--no-edit", "--quiet", upstream];
-        if run("git", &args, None).is_ok() {
-            return Ok(true);
-        }
-        self.git(&["merge", "--abort"])?;
-        Ok(false)
+        merge_with(&|args| run("git", args, None), upstream)
     }
 
     fn detach(&self, start: &str) -> PortResult<()> {
@@ -133,8 +145,53 @@ impl Workspace for GitCli {
 
 #[cfg(test)]
 mod tests {
-    use super::{GitCli, github_repo};
-    use crate::domain::work::ports::Workspace;
+    use std::cell::RefCell;
+
+    use super::{GitCli, github_repo, merge_with};
+    use crate::domain::work::ports::{PortError, PortResult, Workspace};
+
+    /// A fake `git`: `merge` fails with `merge_error`, and `MERGE_HEAD`
+    /// exists when `conflict` is set. Returns the commands it saw.
+    fn merge_run(merge_error: Option<&str>, conflict: bool) -> (PortResult<bool>, Vec<String>) {
+        let seen = RefCell::new(Vec::new());
+        let git = |args: &[&str]| -> PortResult<String> {
+            seen.borrow_mut().push(args.join(" "));
+            match args[0] {
+                "merge" if args[1] == "--abort" => Ok(String::new()),
+                "merge" => merge_error
+                    .map(|e| Err(PortError(e.into())))
+                    .unwrap_or(Ok(String::new())),
+                _ if conflict => Ok(String::new()),
+                _ => Err(PortError("no MERGE_HEAD".into())),
+            }
+        };
+        let result = merge_with(&git, "origin/main");
+        (result, seen.into_inner())
+    }
+
+    #[test]
+    fn a_clean_merge_runs_no_abort() {
+        let (result, seen) = merge_run(None, false);
+        assert!(result.unwrap());
+        assert_eq!(seen.len(), 1);
+    }
+
+    #[test]
+    fn a_conflict_is_aborted_and_is_not_an_error() {
+        let (result, seen) = merge_run(Some("conflict"), true);
+        assert!(!result.unwrap());
+        assert_eq!(seen.last().unwrap(), "merge --abort");
+    }
+
+    #[test]
+    fn a_failed_merge_without_merge_head_reports_its_own_error_and_does_not_abort() {
+        let (result, seen) = merge_run(Some("untracked files would be overwritten"), false);
+        assert_eq!(
+            result.unwrap_err().0,
+            "untracked files would be overwritten"
+        );
+        assert!(!seen.iter().any(|c| c == "merge --abort"), "{seen:?}");
+    }
 
     #[test]
     fn the_current_branch_is_a_name_or_none_for_a_detached_head() {

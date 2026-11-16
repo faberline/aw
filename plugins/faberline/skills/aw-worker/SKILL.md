@@ -84,6 +84,18 @@ Call: `gh api --paginate "repos/<repo>/issues?state=open&labels=stage:review,age
   - spec run: `aw claim --stage spec --rework-only` takes a `stage:spec`
     issue whose newest signal is a tdd `respec`. It never takes an issue that
     never had a spec, and the run does not plan (section 2).
+  - Exception: `--rework-only` also takes a new issue with the label
+    `expedite` in the spec and tdd stages (`aw` 0.7.39 or later), and takes
+    it before other work except `p0`. The label is for a fix of a red `main`
+    (the supervisor sets it, G28) and for a release blocker (a person or the
+    desk sets it). Backpressure stops new work only; an urgent fix is not
+    held behind the queue that it must clear. Do not add the label yourself.
+    The run counts and reports an `expedite` claim as `rework claimed #<N>`.
+  - A claim that cannot prepare the branch of a returned tdd issue (for
+    example a failed `git merge origin/<default>` that is not a conflict)
+    posts a `blocked` tdd signal with the git error on that issue and takes
+    the next candidate. It does not stop the run. A comment of a person after
+    that signal lets a tdd run take the issue again.
 - tdd run: when `review_waiting >= BACKPRESSURE_REVIEW_LIMIT`, use the
   rework-only claim above. Final answer: `backpressure: review waiting <n>,
   new tdd skipped, rework claimed #<N>` or `backpressure: review waiting <n>,
