@@ -142,7 +142,8 @@ pub trait Workspace {
     fn contains(&self, upstream: &str) -> PortResult<bool>;
     /// Merge `upstream` into HEAD without a rebase. `true` when it merged
     /// cleanly. On a conflict it aborts the merge, leaves the branch as it
-    /// was and returns `false`.
+    /// was and returns `false`. Any other failure is an error that carries
+    /// the error of `git merge` itself.
     fn merge(&self, upstream: &str) -> PortResult<bool>;
     fn detach(&self, start: &str) -> PortResult<()>;
     /// Push HEAD to `origin/<branch>`. Never a force push.

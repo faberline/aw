@@ -34,8 +34,10 @@ Do not delete anything.
 When a write is not on the list, make a `decision` issue instead.
 One exception: G21 (below) lets you execute a label-only desk decision.
 The routine prompt must list the G21 label writes; without them, G21 does not run.
-Another exception: G28 (below) lets you add three labels to a product issue that you open for a red `main`.
+Another exception: G28 (below) lets you add four labels to a product issue that you open for a red `main`.
 The routine prompt must list the G28 label writes; without them, G28 does not run.
+Another exception: G41 (below) lets you move an issue from `stage:review` back to `stage:tdd` when no open pull request closes it.
+The routine prompt must list the G41 label writes; without them, G41 does not run, and the item goes in a `pipeline` issue.
 Another exception: G33 (below) lets you answer a blocked test issue of the known class "core v0.5.0 leader no-op" and remove `blocked`.
 The routine prompt must list the G21 label writes for it; without them, G33 does not run, and the item goes to the desk.
 G25 (ghost runs) and G27 (the CI queue tracker) do not add writes. G27 only adds comments on faberline/aw#372.
@@ -117,6 +119,8 @@ Look only at these:
 - l. Queued runs with zero jobs for more than 24 hours (ghost runs, G25, below).
   List them only. A ghost run is not a problem.
 - m. Issues with a `stage:*` label and no `blocked` label that nobody touched for more than 2 hours (pickup age, G34, below).
+- n. Issues in `stage:review` whose last review signal says that no open pull request closes them (G41, below).
+- o. Sent-back issues that no run touched for more than 2 hours while their stage is in rework-only mode (G42, below).
 
 ### 5. Find root causes before you act
 
@@ -142,7 +146,7 @@ Then pick exactly one action for each root cause:
   Do not change labels.
 - **A real defect in `<target>` that no open issue covers.**
   Create one issue with the evidence and no labels.
-  One exception: a red `main` issue gets three labels under G28 (below).
+  One exception: a red `main` issue gets four labels under G28 (below).
   Write the body from a file and read it back (G26).
 - **A defect in aw, the aw-worker skill, `aw ci check` or a shared CI standard.**
   Create a `pipeline` issue in faberline/aw.
@@ -939,17 +943,25 @@ Use this rule only when all of these are true:
 - the body has the failing required job, the run link and the failing step;
 - no open issue in `<target>` covers the failure (step 6).
 
-Then add these three labels to that new issue, in the same run: `stage:spec`, `agent:claude` and `p1`.
+Then add these four labels to that new issue, in the same run: `stage:spec`, `agent:claude`, `p1` and `expedite`.
+`expedite` is the label that lets a spec or tdd run claim the issue while the stage is in backpressure (`aw-worker`, "Backpressure"). Without it, a red `main` waits behind the queue that its own red `main` makes longer.
 Report the new issue on the status board under `這一輪做了什麼`, with its link.
 Do not open a `decision` issue for this.
 
 This rule has limits:
 
 - It applies only to an issue that this run created for a red `main`.
-- Do not add or change a `stage:*` or `agent:*` label on any other issue. G21 is the only other label change.
+- Do not add or change a `stage:*`, `agent:*` or `expedite` label on any other issue. G21 and G41 are the only other label changes.
 - When the fix needs a choice between two options, open a `decision` issue as before (step 5).
 
-Example where the desk added only these three labels: faberline/aw#376 (defer#164). Another: faberline/aw#379 (defer#172).
+#### A release blocker (expedite by decision)
+
+An open issue that a release waits for (G11: the issue blocks the release tag, or a `release` or milestone gate names it) and that stays unclaimed for 2 hours while its stage is in backpressure (G40) is a release blocker.
+You do not add `expedite` to it yourself.
+Open one `decision(<repo>)` issue (step 8) that proposes the label as option A (recommended): the issue number, the release it blocks, how long it is unclaimed, and the counts of G40.
+The desk or the owner adds the label. When the label is on the issue, G30 and G34 apply to it as to any other issue.
+
+Example where the desk added only the first three labels: faberline/aw#376 (defer#164). Another: faberline/aw#379 (defer#172).
 
 ### Milestone of a red-main issue (G29)
 
@@ -1286,3 +1298,33 @@ Do not propose to disable or pause a tdd or spec routine. The rule is that upstr
 When the same cause is likely in more than one repository (for example one CI queue or one runner problem), do not open your own issue.
 Search the open `pipeline` issues of faberline/aw for the other repositories first.
 Read the state of the issue you find (G24). When it is open, link it in a comment and on your board line. Do not open a duplicate (G15, G32).
+
+### Review with no pull request goes back to tdd (G41)
+
+The claim of a review run posts a `blocked` signal when no open pull request closes the issue: "No open pull request closes this issue." The issue stays in `stage:review`. No review run takes it again, and no tdd run takes it.
+
+For each open issue in `<target>` with `stage:review` and without `blocked` (labels from this pass, G19):
+
+1. Read its comments. The last aw signal is from the `review` stage, outcome `blocked`, and its text says that no open pull request closes the issue.
+2. Search the open pull requests of `<target>` for one that closes the issue (`Closes #<n>`, or a head branch for the issue). When one exists, do nothing: the review run takes it.
+3. Otherwise, in the same run, remove the label `stage:review` and add the label `stage:tdd`. A tdd run starts the work again from the default branch.
+4. Write one line on the status board under `這一輪做了什麼`, with the link.
+
+Do not change any other label. Do not use this rule for an issue whose last review signal has another text. Those issues follow G10 and G20.
+
+### A sent-back issue that nobody takes (G42)
+
+A stage in rework-only mode (G40) takes only sent-back work, and `expedite` issues. A sent-back issue is a `stage:tdd` issue with an open pull request or a review `failed` signal as its newest, and a `stage:spec` issue with a tdd `respec` signal as its newest.
+
+For each such issue in a stage that G40 counts as in backpressure: when no `aw:claim` or `aw:signal` comment, commit or label change on it is newer than 2 hours (time from `date -u`, G1), the rework-only claim does not reach it. Report it in one `pipeline(<repo>)` issue "sent-back issue not taken": the issue numbers, the age of the last touch in hours, and the newest error text of any claim comment on it (a claim fault such as faberline/aw#542 leaves a `blocked` signal from the claim itself). Search first (step 6, G15, G32, G43). When one is open, add a comment with the new facts.
+
+Do not report an issue that has a live claim (G37) or the label `blocked`.
+
+### Search for the same failure before you open an issue (G43)
+
+Before you open any issue for a failure (red `main`, failed job, failed test), search the open issues of `<target>` for the same run id and for the same failing test name or the same error text. Use REST (`search/issues` with `repo:<target> is:issue is:open`, or the list call and a filter).
+
+- When an open issue names the same run id or the same failing test, add a comment with the new run link there. Do not open a second issue.
+- When none does, open the issue, and put the run id and the failing test name in the title or the first lines of the body, so the next search finds it.
+
+This check comes before G28. G28 labels only an issue that this run created.

@@ -4,8 +4,8 @@ use super::active::{board, in_checkout};
 use super::services::Services;
 use crate::domain::work::claim::{Claim, STALE_AFTER_SECONDS, latest_mark};
 use crate::domain::work::issue::{
-    Comment, Issue, awaiting_report, claim_order_returned, newest_signal_is, newest_signal_time,
-    redo_requested, valid_agent,
+    Comment, EXPEDITE_LABEL, Issue, awaiting_report, claim_order_returned, newest_signal_is,
+    newest_signal_time, redo_requested, valid_agent,
 };
 use crate::domain::work::ports::Repo;
 use crate::domain::work::pull_request::{PullRequest, find_for_issue, rework_branch, work_branch};
@@ -41,7 +41,8 @@ pub fn claim(
 /// `claim`, and with `rework_only` it takes only an issue that a later
 /// stage sent back: a tdd issue with an open pull request or whose newest
 /// signal is a review `failed`, and a spec issue whose newest signal is a
-/// tdd `respec`. It needs `--stage tdd` or `--stage spec`. Backpressure
+/// tdd `respec`; an issue with the `expedite` label is new work that
+/// backpressure does not hold back, so it counts too. It needs `--stage tdd` or `--stage spec`. Backpressure
 /// uses it: new work waits, returned work is still done.
 pub fn claim_with(
     s: Services<'_>,
@@ -107,6 +108,7 @@ pub fn claim_with(
         prs = Some(all);
     }
     let mut checkout: Option<bool> = None;
+    let mut fetched = false;
     let mut needs_checkout = Vec::new();
     let mut needs_other = Vec::new();
 
@@ -126,7 +128,10 @@ pub fn claim_with(
         if !awaiting_report(stage, agent, &comments) {
             continue;
         }
-        if rework_only && !sent_back(stage, &comments, returned.contains(&issue.number)) {
+        if rework_only
+            && !(sent_back(stage, &comments, returned.contains(&issue.number))
+                || issue.has_label(EXPEDITE_LABEL))
+        {
             continue;
         }
         // The list of recent comments can miss a claim (a comment that is
@@ -197,7 +202,27 @@ pub fn claim_with(
         };
         let mut superseded = None;
         if stage == Stage::Tdd {
-            superseded = prepare_work_branch(s, &mut claim, pr.as_ref(), &comments)?;
+            if !fetched {
+                ready_checkout(s)?;
+                fetched = true;
+            }
+            match prepare_work_branch(s, &mut claim, pr.as_ref(), &comments) {
+                Ok(old) => superseded = old,
+                Err(error) => {
+                    // One issue that cannot be prepared must not stop the
+                    // run (faberline/aw#542): say why on that issue, and
+                    // try the next candidate. A tree that the failure left
+                    // dirty stops the run, or every later issue would fail.
+                    fail_prepare(s, issue, agent, &error)?;
+                    if !s.workspace.is_clean()? {
+                        bail!(
+                            "the working tree has changes after the preparation of #{} failed: {error:#}",
+                            issue.number
+                        );
+                    }
+                    continue;
+                }
+            }
         }
         // A claim of a dead run that is older than the recent comments is
         // still on the issue. Remove it, so the issue shows one claim.
@@ -310,6 +335,36 @@ fn block(s: Services<'_>, issue: &Issue, agent: &str, text: &str) -> Result<()> 
     Ok(())
 }
 
+/// Record a blocked tdd signal with the error, so the planner and the
+/// supervisor see why this issue was passed over. A comment of a person
+/// after the signal lets the next tdd run take the issue again.
+fn fail_prepare(s: Services<'_>, issue: &Issue, agent: &str, error: &anyhow::Error) -> Result<()> {
+    eprintln!(
+        "aw: skipped #{}: could not prepare the work branch: {error:#}",
+        issue.number
+    );
+    let signal = Signal {
+        stage: Stage::Tdd,
+        agent: agent.to_string(),
+        outcome: Outcome::Blocked,
+    };
+    let text =
+        format!("aw claim could not prepare the work branch and skipped this issue:\n\n{error:#}");
+    s.tracker
+        .comment(issue.number, &signal.render(&text, None))
+        .with_context(|| format!("could not comment on issue #{}", issue.number))?;
+    Ok(())
+}
+
+/// The checkout must be clean; fetch `origin` once for the run.
+fn ready_checkout(s: Services<'_>) -> Result<()> {
+    if !s.workspace.is_clean()? {
+        bail!("the working tree has changes; commit, stash or remove them before a tdd claim");
+    }
+    s.workspace.fetch().context("git fetch failed")?;
+    Ok(())
+}
+
 /// Check out the tdd work branch in a clean checkout.
 ///
 /// An open pull request branch that is behind the default branch gets
@@ -324,10 +379,6 @@ fn prepare_work_branch(
     comments: &[crate::domain::work::issue::Comment],
 ) -> Result<Option<PullRequest>> {
     let ws = s.workspace;
-    if !ws.is_clean()? {
-        bail!("the working tree has changes; commit, stash or remove them before a tdd claim");
-    }
-    ws.fetch().context("git fetch failed")?;
     let upstream = format!("origin/{}", claim.default_branch);
     let Some(pr) = pr.filter(|p| p.head != claim.default_branch) else {
         open_branch(s, claim)?;
@@ -335,7 +386,11 @@ fn prepare_work_branch(
     };
     if !redo_requested(comments) {
         open_branch(s, claim)?;
-        if ws.contains(&upstream)? || ws.merge(&upstream)? {
+        if ws.contains(&upstream)?
+            || ws
+                .merge(&upstream)
+                .with_context(|| format!("git merge {upstream} failed"))?
+        {
             return Ok(None);
         }
     }

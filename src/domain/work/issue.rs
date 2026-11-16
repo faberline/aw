@@ -103,7 +103,16 @@ pub const BAR_LABEL: &str = "bar";
 /// until it merges. A person or the supervisor sets it.
 pub const CI_FIX_LABEL: &str = "ci-fix";
 
-/// Claim order: `p0` first, then the issues with the `ci-fix` label, then
+/// The label of a new issue that backpressure must not hold back: a fix of
+/// a red default branch, or the fix that a release waits for. With it,
+/// `aw claim --rework-only` takes the issue in spec and tdd. It stops
+/// nothing else: the stages still obey their limits for all other new
+/// work. The supervisor sets it on a red-main fix; for a release blocker
+/// it proposes the label in a decision (faberline/aw#538).
+pub const EXPEDITE_LABEL: &str = "expedite";
+
+/// Claim order: `p0` first, then the issues with the `expedite` label, then
+/// the issues with the `ci-fix` label, then
 /// the issues with the `bar` label, then `p1` (with or without a
 /// milestone), then the lowest milestone version (compared as semver), then the
 /// priority label (unlabeled last), then the issues that came back from
@@ -126,6 +135,7 @@ pub fn claim_order_returned(issues: &mut [Issue], returned: &[(u64, String)]) {
         let back = returned.iter().find(|(n, _)| *n == i.number);
         (
             i.priority() != 0,
+            !i.has_label(EXPEDITE_LABEL),
             !i.has_label(CI_FIX_LABEL),
             !i.has_label(BAR_LABEL),
             i.priority() > 1,
