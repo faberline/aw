@@ -168,13 +168,13 @@ jobs:
     command: |
       cargo fmt --all -- --check
       cargo clippy --workspace --all-targets --locked -- -D warnings
-    resources: { cpu: "1500m", memory: 5Gi }
+    resources: { cpu: "1300m", memory: 4Gi }
     timeout: 20m
 
   - name: lib-all-features
     stage: test
     command: cargo test --workspace --all-features --locked
-    resources: { cpu: "1500m", memory: 5Gi }
+    resources: { cpu: "1300m", memory: 4Gi }
     timeout: 40m
 
   - name: image-server
@@ -204,7 +204,7 @@ Fields:
 | `command` | for `command` | Bash, run from the repository root with `set -euo pipefail`. |
 | `image` | no | Overrides the default image. Pinned by tag or digest, never `latest`. |
 | `pool` | no | The node pool. Default `aw-ci`. Only `aw-ci` and the repository's own pools are allowed. |
-| `resources` | no | `cpu` and `memory` requests. No limits, as in [test-cluster.md](test-cluster.md#one-pod-per-node-requests-without-limits). Default `cpu: "1500m"`, `memory: 5Gi`. A node of `pool-aw-ci` (n4-standard-2) has about 1.9 CPU and 6 GiB allocatable, so one Job gets one node and a request above that never schedules. |
+| `resources` | no | `cpu` and `memory` requests. No limits, as in [test-cluster.md](test-cluster.md#one-pod-per-node-requests-without-limits). Default `cpu: "1300m"`, `memory: 4Gi`; these are also the maximum. A node (n4-standard-2) has 1930m and 6170228Ki allocatable, but its DaemonSets request about 510m and 1000Mi, so about 1420m and 5030Mi are free (measured 2026-11-17). One Job gets one node. A larger request never schedules, the autoscaler adds no node (`NotTriggerScaleUp`), and the batch runner rejects it before it applies the Jobs. |
 | `timeout` | yes | `activeDeadlineSeconds` of the Job, as `<n>m`. About three times the normal run time, as in [ci.md](ci.md#queue). |
 | `paths` | no | A [test-scopes.md](test-scopes.md#the-map) selector. The Job is skipped when no changed path matches. A push to `main` ignores it. |
 | `env` | no | A map of plain environment values. Never a secret. |
