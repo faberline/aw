@@ -43,7 +43,8 @@ In a stage run:
   that stage, so the three runs do not block each other.
 - A tdd run (`aw claim --stage tdd`, `aw` 0.7.36 or later) takes an issue that
   review sent back (an open pull request) before new work of the same
-  priority. Priority labels still come first.
+  priority, whatever its milestone; the one that has waited longest since its
+  review `failed` signal goes first (`aw` 0.7.38). Priority labels still come first.
 - Only the spec run plans. The tdd and review runs skip section 2.
 - The run's own model does the stage work. Do not give it to a subagent.
 

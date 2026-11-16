@@ -114,22 +114,50 @@ pub fn claim_order(issues: &mut [Issue]) {
 
 /// `claim_order`, where the issues in `returned` (an issue with an open
 /// pull request that review sent back to tdd) come before the other
-/// issues of the same priority. A returned issue never passes an issue of
-/// a higher priority, so the rest of the order does not change.
-pub fn claim_order_returned(issues: &mut [Issue], returned: &[u64]) {
-    let back = |i: &Issue| returned.contains(&i.number);
-    issues.sort_by(|a, b| {
-        (a.priority() != 0)
-            .cmp(&(b.priority() != 0))
-            .then_with(|| b.has_label(CI_FIX_LABEL).cmp(&a.has_label(CI_FIX_LABEL)))
-            .then_with(|| b.has_label(BAR_LABEL).cmp(&a.has_label(BAR_LABEL)))
-            .then_with(|| (a.priority() > 1).cmp(&(b.priority() > 1)))
-            .then_with(|| a.milestone_rank().cmp(&b.milestone_rank()))
-            .then_with(|| a.priority().cmp(&b.priority()))
-            .then_with(|| back(b).cmp(&back(a)))
-            .then_with(|| a.created_at.cmp(&b.created_at))
-            .then_with(|| a.number.cmp(&b.number))
+/// issues of the same priority, whatever their milestone. A returned issue
+/// never passes an issue of a higher priority, so the order of new work
+/// does not change. Each entry of `returned` is the issue number and the
+/// time of its newest review `failed` signal (`""` when there is none).
+/// Among returned issues the one that has waited longest comes first, so
+/// an old pull request does not starve behind returned issues of a lower
+/// milestone that come back again and again (lumen#12 and #17, aw#536).
+pub fn claim_order_returned(issues: &mut [Issue], returned: &[(u64, String)]) {
+    issues.sort_by_cached_key(|i| {
+        let back = returned.iter().find(|(n, _)| *n == i.number);
+        (
+            i.priority() != 0,
+            !i.has_label(CI_FIX_LABEL),
+            !i.has_label(BAR_LABEL),
+            i.priority() > 1,
+            // A returned issue goes before the new work of its group.
+            match back {
+                Some(_) => (0, (0, (0, 0, 0))),
+                None => {
+                    let (rank, version) = i.milestone_rank();
+                    (1, (rank, version))
+                }
+            },
+            i.priority(),
+            // No failed signal: the pull request was just submitted, so it
+            // waits behind the ones that review sent back.
+            back.map(|(_, at)| {
+                if at.is_empty() {
+                    "~".to_string()
+                } else {
+                    at.clone()
+                }
+            }),
+            i.created_at.clone(),
+            i.number,
+        )
     });
+}
+
+/// The time of the newest signal when it comes from `stage` with `outcome`.
+pub fn newest_signal_time(comments: &[Comment], stage: Stage, outcome: Outcome) -> Option<String> {
+    latest_signal_at(comments)
+        .filter(|(_, s)| s.stage == stage && s.outcome == outcome)
+        .map(|(at, _)| at.to_string())
 }
 
 /// The newest `aw` signal in the comments.
@@ -363,7 +391,7 @@ mod tests {
             issue(3, &["p1"], None),
             issue(4, &["p2"], None),
         ];
-        claim_order_returned(&mut issues, &[3, 4]);
+        claim_order_returned(&mut issues, &[(3, String::new()), (4, String::new())]);
         let order: Vec<u64> = issues.iter().map(|i| i.number).collect();
         assert_eq!(order, [3, 1, 4, 2]);
     }

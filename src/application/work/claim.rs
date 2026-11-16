@@ -4,8 +4,8 @@ use super::active::{board, in_checkout};
 use super::services::Services;
 use crate::domain::work::claim::{Claim, STALE_AFTER_SECONDS, latest_mark};
 use crate::domain::work::issue::{
-    Comment, Issue, awaiting_report, claim_order_returned, newest_signal_is, redo_requested,
-    valid_agent,
+    Comment, Issue, awaiting_report, claim_order_returned, newest_signal_is, newest_signal_time,
+    redo_requested, valid_agent,
 };
 use crate::domain::work::ports::Repo;
 use crate::domain::work::pull_request::{PullRequest, find_for_issue, rework_branch, work_branch};
@@ -88,13 +88,22 @@ pub fn claim_with(
     let mut returned: Vec<u64> = Vec::new();
     if only == Some(Stage::Tdd) {
         let all = s.tracker.open_prs()?;
-        returned = issues
+        let numbers: Vec<u64> = issues
             .iter()
-            .filter(|i| Stage::from_labels(&i.labels) == Some(Stage::Tdd))
+            .filter(|i| i.actionable_stage(agent) == Some(Stage::Tdd))
             .filter(|i| find_for_issue(&all, i.number).is_some())
             .map(|i| i.number)
             .collect();
-        claim_order_returned(&mut issues, &returned);
+        // The wait of a returned issue starts at its newest review `failed`
+        // signal: the one that has waited longest goes first.
+        let mut order = Vec::new();
+        for n in &numbers {
+            let at = newest_signal_time(&s.tracker.comments(*n)?, Stage::Review, Outcome::Failed)
+                .unwrap_or_default();
+            order.push((*n, at));
+        }
+        returned = numbers;
+        claim_order_returned(&mut issues, &order);
         prs = Some(all);
     }
     let mut checkout: Option<bool> = None;
