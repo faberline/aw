@@ -54,7 +54,9 @@ aw report --agent claude --repo faberline/core ready -F summary.md
 `--repo owner/name` (or `AW_REPO`). Without `--repo`, `aw` uses the
 repository of the current checkout.
 
-`aw claim` takes the first eligible issue (priority, then oldest), posts the
+`aw claim` takes the first eligible issue (priority, then oldest; with
+`--stage tdd`, an issue that review sent back, which has an open pull request,
+comes before new work of the same priority), posts the
 claim comment and prints the claim as JSON. It exits 2 when there is nothing
 to do. An agent holds at most one claim in a repository.
 `aw claim --skip <issue>` passes over that issue; repeat it for more. A

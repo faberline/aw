@@ -680,3 +680,62 @@ fn a_waits_line_with_no_number_warns_and_is_claimed() {
         .insert(1, "Waits for: the port adapter".into());
     assert_eq!(claimed(&w, "claude").issue, 1);
 }
+
+fn claimed_tdd(world: &World) -> Claim {
+    match claim(world.services(), "other", Some(Stage::Tdd), &[], &[]).unwrap() {
+        ClaimOutcome::Claimed(c) => c,
+        ClaimOutcome::Nothing(why) => panic!("expected a claim, got nothing: {why}"),
+    }
+}
+
+fn returned_world() -> World {
+    let w = World::new();
+    // #3 is new work. #9 came back from review: its pull request is open.
+    w.tracker.issue(3, &["agent:other", "stage:tdd", "p1"]);
+    w.tracker.issue(9, &["agent:other", "stage:tdd", "p1"]);
+    w.tracker.pr(51, "issue/9", "Closes #9");
+    w
+}
+
+#[test]
+fn tdd_takes_an_issue_returned_from_review_before_older_new_work_of_the_same_priority() {
+    // lumen, 2026-11-16: two reviewed pull requests waited behind about 22
+    // newer issues, so review judged a stale head again and again.
+    let w = returned_world();
+    assert_eq!(claimed_tdd(&w).issue, 9);
+}
+
+#[test]
+fn tdd_takes_higher_priority_new_work_before_a_returned_issue() {
+    let w = returned_world();
+    w.tracker.issue(12, &["agent:other", "stage:tdd", "p0"]);
+    assert_eq!(claimed_tdd(&w).issue, 12);
+}
+
+#[test]
+fn tdd_takes_new_work_of_a_higher_priority_before_a_returned_issue_of_a_lower_one() {
+    let w = World::new();
+    w.tracker.issue(3, &["agent:other", "stage:tdd", "p1"]);
+    w.tracker.issue(9, &["agent:other", "stage:tdd", "p2"]);
+    w.tracker.pr(51, "issue/9", "Closes #9");
+    assert_eq!(claimed_tdd(&w).issue, 3);
+}
+
+#[test]
+fn a_returned_issue_that_waits_on_an_open_issue_is_still_passed_over() {
+    let w = World::new();
+    w.tracker.issue(3, &["agent:other", "stage:tdd"]);
+    w.tracker.issue(9, &["agent:other", "stage:tdd", "blocked"]);
+    w.tracker.pr(51, "issue/9", "Closes #9");
+    assert_eq!(claimed_tdd(&w).issue, 3);
+}
+
+#[test]
+fn without_a_stage_a_returned_tdd_issue_gets_no_boost_over_review() {
+    let w = World::new();
+    w.tracker.issue(3, &["agent:other", "stage:review"]);
+    w.tracker.pr(50, "issue/3", "Closes #3");
+    w.tracker.issue(9, &["agent:other", "stage:tdd"]);
+    w.tracker.pr(51, "issue/9", "Closes #9");
+    assert_eq!(claimed(&w, "other").issue, 3);
+}
