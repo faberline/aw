@@ -812,3 +812,65 @@ fn rework_only_needs_a_spec_or_tdd_stage() {
     assert!(rework(&w, Stage::Review).is_err());
     assert!(claim_with(w.services(), "other", None, &[], &[], true).is_err());
 }
+
+fn in_milestone(w: &World, number: u64, title: &str) {
+    for i in w.tracker.issues.borrow_mut().iter_mut() {
+        if i.number == number {
+            i.milestone = Some(title.into());
+        }
+    }
+}
+
+#[test]
+fn rework_only_tdd_takes_the_returned_issue_that_has_waited_longest() {
+    // lumen, 2026-11-17 (aw#536): two pull requests that review sent back on
+    // 2026-11-15 waited two days. Returned issues of lower milestones came
+    // back from review again and again and went first every time.
+    let w = World::new();
+    w.tracker.issue(5, &["agent:other", "stage:tdd", "p1"]);
+    w.tracker.pr(51, "issue/5", "Closes #5");
+    in_milestone(&w, 5, "lib@0.13.0");
+    w.tracker.add_comment(
+        5,
+        &signal(Stage::Review, "other", Outcome::Failed),
+        "2026-01-16T06:00:00Z",
+    );
+    w.tracker.issue(12, &["agent:other", "stage:tdd", "p1"]);
+    w.tracker.pr(52, "issue/12", "Closes #12");
+    in_milestone(&w, 12, "lib@0.26.0");
+    w.tracker.add_comment(
+        12,
+        &signal(Stage::Review, "other", Outcome::Failed),
+        "2026-01-15T17:05:00Z",
+    );
+    // Notes of a person after the signal do not change who waited longest.
+    w.tracker
+        .add_comment(12, "Desk: priority raised.", "2026-01-15T17:25:00Z");
+    match rework(&w, Stage::Tdd).unwrap() {
+        ClaimOutcome::Claimed(c) => assert_eq!(c.issue, 12),
+        ClaimOutcome::Nothing(why) => panic!("expected a claim: {why}"),
+    }
+}
+
+#[test]
+fn rework_only_tdd_keeps_the_priority_before_the_wait() {
+    let w = World::new();
+    w.tracker.issue(5, &["agent:other", "stage:tdd", "p1"]);
+    w.tracker.pr(51, "issue/5", "Closes #5");
+    w.tracker.add_comment(
+        5,
+        &signal(Stage::Review, "other", Outcome::Failed),
+        "2026-01-16T06:00:00Z",
+    );
+    w.tracker.issue(12, &["agent:other", "stage:tdd", "p2"]);
+    w.tracker.pr(52, "issue/12", "Closes #12");
+    w.tracker.add_comment(
+        12,
+        &signal(Stage::Review, "other", Outcome::Failed),
+        "2026-01-15T17:05:00Z",
+    );
+    match rework(&w, Stage::Tdd).unwrap() {
+        ClaimOutcome::Claimed(c) => assert_eq!(c.issue, 5),
+        ClaimOutcome::Nothing(why) => panic!("expected a claim: {why}"),
+    }
+}

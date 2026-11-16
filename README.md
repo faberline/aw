@@ -56,7 +56,7 @@ repository of the current checkout.
 
 `aw claim` takes the first eligible issue (priority, then oldest; with
 `--stage tdd`, an issue that review sent back, which has an open pull request,
-comes before new work of the same priority), posts the
+comes before new work of the same priority, the longest wait first), posts the
 claim comment and prints the claim as JSON. It exits 2 when there is nothing
 to do. An agent holds at most one claim in a repository.
 `aw claim --skip <issue>` passes over that issue; repeat it for more. A
