@@ -3,7 +3,7 @@
 # S8 test coverage: docs/standards/coverage.md. CI raises `line`; it never
 # goes down.
 [standards.coverage]
-line = 90.59
+line = 91.21
 target = 100
 
 # Repo hygiene: docs/standards/repo-hygiene.md. The baseline is empty and
