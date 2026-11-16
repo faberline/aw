@@ -108,7 +108,7 @@ Look only at these:
 - d. Issues with a `stage:*` label and an `agent:*` claim label.
   Their claimed branch has no new commit for 3 hours.
 - e. Blocked issues whose reason is gone (G10, below).
-- f. Stage liveness (G8, below).
+- f. Stage liveness (G8 and backpressure G40, below).
 - g. Review loops (G12, below).
 - h. Parent issues whose children are all done (G13, below).
 - i. Issues with `stage:tdd` and `blocked` whose last signal says the spec is incomplete (G16, below).
@@ -350,7 +350,8 @@ Note its time.
 
 A stage may have no signal for more than 3 hours.
 Claimable work may exist for that stage.
-Before you report a dead routine, check this:
+Before you report a dead routine, apply G40 (backpressure) to the `tdd` and `spec` stages. A stage in backpressure is not dead.
+Then check this:
 a worker releases an issue that waits for an open prerequisite and takes the next one (`aw-worker` section 4).
 A release writes no `aw:signal`.
 So a live routine can look silent.
@@ -1118,6 +1119,7 @@ When one is open, add one comment with the new numbers.
 When none is open, create one `pipeline(<repo>)` issue in the same pass.
 The issue has: the stage, the issues in the list with the hours, the queue depth, the time of the last output of the routine, and the claim check of each issue (G4, G6, G30).
 Check G8 first: when every issue waits for an open prerequisite, this is not an alarm and not a pipeline issue.
+Check G40 too: when the stage is in backpressure, the routine skipped by design. Do not open or update a `pipeline` issue for it.
 
 Do not claim issues, do not change labels, and do not run the stage.
 Do not use the 2 hours as a reason to rerun anything.
@@ -1225,3 +1227,62 @@ Evidence: faberline/aw#437 was filed as "cause not confirmed" because the superv
 The tape `ci.yml` pinned `gke-test.yml@bfa0a46`. That ref still has the `concurrency` group. See faberline/tape#138.
 
 When the pinned file already has the fix, this rule does not apply. Go on with the normal cause search.
+
+### Backpressure is not a stopped routine (G40)
+
+A tdd run or a spec run skips a repository on purpose when the stages below it are stuck.
+A skipped run writes no signal on GitHub.
+So a healthy routine looks silent.
+The rules are in `aw-worker`, section "Backpressure: count downstream before the first claim".
+G8 and G34 call this rule before they report a `tdd` or `spec` stage as silent.
+
+#### Count (before you report silence)
+
+Count with REST, one list call for each label.
+Use the same query as `aw-worker`: open issues of `<target>` that are not pull requests and do not have the label `blocked`.
+
+- `review_waiting`: issues with `stage:review`.
+- `tdd_waiting`: issues with `stage:tdd`.
+
+Compare the counts with the limits in `aw-worker`: `BACKPRESSURE_REVIEW_LIMIT` and `BACKPRESSURE_TDD_LIMIT`.
+Do not copy the numbers into your text. Read them from `aw-worker` in this pass, because they can change.
+
+- The `tdd` stage is in backpressure when `review_waiting` is at or above `BACKPRESSURE_REVIEW_LIMIT`.
+- The `spec` stage is in backpressure when `review_waiting` is at or above `BACKPRESSURE_REVIEW_LIMIT`, or `tdd_waiting` is at or above `BACKPRESSURE_TDD_LIMIT`.
+- The `review` stage has no backpressure rule. G8 applies to it as before.
+
+#### What you do for a stage in backpressure
+
+1. Do not open a "routine silent" issue. Do not add a comment to one.
+2. Write one line on the status board, for example `backpressure: review waiting 5, tdd and spec skip by design`.
+3. Go on with the other checks. A stage in backpressure is not an alarm in step 9.
+
+A stage that is not in backpressure keeps G8 and G34 as they are.
+
+#### The real signal: the review stage is the bottleneck
+
+Backpressure is normal for a short time. It is a problem when it does not end.
+Report the review stage as the bottleneck when both are true:
+
+- the stage is in backpressure, and
+- the newest `aw:signal` of the `review` stage with outcome `passed` or `failed` in `<target>` is older than 6 hours (time from `date -u`, G1).
+
+Then do this, in one issue for each repository:
+
+1. Search the open faberline/aw issues with the label `pipeline` for `<repo>` and "review bottleneck" first (step 6, G15, G32).
+2. When one is open, add one comment with the new facts. Do not open a second issue.
+3. When none is open, open one `pipeline(<repo>)` issue "review is the bottleneck".
+4. The facts: the pull requests that wait for review, how long each waits (hours), and the reason for each. Read the reason from the evidence, not from a guess (G14):
+   - behind `main` (needs an update),
+   - CI queued or not started (G18, G23),
+   - repeated failed reviews (G12).
+   Add `review_waiting`, `tdd_waiting` and the time of the last `passed` or `failed` signal.
+5. This issue is urgent (step 9) only when the repository is on the release chain (G11) or has `p0` or `p1`.
+
+Do not propose to disable or pause a tdd or spec routine. The rule is that upstream does no new work while downstream is stuck.
+
+#### The same cause in several repositories
+
+When the same cause is likely in more than one repository (for example one CI queue or one runner problem), do not open your own issue.
+Search the open `pipeline` issues of faberline/aw for the other repositories first.
+Read the state of the issue you find (G24). When it is open, link it in a comment and on your board line. Do not open a duplicate (G15, G32).
