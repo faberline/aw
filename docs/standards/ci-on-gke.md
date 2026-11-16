@@ -19,6 +19,12 @@ repository uses it yet. It is not a standard and has no checker; see the
 | Proof | `.github/workflows/ci-stage-proof.yml` and `.github/ci/proof-jobs.yaml` | Started by hand. |
 | Pool `aw-ci`, sccache bucket, identity | `infra/gke-test/ci.tf` | Applied. `ci-stage.yml` takes the bucket and the service account as inputs. |
 
+A repository uses the `ci-rust` tag that equals the `channel` in its
+`rust-toolchain.toml`. The toolchain in the image is read-only, so a Job cannot
+install another version. When a repository pins a new version, add it to the
+matrix of `publish-rust` in `.github/workflows/ci-image.yml`. The list has
+only versions that a repository pins. Each version has the same components.
+
 Not built yet. The text below describes the design for these parts:
 
 - Kinds `image` and `suite`. A stage that has such a Job fails before

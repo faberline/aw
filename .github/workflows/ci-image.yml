@@ -3,7 +3,7 @@ name: ci-image
 # Publishes the shared CI images to GHCR:
 # - ghcr.io/faberline/ci-base: Rust stable, uv, kind and kubectl.
 # - ghcr.io/faberline/ci-rust: the image of the work Jobs of ci-on-gke: a
-#   pinned Rust toolchain, sccache, kubectl, cargo-llvm-cov, cargo-deny and Node.js (docs/standards/ci-on-gke.md).
+#   pinned Rust toolchain (one tag for each pinned version), sccache, kubectl, cargo-llvm-cov, cargo-deny and Node.js (docs/standards/ci-on-gke.md).
 # - ghcr.io/faberline/kindest-node: a copy of the kind node image, so a
 #   kind cluster does not pull from Docker Hub.
 # A pull request only builds the image. main and the weekly run publish it.
@@ -36,8 +36,6 @@ concurrency:
 env:
   BASE: ghcr.io/faberline/ci-base
   RUST: ghcr.io/faberline/ci-rust
-  # The tag of ci-rust. Keep it the same as RUST_VERSION in ci/rust/Dockerfile.
-  RUST_VERSION: 1.99.1
   NODE: ghcr.io/faberline/kindest-node
   NODE_TAG: v1.33.1
   NODE_SOURCE: kindest/node:v1.33.1@sha256:050072256b9a903bd914c0b2866828150cb229cea0efe5892e2b644d5dd3b34f
@@ -67,15 +65,6 @@ jobs:
           tags: |
             ${{ env.BASE }}:1
             ${{ env.BASE }}:sha-${{ github.sha }}
-      - name: Build the work Job image
-        uses: docker/build-push-action@v6
-        with:
-          context: ci/rust
-          build-args: RUST_VERSION=${{ env.RUST_VERSION }}
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: |
-            ${{ env.RUST }}:${{ env.RUST_VERSION }}
-            ${{ env.RUST }}:sha-${{ github.sha }}
       - name: Copy the kind node image
         if: github.event_name != 'pull_request'
         run: |
@@ -89,8 +78,41 @@ jobs:
           echo "copied digest: $got"
           test "$got" = "$NODE_DIGEST"
 
+  # One image for each Rust version that a repository pins in its
+  # rust-toolchain.toml. The versions are in the matrix below: add a version
+  # when a repository pins it, and remove it when no repository pins it.
+  # Every version gets the same components (see ci/rust/Dockerfile).
+  publish-rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_version: ["1.99.1", "1.96.1"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build the work Job image
+        uses: docker/build-push-action@v6
+        with:
+          context: ci/rust
+          build-args: RUST_VERSION=${{ matrix.rust_version }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.RUST }}:${{ matrix.rust_version }}
+            ${{ env.RUST }}:sha-${{ github.sha }}-${{ matrix.rust_version }}
+
   verify:
-    needs: publish
+    needs: [publish, publish-rust]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 30
