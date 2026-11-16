@@ -385,7 +385,7 @@ jobs:
     stage: test
     command: |
       cargo test --workspace --locked
-    resources: { cpu: 4, memory: 12Gi }
+    resources: { cpu: 1, memory: 3Gi }
     timeout: 40m
     env: { RUST_BACKTRACE: 1 }
   - name: doc
@@ -442,7 +442,7 @@ check "batch: the default pool is aw-ci, with its toleration" rendered \
 check "batch: a Job may use a pool of its repository" rendered \
   '.items[1].spec.template.spec.nodeSelector["faberline.dev/pool"] == "som-client"'
 check "batch: requests come from the manifest, defaults else" rendered \
-  '[.items[].spec.template.spec.containers[0].resources.requests] == [{cpu: "4", memory: "12Gi"}, {cpu: "1500m", memory: "5Gi"}]'
+  '[.items[].spec.template.spec.containers[0].resources.requests] == [{cpu: "1", memory: "3Gi"}, {cpu: "1300m", memory: "4Gi"}]'
 check "batch: env of the manifest reaches the work container" rendered \
   '.items[0].spec.template.spec.containers[0].env | any(.name == "RUST_BACKTRACE" and .value == "1")'
 check "batch: only the init container mounts the Secret" rendered \
@@ -474,6 +474,7 @@ jobs:
   - { name: Bad_Name, stage: build, command: "", image: "rust:latest", pool: keep-server, timeout: 40, bogus: 1 }
   - { name: twin, stage: test, command: "true", image: "rust:1", timeout: 5m, resources: { cpu: lots, memory: 2G } }
   - { name: twin, stage: test, command: "true", timeout: 5m, env: { "bad-key": 1 } }
+  - { name: big, stage: test, command: "true", image: "rust:1", timeout: 5m, resources: { cpu: 1500m, memory: 5Gi } }
 YAML
 if BATCH_MANIFEST="$B/bad.yaml" batch test render; then
   fail "batch: a bad manifest fails before anything is applied"
@@ -483,7 +484,7 @@ fi
 for want in 'version must be 1' 'Bad_Name: name must be' 'stage must be lint, test or e2e' 'unknown field bogus' \
   'command is required' 'never latest' 'pool keep-server is not aw-ci and not a pool of som' \
   'timeout is required' 'twin: the name is used more than once' 'resources.cpu must be' \
-  'resources.memory must be' 'twin: no image' 'env bad-key must be'; do
+  'resources.memory must be' 'big: resources.cpu 1500m does not fit a node' 'big: resources.memory 5Gi does not fit a node' 'twin: no image' 'env bad-key must be'; do
   check "batch: manifest rule: $want" grep -q "$want" "$B/err"
 done
 

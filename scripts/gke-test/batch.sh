@@ -67,6 +67,14 @@ IMAGE_GRACE_SECONDS="${IMAGE_GRACE_SECONDS:-180}"
 # of pools.yaml, because it belongs to no single repository.
 CI_POOL="aw-ci"
 CI_KSA="ci-job"
+# What one Job pod may request on an n4-standard-2 node. The node has 1930m and
+# 6170228Ki allocatable, but its DaemonSets (anetd, fluentbit, gke-metadata-server,
+# node-local-dns, pdcsi, ...) request about 510m and 1000Mi. Measured on
+# 2026-11-17, that leaves about 1420m and 5030Mi. A larger request never
+# schedules and the autoscaler adds no node (NotTriggerScaleUp), so the batch
+# runner rejects it before it applies anything. Default and maximum are equal.
+MAX_CPU_M=1300
+MAX_MEM_MI=4096
 LABEL_STAGE="faberline.dev/ci-stage"
 LABEL_JOB="faberline.dev/ci-job"
 # Minutes on top of the largest Job timeout: the queue for a node, the node
@@ -100,8 +108,11 @@ pool_owners="$(yq -o=json -I=0 '.pools' "$POOLS_FILE" \
 # Prints one line per problem.
 check_manifest() {
   jq -r --arg stage "$STAGE" --arg repo "$REPO" --arg ci_pool "$CI_POOL" \
+    --argjson max_cpu "$MAX_CPU_M" --argjson max_mem "$MAX_MEM_MI" \
     --argjson pools "$pool_owners" '
     def s: if type == "string" then . else "" end;
+    def mcpu: tostring | if endswith("m") then (.[:-1] | tonumber) else (tonumber * 1000) end;
+    def mmem: s | if endswith("Gi") then (.[:-2] | tonumber * 1024) else (.[:-2] | tonumber) end;
     ["name","stage","kind","command","image","pool","resources","timeout","paths","env"] as $fields
     | . as $m
     | (if type != "object" then "the manifest must be a map" else empty end),
@@ -136,10 +147,16 @@ check_manifest() {
                 | if $p != $ci_pool and $pools[$p] != $repo
                     then "\($w): pool \($p) is not \($ci_pool) and not a pool of \($repo) in infra/gke-test/pools.yaml of aw"
                   else empty end),
-               (if (.resources.cpu? // "1500m" | tostring | test("^([0-9]+(\\.[0-9]+)?|[0-9]+m)$")) | not
-                  then "\($w): resources.cpu must be a number of CPUs, for example \"2\" or 1500m" else empty end),
-               (if (.resources.memory? // "5Gi" | s | test("^[0-9]+(Mi|Gi)$")) | not
-                  then "\($w): resources.memory must be <n>Mi or <n>Gi" else empty end),
+               (if (.resources.cpu? // "1300m" | tostring | test("^([0-9]+(\\.[0-9]+)?|[0-9]+m)$")) | not
+                  then "\($w): resources.cpu must be a number of CPUs, for example 1 or 1300m"
+                elif (.resources.cpu? // "1300m" | mcpu) > $max_cpu
+                  then "\($w): resources.cpu \(.resources.cpu) does not fit a node: at most \($max_cpu)m after the DaemonSets"
+                else empty end),
+               (if (.resources.memory? // "4Gi" | s | test("^[0-9]+(Mi|Gi)$")) | not
+                  then "\($w): resources.memory must be <n>Mi or <n>Gi"
+                elif (.resources.memory? // "4Gi" | mmem) > $max_mem
+                  then "\($w): resources.memory \(.resources.memory) does not fit a node: at most \($max_mem)Mi after the DaemonSets"
+                else empty end),
                (if (.timeout | s | test("^[1-9][0-9]*m$")) | not
                   then "\($w): timeout is required, as <n>m" else empty end),
                ((.env // {})
@@ -262,8 +279,8 @@ jq --arg stage "$STAGE" --arg ns "$NAMESPACE" --arg repo "$REPO" --arg ci_pool "
                     + ((.env // {}) | to_entries | map({ name: .key, value: (.value | tostring) }))
                   ),
                   resources: { requests: {
-                    cpu: (.resources.cpu // "1500m" | tostring),
-                    memory: (.resources.memory // "5Gi")
+                    cpu: (.resources.cpu // "1300m" | tostring),
+                    memory: (.resources.memory // "4Gi")
                   } },
                   securityContext: $locked,
                   volumeMounts: [ { name: "work", mountPath: "/work" } ]
