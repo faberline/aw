@@ -106,8 +106,18 @@ pub const CI_FIX_LABEL: &str = "ci-fix";
 /// Claim order: `p0` first, then the issues with the `ci-fix` label, then
 /// the issues with the `bar` label, then `p1` (with or without a
 /// milestone), then the lowest milestone version (compared as semver), then the
-/// priority label (unlabeled last), then the oldest issue.
+/// priority label (unlabeled last), then the issues that came back from
+/// review, then the oldest issue.
 pub fn claim_order(issues: &mut [Issue]) {
+    claim_order_returned(issues, &[]);
+}
+
+/// `claim_order`, where the issues in `returned` (an issue with an open
+/// pull request that review sent back to tdd) come before the other
+/// issues of the same priority. A returned issue never passes an issue of
+/// a higher priority, so the rest of the order does not change.
+pub fn claim_order_returned(issues: &mut [Issue], returned: &[u64]) {
+    let back = |i: &Issue| returned.contains(&i.number);
     issues.sort_by(|a, b| {
         (a.priority() != 0)
             .cmp(&(b.priority() != 0))
@@ -116,6 +126,7 @@ pub fn claim_order(issues: &mut [Issue]) {
             .then_with(|| (a.priority() > 1).cmp(&(b.priority() > 1)))
             .then_with(|| a.milestone_rank().cmp(&b.milestone_rank()))
             .then_with(|| a.priority().cmp(&b.priority()))
+            .then_with(|| back(b).cmp(&back(a)))
             .then_with(|| a.created_at.cmp(&b.created_at))
             .then_with(|| a.number.cmp(&b.number))
     });
@@ -337,6 +348,19 @@ mod tests {
         claim_order(&mut issues);
         let order: Vec<u64> = issues.iter().map(|i| i.number).collect();
         assert_eq!(order, [5, 6, 2, 1, 3, 4]);
+    }
+
+    #[test]
+    fn a_returned_issue_comes_before_older_issues_of_its_own_priority_only() {
+        let mut issues = vec![
+            issue(1, &["p1"], None),
+            issue(2, &["p2"], None),
+            issue(3, &["p1"], None),
+            issue(4, &["p2"], None),
+        ];
+        claim_order_returned(&mut issues, &[3, 4]);
+        let order: Vec<u64> = issues.iter().map(|i| i.number).collect();
+        assert_eq!(order, [3, 1, 4, 2]);
     }
 
     fn order(mut issues: Vec<Issue>) -> Vec<u64> {

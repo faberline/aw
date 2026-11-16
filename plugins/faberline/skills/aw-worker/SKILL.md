@@ -41,6 +41,9 @@ In a stage run:
 - Add `--stage <stage>` to every `claim`, `report`, `release` and `status`
   command (it is part of `<who>`). `aw` then takes and holds only claims of
   that stage, so the three runs do not block each other.
+- A tdd run (`aw claim --stage tdd`, `aw` 0.7.36 or later) takes an issue that
+  review sent back (an open pull request) before new work of the same
+  priority. Priority labels still come first.
 - Only the spec run plans. The tdd and review runs skip section 2.
 - The run's own model does the stage work. Do not give it to a subagent.
 

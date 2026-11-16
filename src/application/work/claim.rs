@@ -3,7 +3,9 @@ use anyhow::{Context, Result, bail};
 use super::active::{board, in_checkout};
 use super::services::Services;
 use crate::domain::work::claim::{Claim, STALE_AFTER_SECONDS, latest_mark};
-use crate::domain::work::issue::{Issue, awaiting_report, redo_requested, valid_agent};
+use crate::domain::work::issue::{
+    Issue, awaiting_report, claim_order_returned, redo_requested, valid_agent,
+};
 use crate::domain::work::ports::Repo;
 use crate::domain::work::pull_request::{PullRequest, find_for_issue, rework_branch, work_branch};
 use crate::domain::work::signal::{Outcome, Signal};
@@ -56,11 +58,29 @@ pub fn claim(
 
     let repo = &board.repo;
     let mut prs: Option<Vec<PullRequest>> = None;
+    // An issue in tdd with an open pull request came back from review. It
+    // goes before new work of the same priority (only `--stage tdd` claims
+    // this way: without it, one agent mixes stages and the order of the
+    // stages stays as it was), or it waits behind every
+    // newer issue and review judges a stale head again. The pull requests
+    // come from one request, which a tdd or review claim reads anyway.
+    let mut issues = board.issues.clone();
+    if only == Some(Stage::Tdd) {
+        let all = s.tracker.open_prs()?;
+        let returned: Vec<u64> = issues
+            .iter()
+            .filter(|i| Stage::from_labels(&i.labels) == Some(Stage::Tdd))
+            .filter(|i| find_for_issue(&all, i.number).is_some())
+            .map(|i| i.number)
+            .collect();
+        claim_order_returned(&mut issues, &returned);
+        prs = Some(all);
+    }
     let mut checkout: Option<bool> = None;
     let mut needs_checkout = Vec::new();
     let mut needs_other = Vec::new();
 
-    for issue in &board.issues {
+    for issue in &issues {
         if skip.contains(&issue.number) {
             continue;
         }
