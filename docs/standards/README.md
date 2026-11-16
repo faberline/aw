@@ -47,14 +47,16 @@ Promote a guideline only when all three are true:
 | S5 | [SaaS service skeleton](saas-service.md) | repositories with `[project] kind = "saas-service"`: `lumen`, `tape`, `defer`, `relay`, `keep` | `aw standards saas-service check` | `[[standards.saas_service.exception]]` in `aw.toml` | candidate since 2026-10-22; report only; 0 of 5 pass |
 | S7 | [CI stages](ci.md) | every repository with CI | `aw ci check` | `[[standards.ci.exception]]` in `aw.toml` | active since 2026-11-09; 0 of 8 repositories pass (`aw` misses only the ruleset) |
 | S8 | [Test coverage](coverage.md): 100 % line coverage, reached by a ratchet | every Rust repository | the coverage action, `.github/actions/coverage` | `[[standards.coverage.exclude]]` in `aw.toml` | active since 2026-11-10; `aw` adopted, then `lumen`, then the rest |
+| S9 | [Repo hygiene](repo-hygiene.md): no session leftovers, home paths, dated documents or oversized files; a ratchet to an empty baseline | every repository | `aw repo check` | `[hygiene]` table in `aw.toml` | active since `aw` 0.7.40; every repository adopts it in its `lint` job; an empty baseline is required for `1.0.0` |
 
 A candidate becomes active when its checker is on `aw` main.
 
 **Most checkers are not available now.** On 2026-11-06 `aw` became a Rust
 issue CLI and the Python engine was removed, with `scripts/meta/` and every
 `aw standards` command in the table. The rules still apply; check them by
-hand until a checker is ported to the Rust `aw`. Two checkers are in the Rust
-`aw` now: `aw ci check` (S7) and `aw standards check` (S4, since `aw` 0.7.34).
+hand until a checker is ported to the Rust `aw`. Three checkers are in the Rust
+`aw` now: `aw ci check` (S7), `aw standards check` (S4, since `aw` 0.7.34)
+and `aw repo check` (S9).
 For DEV-PIPELINE-1, each consumer also needs its own verified adoption evidence.
 This specification covers ordinary PR development only. Release pipelines
 will be defined separately.
@@ -71,7 +73,6 @@ will be defined separately.
 | [cost-control.md](cost-control.md) | Standing cost rules for the shared GKE test cluster: select suites by diff, cheapest machine, scale to zero, owner approval in TWD, weekly review, and the cost log. No checker yet. |
 | [release-tooling.md](release-tooling.md) | The release workflows and scripts that `aw` supplies once to the service repositories, the inputs each repository passes, and the order in which repositories move. `service-release.yml` is the first shared piece. Becomes a standard when `aw release check` ships. |
 
-The authoring, service, CLI, meta-doc, and release conventions are still in
-the root [CONTRIBUTING.md](https://github.com/faberline/workspace/blob/main/CONTRIBUTING.md)
-in `workspace`. Most of them have no checker, so under this definition they
-are guidelines. They move here when `workspace` merges into `aw`.
+Some authoring, service, CLI, meta-doc, and release conventions are not in
+this folder yet. Most of them have no checker, so under this definition they
+are guidelines. They move here when a checker ships.

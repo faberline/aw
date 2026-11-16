@@ -35,6 +35,8 @@ jobs:
           shellcheck -S warning -x scripts/gke-test/*.sh scripts/gke-test/tests/*.sh
           scripts/gke-test/tests/run-tests.sh
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: repo hygiene (S9)
+        run: cargo run --locked --quiet -- repo check
 
   # Runs the workspace tests with coverage (S8, docs/standards/coverage.md).
   test-coverage:

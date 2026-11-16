@@ -6,6 +6,7 @@ mod meta;
 mod process;
 mod release_gate;
 mod release_workflow;
+mod repo;
 mod report;
 mod runs;
 mod standards;
