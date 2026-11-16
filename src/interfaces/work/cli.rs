@@ -97,6 +97,12 @@ enum Command {
         /// label is passed over. Repeat it or separate with commas.
         #[arg(long, env = "AW_HAS", value_name = "THING", value_delimiter = ',')]
         has: Vec<String>,
+        /// Take only an issue that a later stage sent back (tdd: an open
+        /// pull request or a review `failed`; spec: a tdd `respec`). New
+        /// work is left. Needs `--stage tdd` or `--stage spec`. Used
+        /// under backpressure.
+        #[arg(long)]
+        rework_only: bool,
     },
     /// Finish the claimed stage.
     Report {
@@ -602,18 +608,21 @@ fn read_message(message: Option<String>, file: Option<String>) -> Result<String>
 
 fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit> {
     match command {
-        Command::Claim { target, skip, has } => {
-            match work::claim(s, &target.agent, target.stage(), &skip, &has)? {
-                ClaimOutcome::Claimed(claim) => {
-                    print(&claim)?;
-                    Ok(Exit::Ok)
-                }
-                ClaimOutcome::Nothing(why) => {
-                    eprintln!("aw: {why}");
-                    Ok(Exit::Nothing)
-                }
+        Command::Claim {
+            target,
+            skip,
+            has,
+            rework_only,
+        } => match work::claim_with(s, &target.agent, target.stage(), &skip, &has, rework_only)? {
+            ClaimOutcome::Claimed(claim) => {
+                print(&claim)?;
+                Ok(Exit::Ok)
             }
-        }
+            ClaimOutcome::Nothing(why) => {
+                eprintln!("aw: {why}");
+                Ok(Exit::Nothing)
+            }
+        },
         Command::Report {
             target,
             outcome,

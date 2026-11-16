@@ -145,6 +145,11 @@ fn latest_signal_at(comments: &[Comment]) -> Option<(&str, Signal)> {
         .max_by(|a, b| a.0.cmp(b.0))
 }
 
+/// The newest signal on the issue comes from `stage` with `outcome`.
+pub fn newest_signal_is(comments: &[Comment], stage: Stage, outcome: Outcome) -> bool {
+    latest_signal(comments).is_some_and(|s| s.stage == stage && s.outcome == outcome)
+}
+
 /// True until `agent` reports on `stage`. A signal for another stage or
 /// from another agent does not count, so the planner can move the stage or
 /// the agent label to make the issue work again. A `blocked` signal stops

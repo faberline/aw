@@ -73,16 +73,30 @@ each label, no polling). Count open issues that do not have the label
 Call: `gh api --paginate "repos/<repo>/issues?state=open&labels=stage:review,agent:claude&per_page=100" --jq '[.[] | select(.pull_request | not) | select(any(.labels[]; .name == "blocked") | not)] | length'`
 (use `stage:tdd` for the second count).
 
-- tdd run: when `review_waiting >= BACKPRESSURE_REVIEW_LIMIT`, claim nothing
-  in that repository. Final answer: `backpressure: review waiting <n>, tdd skipped`.
+- Backpressure stops NEW work only. Work that a later stage sent back is
+  still done. Under backpressure, claim with `--rework-only` (`aw` 0.7.37 or
+  later) instead of a plain claim. It takes only returned issues and exits
+  with the "nothing to claim" code otherwise:
+  - tdd run: `aw claim --stage tdd --rework-only` takes a `stage:tdd` issue
+    that has an open pull request or whose newest signal is a review
+    `failed`. It never takes an issue with no earlier tdd work.
+  - spec run: `aw claim --stage spec --rework-only` takes a `stage:spec`
+    issue whose newest signal is a tdd `respec`. It never takes an issue that
+    never had a spec, and the run does not plan (section 2).
+- tdd run: when `review_waiting >= BACKPRESSURE_REVIEW_LIMIT`, use the
+  rework-only claim above. Final answer: `backpressure: review waiting <n>,
+  new tdd skipped, rework claimed #<N>` or `backpressure: review waiting <n>,
+  new tdd skipped, no rework waiting`.
 - spec run: when `review_waiting >= BACKPRESSURE_REVIEW_LIMIT` or
-  `tdd_waiting >= BACKPRESSURE_TDD_LIMIT`, claim nothing in that repository
-  and do not plan (section 2). Final answer:
-  `backpressure: tdd waiting <n>, review waiting <m>, spec skipped`.
+  `tdd_waiting >= BACKPRESSURE_TDD_LIMIT`, use the rework-only claim above.
+  Final answer: `backpressure: tdd waiting <n>, review waiting <m>, new spec
+  skipped, rework claimed #<N>` or `..., new spec skipped, no rework waiting`.
+- After a rework claim, work the issue as in a normal run (sections 3 and
+  following). Then go on with the next repository.
 - Work that the run already owns is finished, not dropped: a claim that
   `aw status` shows (section 3, step 2) and a leftover that the skill tells
-  the run to resume. Backpressure only stops a new `aw claim`.
-- A skipped repository changes no label and writes no issue comment. The run
+  the run to resume. Backpressure only stops a new-work `aw claim`.
+- A repository with no rework changes no label and writes no issue comment. The run
   goes on with the next repository. It stops when every repository is
   skipped or has nothing to claim.
 - A skipped repository reports no stage, so it does not count toward the

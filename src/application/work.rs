@@ -6,7 +6,7 @@ pub mod release;
 pub mod report;
 pub mod services;
 
-pub use claim::{ClaimOutcome, claim};
+pub use claim::{ClaimOutcome, claim, claim_with};
 pub use release::{release, status};
 pub use report::{Reported, report};
 pub use services::Services;
