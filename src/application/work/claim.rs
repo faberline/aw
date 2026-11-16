@@ -4,7 +4,8 @@ use super::active::{board, in_checkout};
 use super::services::Services;
 use crate::domain::work::claim::{Claim, STALE_AFTER_SECONDS, latest_mark};
 use crate::domain::work::issue::{
-    Issue, awaiting_report, claim_order_returned, redo_requested, valid_agent,
+    Comment, Issue, awaiting_report, claim_order_returned, newest_signal_is, redo_requested,
+    valid_agent,
 };
 use crate::domain::work::ports::Repo;
 use crate::domain::work::pull_request::{PullRequest, find_for_issue, rework_branch, work_branch};
@@ -34,6 +35,25 @@ pub fn claim(
     skip: &[u64],
     has: &[String],
 ) -> Result<ClaimOutcome> {
+    claim_with(s, agent, only, skip, has, false)
+}
+
+/// `claim`, and with `rework_only` it takes only an issue that a later
+/// stage sent back: a tdd issue with an open pull request or whose newest
+/// signal is a review `failed`, and a spec issue whose newest signal is a
+/// tdd `respec`. It needs `--stage tdd` or `--stage spec`. Backpressure
+/// uses it: new work waits, returned work is still done.
+pub fn claim_with(
+    s: Services<'_>,
+    agent: &str,
+    only: Option<Stage>,
+    skip: &[u64],
+    has: &[String],
+    rework_only: bool,
+) -> Result<ClaimOutcome> {
+    if rework_only && !matches!(only, Some(Stage::Spec | Stage::Tdd)) {
+        bail!("--rework-only needs --stage spec or --stage tdd");
+    }
     if !valid_agent(agent) {
         bail!("agent `{agent}` must use only a-z, 0-9 and -");
     }
@@ -65,9 +85,10 @@ pub fn claim(
     // newer issue and review judges a stale head again. The pull requests
     // come from one request, which a tdd or review claim reads anyway.
     let mut issues = board.issues.clone();
+    let mut returned: Vec<u64> = Vec::new();
     if only == Some(Stage::Tdd) {
         let all = s.tracker.open_prs()?;
-        let returned: Vec<u64> = issues
+        returned = issues
             .iter()
             .filter(|i| Stage::from_labels(&i.labels) == Some(Stage::Tdd))
             .filter(|i| find_for_issue(&all, i.number).is_some())
@@ -94,6 +115,9 @@ pub fn claim(
         // agent take it. Most claims read one issue.
         let comments = s.tracker.comments(issue.number)?;
         if !awaiting_report(stage, agent, &comments) {
+            continue;
+        }
+        if rework_only && !sent_back(stage, &comments, returned.contains(&issue.number)) {
             continue;
         }
         // The list of recent comments can miss a claim (a comment that is
@@ -183,6 +207,9 @@ pub fn claim(
     }
 
     let mut why = match only {
+        Some(o) if rework_only => {
+            format!("no returned {o} issue for `{agent}` is waiting on it")
+        }
         Some(o) => format!("no open {o} issue for `{agent}` is waiting on it"),
         None => format!("no open issue for `{agent}` is waiting on it"),
     };
@@ -200,6 +227,15 @@ pub fn claim(
         ));
     }
     Ok(ClaimOutcome::Nothing(why))
+}
+
+/// An issue that a later stage sent back to `stage`.
+fn sent_back(stage: Stage, comments: &[Comment], open_pr: bool) -> bool {
+    match stage {
+        Stage::Tdd => open_pr || newest_signal_is(comments, Stage::Review, Outcome::Failed),
+        Stage::Spec => newest_signal_is(comments, Stage::Tdd, Outcome::Respec),
+        Stage::Review => false,
+    }
 }
 
 /// An issue whose `Waits for:` line names an issue that is still open is

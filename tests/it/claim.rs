@@ -1,4 +1,4 @@
-use aw::application::work::{ClaimOutcome, claim, status};
+use aw::application::work::{ClaimOutcome, claim, claim_with, status};
 use aw::domain::work::claim::{Claim, ClaimMark, STALE_AFTER_SECONDS};
 use aw::domain::work::signal::{Outcome, Signal};
 use aw::domain::work::stage::Stage;
@@ -738,4 +738,77 @@ fn without_a_stage_a_returned_tdd_issue_gets_no_boost_over_review() {
     w.tracker.issue(9, &["agent:other", "stage:tdd"]);
     w.tracker.pr(51, "issue/9", "Closes #9");
     assert_eq!(claimed(&w, "other").issue, 3);
+}
+
+fn rework(w: &World, stage: Stage) -> Result<ClaimOutcome, anyhow::Error> {
+    claim_with(w.services(), "other", Some(stage), &[], &[], true)
+}
+
+#[test]
+fn rework_only_tdd_takes_an_issue_with_an_open_pull_request() {
+    let w = returned_world();
+    match rework(&w, Stage::Tdd).unwrap() {
+        ClaimOutcome::Claimed(c) => assert_eq!(c.issue, 9),
+        ClaimOutcome::Nothing(why) => panic!("expected a claim: {why}"),
+    }
+}
+
+#[test]
+fn rework_only_tdd_takes_an_issue_whose_newest_signal_is_a_review_failed() {
+    let w = World::new();
+    w.tracker.issue(3, &["agent:other", "stage:tdd"]);
+    w.tracker.issue(4, &["agent:other", "stage:tdd"]);
+    w.tracker.add_comment(
+        4,
+        &signal(Stage::Review, "other", Outcome::Failed),
+        "2026-01-01T00:00:00Z",
+    );
+    match rework(&w, Stage::Tdd).unwrap() {
+        ClaimOutcome::Claimed(c) => assert_eq!(c.issue, 4),
+        ClaimOutcome::Nothing(why) => panic!("expected a claim: {why}"),
+    }
+}
+
+#[test]
+fn rework_only_tdd_does_not_take_new_work() {
+    let w = World::new();
+    w.tracker.issue(3, &["agent:other", "stage:tdd"]);
+    match rework(&w, Stage::Tdd).unwrap() {
+        ClaimOutcome::Nothing(why) => assert!(why.contains("no returned tdd issue"), "{why}"),
+        ClaimOutcome::Claimed(c) => panic!("claimed new work #{}", c.issue),
+    }
+    assert!(w.tracker.claims(3).is_empty());
+}
+
+#[test]
+fn rework_only_spec_takes_an_issue_that_tdd_sent_back() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:other", "stage:spec"]);
+    w.tracker.issue(2, &["agent:other", "stage:spec"]);
+    w.tracker.add_comment(
+        2,
+        &signal(Stage::Tdd, "other", Outcome::Respec),
+        "2026-01-01T00:00:00Z",
+    );
+    match rework(&w, Stage::Spec).unwrap() {
+        ClaimOutcome::Claimed(c) => assert_eq!(c.issue, 2),
+        ClaimOutcome::Nothing(why) => panic!("expected a claim: {why}"),
+    }
+}
+
+#[test]
+fn rework_only_spec_does_not_take_an_issue_that_never_had_a_spec() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:other", "stage:spec"]);
+    assert!(matches!(
+        rework(&w, Stage::Spec).unwrap(),
+        ClaimOutcome::Nothing(_)
+    ));
+}
+
+#[test]
+fn rework_only_needs_a_spec_or_tdd_stage() {
+    let w = World::new();
+    assert!(rework(&w, Stage::Review).is_err());
+    assert!(claim_with(w.services(), "other", None, &[], &[], true).is_err());
 }
