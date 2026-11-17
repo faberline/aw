@@ -1139,3 +1139,16 @@ fn other_comments_and_older_desk_comments_do_not_send_an_issue_back() {
         ClaimOutcome::Nothing(_)
     ));
 }
+
+#[test]
+fn a_waits_text_after_a_sentence_holds_the_issue_back() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec", "p0"]);
+    w.tracker.issue(2, &["agent:claude", "stage:spec"]);
+    w.tracker.issue(9, &["agent:claude", "stage:spec"]);
+    w.tracker
+        .bodies
+        .borrow_mut()
+        .insert(1, "Part of #7. Waits for: #9".into());
+    assert_eq!(claimed(&w, "claude").issue, 2);
+}
