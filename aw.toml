@@ -3,5 +3,22 @@
 # S8 test coverage: docs/standards/coverage.md. CI raises `line`; it never
 # goes down.
 [standards.coverage]
-line = 90.59
+line = 91.21
 target = 100
+
+# Repo hygiene: docs/standards/repo-hygiene.md. The baseline is empty and
+# stays empty; aw is clean.
+[hygiene]
+baseline = []
+
+[[hygiene.root]]
+path = ".claude-plugin"
+reason = "The plugin marketplace manifest that Claude Code reads from the repo root."
+
+[[hygiene.root]]
+path = "infra"
+reason = "The shared GKE test cluster config (infra/gke-test)."
+
+[[hygiene.root]]
+path = "plugins"
+reason = "The shared Faberline skills (plugins/faberline); the marketplace installs them."

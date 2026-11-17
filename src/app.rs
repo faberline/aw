@@ -6,6 +6,7 @@ use std::process::ExitCode;
 use crate::application::ci::CiServices;
 use crate::application::meta::MetaServices;
 use crate::application::release::ReleaseServices;
+use crate::application::repo::RepoServices;
 use crate::application::run::RunServices;
 use crate::application::standards::{RepoTarget, StandardsServices};
 use crate::application::work::Services;
@@ -14,11 +15,12 @@ use crate::infrastructure::ci::files::origin_repo;
 use crate::infrastructure::ci::{GhBranchRules, GitHubFiles, LocalFiles};
 use crate::infrastructure::meta::LocalMeta;
 use crate::infrastructure::release::{GhRelease, YamlWorkflows};
+use crate::infrastructure::repo::TrackedFiles;
 use crate::infrastructure::run::LedgerFile;
 use crate::infrastructure::standards::{LocalCore, LocalRepo, is_checkout};
 use crate::infrastructure::work::{GhCli, GitCli, SystemClock};
 use crate::interfaces::work::cli::{
-    self, CiTarget, Exit, MetaTarget, ReleaseCall, StandardsTarget,
+    self, CiTarget, Exit, HygieneTarget, MetaTarget, ReleaseCall, StandardsTarget,
 };
 
 pub fn run() -> ExitCode {
@@ -28,6 +30,9 @@ pub fn run() -> ExitCode {
     };
     if let Some(target) = parsed.ci_target() {
         return exit_code(ci_check(target));
+    }
+    if let Some(target) = parsed.repo_target() {
+        return exit_code(repo_check(target));
     }
     if let Some(target) = parsed.meta_target() {
         return exit_code(meta_check(target));
@@ -79,6 +84,20 @@ fn ci_check(target: &CiTarget) -> Exit {
         files: files.as_ref(),
         rules: rules.as_ref().map(|r| r as &dyn BranchRules),
     })
+}
+
+/// `aw repo check`: the tracked files of the checkout that holds `--dir`
+/// (default: the current directory).
+fn repo_check(target: &HygieneTarget) -> Exit {
+    let dir = target.dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    let repo = match TrackedFiles::open(&dir) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("aw: {err}");
+            return Exit::Nothing;
+        }
+    };
+    cli::run_repo(RepoServices { files: &repo }, target)
 }
 
 /// `aw standards check`: the repositories of `--repo` (default `.`) against

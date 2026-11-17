@@ -21,7 +21,7 @@ Pick exactly one kind. The kind decides which rows of the tables below apply.
 | `service` | A long-running, network-exposed process with an image and Kubernetes manifests. | beam, courier, defer, keep, loom, lumen, mesh, pgpool, relay, sift, tape |
 | `cli` | A local command-line tool released as a binary. | arena, cap, cgdb, guard, jet, meter, preview, rig, vat |
 | `library` | Crates or packages other repositories depend on by tag. | core |
-| `python` | A `uv`-managed Python package or tool. | aw, som, workspace (until merged into aw) |
+| `python` | A `uv`-managed Python package or tool. | som |
 | `incubating` | Docs and backlog only. No build yet. | cube, truce |
 
 `jev`, `mamba`, and `model-router` are mixed today. Each declares its kind in
@@ -102,7 +102,7 @@ workflow without its repository.
   `git = "https://github.com/faberline/core", tag = "vX.Y.Z"`. They use a
   `core` crate instead of their own copy; see [core-reuse.md](core-reuse.md).
 - A dependency on a sibling app pins a git revision.
-- Python repositories depend on `aw` through `uv tool install git+...`.
+- A repository uses `aw` as an installed binary (`aw` is a Rust CLI).
 - The release order lives in the organization README. A repository does not
   depend on a repository that releases after it.
 
@@ -128,11 +128,12 @@ The root CONTRIBUTING itself still names monorepo paths: 17 `apps/` and 70
 ## Adoption order
 
 1. Agree the open decisions below.
-2. Ship a checker in `aw` that reads this guide's `R` rows, for example
-   `aw repo check`. Each row it covers becomes a standard.
+2. Ship a checker in `aw` that reads this guide's `R` rows. `aw repo check`
+   ([repo-hygiene.md](repo-hygiene.md)) covers the root allow-list; each row
+   it covers becomes a standard.
 3. Fix the cheap `R` rows in each repository: `LICENSE`, `.gitignore`,
    `CONTRIBUTING.md`, `aw.toml`, monorepo paths.
-4. Point each app `CONTRIBUTING.md` at this folder instead of `workspace`.
+4. Point each app `CONTRIBUTING.md` at this folder.
 5. Fix READMEs repository by repository, in release order.
 
 ## Open decisions

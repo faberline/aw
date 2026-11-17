@@ -11,9 +11,11 @@ use serde::Serialize;
 use crate::application::ci::{self, CiServices};
 use crate::application::meta::{self, MetaServices};
 use crate::application::release::{self, Advanced, ReleaseServices};
+use crate::application::repo::{self, RepoServices};
 use crate::application::run::{Client, Event, RunServices};
 use crate::application::standards::{self, StandardsServices};
 use crate::application::work::{self, ClaimOutcome, Outcome, Services};
+use crate::domain::work::ports::PortError;
 use crate::domain::work::stage::Stage;
 use crate::interfaces::run::commands;
 
@@ -32,6 +34,7 @@ use crate::interfaces::run::commands;
         aw ci check checks ci.yml and the ruleset against docs/standards/ci.md\n\
         aw standards check checks Cargo.toml files against docs/standards/core-reuse.md\n\
         aw meta check checks project README files against the README contract\n\
+        aw repo check checks the tracked files for clutter (docs/standards/repo-hygiene.md)\n\
         aw release-status    assesses a milestone release; it only reads\n\
         aw release-advance   creates the next release tag when the assessment did not change\n\
         aw release-preflight proves a tag inside its own workflow run; it only reads\n\n\
@@ -154,6 +157,11 @@ enum Command {
         #[command(subcommand)]
         command: MetaCommand,
     },
+    /// Check the tracked files of a checkout for clutter.
+    Repo {
+        #[command(subcommand)]
+        command: RepoCommand,
+    },
     /// Assess a milestone release: the state, the one next action and the
     /// fingerprint of the inputs. It only reads.
     ReleaseStatus {
@@ -242,6 +250,31 @@ pub struct CiTarget {
     /// Do not read the ruleset; its check is skipped.
     #[arg(long)]
     pub no_ruleset: bool,
+}
+
+#[derive(Subcommand)]
+enum RepoCommand {
+    /// Check the tracked files (`git ls-files`) against the hygiene rules
+    /// RH1 to RH5 of docs/standards/repo-hygiene.md and the `[hygiene]`
+    /// table of `aw.toml`. Exit codes: 0 pass, 1 a new violation or a stale
+    /// baseline entry, 2 a usage error.
+    Check(HygieneTarget),
+}
+
+/// What `aw repo check` reads.
+#[derive(Args, Clone, Debug, Default)]
+pub struct HygieneTarget {
+    /// A folder inside the checkout. Default: the current directory.
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
+    /// `text` prints one line for each finding; `json` prints a
+    /// `repo-report/1` document.
+    #[arg(long, value_enum, default_value_t = ReportFormat::Text)]
+    pub format: ReportFormat,
+    /// Print the `baseline = [...]` block for every current violation and
+    /// exit 0. Use it once, to adopt the check.
+    #[arg(long)]
+    pub print_baseline: bool,
 }
 
 #[derive(Subcommand)]
@@ -396,6 +429,16 @@ impl Cli {
         }
     }
 
+    /// The target of `aw repo check`, if that is the command.
+    pub fn repo_target(&self) -> Option<&HygieneTarget> {
+        match &self.command {
+            Command::Repo {
+                command: RepoCommand::Check(target),
+            } => Some(target),
+            _ => None,
+        }
+    }
+
     /// The target of `aw meta check`, if that is the command.
     pub fn meta_target(&self) -> Option<&MetaTarget> {
         match &self.command {
@@ -540,6 +583,33 @@ pub fn run_standards(services: StandardsServices<'_>, format: ReportFormat) -> E
     }
 }
 
+/// Run `aw repo check`: print the report; exit 1 when a violation is new or
+/// a baseline entry is stale. With `print_baseline`, print the baseline.
+pub fn run_repo(services: RepoServices<'_>, target: &HygieneTarget) -> Exit {
+    let result = if target.print_baseline {
+        repo::baseline(services).map(|all| {
+            print!("{}", repo::render_baseline(&all));
+            true
+        })
+    } else {
+        repo::check(services).and_then(|report| {
+            match target.format {
+                ReportFormat::Json => print(&report).map_err(|e| PortError(format!("{e:#}")))?,
+                ReportFormat::Text => println!("{}", repo::render(&report)),
+            }
+            Ok(report.ok)
+        })
+    };
+    match result {
+        Ok(true) => Exit::Ok,
+        Ok(false) => Exit::Failed,
+        Err(err) => {
+            eprintln!("aw: {err}");
+            Exit::Nothing
+        }
+    }
+}
+
 /// Run `aw meta check`: print the report; exit 1 when a README has a
 /// finding and 2 when a README cannot be read.
 pub fn run_meta(services: MetaServices<'_>, paths: &[String], format: ReportFormat) -> Exit {
@@ -666,6 +736,9 @@ fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit
         }
         Command::Ci { .. } => {
             anyhow::bail!("`aw ci` needs the CI adapters; the composition root runs it")
+        }
+        Command::Repo { .. } => {
+            anyhow::bail!("`aw repo` needs its adapter; the composition root runs it")
         }
         Command::Meta { .. } => {
             anyhow::bail!("`aw meta` needs its adapter; the composition root runs it")
