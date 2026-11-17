@@ -484,6 +484,20 @@ impl Tracker for GhCli {
             .map_err(|_| PortError(format!("check runs returned `{}`", out.trim())))
     }
 
+    fn has_unfinished_runs(&self, head: &str) -> PortResult<bool> {
+        let repo = self.name()?;
+        let path = format!(
+            "repos/{repo}/actions/runs?head_sha={}&per_page=100",
+            encode(head)
+        );
+        let jq = "[.workflow_runs[] | select(.status != \"completed\")] | length";
+        let out = self.get(&path, Some(jq))?;
+        out.trim()
+            .parse::<u64>()
+            .map(|n| n > 0)
+            .map_err(|_| PortError(format!("workflow runs returned `{}`", out.trim())))
+    }
+
     fn check_runs(&self, head: &str) -> PortResult<Vec<CheckRun>> {
         let repo = self.name()?;
         let path = format!(

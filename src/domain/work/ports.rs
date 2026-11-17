@@ -74,6 +74,10 @@ pub trait Tracker {
     /// The newest check run of some name on the `head` branch failed or
     /// timed out. CI must run again before that branch can merge.
     fn has_failed_checks(&self, head: &str) -> PortResult<bool>;
+    /// A workflow run of the `head` commit is queued or in progress. A queued
+    /// run has no job yet, so it has no check run: this is how a head that
+    /// was just updated shows that its CI is in flight.
+    fn has_unfinished_runs(&self, head: &str) -> PortResult<bool>;
     /// The newest check run of each name on the `head` branch.
     fn check_runs(&self, head: &str) -> PortResult<Vec<CheckRun>>;
     /// The check names that the repository rulesets require on `branch`

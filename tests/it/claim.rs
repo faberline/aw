@@ -1012,6 +1012,44 @@ fn an_idle_review_claim_updates_the_next_behind_pr_in_order() {
 }
 
 #[test]
+fn a_queued_ci_run_without_check_runs_is_an_update_in_flight() {
+    // aw#570: after `aw` updates a branch, its CI run is queued and has no
+    // job, so the required check `gate` does not exist yet. That must count
+    // as in flight, or each later claim updates one more pull request.
+    let w = World::new();
+    w.tracker.issue(8, &["agent:other", "stage:review", "p2"]);
+    w.tracker.pr(6, "other/issue-8", "Closes #8");
+    w.tracker
+        .issue(9, &["agent:other", "stage:review", "p3", "expedite"]);
+    w.tracker.pr(4, "other/issue-9", "Closes #9");
+    *w.tracker.required.borrow_mut() = vec!["gate".into()];
+    w.tracker.behind.set(2);
+    let why = nothing(&w, "claude");
+    assert!(why.contains("pull request #4"), "{why}");
+    // #4 is updated; its run is queued and has no check run.
+    w.tracker
+        .behind_heads
+        .borrow_mut()
+        .insert("other/issue-9".into(), 0);
+    w.tracker
+        .unfinished_heads
+        .borrow_mut()
+        .push("other/issue-9".into());
+    w.tracker.calls.borrow_mut().clear();
+    // A second pass in the same run, and a later run: no update.
+    for _ in 0..2 {
+        let why = nothing(&w, "claude");
+        assert!(!why.contains("updated the branch"), "{why}");
+        assert!(w.tracker.calls().is_empty(), "{:?}", w.tracker.calls());
+    }
+    // Once CI finished without the required check, it cannot merge next:
+    // the next pull request is updated (the 0.7.7 rule stays).
+    w.tracker.unfinished_heads.borrow_mut().clear();
+    let why = nothing(&w, "claude");
+    assert!(why.contains("pull request #6"), "{why}");
+}
+
+#[test]
 fn an_idle_claim_updates_nothing_for_a_stage_that_is_not_review() {
     let w = World::new();
     w.tracker.issue(8, &["agent:other", "stage:review"]);

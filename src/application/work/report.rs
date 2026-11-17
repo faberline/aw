@@ -632,7 +632,12 @@ fn up_to_date_review_pr(
     Ok(None)
 }
 
-/// The head can merge once its running checks pass.
+/// The head can merge once its running checks pass. This is also the test
+/// for "an update is in flight": a head with no failed check whose CI has not
+/// finished. A queued workflow run has no check run yet, so a required check
+/// that is only missing counts as in flight while a workflow run of the head
+/// is unfinished (aw#570). Without such a run, a missing required check means
+/// that CI never started or ended without it: the pull request cannot merge.
 pub(super) fn merge_ready(
     s: Services<'_>,
     head: &str,
@@ -642,7 +647,13 @@ pub(super) fn merge_ready(
         None => Ok(!s.tracker.has_failed_checks(head)?),
         Some(required) => {
             let runs = s.tracker.check_runs(head)?;
-            Ok(judge_required(required, &runs) != RequiredChecks::Blocked)
+            match judge_required(required, &runs) {
+                RequiredChecks::Passed | RequiredChecks::Running => Ok(true),
+                RequiredChecks::Blocked => {
+                    Ok(!s.tracker.has_failed_checks(head)?
+                        && s.tracker.has_unfinished_runs(head)?)
+                }
+            }
         }
     }
 }
