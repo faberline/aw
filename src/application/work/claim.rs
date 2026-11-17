@@ -5,8 +5,8 @@ use super::queue::update_next;
 use super::services::Services;
 use crate::domain::work::claim::{Claim, STALE_AFTER_SECONDS, latest_mark};
 use crate::domain::work::issue::{
-    Comment, EXPEDITE_LABEL, Issue, awaiting_report, claim_order_returned, newest_signal_is,
-    newest_signal_time, redo_requested, valid_agent,
+    Comment, EXPEDITE_LABEL, Issue, awaiting_report, claim_order_returned, desk_sent_back,
+    newest_signal_is, newest_signal_time, redo_requested, valid_agent,
 };
 use crate::domain::work::ports::Repo;
 use crate::domain::work::pull_request::{PullRequest, find_for_issue, rework_branch, work_branch};
@@ -280,8 +280,14 @@ pub fn claim_with(
 /// An issue that a later stage sent back to `stage`.
 fn sent_back(stage: Stage, comments: &[Comment], open_pr: bool) -> bool {
     match stage {
-        Stage::Tdd => open_pr || newest_signal_is(comments, Stage::Review, Outcome::Failed),
-        Stage::Spec => newest_signal_is(comments, Stage::Tdd, Outcome::Respec),
+        Stage::Tdd => {
+            open_pr
+                || newest_signal_is(comments, Stage::Review, Outcome::Failed)
+                || desk_sent_back(comments)
+        }
+        Stage::Spec => {
+            newest_signal_is(comments, Stage::Tdd, Outcome::Respec) || desk_sent_back(comments)
+        }
         Stage::Review => false,
     }
 }
@@ -301,12 +307,23 @@ fn waits_on_open_issue(s: Services<'_>, issue: &Issue, repo: &str) -> Result<boo
     let mut open = Vec::new();
     for p in &waits.prerequisites {
         let same = p.repo.as_deref().is_none_or(|r| r == repo);
-        let still_open = s
+        // A dependency that cannot be read (another repository without
+        // access, 403, 404) is a wait for this one issue, not an error
+        // for the whole stage (faberline/aw#596).
+        match s
             .tracker
             .issue_is_open(if same { None } else { p.repo.as_deref() }, p.number)
-            .with_context(|| format!("could not read {} for #{}", p.show(), issue.number))?;
-        if still_open {
-            open.push(p.show());
+        {
+            Ok(true) => open.push(p.show()),
+            Ok(false) => {}
+            Err(err) => {
+                eprintln!(
+                    "aw: skipped #{}: could not read {}: {err}; treated as waiting",
+                    issue.number,
+                    p.show()
+                );
+                return Ok(true);
+            }
         }
     }
     if open.is_empty() {

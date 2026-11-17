@@ -200,10 +200,27 @@ pub fn awaiting_report(stage: Stage, agent: &str, comments: &[Comment]) -> bool 
     if s.stage != stage || s.agent != agent {
         return true;
     }
-    s.outcome == Outcome::Blocked
+    (s.outcome == Outcome::Blocked
         && comments
             .iter()
-            .any(|c| c.created_at.as_str() > at && !is_aw_comment(&c.body))
+            .any(|c| c.created_at.as_str() > at && !is_aw_comment(&c.body)))
+        || desk_sent_back(comments)
+}
+
+/// A comment that starts with `desk:` or `desk,` is newer than the newest
+/// `aw` signal. It is how the desk sends an issue back to the stage that
+/// its label names: the label alone is not enough when the last signal is
+/// `ready` of that stage (faberline/aw#596).
+pub fn desk_sent_back(comments: &[Comment]) -> bool {
+    let Some((at, _)) = latest_signal_at(comments) else {
+        return false;
+    };
+    comments.iter().any(|c| {
+        let body = c.body.trim_start().to_lowercase();
+        c.created_at.as_str() > at
+            && !is_aw_comment(&c.body)
+            && (body.starts_with("desk:") || body.starts_with("desk,"))
+    })
 }
 
 /// The line a spec writes in its message to ask for a redo from the

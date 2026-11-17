@@ -530,6 +530,20 @@ Read code through the GitHub API when you do not need the clone:
   the comment and adds the label. `aw report blocked` is for a decision that
   only a person can make, so do not use it here. Add `blocked` to no other
   issue. The supervisor or the desk removes it when the supplier merges.
+- **A dependency that `aw claim` cannot read.** A `Waits for:` line can name
+  an issue in a repository that this run cannot read (403, 404). `aw claim`
+  then treats that one issue as waiting, prints `aw: skipped #N: could not
+  read <dependency>: ...; treated as waiting`, and goes on to the next
+  issue. When a claim still ends with an error that names one issue, post
+  one comment on that issue (check first that no comment of yours already
+  says it: once, not each hour), then claim again with `--skip <number>`.
+  Never end the run at the first error while other issues wait.
+- **The desk sends an issue back.** An issue in `stage:tdd` or `stage:spec`
+  whose last signal is `ready` of that stage is not claimed. The desk
+  starts a new comment with `desk:` or `desk,` (after the signal) and the
+  claim treats it as rework: tdd or spec takes it, in the order of a
+  failed review, also in a `--rework-only` run. A comment of another kind
+  does not do this. The desk also sets the stage label.
 - Report `respec`, not `blocked`, when the spec needs a new version: the
   cause in the spec is not confirmed (for example the spec's failing test
   passes on the current code), a test that the spec requires does not fail,
