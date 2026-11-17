@@ -5,6 +5,7 @@ use super::active::{active, in_checkout};
 use super::queue::update_next;
 use super::release::finish;
 use super::services::Services;
+use crate::domain::run::record::rfc3339;
 use crate::domain::work::claim::Claim;
 use crate::domain::work::issue::agent_label;
 use crate::domain::work::ports::{NewIssue, RequiredChecks, judge_required};
@@ -525,6 +526,9 @@ fn merge(
             {
                 return Ok(Merge::Waiting { url, holder });
             }
+            if let Some(holder) = recent_update(s, Some(claim.issue))? {
+                return Ok(Merge::Waiting { url, holder });
+            }
             s.tracker.update_branch(number).with_context(|| {
                 format!("could not merge #{number} ({err}) or update its branch")
             })?;
@@ -627,6 +631,42 @@ fn up_to_date_review_pr(
                 "could not compare #{} with its base: {err}",
                 pr.number
             )),
+        }
+    }
+    Ok(None)
+}
+
+/// How long a `branch updated` note counts as an update in flight, in seconds.
+/// GitHub needs about a minute after `update-branch` to move the head and to
+/// create the CI run, and in that time the checks of the pull request show
+/// nothing (aw#587: seven updates in seven minutes).
+pub(super) const RECENT_UPDATE_SECONDS: i64 = 600;
+
+/// The pull request of an issue other than `own` whose review stage posted
+/// `branch updated` within `RECENT_UPDATE_SECONDS`, and that is still open
+/// without a failed check. Its CI may not exist yet, so the checks cannot
+/// tell that its update is in flight; the note can.
+pub(super) fn recent_update(s: Services<'_>, own: Option<u64>) -> Result<Option<u64>> {
+    let since = rfc3339(s.clock.now() - RECENT_UPDATE_SECONDS);
+    let recent = s.tracker.comments_since(&since)?;
+    let mut issues: Vec<u64> = recent
+        .iter()
+        .filter(|(issue, c)| {
+            Some(*issue) != own && c.body.contains("\u{b7} review \u{b7} **branch updated**")
+        })
+        .map(|(issue, _)| *issue)
+        .collect();
+    issues.sort_unstable();
+    issues.dedup();
+    if issues.is_empty() {
+        return Ok(None);
+    }
+    let prs = s.tracker.open_prs()?;
+    for issue in issues {
+        if let Some(pr) = find_for_issue(&prs, issue)
+            && !s.tracker.has_failed_checks(&pr.head)?
+        {
+            return Ok(Some(pr.number));
         }
     }
     Ok(None)

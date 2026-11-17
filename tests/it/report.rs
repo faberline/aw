@@ -190,6 +190,50 @@ fn review_passed_behind_base_waits_while_another_review_pr_is_up_to_date() {
 }
 
 #[test]
+fn review_passed_behind_base_waits_while_another_update_is_minutes_old() {
+    // aw#587: GitHub needs about a minute to move the head and to create the
+    // CI run after `update-branch`; the checks of that pull request show
+    // nothing then. The note of the update tells that it is in flight.
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    w.tracker.issue(8, &["agent:claude", "stage:review"]);
+    w.tracker.pr(6, "claude/issue-8", "Closes #8");
+    w.tracker.add_comment(
+        8,
+        "**aw** \u{b7} `claude` \u{b7} review \u{b7} **branch updated**\n\nurl",
+        &aw::domain::run::record::rfc3339(crate::support::NOW - 60),
+    );
+    claim_issue(&w, "claude");
+    w.tracker.fail_merge.set(true);
+    w.tracker.behind.set(3);
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert!(!reported.updated_branch);
+    assert_eq!(reported.waiting_for, Some(6));
+    assert_eq!(w.tracker.calls(), ["edit_comment #7"]);
+}
+
+#[test]
+fn review_passed_behind_base_updates_when_the_other_update_is_old() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    w.tracker.issue(8, &["agent:claude", "stage:review"]);
+    w.tracker.pr(6, "claude/issue-8", "Closes #8");
+    w.tracker.add_comment(
+        8,
+        "**aw** \u{b7} `claude` \u{b7} review \u{b7} **branch updated**\n\nurl",
+        &aw::domain::run::record::rfc3339(crate::support::NOW - 3600),
+    );
+    claim_issue(&w, "claude");
+    w.tracker.fail_merge.set(true);
+    w.tracker.behind.set(3);
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert!(reported.updated_branch);
+    assert_eq!(w.tracker.calls(), ["update_branch #5", "edit_comment #7"]);
+}
+
+#[test]
 fn review_passed_behind_base_updates_a_higher_priority_pr_before_an_up_to_date_lower_one() {
     let w = World::new();
     w.tracker.issue(7, &["agent:claude", "stage:review", "p0"]);

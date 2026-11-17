@@ -1386,3 +1386,13 @@ Then do this in the same pass. Open no `decision` issue.
 
 Do not close issues, merge or change other labels. Do not use this rule for a failure that has no advisory ID (use G28 or G44).
 
+
+### Many branch updates and no merge (G48)
+
+The review stage must update one branch of a repository at a time. A review that posts more than one `branch updated` comment for one repository within 30 minutes, with no merge after them, is a defect. It is not progress (evidence, 2026-11-17: seven updates in seven minutes in lumen; the board said "review is working"; faberline/aw#587).
+
+1. Read the `branch updated` signals of the repository (`gh api` on the issue comments of the `stage:review` issues, or the comment list of the repository since 30 minutes ago). Count the ones in any 30 minutes window.
+2. When the count is above one, and no pull request of the repository merged after the first of them, open one `pipeline` issue, or reuse the open one (G43). Write the issue numbers and the time of each `branch updated` comment, and the merge times (or "no merge").
+3. In the board or the decision, do not write "review is working" or "not the bottleneck" for this repository. Write the issue number of the `pipeline` issue.
+
+A single `branch updated` per 30 minutes is normal. Do not close issues, merge or change labels.

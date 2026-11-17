@@ -542,8 +542,9 @@ Read code through the GitHub API when you do not need the clone:
   and the tdd run does not take `blocked`, so no run takes the issue.
   As a safety net, `aw` changes a tdd `blocked` report to
   `respec` when its first line says the spec is the cause (for example
-  `spec unclear: ...`); a reason that does not start with `spec` or
-  `the spec`, for example `Blocked: the poison test ...`, is not changed. Do not rely on it.
+  `spec unclear: ...`); a reason that does not name `the spec` with a gap or
+  unsound phrase (for example `does not hold`, `not confirmed`, `does not fail`)
+  is not changed. Do not rely on it.
 - Give the implementation to one subagent with the Agent tool and
   `model: "haiku"`. Its brief has: the clone path and branch; the whole spec;
   on rework, the review findings; the repository rules file to read; and

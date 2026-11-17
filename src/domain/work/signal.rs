@@ -101,6 +101,17 @@ const SPEC_GAP_WORDS: [&str; 6] = [
     "does not meet",
 ];
 
+/// Phrases that say the cause or the test in the spec does not hold
+/// (faberline/kit#221: `the poison test in the spec does not fail ...`).
+/// They count only when the reason also names `the spec`.
+const SPEC_UNSOUND_PHRASES: [&str; 5] = [
+    "does not hold",
+    "not confirmed",
+    "does not fail",
+    "does not reproduce",
+    "cannot be implemented",
+];
+
 /// True when the first line of a `blocked` message says that the spec is
 /// the cause: it starts with `spec` or `the spec` and has a gap word, for
 /// example `spec unclear: ...` or `tdd blocked: the spec is missing points`.
@@ -116,7 +127,10 @@ pub fn names_spec_gap(message: &str) -> bool {
         }
     }
     let about_spec = reason.starts_with("spec ") || reason.starts_with("the spec ");
-    about_spec && SPEC_GAP_WORDS.iter().any(|word| reason.contains(word))
+    if about_spec && SPEC_GAP_WORDS.iter().any(|word| reason.contains(word)) {
+        return true;
+    }
+    reason.contains("the spec") && SPEC_UNSOUND_PHRASES.iter().any(|p| reason.contains(p))
 }
 
 /// The label change that a report makes on the issue.
@@ -314,6 +328,8 @@ mod tests {
             "blocked: the spec lacks tests/a.rs",
             "tdd: spec does not meet the checklist",
             "  the spec is not complete",
+            "Blocked: the poison test in the spec does not fail on the current code, so the stated cause does not hold.",
+            "tdd blocked: the cause in the spec is not confirmed",
         ] {
             assert!(names_spec_gap(message), "{message}");
         }
