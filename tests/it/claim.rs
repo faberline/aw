@@ -1070,3 +1070,72 @@ fn an_idle_claim_that_cannot_update_still_says_nothing_to_claim() {
     let why = nothing(&w, "claude");
     assert!(!why.contains("updated the branch"), "{why}");
 }
+
+#[test]
+fn an_unreadable_dependency_waits_one_issue_and_the_run_goes_on() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec", "p0"]);
+    w.tracker.issue(2, &["agent:claude", "stage:spec"]);
+    w.tracker
+        .bodies
+        .borrow_mut()
+        .insert(1, "Waits for: faberline/som#249".into());
+    w.tracker
+        .foreign_unreadable
+        .borrow_mut()
+        .push("faberline/som#249".into());
+    assert_eq!(claimed(&w, "claude").issue, 2);
+    assert!(w.tracker.claims(1).is_empty());
+}
+
+fn desk_world(stage_label: &str, signal_stage: Stage) -> World {
+    let w = World::new();
+    w.tracker.issue(4, &["agent:other", stage_label]);
+    w.tracker.add_comment(
+        4,
+        &signal(signal_stage, "other", Outcome::Ready),
+        "2026-01-01T00:00:00Z",
+    );
+    w
+}
+
+#[test]
+fn a_desk_comment_after_a_ready_signal_sends_a_tdd_issue_back() {
+    let w = desk_world("stage:tdd", Stage::Tdd);
+    w.tracker.pr(51, "issue/4", "Closes #4");
+    // Without the desk comment the issue is not claimed (faberline/sift#204).
+    assert!(matches!(
+        rework(&w, Stage::Tdd).unwrap(),
+        ClaimOutcome::Nothing(_)
+    ));
+    w.tracker
+        .add_comment(4, "desk: new target, redo", "2026-01-02T00:00:00Z");
+    match rework(&w, Stage::Tdd).unwrap() {
+        ClaimOutcome::Claimed(c) => assert_eq!(c.issue, 4),
+        ClaimOutcome::Nothing(why) => panic!("expected a claim: {why}"),
+    }
+}
+
+#[test]
+fn a_desk_comment_after_a_ready_signal_sends_a_spec_issue_back() {
+    let w = desk_world("stage:spec", Stage::Spec);
+    w.tracker
+        .add_comment(4, "Desk, please redo the spec", "2026-01-02T00:00:00Z");
+    match rework(&w, Stage::Spec).unwrap() {
+        ClaimOutcome::Claimed(c) => assert_eq!(c.issue, 4),
+        ClaimOutcome::Nothing(why) => panic!("expected a claim: {why}"),
+    }
+}
+
+#[test]
+fn other_comments_and_older_desk_comments_do_not_send_an_issue_back() {
+    let w = desk_world("stage:spec", Stage::Spec);
+    w.tracker
+        .add_comment(4, "desk: before the signal", "2025-12-31T00:00:00Z");
+    w.tracker
+        .add_comment(4, "looks fine to me", "2026-01-02T00:00:00Z");
+    assert!(matches!(
+        rework(&w, Stage::Spec).unwrap(),
+        ClaimOutcome::Nothing(_)
+    ));
+}

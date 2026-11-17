@@ -61,6 +61,8 @@ pub struct FakeTracker {
     /// The labels of the closed issues: GitHub still serves a closed issue.
     /// Open issues of other repositories, as `owner/name#number`.
     pub foreign_open: RefCell<Vec<String>>,
+    /// Foreign issues whose read fails with a 403.
+    pub foreign_unreadable: RefCell<Vec<String>>,
     closed_labels: RefCell<HashMap<u64, Vec<String>>>,
     next_comment_id: Cell<u64>,
 }
@@ -286,10 +288,14 @@ impl Tracker for FakeTracker {
     }
 
     fn issue_is_open(&self, repo: Option<&str>, issue: u64) -> PortResult<bool> {
-        Ok(match repo {
-            Some(r) if r != "o/r" => self.foreign_open.borrow().contains(&format!("{r}#{issue}")),
-            _ => self.issues.borrow().iter().any(|i| i.number == issue),
-        })
+        if let Some(r) = repo.filter(|r| *r != "o/r") {
+            let key = format!("{r}#{issue}");
+            if self.foreign_unreadable.borrow().contains(&key) {
+                return Err(PortError("HTTP 403".into()));
+            }
+            return Ok(self.foreign_open.borrow().contains(&key));
+        }
+        Ok(self.issues.borrow().iter().any(|i| i.number == issue))
     }
 
     fn create_issue(&self, new: &NewIssue) -> PortResult<u64> {

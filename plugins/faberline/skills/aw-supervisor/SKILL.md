@@ -1406,3 +1406,14 @@ CR3 of the core-reuse check (`docs/standards/core-reuse.md`) gives a repository 
 3. In the board, write the issue number. Do not write "red main, cause unknown" for this failure.
 
 If the failure is on `main` after the 7 days, the same issue is the one to use (G28 order: expedite is added there). Do not edit `aw.toml` exceptions.
+
+### A stage with claimable issues and no signal (G50)
+
+A stage that does no work is a defect, even when each run ends without an error (evidence, 2026-11-17: the spec routine of core stopped for more than two hours on one unreadable dependency; a tdd issue that the desk sent back waited for two hours; faberline/aw#596).
+
+1. For each repository and each stage (`spec`, `tdd`, `review`), find the open issues with that stage label that can be claimed: no `blocked`, and for a `--rework-only` run only rework (open pull request, tdd `respec` or review `failed` as the last signal, or a newer `desk:` comment) or `expedite`.
+2. Find the time of the last signal of that stage in the repository.
+3. When at least one issue can be claimed and the last signal is more than 2 hours old, open one `pipeline` issue, or reuse the open one (G43). Write the issue numbers and the time of the last signal. Do not write "waits for the routine".
+4. Also name each issue whose label is `stage:tdd` or `stage:spec` while its last signal is `ready` of the same stage and no `desk:` comment follows it: no run takes it.
+
+Do not change labels. Do not touch the issues.
