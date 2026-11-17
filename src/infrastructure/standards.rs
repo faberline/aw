@@ -220,54 +220,18 @@ impl LocalCore {
     /// A clone made with `--no-checkout` has no working tree (aw#590: the
     /// check printed `0 crates`); its trees and commits are still there.
     fn crates_at(&self, dir: &str, tag: &str) -> BTreeSet<String> {
-        let mut crates = BTreeSet::new();
-        let Ok(files) = run(
-            "git",
-            &["-C", dir, "ls-tree", "-r", "--name-only", tag, "crates"],
-            None,
-        ) else {
-            return crates;
-        };
-        for path in files.lines().filter(|p| {
-            let parts: Vec<&str> = p.split('/').collect();
-            parts.len() == 3 && parts[2] == "Cargo.toml"
-        }) {
-            let spec = format!("{tag}:{path}");
-            let Ok(text) = run("git", &["-C", dir, "show", &spec], None) else {
-                continue;
-            };
-            if let Some(name) = parse(path, &text).ok().and_then(|doc| {
-                doc.get("package")
-                    .and_then(|p| p.get("name"))
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            }) {
-                crates.insert(name);
-            }
-        }
-        crates
-    }
-
-    /// The package names under `crates/` of the working tree.
-    fn crates_on_disk(&self) -> PortResult<BTreeSet<String>> {
-        let mut crates = BTreeSet::new();
-        if let Ok(entries) = std::fs::read_dir(self.dir.join("crates")) {
-            for entry in entries.flatten() {
-                let manifest = entry.path().join("Cargo.toml");
-                let Ok(text) = std::fs::read_to_string(&manifest) else {
-                    continue;
-                };
-                let doc = parse(&manifest.display().to_string(), &text)?;
-                if let Some(name) = doc
-                    .get("package")
-                    .and_then(|p| p.get("name"))
-                    .and_then(Value::as_str)
-                {
-                    crates.insert(name.to_string());
-                }
-            }
-        }
-        Ok(crates)
+        let args = ["-C", dir, "ls-tree", "-r", "--name-only", tag, "crates"];
+        let files = run("git", &args, None).unwrap_or_default();
+        let manifests = files.lines().filter(|p| p.matches('/').count() == 2);
+        manifests
+            .filter(|p| p.ends_with("/Cargo.toml"))
+            .filter_map(|p| {
+                let text = run("git", &["-C", dir, "show", &format!("{tag}:{p}")], None).ok()?;
+                let doc = parse(p, &text).ok()?;
+                let name = doc.get("package")?.get("name")?.as_str()?;
+                Some(name.to_string())
+            })
+            .collect()
     }
 }
 
@@ -303,10 +267,7 @@ impl CoreSource for LocalCore {
         let read_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
-        let mut crates = self.crates_at(&dir, &tag);
-        if crates.is_empty() {
-            crates = self.crates_on_disk()?;
-        }
+        let crates = self.crates_at(&dir, &tag);
         Ok(CoreRelease {
             tag,
             previous,
