@@ -43,6 +43,8 @@ pub struct FakeTracker {
     pub checks_error_heads: RefCell<Vec<String>>,
     /// Reading the required checks fails.
     pub required_unreadable: Cell<bool>,
+    /// A workflow run of these head branches is queued or in progress.
+    pub unfinished_heads: RefCell<Vec<String>>,
     /// The newest check runs of these head branches.
     pub runs: RefCell<HashMap<String, Vec<CheckRun>>>,
     /// The bodies of the issues; an issue without one has an empty body.
@@ -407,6 +409,10 @@ impl Tracker for FakeTracker {
             return Err(PortError("checks: boom".into()));
         }
         Ok(self.red_heads.borrow().iter().any(|h| h == head))
+    }
+
+    fn has_unfinished_runs(&self, head: &str) -> PortResult<bool> {
+        Ok(self.unfinished_heads.borrow().iter().any(|h| h == head))
     }
 
     fn check_runs(&self, head: &str) -> PortResult<Vec<CheckRun>> {
