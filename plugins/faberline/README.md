@@ -96,7 +96,7 @@ review, CI runs again and the next review run merges it.
 
 The same run also keeps the queue moving. After a merge, `aw report`
 updates the branch of the next review pull request that is behind `main`
-(order: `expedite`, then priority label, then oldest) and reports it as
+(the order of `aw claim`: `p0`, `expedite`, `ci-fix`, `bar`, then priority label, then oldest) and reports it as
 `"updated_next": <pr>`. When `aw claim` finds nothing to claim and no review
 pull request can merge or is in flight, it updates the next one in the same
 order. Only one update for each repo runs at a time. A pull request with a

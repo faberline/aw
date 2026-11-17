@@ -141,8 +141,8 @@ does not apply to a review run; the rules below replace it.
    (up to about 15 minutes) ends before that start, and two runs of the
    same repository do not overlap.
 3. After each merge the other pull requests are behind. `aw report passed`
-   updates the branch of the next pull request that is behind, in the order
-   `expedite`, priority label, oldest, in the same run
+   updates the branch of the next pull request that is behind, by
+   the order of `aw claim` (`p0`, `expedite`, ..., oldest), in the same run
    (`"updated_next": <pr>`). `aw claim` does the same when it finds nothing
    to claim and no review pull request can merge or is in flight. A pull
    request that you report `passed` while it is behind is still updated by

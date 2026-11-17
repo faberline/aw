@@ -4,15 +4,15 @@ use anyhow::Result;
 
 use super::report::{merge_ready, read_required};
 use super::services::Services;
-use crate::domain::work::issue::EXPEDITE_LABEL;
+use crate::domain::work::issue::claim_order;
 use crate::domain::work::pull_request::{PullRequest, find_for_issue};
 use crate::domain::work::stage::Stage;
 
 /// Update the branch of the next review pull request that is behind the
 /// base branch, so its CI runs on the current base. Returns its number.
 ///
-/// The order is the `expedite` label, then the priority label, then the
-/// oldest issue. The rule "one update for each repo at a time" holds: when a
+/// The order is `claim_order`, the order of `aw claim` (`p0`, `expedite`,
+/// `ci-fix`, `bar`, then the other labels and the oldest). The rule "one update for each repo at a time" holds: when a
 /// pull request that comes first is up to date and can merge (its required
 /// checks are green or still run), nothing is updated. A pull request with a
 /// failed check is passed over: review sends it back to tdd, and a new CI
@@ -92,21 +92,15 @@ fn try_update_next(
 }
 
 /// The open pull requests of the `stage:review` issues that are not
-/// `blocked`, in queue order: `expedite`, priority, oldest issue.
+/// `blocked`, in `claim_order`.
 fn queue(s: Services<'_>, skip: Option<u64>) -> Result<Vec<PullRequest>> {
     let mut issues = s.tracker.open_issues(&format!("stage:{}", Stage::Review))?;
     issues.retain(|i| Some(i.number) != skip && !i.has_label("blocked"));
     if issues.is_empty() {
         return Ok(Vec::new());
     }
-    issues.sort_by_cached_key(|i| {
-        (
-            !i.has_label(EXPEDITE_LABEL),
-            i.priority(),
-            i.created_at.clone(),
-            i.number,
-        )
-    });
+    // The same order as `aw claim`: there is no second order.
+    claim_order(&mut issues);
     let prs = s.tracker.open_prs()?;
     Ok(issues
         .iter()

@@ -1129,7 +1129,8 @@ fn split_applies_to_spec_only() {
 }
 
 /// #7 (claimed) merges. #8 to #11 wait at review, all behind `main`.
-/// The order is `expedite`, then priority, then oldest.
+/// The order is `claim_order`: `p0`, `expedite`, then the rest by priority
+/// and age.
 fn next_world() -> World {
     let w = World::new();
     w.tracker.issue(7, &["agent:claude", "stage:review", "p3"]);
@@ -1170,6 +1171,16 @@ fn after_a_merge_the_same_run_updates_the_next_pr_in_order() {
     assert!(merge < update);
     let json = serde_json::to_value(&reported).unwrap();
     assert_eq!(json["updated_next"], 3);
+}
+
+#[test]
+fn a_p0_pr_goes_before_an_expedite_pr_as_in_aw_claim() {
+    let w = next_world();
+    // #8 is the oldest plain one; make it `p0`. `expedite` (#10) comes next.
+    w.tracker.issues.borrow_mut()[1].labels =
+        vec!["agent:other".into(), "stage:review".into(), "p0".into()];
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.updated_next, Some(6));
 }
 
 #[test]
