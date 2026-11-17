@@ -91,12 +91,23 @@ highest `vX.Y.Z` tag in the `core` checkout.
 | CR0 | an exception has no known check or no reason |
 | CR1 | a `core` dependency uses `branch`, `rev`, no tag, or a path outside the repository |
 | CR2 | a repository pins more than one `core` tag |
-| CR3 | a repository pins a tag other than the current `core` release |
+| CR3 | a repository pins a tag other than the current `core` release, except the release just before it for `GRACE_DAYS` (7) days |
 | CR4 | a workspace member names the `core` git source instead of `<crate>.workspace = true` |
 | CR5 | a repository builds a binary but does not depend on `cli-std` |
 | CR6 | a `build.rs` prints `cargo:rustc-env=*GIT_SHA` but its package has no `build-stamp` build dependency |
 | CR7 | a manifest names `prometheus`, `openraft`, or `raft` directly |
 | CR8 | `core` itself depends on another faberline repository |
+
+### CR3 grace
+
+A new `core` release makes every consumer fail CR3 at once. So a repository may pin the release just before the current one for 7 days. The number is `GRACE_DAYS` in `src/domain/standards/core_reuse.rs`.
+
+- The window starts at the commit date of the current release tag. A lightweight tag has no date of its own.
+- In the window, CR3 prints `warn CR3 <path>: ...` with the date from which it fails. The run passes.
+- A pin two or more releases back fails at once. Without a readable date there is no grace.
+- A release candidate (`-rc.N`) is never the current release.
+
+The check reads the crates of `core` from the git tree of the tag. A clone made with `--no-checkout` has no working tree (aw#590: `core v0.5.1 (0 crates)`).
 
 ### Exceptions
 

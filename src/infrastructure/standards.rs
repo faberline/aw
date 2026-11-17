@@ -215,16 +215,41 @@ fn version(tag: &str) -> Option<(u64, u64, u64)> {
     parts.next().is_none().then_some(v)
 }
 
-impl CoreSource for LocalCore {
-    fn release(&self) -> PortResult<CoreRelease> {
-        let dir = self.dir.to_string_lossy();
-        let tags = run("git", &["-C", &dir, "tag", "--list", "v*"], None)?;
-        let tag = tags
-            .split_whitespace()
-            .filter_map(|t| version(t).map(|v| (v, t)))
-            .max()
-            .map(|(_, t)| t.to_string())
-            .ok_or_else(|| PortError(format!("{}: no vX.Y.Z tag", self.dir.display())))?;
+impl LocalCore {
+    /// The package names under `crates/` at `tag`, read from the git tree.
+    /// A clone made with `--no-checkout` has no working tree (aw#590: the
+    /// check printed `0 crates`); its trees and commits are still there.
+    fn crates_at(&self, dir: &str, tag: &str) -> BTreeSet<String> {
+        let mut crates = BTreeSet::new();
+        let Ok(files) = run(
+            "git",
+            &["-C", dir, "ls-tree", "-r", "--name-only", tag, "crates"],
+            None,
+        ) else {
+            return crates;
+        };
+        for path in files.lines().filter(|p| {
+            let parts: Vec<&str> = p.split('/').collect();
+            parts.len() == 3 && parts[2] == "Cargo.toml"
+        }) {
+            let spec = format!("{tag}:{path}");
+            let Ok(text) = run("git", &["-C", dir, "show", &spec], None) else {
+                continue;
+            };
+            if let Some(name) = parse(path, &text).ok().and_then(|doc| {
+                doc.get("package")
+                    .and_then(|p| p.get("name"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            }) {
+                crates.insert(name);
+            }
+        }
+        crates
+    }
+
+    /// The package names under `crates/` of the working tree.
+    fn crates_on_disk(&self) -> PortResult<BTreeSet<String>> {
         let mut crates = BTreeSet::new();
         if let Ok(entries) = std::fs::read_dir(self.dir.join("crates")) {
             for entry in entries.flatten() {
@@ -242,7 +267,53 @@ impl CoreSource for LocalCore {
                 }
             }
         }
-        Ok(CoreRelease { tag, crates })
+        Ok(crates)
+    }
+}
+
+impl CoreSource for LocalCore {
+    fn release(&self) -> PortResult<CoreRelease> {
+        let dir = self.dir.to_string_lossy();
+        let tags = run("git", &["-C", &dir, "tag", "--list", "v*"], None)?;
+        // A release candidate (`-rc.N`) is not a `vX.Y.Z` tag: `version` skips it.
+        let mut found: Vec<((u64, u64, u64), &str)> = tags
+            .split_whitespace()
+            .filter_map(|t| version(t).map(|v| (v, t)))
+            .collect();
+        found.sort();
+        let tag = found
+            .last()
+            .map(|(_, t)| t.to_string())
+            .ok_or_else(|| PortError(format!("{}: no vX.Y.Z tag", self.dir.display())))?;
+        let previous = found.len().checked_sub(2).map(|i| found[i].1.to_string());
+        let released_at = run(
+            "git",
+            &[
+                "-C",
+                &dir,
+                "log",
+                "-1",
+                "--format=%ct",
+                &format!("{tag}^{{commit}}"),
+            ],
+            None,
+        )
+        .ok()
+        .and_then(|out| out.trim().parse().ok());
+        let read_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        let mut crates = self.crates_at(&dir, &tag);
+        if crates.is_empty() {
+            crates = self.crates_on_disk()?;
+        }
+        Ok(CoreRelease {
+            tag,
+            previous,
+            released_at,
+            read_at,
+            crates,
+        })
     }
 }
 

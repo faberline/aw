@@ -1396,3 +1396,13 @@ The review stage must update one branch of a repository at a time. A review that
 3. In the board or the decision, do not write "review is working" or "not the bottleneck" for this repository. Write the issue number of the `pipeline` issue.
 
 A single `branch updated` per 30 minutes is normal. Do not close issues, merge or change labels.
+
+### A repository pins the release before a new core release (G49)
+
+CR3 of the core-reuse check (`docs/standards/core-reuse.md`) gives a repository 7 days to move to a new `core` release. A repository that pins the release before the current one, while the current one is younger than 7 days, passes with a `warn CR3` line. After the 7 days it fails. A failing `core-reuse check` on `main` for this reason is not a red `main` with an unknown cause.
+
+1. Find the current `core` release (the highest `vX.Y.Z` tag, not an `-rc`) and its date. Find the repositories whose `Cargo.toml` pins the release before it (the `warn CR3` line, or the pin in the file).
+2. For each such repository, open one issue, or reuse the open one (G43): title "re-pin core to <tag>", labels `stage:spec`, `agent:claude`, `p1`. Write the pin, the current release, and the date from which CR3 fails.
+3. In the board, write the issue number. Do not write "red main, cause unknown" for this failure.
+
+If the failure is on `main` after the 7 days, the same issue is the one to use (G28 order: expedite is added there). Do not edit `aw.toml` exceptions.
