@@ -46,7 +46,9 @@ pools:
     pool: keep-server
     machine_type: n4-standard-2
     spot: true
-    max_nodes: 1
+    # 3 for the 3-replica raft e2e (keep#70). Owner approval 2026-11-17,
+    # cap 50 TWD a month (stop and report at 40 TWD).
+    max_nodes: 3
   # The test Job (kubectl, curl, jq) requests 250m and 256Mi.
   - repo: keep
     pool: keep-client

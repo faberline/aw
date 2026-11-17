@@ -77,11 +77,11 @@ tears down.
 - Cost cap: the sum of `max_nodes` over all rows, while tests run. Idle cost
   is 0 nodes. Each repository node has a 16 GB Hyperdisk Balanced boot disk. All 16
   repository pools (keep, lumen, tape, defer, relay, sift and core, each with
-  a server and a client pool, lumen also two perf pools) allow up to 33 nodes
-  in total; the system pool adds one. The 33 repository boot disks alone can require
-  528 GB of Hyperdisk capacity. In the worst case all pools, the system pool
-  and `pool-aw-ci` run at once: 33 + 1 + 8 nodes, 84 vCPU, inside the quota
-  CPUS_ALL_REGIONS 96 (checked 2026-11-15; regional CPUS is 100). Data
+  a server and a client pool, lumen also two perf pools) allow up to 35 nodes
+  in total; the system pool adds one. The 35 repository boot disks alone can require
+  560 GB of Hyperdisk capacity. In the worst case all pools, the system pool
+  and `pool-aw-ci` run at once: 35 + 1 + 8 nodes, 88 vCPU, inside the quota
+  CPUS_ALL_REGIONS 96 (checked 2026-11-17; regional CPUS is 100). Data
   PVCs consume additional capacity. Check Hyperdisk capacity, IOPS,
   throughput and CPU quotas before applying or running tests.
 
