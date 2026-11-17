@@ -118,7 +118,9 @@ fn a_drop_inside_the_tolerance_passes() {
 }
 
 #[test]
-fn a_stale_baseline_fails_cov4_with_the_new_value() {
+fn a_stale_baseline_only_warns_in_cov4_with_the_new_value() {
+    // aw#551: a feature PR must not have to edit `line`, so a stale line is
+    // a warning. COV3 and COV5 still keep the ratchet.
     let dir = workspace("stale", FILES);
     let config = write(
         &dir,
@@ -126,10 +128,29 @@ fn a_stale_baseline_fails_cov4_with_the_new_value() {
         "[standards.coverage]\nline = 74.0\ntarget = 100\n",
     );
     let (out, report) = check(&dir, &config, None);
-    assert_eq!(out.status.code(), Some(1));
-    assert_eq!(status(&report, "COV4"), "fail");
+    assert!(out.status.success(), "{report}");
+    assert_eq!(status(&report, "COV4"), "warn");
     let detail = report["findings"][3]["detail"].as_str().unwrap();
-    assert!(detail.contains("raise line to 75"), "{detail}");
+    assert!(detail.contains("raised to 75"), "{detail}");
+}
+
+#[test]
+fn an_unchanged_line_passes_when_main_moved_up() {
+    // Two parallel PRs: neither edits `line`, so neither conflicts.
+    let dir = workspace("unchanged", FILES);
+    let config = write(
+        &dir,
+        "aw.toml",
+        "[standards.coverage]\nline = 74.0\ntarget = 100\n",
+    );
+    let base = write(
+        &dir,
+        "base.toml",
+        "[standards.coverage]\nline = 74.0\ntarget = 100\n",
+    );
+    let (out, report) = check(&dir, &config, Some(&base));
+    assert!(out.status.success(), "{report}");
+    assert_eq!(status(&report, "COV5"), "pass");
 }
 
 #[test]

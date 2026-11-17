@@ -1328,3 +1328,24 @@ Before you open any issue for a failure (red `main`, failed job, failed test), s
 - When none does, open the issue, and put the run id and the failing test name in the title or the first lines of the body, so the next search finds it.
 
 This check comes before G28. G28 labels only an issue that this run created.
+
+### An ownerless flake (G44)
+
+A flaky test can fail review again and again while no one owns it (evidence: faberline/lumen#121 was `blocked` since 2026-11-10 with a stale pull request, and its flake kept faberline/lumen#17 in a review loop).
+
+For each open issue in `<target>` that tracks a flaky or intermittent test, do this when one of these is true: the issue has `blocked`, or it has no `stage:*` label, or its pull request is stale (no commit and no aw signal for 2 days, time from `date -u`, G1). And the flake has failed a review or a `main` run since then (read the `failed` review signals and the `main` runs; name the run).
+
+1. Do not only comment.
+2. Search for a split issue (step 6, G15, G43). When one is open, add the new run link there and stop.
+3. Otherwise open one decision issue (step 8, G3) with one option: split the failing test into a new issue with the labels `stage:spec`, `p1` and `expedite`. The type is `類型：中控可決定`. The `執行清單` creates that issue, and links the old one. G21 does not cover it (it is not label-only), so the desk executes it.
+
+A review `failed` signal with a line `flake: <test> outside the diff, no tracking issue` (aw-worker, review) is the same case: search the open issues for the test name, and when none tracks it, open the tracking issue (G43 first) with the run id and the test name in the title.
+
+### A threshold is not a desk decision (G45)
+
+An option that widens or lowers a perf threshold, a baseline, a coverage ratchet or a timeout is never `類型：中控可決定`. It is `類型：需要使用者` (a user decision). The desk cannot weaken a gate (evidence: faberline/aw#559).
+
+1. The decision must have one option that keeps the threshold. Prefer a more stable measurement, for example the median of 5 runs (core pull request 460).
+2. The option that keeps the threshold goes first, as the recommendation, unless a measurement shows that it cannot work. G9 applies to every number.
+3. Never use G21 for an option of this kind, also when it has one option.
+
