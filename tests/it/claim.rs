@@ -983,3 +983,52 @@ fn an_expedite_issue_goes_before_other_work_but_after_p0() {
         .issue(2, &["agent:claude", "stage:spec", "p1", "expedite"]);
     assert_eq!(claimed(&w, "claude").issue, 1);
 }
+
+#[test]
+fn an_idle_review_claim_updates_the_next_behind_pr_in_order() {
+    let w = World::new();
+    // Other agents' issues: `claude` has nothing to claim.
+    w.tracker.issue(8, &["agent:other", "stage:review", "p2"]);
+    w.tracker.pr(6, "other/issue-8", "Closes #8");
+    w.tracker
+        .issue(9, &["agent:other", "stage:review", "p3", "expedite"]);
+    w.tracker.pr(4, "other/issue-9", "Closes #9");
+    w.tracker.behind.set(2);
+    let why = nothing(&w, "claude");
+    assert!(
+        why.contains("updated the branch of pull request #4"),
+        "{why}"
+    );
+    assert_eq!(w.tracker.calls(), ["update_branch #4"]);
+    // The updated pull request is now in flight: no second update.
+    w.tracker
+        .behind_heads
+        .borrow_mut()
+        .insert("other/issue-9".into(), 0);
+    w.tracker.calls.borrow_mut().clear();
+    let why = nothing(&w, "claude");
+    assert!(!why.contains("updated the branch"), "{why}");
+    assert!(w.tracker.calls().is_empty());
+}
+
+#[test]
+fn an_idle_claim_updates_nothing_for_a_stage_that_is_not_review() {
+    let w = World::new();
+    w.tracker.issue(8, &["agent:other", "stage:review"]);
+    w.tracker.pr(6, "other/issue-8", "Closes #8");
+    w.tracker.behind.set(2);
+    let outcome = claim(w.services(), "claude", Some(Stage::Spec), &[], &[]).unwrap();
+    assert!(matches!(outcome, ClaimOutcome::Nothing(_)));
+    assert!(w.tracker.calls().is_empty());
+}
+
+#[test]
+fn an_idle_claim_that_cannot_update_still_says_nothing_to_claim() {
+    let w = World::new();
+    w.tracker.issue(8, &["agent:other", "stage:review"]);
+    w.tracker.pr(6, "other/issue-8", "Closes #8");
+    w.tracker.behind.set(2);
+    w.tracker.fail_update_branch.set(true);
+    let why = nothing(&w, "claude");
+    assert!(!why.contains("updated the branch"), "{why}");
+}

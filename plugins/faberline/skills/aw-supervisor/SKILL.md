@@ -1349,3 +1349,11 @@ An option that widens or lowers a perf threshold, a baseline, a coverage ratchet
 2. The option that keeps the threshold goes first, as the recommendation, unless a measurement shows that it cannot work. G9 applies to every number.
 3. Never use G21 for an option of this kind, also when it has one option.
 
+
+### A green pull request that is behind `main` waits for the review routine (G46)
+
+A pull request in review whose required checks on the current head are green and that is `behind` `main` for more than 2 hours does not wait for CI. CI has finished. It waits for the review routine, which must update its branch (`aw` does this after a merge and when the queue is idle; faberline/aw#563).
+
+1. Read the state with REST: `mergeable_state` `behind` and the check runs of the head (G14). Take the time from the newest of the head commit time and the time of the last `main` commit that the branch lacks (time from `date -u`, G1).
+2. Write it on the board as `waits for the review routine (<hours> h behind main, CI green)`. Do not write `waits for CI` and do not count it in the queued number (G18, G23).
+3. When the repository has no review claim or signal for 2 hours, check G40 and the routine state first. Do not guess the cause.

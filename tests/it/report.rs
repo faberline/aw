@@ -1127,3 +1127,203 @@ fn split_applies_to_spec_only() {
     assert!(err.to_string().contains("does not apply to tdd"), "{err}");
     assert!(w.tracker.created.borrow().is_empty());
 }
+
+/// #7 (claimed) merges. #8 to #11 wait at review, all behind `main`.
+/// The order is `claim_order`: `p0`, `expedite`, then the rest by priority
+/// and age.
+fn next_world() -> World {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review", "p3"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    // The oldest of the plain ones.
+    w.tracker.issue(8, &["agent:other", "stage:review", "p1"]);
+    w.tracker.pr(6, "other/issue-8", "Closes #8");
+    w.tracker.issue(9, &["agent:other", "stage:review", "p1"]);
+    w.tracker.pr(4, "other/issue-9", "Closes #9");
+    // `expedite` goes before every priority label.
+    w.tracker
+        .issue(10, &["agent:other", "stage:review", "p3", "expedite"]);
+    w.tracker.pr(3, "other/issue-10", "Closes #10");
+    claim_issue(&w, "claude");
+    w.tracker.behind.set(2);
+    w
+}
+
+#[test]
+fn after_a_merge_the_same_run_updates_the_next_pr_in_order() {
+    let w = next_world();
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.updated_next, Some(3));
+    assert_eq!(
+        w.tracker
+            .calls()
+            .iter()
+            .filter(|c| c.starts_with("update_branch"))
+            .count(),
+        1
+    );
+    let calls = w.tracker.calls();
+    let merge = calls
+        .iter()
+        .position(|c| c.starts_with("merge #5"))
+        .unwrap();
+    let update = calls.iter().position(|c| *c == "update_branch #3").unwrap();
+    assert!(merge < update);
+    let json = serde_json::to_value(&reported).unwrap();
+    assert_eq!(json["updated_next"], 3);
+}
+
+#[test]
+fn a_p0_pr_goes_before_an_expedite_pr_as_in_aw_claim() {
+    let w = next_world();
+    // #8 is the oldest plain one; make it `p0`. `expedite` (#10) comes next.
+    w.tracker.issues.borrow_mut()[1].labels =
+        vec!["agent:other".into(), "stage:review".into(), "p0".into()];
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.updated_next, Some(6));
+}
+
+#[test]
+fn the_next_update_goes_by_priority_then_oldest_without_expedite() {
+    let w = next_world();
+    w.tracker.issues.borrow_mut()[3].labels = vec!["agent:other".into(), "stage:review".into()];
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    // #8 and #9 are `p1`; #8 is the older issue.
+    assert_eq!(reported.updated_next, Some(6));
+}
+
+#[test]
+fn a_merge_updates_no_second_branch_while_one_is_up_to_date() {
+    let w = next_world();
+    // The `expedite` pull request is up to date and its CI runs.
+    w.tracker
+        .behind_heads
+        .borrow_mut()
+        .insert("other/issue-10".into(), 0);
+    w.tracker.run("other/issue-10", "gate", true);
+    *w.tracker.required.borrow_mut() = vec!["gate".into()];
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.updated_next, None);
+    assert!(
+        !w.tracker
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("update_branch"))
+    );
+}
+
+#[test]
+fn the_next_update_passes_over_a_red_or_blocked_pr() {
+    let w = next_world();
+    // `expedite` is red: review sends it back, so no CI run is spent on it.
+    w.tracker
+        .red_heads
+        .borrow_mut()
+        .push("other/issue-10".into());
+    // #8 is blocked.
+    w.tracker.issues.borrow_mut()[1]
+        .labels
+        .push("blocked".into());
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.updated_next, Some(4));
+}
+
+#[test]
+fn a_merge_with_no_other_review_pr_updates_nothing() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    claim_issue(&w, "claude");
+    w.tracker.behind.set(2);
+    // No other review pull request: nothing to update.
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "").unwrap();
+    assert_eq!(reported.updated_next, None);
+    assert!(reported.warnings.is_empty());
+}
+
+#[test]
+fn a_review_without_a_merge_updates_no_other_branch_on_its_own() {
+    // `failed` does not merge, so no branch gets a new CI run from it.
+    let w = next_world();
+    report(w.services(), "claude", None, Outcome::Failed, "fix it").unwrap();
+    assert!(
+        !w.tracker
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("update_branch"))
+    );
+}
+
+fn warned(reported: &aw::application::work::Reported, text: &str) -> bool {
+    reported.warnings.iter().any(|w| w.contains(text))
+}
+
+#[test]
+fn a_failed_next_update_is_a_warning_and_the_merge_stays() {
+    let w = next_world();
+    w.tracker.fail_update_branch.set(true);
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.updated_next, None);
+    assert!(warned(&reported, "could not update the branch of #3"));
+    assert!(w.tracker.calls().iter().any(|c| c.starts_with("merge #5")));
+}
+
+#[test]
+fn the_next_update_skips_a_pr_it_cannot_compare() {
+    let w = next_world();
+    w.tracker
+        .behind_error_heads
+        .borrow_mut()
+        .push("other/issue-10".into());
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert!(warned(&reported, "could not compare #3"));
+    assert_eq!(reported.updated_next, Some(6));
+}
+
+#[test]
+fn the_next_update_waits_when_the_checks_cannot_be_read() {
+    // Up to date: unreadable checks mean it may merge next, so wait.
+    let w = next_world();
+    w.tracker
+        .behind_heads
+        .borrow_mut()
+        .insert("other/issue-10".into(), 0);
+    w.tracker
+        .checks_error_heads
+        .borrow_mut()
+        .push("other/issue-10".into());
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.updated_next, None);
+    assert!(warned(&reported, "could not read the checks of #3"));
+    // Behind: the same read error stops the update.
+    let w = next_world();
+    w.tracker
+        .checks_error_heads
+        .borrow_mut()
+        .push("other/issue-10".into());
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.updated_next, None);
+    assert!(warned(&reported, "could not read the checks of #3"));
+}
+
+#[test]
+fn an_up_to_date_pr_that_cannot_merge_does_not_stop_the_next_update() {
+    let w = next_world();
+    // `expedite` is up to date but has no `gate` run: it cannot merge next.
+    w.tracker
+        .behind_heads
+        .borrow_mut()
+        .insert("other/issue-10".into(), 0);
+    *w.tracker.required.borrow_mut() = vec!["gate".into()];
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.updated_next, Some(6));
+}
+
+#[test]
+fn unreadable_required_checks_are_a_warning_for_the_next_update() {
+    let w = next_world();
+    w.tracker.required_unreadable.set(true);
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert!(warned(&reported, "could not read the required checks"));
+    assert_eq!(reported.updated_next, Some(3));
+}
