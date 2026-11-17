@@ -530,12 +530,20 @@ Read code through the GitHub API when you do not need the clone:
   the comment and adds the label. `aw report blocked` is for a decision that
   only a person can make, so do not use it here. Add `blocked` to no other
   issue. The supervisor or the desk removes it when the supplier merges.
+- Report `respec`, not `blocked`, when the spec needs a new version: the
+  cause in the spec is not confirmed (for example the spec's failing test
+  passes on the current code), a test that the spec requires does not fail,
+  or the spec cannot be implemented. Name what is missing or wrong, one
+  numbered line each. `blocked` is only for a wait on an outside item:
+  another issue, a person, or infrastructure. (faberline/kit#221 reported
+  `blocked` for an unconfirmed cause; no routine took the issue.)
 - Never report `blocked` for an incomplete or unclear spec. `blocked` keeps
   `stage:tdd` and adds `blocked`: the spec run does not read `stage:tdd`,
   and the tdd run does not take `blocked`, so no run takes the issue.
   As a safety net, `aw` changes a tdd `blocked` report to
   `respec` when its first line says the spec is the cause (for example
-  `spec unclear: ...`). Do not rely on it.
+  `spec unclear: ...`); a reason that does not start with `spec` or
+  `the spec`, for example `Blocked: the poison test ...`, is not changed. Do not rely on it.
 - Give the implementation to one subagent with the Agent tool and
   `model: "haiku"`. Its brief has: the clone path and branch; the whole spec;
   on rework, the review findings; the repository rules file to read; and
