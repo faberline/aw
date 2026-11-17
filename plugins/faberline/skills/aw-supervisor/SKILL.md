@@ -1419,3 +1419,21 @@ A stage that does no work is a defect, even when each run ends without an error 
 4. Also name each issue whose label is `stage:tdd` or `stage:spec` while its last signal is `ready` of the same stage and no `desk:` comment follows it: no run takes it.
 
 Do not change labels. Do not touch the issues.
+
+### A runner label that GitHub retired (G51)
+
+A job can be cancelled with no step at all. Its check run annotation then says `The configuration '<label>' is not supported`, or another text that says the runner configuration is not supported (evidence, 2026-11-17: faberline/aw#604, the `macos-14` build of the tape release candidate).
+The public runner list gives the cause. Do not write `cause not confirmed` before you read it.
+
+1. Read the README of `actions/runner-images`: `gh api repos/actions/runner-images/contents/README.md --jq .content | base64 -d`. Find the image behind the label (for example `macos-14-arm64` is `macos-14`) and read whether it is retired, and from which date.
+2. When the README says the image is retired, the cause is confirmed. Write the label, the retire date and the README line in the issue. Say that no organization or plan setting is involved.
+3. Open one issue in `<target>` that changes the workflow to a supported label. Give it `stage:spec` and `agent:claude`. Search the open issues of `<target>` first (G32); when one covers the label, add one comment with the new run link instead. Open no `decision` issue and ask the user nothing for this cause. A new paid run still needs its own approval (cost control); say so in the issue.
+4. When the README does not list the label, or lists it as supported, write `cause not confirmed` as in step 6, and list the README as read.
+
+The routine prompt must list the issue open and the two labels of step 3 for this rule. Without them, G51 does not run: put the fix in a `pipeline` issue, but still write the confirmed cause.
+
+#### More than one failed job in one run
+
+When a run has more than one failed or cancelled job, write the cause of each one. Do not stop at the first one.
+Read the repository rules for the other jobs too (for example the S6 rule in `STATUS.md`): a second failure can have its own known cause that the issue does not mention.
+When the run is still in progress, list the jobs that have not ended. Write them as "not ended" and add their causes in the next pass. Do not write the cause of the run as one line while a job is still open.
