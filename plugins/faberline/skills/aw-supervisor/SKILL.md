@@ -1341,6 +1341,14 @@ For each open issue in `<target>` that tracks a flaky or intermittent test, do t
 
 A review `failed` signal with a line `flake: <test> outside the diff, no tracking issue` (aw-worker, review) is the same case: search the open issues for the test name, and when none tracks it, open the tracking issue (G43 first) with the run id and the test name in the title.
 
+**Labels for the issue this run opens (faberline/aw#567).** No routine claims an issue without labels. Add the labels `stage:spec`, `agent:claude`, `p1` and `expedite` to the tracking issue that this run creates, when all of these are true:
+
+1. The same test failed with the same error text in two or more runs (name the run ids).
+2. At least one of those runs is on a pull request that does not touch the test.
+3. No open issue covers the test (the search above found none).
+
+The issue body gives the run ids. Label only the issue that this run created. Do not rerun more than once, close issues or change other labels.
+
 ### A threshold is not a desk decision (G45)
 
 An option that widens or lowers a perf threshold, a baseline, a coverage ratchet or a timeout is never `類型：中控可決定`. It is `類型：需要使用者` (a user decision). The desk cannot weaken a gate (evidence: faberline/aw#559).
