@@ -40,6 +40,8 @@ Another exception: G41 (below) lets you move an issue from `stage:review` back t
 The routine prompt must list the G41 label writes; without them, G41 does not run, and the item goes in a `pipeline` issue.
 Another exception: G33 (below) lets you answer a blocked test issue of the known class "core v0.5.0 leader no-op" and remove `blocked`.
 The routine prompt must list the G21 label writes for it; without them, G33 does not run, and the item goes to the desk.
+Another exception: G47 (below) lets you add labels to the issue for a new RustSec advisory.
+The routine prompt must list the G47 label writes; without them, G47 does not run, and the item goes to the desk.
 G25 (ghost runs) and G27 (the CI queue tracker) do not add writes. G27 only adds comments on faberline/aw#372.
 
 This cloud session blocks GitHub GraphQL.
@@ -1365,3 +1367,22 @@ A pull request in review whose required checks on the current head are green and
 1. Read the state with REST: `mergeable_state` `behind` and the check runs of the head (G14). Take the time from the newest of the head commit time and the time of the last `main` commit that the branch lacks (time from `date -u`, G1).
 2. Write it on the board as `waits for the review routine (<hours> h behind main, CI green)`. Do not write `waits for CI` and do not count it in the queued number (G18, G23).
 3. When the repository has no review claim or signal for 2 hours, check G40 and the routine state first. Do not guess the cause.
+
+### A new RustSec advisory (G47)
+
+A new RustSec advisory can fail a required check in several repositories at once (evidence, 2026-11-17: RUSTSEC-2026-0543, chrono unmaintained, in tape, relay and defer; each supervisor opened a `decision` issue, and the desk gave the same answer three times: faberline/aw#572, #573, #574).
+
+This is the cause "new advisory" when all of these are true:
+
+1. A required check failed, and its log names a RustSec advisory ID (`RUSTSEC-<year>-<number>`). One failed run is enough, also when `main` is not red yet.
+2. The lockfile did not change since the last green run of the same job (compare `Cargo.lock` at the two commits, G14).
+
+Then do this in the same pass. Open no `decision` issue.
+
+1. Search the open issues of `<target>` for the advisory ID (G43). When one exists, reuse it. Otherwise open one issue. Its body has: the advisory ID, the run id, the job, the crate and the dependency path, and these fix rules: add only this advisory ID to the ignore lists that the repository already uses, with a reason and an expiry date in the form of the existing entries; ignore no other advisory; change no test, threshold or required check.
+2. An advisory that is a vulnerability with a safe upgrade is not ignored. The issue asks for the upgrade and not for an ignore entry.
+3. Add the labels `stage:spec`, `agent:claude`, `p1` and `expedite` to the issue that this run created. When the issue already has a `stage:*` label, add only `expedite`, and change `p2` or `p3` to `p1`.
+4. Read the labels of the issue again in this pass, just before you write "no labels" in a board or a decision. A pass that wrote "no labels" from an old read was wrong in aw#572 and aw#573.
+
+Do not close issues, merge or change other labels. Do not use this rule for a failure that has no advisory ID (use G28 or G44).
+
