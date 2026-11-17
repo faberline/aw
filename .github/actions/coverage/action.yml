@@ -41,6 +41,20 @@ runs:
           exit 1
         fi
 
+    - name: Read the measured value of the base commit
+      if: github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      run: |
+        value=$("$GITHUB_ACTION_PATH/base-measured.sh" "$GITHUB_REPOSITORY" "$BASE_SHA" || true)
+        if [ -n "$value" ]; then
+          echo "COVERAGE_BASE_MEASURED=$value" >>"$GITHUB_ENV"
+        else
+          echo "No measured value on the base commit; COV6 is skipped."
+        fi
+
     - name: Check the coverage ratchet
       shell: bash
       env:
@@ -51,6 +65,14 @@ runs:
         cp "$SUMMARY" "$RUNNER_TEMP/coverage-summary.json"
         "$GITHUB_ACTION_PATH/check.sh" "$SUMMARY" "$CONFIG" "${COVERAGE_BASE:-}" \
           | tee "$RUNNER_TEMP/coverage-report.json"
+
+    - name: Record the measured value for later pull requests
+      if: always()
+      shell: bash
+      run: |
+        if [ -s "$RUNNER_TEMP/coverage-report.json" ]; then
+          echo "::notice title=aw-coverage::measured=$(jq -r .measured "$RUNNER_TEMP/coverage-report.json")"
+        fi
 
     - name: Keep the coverage data
       if: always()

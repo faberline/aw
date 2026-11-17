@@ -85,13 +85,26 @@ repository's own setup first, as any `test-*` job does.
 | COV3 | The measured value is at least `line` minus 0.1. The 0.1 is for test noise, for example a branch that a thread race runs only sometimes. |
 | COV4 | The measured value is at most `line` plus 0.5. It never fails, it only warns, and the detail gives the new `line`. A feature pull request does not edit `line`: parallel pull requests that all raised the same line conflicted with each other (aw#551). A `test(coverage):` issue raises `line`. |
 | COV5 | On a pull request, `line` is at least `line` on the base branch. Skipped on a push and when the base branch has no `line`. |
+| COV6 | On a pull request, the measured value is at least the measured value of the base commit minus 0.1. Skipped when the base commit has no recorded value. |
 
 A failed check fails the job, and `gate` fails with it. A warning does not.
 
 The ratchet stays strict without a number in each pull request. `line` never
 goes down (COV5 against the base branch). A pull request cannot measure less
-than `line` minus 0.1 (COV3). Only the raise moved: from every feature
-pull request to the one coverage issue, so there is one writer of the line.
+than `line` minus 0.1 (COV3), and cannot measure more than 0.1 less than its
+base commit (COV6), so `line` may lag behind `main` without a loophole.
+Only the raise moved: from every feature pull request to the one coverage
+issue, so there is one writer of the line.
+
+COV6 reads the base value from a check run annotation. Every run writes the
+annotation `measured=<value>` with the title `aw-coverage` (a
+`::notice` workflow command, last step of the action). A pull request reads
+it from the base commit, or from one of its 4 parents, with
+`.github/actions/coverage/base-measured.sh`. The check runs and annotations
+of a public repository are readable with the job token: the job needs no
+`actions: read` and no artifact download. A repository must pin the action
+at an `aw` commit with COV6 to get it. Until `main` has run once with it, the
+check is skipped.
 
 The script is `.github/actions/coverage/check.sh`. It prints the report as
 JSON, so it also runs on a laptop:
