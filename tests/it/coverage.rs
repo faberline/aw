@@ -237,3 +237,118 @@ fn an_exclude_without_a_reason_fails_cov2() {
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(status(&report, "COV2"), "fail");
 }
+
+fn check_with_base_measured(dir: &Path, config: &str, measured: &str) -> (Output, Value) {
+    let out = Command::new("bash")
+        .arg(SCRIPT)
+        .arg(dir.join("summary.json"))
+        .arg(config)
+        .env("COVERAGE_ROOT", dir)
+        .env("COVERAGE_BASE_MEASURED", measured)
+        .env_remove("GITHUB_STEP_SUMMARY")
+        .output()
+        .unwrap();
+    let report = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
+    (out, report)
+}
+
+#[test]
+fn a_pr_half_a_point_below_the_base_measured_value_fails_cov6() {
+    // aw#551: `line` can lag behind main, so COV6 compares with what the
+    // base commit measured. This run measures 75; main measured 75.5.
+    let dir = workspace("cov6-fail", FILES);
+    let config = write(
+        &dir,
+        "aw.toml",
+        "[standards.coverage]\nline = 74.0\ntarget = 100\n",
+    );
+    let (out, report) = check_with_base_measured(&dir, &config, "75.5");
+    assert_eq!(out.status.code(), Some(1), "{report}");
+    assert_eq!(status(&report, "COV6"), "fail");
+    // COV3 and COV5 alone would have passed: line is 74 and measured is 75.
+    assert_eq!(status(&report, "COV3"), "pass");
+}
+
+#[test]
+fn a_pr_within_noise_of_the_base_measured_value_passes_cov6() {
+    let dir = workspace("cov6-pass", FILES);
+    let config = write(
+        &dir,
+        "aw.toml",
+        "[standards.coverage]\nline = 74.0\ntarget = 100\n",
+    );
+    let (out, report) = check_with_base_measured(&dir, &config, "75.05");
+    assert!(out.status.success(), "{report}");
+    assert_eq!(status(&report, "COV6"), "pass");
+}
+
+#[test]
+fn cov6_is_skipped_without_a_base_measured_value() {
+    let dir = workspace("cov6-skip", FILES);
+    let config = write(
+        &dir,
+        "aw.toml",
+        "[standards.coverage]\nline = 74.0\ntarget = 100\n",
+    );
+    let (_, report) = check(&dir, &config, None);
+    assert_eq!(status(&report, "COV6"), "skipped");
+}
+
+/// A fake `gh` that answers the three calls of base-measured.sh from a
+/// table: `message` is the annotation of check run 7 on the base commit.
+fn base_measured(message: Option<&str>) -> String {
+    let dir = std::env::temp_dir().join(format!(
+        "aw-it-basem-{}-{}",
+        std::process::id(),
+        message.is_some()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let annotations = match message {
+        Some(m) => json!([{"title": "aw-coverage", "message": m}]),
+        None => json!([]),
+    };
+    let fake = format!(
+        r#"#!/usr/bin/env bash
+args="$*"
+case "$args" in
+  *"commits?sha="*) echo basesha ;;
+  *"/check-runs?"*) echo 3; echo 7 ;;
+  *"/annotations"*) echo '{annotations}' | jq -r "${{@: -1}}" ;;
+esac
+"#
+    );
+    // The fake ignores --jq for the first two calls and applies it for the
+    // annotations call, like gh does.
+    std::fs::write(dir.join("gh"), fake).unwrap();
+    Command::new("chmod")
+        .arg("+x")
+        .arg(dir.join("gh"))
+        .status()
+        .unwrap();
+    let path = format!("{}:{}", dir.display(), std::env::var("PATH").unwrap());
+    let script = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/.github/actions/coverage/base-measured.sh"
+    );
+    let out = Command::new("bash")
+        .args([script, "faberline/x", "abc"])
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+#[test]
+fn the_base_measured_value_is_read_from_the_annotation() {
+    assert_eq!(base_measured(Some("measured=83.32")), "83.32");
+}
+
+#[test]
+fn no_annotation_prints_nothing() {
+    assert_eq!(base_measured(None), "");
+}

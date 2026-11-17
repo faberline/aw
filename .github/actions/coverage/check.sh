@@ -3,6 +3,10 @@
 #
 #   check.sh <summary.json> <aw.toml> [<base aw.toml>]
 #
+# COVERAGE_BASE_MEASURED (optional) is the measured value of the base commit
+# of a pull request (base-measured.sh). COV6 fails when this run measures
+# more than 0.1 less. Leave it out when unknown: COV6 is skipped.
+#
 # <summary.json> is the output of `cargo llvm-cov --json --summary-only`.
 # <aw.toml> holds [standards.coverage] of this commit. <base aw.toml> is the
 # same file on the pull request base; leave it out on a push. A path that
@@ -22,6 +26,7 @@ summary=$1
 config=$2
 base=${3:-}
 root=${COVERAGE_ROOT:-$PWD}
+base_measured=${COVERAGE_BASE_MEASURED:-null}
 
 # Points that one run may lose to test noise.
 tolerance=0.1
@@ -50,6 +55,7 @@ report=$(jq -n \
   --slurpfile summary "$summary" \
   --argjson cfg "$head_cfg" \
   --argjson base "$base_cfg" \
+  --argjson base_measured "$base_measured" \
   --arg root "${root%/}/" \
   --argjson tolerance "$tolerance" \
   --argjson slack "$slack" '
@@ -74,6 +80,7 @@ def status(ok): if ok then "pass" else "fail" end;
     excluded_files: (($all | length) - ($files | length)),
     line: $line,
     base_line: $base_line,
+    base_measured: $base_measured,
     target: $c.target,
     new_excludes: ($paths - $base_paths),
     findings: [
@@ -100,7 +107,12 @@ def status(ok): if ok then "pass" else "fail" end;
        then {check: "COV5", status: "skipped", detail: "no base line"}
        else {check: "COV5",
          status: status($line >= $base_line),
-         detail: "line \($line), base line \($base_line)"} end)
+         detail: "line \($line), base line \($base_line)"} end),
+      (if $base_measured == null
+       then {check: "COV6", status: "skipped", detail: "no base measured value"}
+       else {check: "COV6",
+         status: status($measured >= $base_measured - $tolerance),
+         detail: "measured \($measured), base measured \($base_measured), tolerance \($tolerance)"} end)
     ],
     most_uncovered: [$files[]
       | {file: .filename,
@@ -116,7 +128,7 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   jq -r '
     "## Coverage (S8)",
     "",
-    "Line coverage **\(.measured)%**: \(.covered) of \(.lines) lines in \(.files) files (\(.excluded_files) files excluded). Baseline `line` = \(.line), base `line` = \(.base_line), target \(.target).",
+    "Line coverage **\(.measured)%**: \(.covered) of \(.lines) lines in \(.files) files (\(.excluded_files) files excluded). Baseline `line` = \(.line), base `line` = \(.base_line), base measured \(.base_measured), target \(.target).",
     "",
     "| Check | Status | Detail |",
     "|---|---|---|",
