@@ -35,6 +35,12 @@ pub struct FakeTracker {
     pub red_heads: RefCell<Vec<String>>,
     /// The check names the ruleset requires.
     pub required: RefCell<Vec<String>>,
+    /// `update_branch` fails.
+    pub fail_update_branch: Cell<bool>,
+    /// `behind_by` fails for these head branches.
+    pub behind_error_heads: RefCell<Vec<String>>,
+    /// Reading the checks fails for these head branches.
+    pub checks_error_heads: RefCell<Vec<String>>,
     /// Reading the required checks fails.
     pub required_unreadable: Cell<bool>,
     /// The newest check runs of these head branches.
@@ -381,20 +387,32 @@ impl Tracker for FakeTracker {
 
     fn behind_by(&self, base: &str, head: &str) -> PortResult<u64> {
         let _ = base;
+        if self.behind_error_heads.borrow().iter().any(|h| h == head) {
+            return Err(PortError("compare: boom".into()));
+        }
         let heads = self.behind_heads.borrow();
         Ok(heads.get(head).copied().unwrap_or(self.behind.get()))
     }
 
     fn update_branch(&self, pr: u64) -> PortResult<()> {
+        if self.fail_update_branch.get() {
+            return Err(PortError("update: boom".into()));
+        }
         self.record(format!("update_branch #{pr}"));
         Ok(())
     }
 
     fn has_failed_checks(&self, head: &str) -> PortResult<bool> {
+        if self.checks_error_heads.borrow().iter().any(|h| h == head) {
+            return Err(PortError("checks: boom".into()));
+        }
         Ok(self.red_heads.borrow().iter().any(|h| h == head))
     }
 
     fn check_runs(&self, head: &str) -> PortResult<Vec<CheckRun>> {
+        if self.checks_error_heads.borrow().iter().any(|h| h == head) {
+            return Err(PortError("checks: boom".into()));
+        }
         let mut runs = self.runs.borrow().get(head).cloned().unwrap_or_default();
         if self.red_heads.borrow().iter().any(|h| h == head) {
             runs.push(CheckRun {

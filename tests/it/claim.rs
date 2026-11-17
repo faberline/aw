@@ -1021,3 +1021,14 @@ fn an_idle_claim_updates_nothing_for_a_stage_that_is_not_review() {
     assert!(matches!(outcome, ClaimOutcome::Nothing(_)));
     assert!(w.tracker.calls().is_empty());
 }
+
+#[test]
+fn an_idle_claim_that_cannot_update_still_says_nothing_to_claim() {
+    let w = World::new();
+    w.tracker.issue(8, &["agent:other", "stage:review"]);
+    w.tracker.pr(6, "other/issue-8", "Closes #8");
+    w.tracker.behind.set(2);
+    w.tracker.fail_update_branch.set(true);
+    let why = nothing(&w, "claude");
+    assert!(!why.contains("updated the branch"), "{why}");
+}

@@ -1242,3 +1242,77 @@ fn a_review_without_a_merge_updates_no_other_branch_on_its_own() {
             .any(|c| c.starts_with("update_branch"))
     );
 }
+
+fn warned(reported: &aw::application::work::Reported, text: &str) -> bool {
+    reported.warnings.iter().any(|w| w.contains(text))
+}
+
+#[test]
+fn a_failed_next_update_is_a_warning_and_the_merge_stays() {
+    let w = next_world();
+    w.tracker.fail_update_branch.set(true);
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.updated_next, None);
+    assert!(warned(&reported, "could not update the branch of #3"));
+    assert!(w.tracker.calls().iter().any(|c| c.starts_with("merge #5")));
+}
+
+#[test]
+fn the_next_update_skips_a_pr_it_cannot_compare() {
+    let w = next_world();
+    w.tracker
+        .behind_error_heads
+        .borrow_mut()
+        .push("other/issue-10".into());
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert!(warned(&reported, "could not compare #3"));
+    assert_eq!(reported.updated_next, Some(6));
+}
+
+#[test]
+fn the_next_update_waits_when_the_checks_cannot_be_read() {
+    // Up to date: unreadable checks mean it may merge next, so wait.
+    let w = next_world();
+    w.tracker
+        .behind_heads
+        .borrow_mut()
+        .insert("other/issue-10".into(), 0);
+    w.tracker
+        .checks_error_heads
+        .borrow_mut()
+        .push("other/issue-10".into());
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.updated_next, None);
+    assert!(warned(&reported, "could not read the checks of #3"));
+    // Behind: the same read error stops the update.
+    let w = next_world();
+    w.tracker
+        .checks_error_heads
+        .borrow_mut()
+        .push("other/issue-10".into());
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.updated_next, None);
+    assert!(warned(&reported, "could not read the checks of #3"));
+}
+
+#[test]
+fn an_up_to_date_pr_that_cannot_merge_does_not_stop_the_next_update() {
+    let w = next_world();
+    // `expedite` is up to date but has no `gate` run: it cannot merge next.
+    w.tracker
+        .behind_heads
+        .borrow_mut()
+        .insert("other/issue-10".into(), 0);
+    *w.tracker.required.borrow_mut() = vec!["gate".into()];
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.updated_next, Some(6));
+}
+
+#[test]
+fn unreadable_required_checks_are_a_warning_for_the_next_update() {
+    let w = next_world();
+    w.tracker.required_unreadable.set(true);
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert!(warned(&reported, "could not read the required checks"));
+    assert_eq!(reported.updated_next, Some(3));
+}
