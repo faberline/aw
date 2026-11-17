@@ -104,7 +104,11 @@ const SPEC_GAP_WORDS: [&str; 6] = [
 /// Phrases that say the cause or the test in the spec does not hold
 /// (faberline/kit#221: `the poison test in the spec does not fail ...`).
 /// They count only when the reason also names `the spec`.
-const SPEC_UNSOUND_PHRASES: [&str; 5] = [
+const SPEC_UNSOUND_PHRASES: [&str; 9] = [
+    "does not match",
+    "does not say",
+    "already exists",
+    "already exist",
     "does not hold",
     "not confirmed",
     "does not fail",
@@ -330,6 +334,8 @@ mod tests {
             "  the spec is not complete",
             "Blocked: the poison test in the spec does not fail on the current code, so the stated cause does not hold.",
             "tdd blocked: the cause in the spec is not confirmed",
+            "Blocked: the spec for #403 does not match the repository, and the spec does not say how to resolve it.",
+            "blocked: the spec says create a.rs, and a.rs already exists on main",
         ] {
             assert!(names_spec_gap(message), "{message}");
         }

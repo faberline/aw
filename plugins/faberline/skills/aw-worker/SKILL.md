@@ -533,10 +533,16 @@ Read code through the GitHub API when you do not need the clone:
 - Report `respec`, not `blocked`, when the spec needs a new version: the
   cause in the spec is not confirmed (for example the spec's failing test
   passes on the current code), a test that the spec requires does not fail,
-  or the spec cannot be implemented. Name what is missing or wrong, one
+  the spec cannot be implemented, or the spec does not match the
+  repository (it says "Create" for a file that exists on the default
+  branch, names an item that is not there, or leaves open how to add to
+  existing code). Start the reason with `the spec` and name each
+  mismatch. This needs no person: the spec stage reads the code again.
+  Name what is missing or wrong, one
   numbered line each. `blocked` is only for a wait on an outside item:
   another issue, a person, or infrastructure. (faberline/kit#221 reported
-  `blocked` for an unconfirmed cause; no routine took the issue.)
+  `blocked` for an unconfirmed cause, and faberline/core#403 for a "Create"
+  file that already existed; no routine took either issue.)
 - Never report `blocked` for an incomplete or unclear spec. `blocked` keeps
   `stage:tdd` and adds `blocked`: the spec run does not read `stage:tdd`,
   and the tdd run does not take `blocked`, so no run takes the issue.
