@@ -2,6 +2,7 @@
 
 mod active;
 pub mod claim;
+mod queue;
 pub mod release;
 pub mod report;
 pub mod services;

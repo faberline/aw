@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
 use super::active::{active, in_checkout};
+use super::queue::update_next;
 use super::release::finish;
 use super::services::Services;
 use crate::domain::work::claim::Claim;
@@ -29,6 +30,10 @@ pub struct Reported {
     /// it is, so the two do not race. The next review run tries again.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub waiting_for: Option<u64>,
+    /// After a merge, `aw` updated the branch of this next review pull
+    /// request in the same run (`expedite`, then priority, then oldest).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_next: Option<u64>,
     /// spec split: the child issues that `aw` made.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<u64>,
@@ -83,10 +88,14 @@ pub fn report(
     if outcome == Outcome::Split {
         return split(s, held.comment_id, &claim, message, warnings);
     }
+    let mut merged = false;
     let link = match (claim.stage, outcome) {
         (Stage::Tdd, Outcome::Ready) => Some(open_pr(s, &claim, message)?),
         (Stage::Review, Outcome::Passed) => match merge(s, &claim, message, &mut warnings)? {
-            Merge::Merged(url) => Some(url),
+            Merge::Merged(url) => {
+                merged = true;
+                Some(url)
+            }
             Merge::Updated(url) => {
                 return updated(s, held.comment_id, &claim, message, url, warnings);
             }
@@ -115,6 +124,13 @@ pub fn report(
 
     move_labels(s, &claim, outcome, &mut warnings);
     warnings.extend(finish(s, &claim)?);
+    // The merge made the other review pull requests behind. Start the CI of
+    // the next one now, so a later run does not first have to claim it.
+    let updated_next = if merged {
+        update_next(s, &claim.default_branch, Some(claim.issue), &mut warnings)
+    } else {
+        None
+    };
     Ok(Reported {
         issue: claim.issue,
         stage: claim.stage,
@@ -122,6 +138,7 @@ pub fn report(
         link,
         updated_branch: false,
         waiting_for: None,
+        updated_next,
         children: Vec::new(),
         warnings,
     })
@@ -251,6 +268,7 @@ fn split(
         link: None,
         updated_branch: false,
         waiting_for: None,
+        updated_next: None,
         children,
         warnings,
     })
@@ -297,6 +315,7 @@ fn updated(
         link: Some(url),
         updated_branch: true,
         waiting_for: None,
+        updated_next: None,
         children: Vec::new(),
         warnings,
     })
@@ -344,6 +363,7 @@ fn waiting(
         link: Some(url),
         updated_branch: false,
         waiting_for: Some(holder),
+        updated_next: None,
         children: Vec::new(),
         warnings,
     })
@@ -467,7 +487,7 @@ fn close(
 /// The warning (and note text) when the required checks cannot be read.
 /// The old rule stays in force then: any up-to-date pull request without a
 /// failed check holds the others back.
-const REQUIRED_UNREAD: &str = "could not read the required checks of the ruleset; \
+pub(super) const REQUIRED_UNREAD: &str = "could not read the required checks of the ruleset; \
      kept the old queue rule (an up-to-date pull request without a failed check goes first)";
 
 fn merge(
@@ -483,7 +503,7 @@ fn merge(
     } else {
         message.to_string()
     };
-    let required = read_required(s, claim, warnings);
+    let required = read_required(s, &claim.default_branch, warnings);
     // A higher-priority pull request was just updated and its required
     // checks still run. Merging this one now would leave it behind again.
     if let Some(required) = required.as_deref()
@@ -517,12 +537,12 @@ fn merge(
 
 /// The check names the ruleset requires on the default branch, or `None`
 /// (with a warning) when they cannot be read.
-fn read_required(
+pub(super) fn read_required(
     s: Services<'_>,
-    claim: &Claim,
+    base: &str,
     warnings: &mut Vec<String>,
 ) -> Option<Vec<String>> {
-    match s.tracker.required_checks(&claim.default_branch) {
+    match s.tracker.required_checks(base) {
         Ok(required) => Some(required),
         Err(err) => {
             warnings.push(format!("{REQUIRED_UNREAD}: {err}"));
@@ -613,7 +633,11 @@ fn up_to_date_review_pr(
 }
 
 /// The head can merge once its running checks pass.
-fn merge_ready(s: Services<'_>, head: &str, required: Option<&[String]>) -> Result<bool> {
+pub(super) fn merge_ready(
+    s: Services<'_>,
+    head: &str,
+    required: Option<&[String]>,
+) -> Result<bool> {
     match required {
         None => Ok(!s.tracker.has_failed_checks(head)?),
         Some(required) => {

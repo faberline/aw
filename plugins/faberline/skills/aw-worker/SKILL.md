@@ -140,11 +140,14 @@ does not apply to a review run; the rules below replace it.
    next run starts about 60 minutes later; 40 minutes plus the last review
    (up to about 15 minutes) ends before that start, and two runs of the
    same repository do not overlap.
-3. After each merge the other pull requests are behind. Update the branch of
-   only the next pull request in the order, and only when you report
-   `passed` for it: `aw` updates the branch then (`"updated_branch": true`).
-   Never update all waiting branches. Never run `gh` or `git` to update a
-   branch yourself.
+3. After each merge the other pull requests are behind. `aw report passed`
+   updates the branch of the next pull request that is behind, in the order
+   `expedite`, priority label, oldest, in the same run
+   (`"updated_next": <pr>`). `aw claim` does the same when it finds nothing
+   to claim and no review pull request can merge or is in flight. A pull
+   request that you report `passed` while it is behind is still updated by
+   `aw` (`"updated_branch": true`). Never update all waiting branches.
+   Never run `gh` or `git` to update a branch yourself.
 4. After `"updated_branch": true` or `"waiting_for"`, claim again with
    `--skip <issue>` for that issue. While the updated pull request waits for
    CI, you may review the next one (read and judge it). If the verdict is

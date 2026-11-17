@@ -1127,3 +1127,118 @@ fn split_applies_to_spec_only() {
     assert!(err.to_string().contains("does not apply to tdd"), "{err}");
     assert!(w.tracker.created.borrow().is_empty());
 }
+
+/// #7 (claimed) merges. #8 to #11 wait at review, all behind `main`.
+/// The order is `expedite`, then priority, then oldest.
+fn next_world() -> World {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review", "p3"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    // The oldest of the plain ones.
+    w.tracker.issue(8, &["agent:other", "stage:review", "p1"]);
+    w.tracker.pr(6, "other/issue-8", "Closes #8");
+    w.tracker.issue(9, &["agent:other", "stage:review", "p1"]);
+    w.tracker.pr(4, "other/issue-9", "Closes #9");
+    // `expedite` goes before every priority label.
+    w.tracker
+        .issue(10, &["agent:other", "stage:review", "p3", "expedite"]);
+    w.tracker.pr(3, "other/issue-10", "Closes #10");
+    claim_issue(&w, "claude");
+    w.tracker.behind.set(2);
+    w
+}
+
+#[test]
+fn after_a_merge_the_same_run_updates_the_next_pr_in_order() {
+    let w = next_world();
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.updated_next, Some(3));
+    assert_eq!(
+        w.tracker
+            .calls()
+            .iter()
+            .filter(|c| c.starts_with("update_branch"))
+            .count(),
+        1
+    );
+    let calls = w.tracker.calls();
+    let merge = calls
+        .iter()
+        .position(|c| c.starts_with("merge #5"))
+        .unwrap();
+    let update = calls.iter().position(|c| *c == "update_branch #3").unwrap();
+    assert!(merge < update);
+    let json = serde_json::to_value(&reported).unwrap();
+    assert_eq!(json["updated_next"], 3);
+}
+
+#[test]
+fn the_next_update_goes_by_priority_then_oldest_without_expedite() {
+    let w = next_world();
+    w.tracker.issues.borrow_mut()[3].labels = vec!["agent:other".into(), "stage:review".into()];
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    // #8 and #9 are `p1`; #8 is the older issue.
+    assert_eq!(reported.updated_next, Some(6));
+}
+
+#[test]
+fn a_merge_updates_no_second_branch_while_one_is_up_to_date() {
+    let w = next_world();
+    // The `expedite` pull request is up to date and its CI runs.
+    w.tracker
+        .behind_heads
+        .borrow_mut()
+        .insert("other/issue-10".into(), 0);
+    w.tracker.run("other/issue-10", "gate", true);
+    *w.tracker.required.borrow_mut() = vec!["gate".into()];
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.updated_next, None);
+    assert!(
+        !w.tracker
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("update_branch"))
+    );
+}
+
+#[test]
+fn the_next_update_passes_over_a_red_or_blocked_pr() {
+    let w = next_world();
+    // `expedite` is red: review sends it back, so no CI run is spent on it.
+    w.tracker
+        .red_heads
+        .borrow_mut()
+        .push("other/issue-10".into());
+    // #8 is blocked.
+    w.tracker.issues.borrow_mut()[1]
+        .labels
+        .push("blocked".into());
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "ok").unwrap();
+    assert_eq!(reported.updated_next, Some(4));
+}
+
+#[test]
+fn a_merge_with_no_other_review_pr_updates_nothing() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:review"]);
+    w.tracker.pr(5, "claude/issue-7", "Closes #7");
+    claim_issue(&w, "claude");
+    w.tracker.behind.set(2);
+    // No other review pull request: nothing to update.
+    let reported = report(w.services(), "claude", None, Outcome::Passed, "").unwrap();
+    assert_eq!(reported.updated_next, None);
+    assert!(reported.warnings.is_empty());
+}
+
+#[test]
+fn a_review_without_a_merge_updates_no_other_branch_on_its_own() {
+    // `failed` does not merge, so no branch gets a new CI run from it.
+    let w = next_world();
+    report(w.services(), "claude", None, Outcome::Failed, "fix it").unwrap();
+    assert!(
+        !w.tracker
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("update_branch"))
+    );
+}

@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 
 use super::active::{board, in_checkout};
+use super::queue::update_next;
 use super::services::Services;
 use crate::domain::work::claim::{Claim, STALE_AFTER_SECONDS, latest_mark};
 use crate::domain::work::issue::{
@@ -259,6 +260,19 @@ pub fn claim_with(
             "; passed over {}: run `aw claim --has <thing>` on a machine that has it",
             needs_other.join(", ")
         ));
+    }
+    // No review issue is left to claim. When no review pull request can
+    // merge next and no update is in flight, start the CI of the next one.
+    if !rework_only && matches!(only, None | Some(Stage::Review)) {
+        let mut warnings = Vec::new();
+        if let Some(pr) = update_next(s, &repo.default_branch, None, &mut warnings) {
+            why.push_str(&format!(
+                "; updated the branch of pull request #{pr}, the next in the review queue"
+            ));
+        }
+        for warning in warnings {
+            eprintln!("aw: {warning}");
+        }
     }
     Ok(ClaimOutcome::Nothing(why))
 }
