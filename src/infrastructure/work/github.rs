@@ -477,11 +477,7 @@ impl Tracker for GhCli {
         // A re-run replaces an older run of the same name.
         let jq = "[.check_runs | group_by(.name)[] | max_by(.id) \
                   | select(.conclusion == \"failure\" or .conclusion == \"timed_out\")] | length";
-        let out = self.get(&path, Some(jq))?;
-        out.trim()
-            .parse::<u64>()
-            .map(|n| n > 0)
-            .map_err(|_| PortError(format!("check runs returned `{}`", out.trim())))
+        nonzero(&self.get(&path, Some(jq))?, "check runs")
     }
 
     fn has_unfinished_runs(&self, head: &str) -> PortResult<bool> {
@@ -491,11 +487,7 @@ impl Tracker for GhCli {
             encode(head)
         );
         let jq = "[.workflow_runs[] | select(.status != \"completed\")] | length";
-        let out = self.get(&path, Some(jq))?;
-        out.trim()
-            .parse::<u64>()
-            .map(|n| n > 0)
-            .map_err(|_| PortError(format!("workflow runs returned `{}`", out.trim())))
+        nonzero(&self.get(&path, Some(jq))?, "workflow runs")
     }
 
     fn check_runs(&self, head: &str) -> PortResult<Vec<CheckRun>> {
@@ -531,6 +523,14 @@ impl Tracker for GhCli {
     }
 }
 
+/// `true` when a `jq` count is above 0.
+fn nonzero(out: &str, what: &str) -> PortResult<bool> {
+    out.trim()
+        .parse::<u64>()
+        .map(|n| n > 0)
+        .map_err(|_| PortError(format!("{what} returned `{}`", out.trim())))
+}
+
 fn parse_check_runs(out: &str) -> PortResult<Vec<CheckRun>> {
     out.lines()
         .filter(|l| !l.trim().is_empty())
@@ -560,6 +560,14 @@ mod tests {
         assert!(runs[1].running && !runs[1].failed);
         assert!(runs[2].failed);
         assert!(parse_check_runs("broken").is_err());
+    }
+
+    #[test]
+    fn a_count_above_zero_is_true_and_other_text_is_an_error() {
+        assert!(nonzero("2\n", "workflow runs").unwrap());
+        assert!(!nonzero("0\n", "workflow runs").unwrap());
+        let err = nonzero("oops", "workflow runs").unwrap_err();
+        assert_eq!(err.0, "workflow runs returned `oops`");
     }
 
     #[test]
