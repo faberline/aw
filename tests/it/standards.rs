@@ -47,6 +47,7 @@ fn world(name: &str) -> PathBuf {
         ],
     );
     git(&core, &["tag", "v1.0.0"]);
+    git(&core, &["tag", "v1.1.0"]);
     git(&core, &["tag", "v1.2.0"]);
     git(&core, &["tag", "v1.10.0-rc.1"]);
     root
@@ -231,4 +232,45 @@ fn help_lists_the_command() {
         text.contains("--core") && text.contains("--format"),
         "{text}"
     );
+}
+
+#[test]
+fn a_new_previous_release_is_a_warning_and_a_core_clone_without_a_tree_has_crates() {
+    let root = world("grace");
+    checkout(
+        &root,
+        "app",
+        &[
+            ("Cargo.toml", &manifest("v1.1.0")),
+            ("crates/m/Cargo.toml", MEMBER),
+        ],
+    );
+    // The tags sit on a commit made just now: v1.2.0 is younger than 7 days.
+    let (out, text) = check(&root, "app", &[]);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("warn CR3 Cargo.toml: pins v1.1.0; current is v1.2.0"),
+        "{text}"
+    );
+    // The CI clone of core has no working tree (aw#590).
+    let bare = root.join("core-nocheckout");
+    git(
+        &root,
+        &[
+            "clone",
+            "-q",
+            "--no-checkout",
+            root.join("core").to_str().unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
+    let out = Command::new(env!("CARGO_BIN_EXE_aw"))
+        .args(["standards", "check", "--repo"])
+        .arg(root.join("app"))
+        .arg("--core")
+        .arg(&bare)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(text.contains("core v1.2.0 (2 crates)"), "{text}");
 }

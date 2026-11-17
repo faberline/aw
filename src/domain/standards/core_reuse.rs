@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 
 use super::repo::{BuildScript, Dep, Exception, Manifest};
+use crate::domain::run::record::rfc3339;
 
 pub const SCHEMA: &str = "core-reuse-report/1";
 
@@ -16,7 +17,10 @@ pub const CHECKS: [(&str, &str); 9] = [
         "core is pinned by git tag, never by path, branch, or rev",
     ),
     ("CR2", "one core tag per repository"),
-    ("CR3", "the pinned tag is the current core release"),
+    (
+        "CR3",
+        "the pinned tag is the current core release, or the one before it for 7 days",
+    ),
     (
         "CR4",
         "a workspace member takes core from [workspace.dependencies]",
@@ -37,13 +41,37 @@ const DENIED: [(&str, &str); 3] = [
     ("raft", "raft-core"),
 ];
 
+/// Days in which a repository may still pin the release before the current
+/// one (CR3). The one place for this number; `docs/standards/core-reuse.md`
+/// names it.
+pub const GRACE_DAYS: i64 = 7;
+const DAY: i64 = 86_400;
+
 /// The current `core` release.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CoreRelease {
-    /// The highest `vX.Y.Z` tag.
+    /// The highest `vX.Y.Z` tag. A release candidate (`-rc.N`) is not one.
     pub tag: String,
+    /// The `vX.Y.Z` tag just below `tag`, if there is one.
+    pub previous: Option<String>,
+    /// Unix seconds of the commit that `tag` names. A lightweight tag has no
+    /// date of its own. `None` when it cannot be read.
+    pub released_at: Option<i64>,
+    /// Unix seconds of the moment the release was read.
+    pub read_at: i64,
     /// The package names under `crates/`.
     pub crates: BTreeSet<String>,
+}
+
+impl CoreRelease {
+    /// `tag` is the release before the current one, and the current one is
+    /// younger than `GRACE_DAYS`. Without a date there is no grace.
+    fn in_grace(&self, tag: &str) -> bool {
+        self.previous.as_deref() == Some(tag)
+            && self
+                .released_at
+                .is_some_and(|at| self.read_at - at < GRACE_DAYS * DAY)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -67,6 +95,8 @@ pub struct RepoReport {
     pub repo: String,
     pub ok: bool,
     pub findings: Vec<Finding>,
+    /// A finding that does not fail the run yet (the CR3 grace).
+    pub warnings: Vec<Finding>,
     pub excepted: Vec<Excepted>,
 }
 
@@ -92,7 +122,8 @@ fn finding(check: &str, path: &str, message: String) -> Finding {
 pub fn check(input: &RepoInput, release: &CoreRelease) -> RepoReport {
     let (valid, mut failing) = exceptions(&input.exceptions);
     let mut excepted = Vec::new();
-    for f in findings(input, release) {
+    let mut warnings = Vec::new();
+    for f in findings(input, release, &mut warnings) {
         match valid
             .iter()
             .find(|e| e.check == f.check && e.path.as_deref().unwrap_or(&f.path) == f.path)
@@ -110,6 +141,7 @@ pub fn check(input: &RepoInput, release: &CoreRelease) -> RepoReport {
         repo: input.name.clone(),
         ok: failing.is_empty(),
         findings: failing,
+        warnings,
         excepted,
     }
 }
@@ -132,7 +164,7 @@ fn exceptions(entries: &[Exception]) -> (Vec<&Exception>, Vec<Finding>) {
     (valid, broken)
 }
 
-fn findings(input: &RepoInput, release: &CoreRelease) -> Vec<Finding> {
+fn findings(input: &RepoInput, release: &CoreRelease, warnings: &mut Vec<Finding>) -> Vec<Finding> {
     let deps: Vec<&Dep> = input.manifests.iter().flat_map(|m| &m.deps).collect();
     let mut out = Vec::new();
     if input.is_core {
@@ -157,11 +189,19 @@ fn findings(input: &RepoInput, release: &CoreRelease) -> Vec<Finding> {
     }
     for (tag, manifests) in pinned.iter().filter(|(t, _)| **t != release.tag) {
         for m in manifests {
-            out.push(finding(
-                "CR3",
-                m,
-                format!("pins {tag}; current is {}", release.tag),
-            ));
+            let message = format!("pins {tag}; current is {}", release.tag);
+            match release.released_at.filter(|_| release.in_grace(tag)) {
+                Some(at) => warnings.push(finding(
+                    "CR3",
+                    m,
+                    format!(
+                        "{message} (released {}); this fails from {}",
+                        &rfc3339(at)[..10],
+                        &rfc3339(at + GRACE_DAYS * DAY)[..10]
+                    ),
+                )),
+                None => out.push(finding("CR3", m, message)),
+            }
         }
     }
     members(input, &deps, &mut out);
@@ -360,6 +400,9 @@ pub fn render(report: &Report) -> String {
         for f in &repo.findings {
             lines.push(format!("  {} {}: {}", f.check, f.path, f.message));
         }
+        for f in &repo.warnings {
+            lines.push(format!("  warn {} {}: {}", f.check, f.path, f.message));
+        }
         for f in &repo.excepted {
             lines.push(format!("  excepted {} {}: {}", f.check, f.path, f.reason));
         }
@@ -386,6 +429,9 @@ mod tests {
     fn release() -> CoreRelease {
         CoreRelease {
             tag: "v1.2.0".into(),
+            previous: Some("v1.1.0".into()),
+            released_at: None,
+            read_at: 0,
             crates: ["cli-std", "build-stamp", "raft-core"]
                 .map(String::from)
                 .into(),
@@ -468,6 +514,59 @@ mod tests {
         assert_eq!(checks(&report), ["CR2", "CR3"]);
         assert_eq!(report.findings[0].message, "pins v1.0.0, v1.2.0");
         assert_eq!(report.findings[1].path, "sub/Cargo.toml");
+    }
+
+    #[test]
+    fn cr3_allows_the_release_before_the_current_one_for_seven_days() {
+        let old = core_dep("Cargo.toml", "cli-std", Some("v1.1.0"));
+        let i = input(vec![manifest("Cargo.toml", vec![old])]);
+        let day = 86_400;
+        let mut r = release();
+        r.released_at = Some(1_800_000_000);
+        // Inside the window: a warning with the date it fails, no finding.
+        r.read_at = 1_800_000_000 + 7 * day - 1;
+        let report = check(&i, &r);
+        assert!(report.ok, "{report:?}");
+        assert_eq!(report.warnings.len(), 1);
+        assert!(
+            report.warnings[0]
+                .message
+                .contains("this fails from 2027-01-")
+        );
+        assert!(
+            render(&Report {
+                schema: SCHEMA,
+                core: CoreSummary {
+                    path: "c".into(),
+                    tag: "v1.2.0".into(),
+                    crates: 3
+                },
+                repos: vec![report],
+                ok: true,
+            })
+            .contains("  warn CR3 Cargo.toml: pins v1.1.0; current is v1.2.0")
+        );
+        // At seven days it fails, as before.
+        r.read_at = 1_800_000_000 + 7 * day;
+        let report = check(&i, &r);
+        assert_eq!(checks(&report), ["CR3"]);
+        assert!(report.warnings.is_empty());
+    }
+
+    #[test]
+    fn cr3_fails_an_older_pin_and_a_release_without_a_date() {
+        let mut r = release();
+        r.released_at = Some(1_800_000_000);
+        r.read_at = 1_800_000_000 + 3_600;
+        // Two releases back: no grace.
+        let older = core_dep("Cargo.toml", "cli-std", Some("v1.0.0"));
+        let report = check(&input(vec![manifest("Cargo.toml", vec![older])]), &r);
+        assert_eq!(checks(&report), ["CR3"]);
+        // The previous release, but the date is unknown: no grace.
+        let prev = core_dep("Cargo.toml", "cli-std", Some("v1.1.0"));
+        r.released_at = None;
+        let report = check(&input(vec![manifest("Cargo.toml", vec![prev])]), &r);
+        assert_eq!(checks(&report), ["CR3"]);
     }
 
     #[test]

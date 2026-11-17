@@ -215,34 +215,66 @@ fn version(tag: &str) -> Option<(u64, u64, u64)> {
     parts.next().is_none().then_some(v)
 }
 
+impl LocalCore {
+    /// The package names under `crates/` at `tag`, read from the git tree.
+    /// A clone made with `--no-checkout` has no working tree (aw#590: the
+    /// check printed `0 crates`); its trees and commits are still there.
+    fn crates_at(&self, dir: &str, tag: &str) -> BTreeSet<String> {
+        let args = ["-C", dir, "ls-tree", "-r", "--name-only", tag, "crates"];
+        let files = run("git", &args, None).unwrap_or_default();
+        let manifests = files.lines().filter(|p| p.matches('/').count() == 2);
+        manifests
+            .filter(|p| p.ends_with("/Cargo.toml"))
+            .filter_map(|p| {
+                let text = run("git", &["-C", dir, "show", &format!("{tag}:{p}")], None).ok()?;
+                let doc = parse(p, &text).ok()?;
+                let name = doc.get("package")?.get("name")?.as_str()?;
+                Some(name.to_string())
+            })
+            .collect()
+    }
+}
+
 impl CoreSource for LocalCore {
     fn release(&self) -> PortResult<CoreRelease> {
         let dir = self.dir.to_string_lossy();
         let tags = run("git", &["-C", &dir, "tag", "--list", "v*"], None)?;
-        let tag = tags
+        // A release candidate (`-rc.N`) is not a `vX.Y.Z` tag: `version` skips it.
+        let mut found: Vec<((u64, u64, u64), &str)> = tags
             .split_whitespace()
             .filter_map(|t| version(t).map(|v| (v, t)))
-            .max()
+            .collect();
+        found.sort();
+        let tag = found
+            .last()
             .map(|(_, t)| t.to_string())
             .ok_or_else(|| PortError(format!("{}: no vX.Y.Z tag", self.dir.display())))?;
-        let mut crates = BTreeSet::new();
-        if let Ok(entries) = std::fs::read_dir(self.dir.join("crates")) {
-            for entry in entries.flatten() {
-                let manifest = entry.path().join("Cargo.toml");
-                let Ok(text) = std::fs::read_to_string(&manifest) else {
-                    continue;
-                };
-                let doc = parse(&manifest.display().to_string(), &text)?;
-                if let Some(name) = doc
-                    .get("package")
-                    .and_then(|p| p.get("name"))
-                    .and_then(Value::as_str)
-                {
-                    crates.insert(name.to_string());
-                }
-            }
-        }
-        Ok(CoreRelease { tag, crates })
+        let previous = found.len().checked_sub(2).map(|i| found[i].1.to_string());
+        let released_at = run(
+            "git",
+            &[
+                "-C",
+                &dir,
+                "log",
+                "-1",
+                "--format=%ct",
+                &format!("{tag}^{{commit}}"),
+            ],
+            None,
+        )
+        .ok()
+        .and_then(|out| out.trim().parse().ok());
+        let read_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        let crates = self.crates_at(&dir, &tag);
+        Ok(CoreRelease {
+            tag,
+            previous,
+            released_at,
+            read_at,
+            crates,
+        })
     }
 }
 
