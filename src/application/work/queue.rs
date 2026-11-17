@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 
-use super::report::{merge_ready, read_required};
+use super::report::{merge_ready, read_required, recent_update};
 use super::services::Services;
 use crate::domain::work::issue::claim_order;
 use crate::domain::work::pull_request::{PullRequest, find_for_issue};
@@ -44,6 +44,10 @@ fn try_update_next(
 ) -> Result<Option<u64>> {
     let queue = queue(s, skip)?;
     if queue.is_empty() {
+        return Ok(None);
+    }
+    // An update from the last minutes may show no CI yet (aw#587).
+    if recent_update(s, None)?.is_some() {
         return Ok(None);
     }
     let required = read_required(s, base, warnings);
