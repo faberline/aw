@@ -1196,6 +1196,8 @@ For each one, read the state of each named sibling issue (G24).
   Use a `decision` issue of type `中控可決定` (step 8) and write the exact label change.
   This extends G10.
 
+A `Waits for:` text after other text in one line (for example `Part of #161. Waits for: #182`) is the same defect with a form that older `aw` did not read (faberline/aw#601; since aw 0.7.50 `aw claim` reads it after a sentence end). When this is the only defect, the named issue is open and in the same repository, and the issue has a `stage:tdd` or `stage:spec` label: edit the issue body yourself so that `Waits for: #<number>` is a line of its own (the text before it stays on its own line), add `blocked` with the usual comment, and write it on the board. Open no `decision` issue for this case. If the named issue is in another repository, or the line has no number, the old rules stay.
+
 G38 exception to G21: this is the only case where the supervisor adds `blocked`.
 It applies only to an issue with a `stage:tdd` label and a `Waits for:` line with numbered prerequisites that are open (G24).
 All other uses of adding `blocked` stay with the desk.

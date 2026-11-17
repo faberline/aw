@@ -35,6 +35,13 @@ pub fn parse(body: &str) -> Waits {
     let mut waits = Waits::default();
     for line in body.lines() {
         let line = line.trim_start_matches(|c: char| c.is_whitespace() || "-*>".contains(c));
+        // `Part of #7. Waits for: #9` holds a waits text after a sentence end
+        // (faberline/aw#601). It counts. Safer than a warning: an early claim
+        // wastes a whole tdd run, a hold that is not meant shows on the board.
+        let line = match after_sentence(line) {
+            Some(at) => &line[at..],
+            None => line,
+        };
         let Some(head) = line.get(..10) else { continue };
         if !head.eq_ignore_ascii_case("waits for:") {
             continue;
@@ -61,9 +68,30 @@ pub fn parse(body: &str) -> Waits {
     waits
 }
 
+/// The byte index of a `Waits for:` that follows the end of a sentence in
+/// the same line (`.`, `;`, `!` or `?`, then a space).
+fn after_sentence(line: &str) -> Option<usize> {
+    let lower = line.to_ascii_lowercase();
+    let at = lower.find("waits for:")?;
+    let before = line[..at].trim_end();
+    (at > 0 && line[..at].ends_with(' ') && before.ends_with(['.', ';', '!', '?'])).then_some(at)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_waits_text_after_a_sentence_is_read() {
+        let w = parse("Part of #161. Waits for: #182\nWaits for: #185");
+        assert_eq!(w.prerequisites, [p(None, 182), p(None, 185)]);
+    }
+
+    #[test]
+    fn a_waits_text_inside_a_sentence_is_not_read() {
+        let w = parse("The port waits for: #5 to merge.\nIt is done;waits for: #6");
+        assert_eq!(w, Waits::default());
+    }
 
     fn p(repo: Option<&str>, number: u64) -> Prerequisite {
         Prerequisite {

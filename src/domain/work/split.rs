@@ -122,6 +122,7 @@ pub fn child_body(parent: u64, text: &str) -> String {
 pub fn number_waits(text: &str, made: &[(u64, String)]) -> String {
     let lines: Vec<String> = text
         .lines()
+        .flat_map(own_line_waits)
         .map(|line| {
             let Some(rest) = line.trim_start().strip_prefix_ignore_case("waits for:") else {
                 return line.to_string();
@@ -143,6 +144,21 @@ pub fn number_waits(text: &str, made: &[(u64, String)]) -> String {
         })
         .collect();
     lines.join("\n")
+}
+
+/// A `Waits for:` that follows a sentence in the same line (`Part of #7.
+/// Waits for: #9`) moves to a line of its own. The child text that an agent
+/// writes made this form (faberline/aw#601).
+fn own_line_waits(line: &str) -> Vec<String> {
+    let lower = line.to_ascii_lowercase();
+    if let Some(at) = lower.find("waits for:")
+        && at > 0
+        && line[..at].ends_with(' ')
+        && line[..at].trim_end().ends_with(['.', ';', '!', '?'])
+    {
+        return vec![line[..at].trim_end().to_string(), line[at..].to_string()];
+    }
+    vec![line.to_string()]
 }
 
 trait StripPrefixIgnoreCase {
@@ -187,6 +203,15 @@ mod tests {
     const TWO: &str = "Too large: two crates and a migration.\n\n\
         ## Child: Add the port\nThe trait and its tests.\n\n\
         ## child:  Add the adapter \nThe `gh` adapter.\nWaits for the port.\n";
+
+    #[test]
+    fn a_waits_text_after_a_sentence_gets_a_line_of_its_own() {
+        let text = "Part of #161. Waits for: #182\nWaits for: #185\nIt waits for: no one.";
+        assert_eq!(
+            number_waits(text, &[]),
+            "Part of #161.\nWaits for: #182\nWaits for: #185\nIt waits for: no one."
+        );
+    }
 
     #[test]
     fn a_message_gives_the_reason_and_the_children() {
