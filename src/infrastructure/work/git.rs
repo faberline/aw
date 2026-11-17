@@ -53,6 +53,23 @@ fn merge_with(git: &dyn Fn(&[&str]) -> PortResult<String>, upstream: &str) -> Po
     Ok(false)
 }
 
+/// `git fetch`, then complete the history when the clone is shallow. A
+/// shallow clone (the cloud routines clone with a depth) cuts the history,
+/// so `git merge origin/main` finds no merge base and fails with
+/// "refusing to merge unrelated histories" (aw#552). The flag
+/// `--allow-unrelated-histories` is never used.
+fn fetch_with(git: &dyn Fn(&[&str]) -> PortResult<String>) -> PortResult<()> {
+    git(&["fetch", "--prune", "--quiet", "origin"])?;
+    // An old git without the flag fails here: treat it as not shallow.
+    let shallow = git(&["rev-parse", "--is-shallow-repository"])
+        .map(|out| out.trim() == "true")
+        .unwrap_or(false);
+    if shallow {
+        git(&["fetch", "--unshallow", "--prune", "--quiet", "origin"])?;
+    }
+    Ok(())
+}
+
 impl Workspace for GitCli {
     fn origin_repo(&self) -> PortResult<Option<String>> {
         // Outside a checkout, or without `origin`, git fails: no repo.
@@ -82,7 +99,7 @@ impl Workspace for GitCli {
     }
 
     fn fetch(&self) -> PortResult<()> {
-        self.git(&["fetch", "--prune", "--quiet", "origin"])
+        fetch_with(&|args| run("git", args, None))
     }
 
     fn has_local_branch(&self, branch: &str) -> PortResult<bool> {
@@ -147,7 +164,7 @@ impl Workspace for GitCli {
 mod tests {
     use std::cell::RefCell;
 
-    use super::{GitCli, github_repo, merge_with};
+    use super::{GitCli, fetch_with, github_repo, merge_with};
     use crate::domain::work::ports::{PortError, PortResult, Workspace};
 
     /// A fake `git`: `merge` fails with `merge_error`, and `MERGE_HEAD`
@@ -191,6 +208,39 @@ mod tests {
             "untracked files would be overwritten"
         );
         assert!(!seen.iter().any(|c| c == "merge --abort"), "{seen:?}");
+    }
+
+    fn fetch_run(shallow: &str) -> Vec<String> {
+        let seen = RefCell::new(Vec::new());
+        let git = |args: &[&str]| -> PortResult<String> {
+            seen.borrow_mut().push(args.join(" "));
+            Ok(if args[0] == "rev-parse" {
+                shallow.into()
+            } else {
+                String::new()
+            })
+        };
+        fetch_with(&git).unwrap();
+        seen.into_inner()
+    }
+
+    #[test]
+    fn a_shallow_clone_is_unshallowed_after_the_fetch() {
+        let seen = fetch_run("true\n");
+        assert!(
+            seen.iter().any(|c| c.contains("fetch --unshallow")),
+            "{seen:?}"
+        );
+        assert!(
+            !seen.iter().any(|c| c.contains("allow-unrelated")),
+            "{seen:?}"
+        );
+    }
+
+    #[test]
+    fn a_full_clone_is_not_unshallowed() {
+        let seen = fetch_run("false\n");
+        assert!(!seen.iter().any(|c| c.contains("unshallow")), "{seen:?}");
     }
 
     #[test]

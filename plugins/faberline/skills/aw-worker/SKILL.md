@@ -291,7 +291,7 @@ An open issue in the flow keeps exactly one `stage:` label and the label
      tests that run every line of the file; the rules: tests only, no change
      of behavior, a bug that a test finds becomes a new issue, an exclude
      only as S8 allows; set `line` in `aw.toml` to the value that COV4
-     names. Triage it in the next plan like any issue: `p2`.
+     names (this is the one change that raises `line`, aw#551). Triage it in the next plan like any issue: `p2`.
 
 `aw claim` takes `p0` first, then the issues with the label `ci-fix`, then
 the issues with the label `bar`, then the issues of the lowest milestone
@@ -563,8 +563,10 @@ Read code through the GitHub API when you do not need the clone:
 - When the repository's `aw.toml` has `[standards.coverage]` (standard S8,
   `docs/standards/coverage.md` in aw), the tests run every new and changed
   line. Put this rule in the subagent's brief. On rework after a CI coverage
-  failure, follow the check's detail: COV3 needs more tests; COV4 names the
-  new `line` for `aw.toml`. Never lower `line`.
+  failure, follow the check's detail: COV3 needs more tests. Do not edit `line` in a feature pull request:
+  COV4 only warns, and a parallel pull request that edits the same line
+  conflicts (aw#551). Only a `test(coverage):` issue raises `line`. Never
+  lower `line`.
 - Commit with conventional messages.
 - On rework, do not remove required items from the pull request body.
   The body keeps the one `Closes #<n>` line. It also keeps each item that
@@ -590,9 +592,29 @@ Read code through the GitHub API when you do not need the clone:
   - Checks are still running: `$AW release <who>`. Remember the issue
     number. Claim again with `--skip` for it (section 3, step 4). A later
     run reviews it.
+  - A check failed because of a flake: rerun it once, do not send the pull
+    request back. All of these must be true:
+    - the failing test is outside the pull request diff (neither its file
+      nor the code it runs is changed by the diff), read from the job log;
+    - an open issue in the repository names that test as an intermittent
+      test or flake (search the open issues for the test name);
+    - the head commit has no earlier rerun: the pull request has no comment
+      `<!-- aw:rerun sha=<head sha> -->` (at most one rerun per head commit).
+
+    Then post that comment on the pull request, call
+    `gh api -X POST repos/<repo>/actions/runs/<run id>/rerun-failed-jobs`,
+    run `$AW release <who>` and claim again with `--skip` for the issue. A
+    later run reviews the new result. Do not report `failed` for it. Never
+    mark a check as optional or ignore it. A failure inside the diff, a
+    failing test that no open issue tracks, or a second failure on the same
+    head commit is a real failure (next item).
   - A check failed or the pull request has a merge conflict:
     `$AW report <who> failed -F <file>` with the failed checks or the
     conflict. No subagent is needed, except on the third review (below).
+    When the failing test is outside the diff and no open issue tracks it,
+    add the line `flake: <test name> outside the diff, no tracking issue,
+    run <run id>`. The supervisor opens the tracking issue (aw-supervisor,
+    G44).
 - All checks are green and there is no conflict: give the verdict to one
   subagent with the Agent tool and `model: "opus"`. Its brief has: the
   repository and pull request number; the issue number; the REST calls for

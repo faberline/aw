@@ -25,7 +25,8 @@ root=${COVERAGE_ROOT:-$PWD}
 
 # Points that one run may lose to test noise.
 tolerance=0.1
-# Points that the baseline may stay below the measured value.
+# Points that the baseline may stay below the measured value before COV4
+# warns. COV4 never fails: a feature PR must not edit `line` (aw#551).
 slack=0.5
 
 # Prints [standards.coverage] of a TOML file as JSON, or null.
@@ -91,10 +92,10 @@ def status(ok): if ok then "pass" else "fail" end;
          detail: "measured \($measured), line \($line), tolerance \($tolerance)"} end),
       (if $line == null then {check: "COV4", status: "skipped", detail: "no line"}
        else {check: "COV4",
-         status: status($measured <= $line + $slack),
+         status: (if $measured <= $line + $slack then "pass" else "warn" end),
          detail: (if $measured <= $line + $slack
            then "line is within \($slack) of measured"
-           else "raise line to \($measured)" end)} end),
+           else "line can be raised to \($measured); a raise-only change, not part of a feature PR" end)} end),
       (if $line == null or $base_line == null
        then {check: "COV5", status: "skipped", detail: "no base line"}
        else {check: "COV5",

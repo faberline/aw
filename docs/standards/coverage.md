@@ -83,10 +83,15 @@ repository's own setup first, as any `test-*` job does.
 | COV1 | `aw.toml` has `[standards.coverage]` with a number `line` and `target = 100`. When it fails, the detail gives the measured value to write. |
 | COV2 | Every `[[standards.coverage.exclude]]` has a `path` and a `reason`. |
 | COV3 | The measured value is at least `line` minus 0.1. The 0.1 is for test noise, for example a branch that a thread race runs only sometimes. |
-| COV4 | The measured value is at most `line` plus 0.5. When it fails, the detail gives the new `line`. Write it in the same pull request. |
+| COV4 | The measured value is at most `line` plus 0.5. It never fails, it only warns, and the detail gives the new `line`. A feature pull request does not edit `line`: parallel pull requests that all raised the same line conflicted with each other (aw#551). A `test(coverage):` issue raises `line`. |
 | COV5 | On a pull request, `line` is at least `line` on the base branch. Skipped on a push and when the base branch has no `line`. |
 
-A failed check fails the job, and `gate` fails with it.
+A failed check fails the job, and `gate` fails with it. A warning does not.
+
+The ratchet stays strict without a number in each pull request. `line` never
+goes down (COV5 against the base branch). A pull request cannot measure less
+than `line` minus 0.1 (COV3). Only the raise moved: from every feature
+pull request to the one coverage issue, so there is one writer of the line.
 
 The script is `.github/actions/coverage/check.sh`. It prints the report as
 JSON, so it also runs on a laptop:
@@ -131,8 +136,8 @@ this in the pipeline:
   coverage issue at a time.
 - **tdd.** New and changed code comes with tests that run its lines. A
   coverage issue adds tests only and does not change behavior; a bug that a
-  new test finds is a new issue. When COV4 fails, set `line` to the value it
-  names.
+  new test finds is a new issue. A feature change does not edit `line` (COV4
+  only warns). A coverage issue sets `line` to the value that COV4 names.
 - **review.** A lower `line` or an exclude that this page does not allow is
   a finding.
 
