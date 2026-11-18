@@ -489,7 +489,12 @@ Read code through the GitHub API when you do not need the clone:
   `aw:redo` alone on its own line in the spec file. Do not only write
   "start from main" in prose: `aw claim` reads only this line. Then
   `aw claim` for tdd gives a new branch `<head>-r2` (later `-r3`) from the
-  default branch and closes the old pull request with a comment. The redo
+  default branch and closes the old pull request with a comment. When the old
+  branch is on origin and has no open pull request (for example its pull
+  request was closed), the redo still applies: the claim gives `-r2`, closes
+  nothing and deletes nothing. Without `aw:redo`, such an old branch is
+  reused as it is: `aw` does not read closed pull requests, so write
+  `aw:redo` when the old work must not continue. The redo
   happens once, at the next tdd claim; later claims continue the new branch.
 - `$AW report <who> ready -F <file>`. The spec becomes the signal comment.
 
