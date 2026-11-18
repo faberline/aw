@@ -525,12 +525,14 @@ impl Workspace for FakeWorkspace {
                 "fatal: '{branch}' is already used by worktree"
             )));
         }
+        *self.head.borrow_mut() = Some(branch.into());
         Ok(())
     }
 
     fn create_branch(&self, branch: &str, start: &str) -> PortResult<()> {
         self.record(format!("create {branch} from {start}"));
         self.local.borrow_mut().push(branch.into());
+        *self.head.borrow_mut() = Some(branch.into());
         Ok(())
     }
 
@@ -553,6 +555,7 @@ impl Workspace for FakeWorkspace {
 
     fn detach(&self, start: &str) -> PortResult<()> {
         self.record(format!("detach {start}"));
+        *self.head.borrow_mut() = None;
         Ok(())
     }
 

@@ -64,7 +64,7 @@ pub fn claim_with(
     if let Some(active) = board.active(agent, only) {
         if !active.claim.is_stale(now) {
             return Ok(ClaimOutcome::Nothing(format!(
-                "issue #{} ({}) is still claimed by `{agent}`; run `aw report` or `aw release` first",
+                "issue #{} ({}) is still claimed by `{agent}`; run `aw report` or `aw release` first, but only if this run made that claim (another run of `{agent}` may hold it: do not release it)",
                 active.claim.issue, active.claim.stage
             )));
         }

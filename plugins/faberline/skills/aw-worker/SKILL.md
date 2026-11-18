@@ -772,6 +772,17 @@ Read code through the GitHub API when you do not need the clone:
   The only other push is the work-in-progress push in tdd.
 - Work only on the issue that `aw claim` gives. One claim at a time.
 - When you stop with an active claim and cannot finish, run `$AW release <who>`.
+- Run `$AW release <who>` only for a claim that this run made. `aw claim` can say
+  that an issue is "still claimed by" your agent name. Another run of the same
+  agent (a second routine) may hold that claim: leave it, do not release it.
+  `aw release` and `aw report` refuse a tdd claim when this checkout is on another branch.
+- A tdd rework that pushed a head must end with `$AW report <who> ready` (when
+  the work is done and the checks are green or still running), or with
+  `blocked` and its reason. Do not end it with `release` and no word. A `release`
+  of a tdd claim with a pull request posts a note on the issue; it does not
+  replace the signal. When a sent-back issue already has a pull request head
+  that is newer than the review `failed` signal and all checks are green, the
+  rework is done: report `ready`.
 - Never edit or delete a claim or signal comment (`<!-- aw:`). Only `aw` writes them.
 - The claim comment is the only lock in this skill. `aw claim` prevents
   overlap; do not check for other workers in another way.

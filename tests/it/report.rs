@@ -1371,3 +1371,47 @@ fn unreadable_required_checks_are_a_warning_for_the_next_update() {
     assert!(warned(&reported, "could not read the required checks"));
     assert_eq!(reported.updated_next, Some(3));
 }
+
+/// A tdd claim with an open pull request: the run pushed work.
+fn tdd_claim_with_pr(w: &World) {
+    w.workspace
+        .remote
+        .borrow_mut()
+        .push("claude/issue-7".into());
+    w.tracker.pr(51, "claude/issue-7", "Closes #7");
+    w.tracker.issue(7, &["agent:claude", "stage:tdd"]);
+    claim_issue(w, "claude");
+}
+
+#[test]
+fn release_of_a_tdd_claim_with_a_pull_request_leaves_a_note() {
+    let w = World::new();
+    tdd_claim_with_pr(&w);
+    *w.workspace.head.borrow_mut() = Some("claude/issue-7".into());
+    release(w.services(), "claude", None).unwrap();
+    assert!(w.tracker.claims(7).is_empty());
+    assert!(w.tracker.signals(7).is_empty());
+    let note = w.tracker.last_comment(7);
+    assert!(
+        note.contains("released the claim without a signal"),
+        "{note}"
+    );
+    assert!(
+        note.contains("claude/issue-7") && note.contains("#51"),
+        "{note}"
+    );
+}
+
+#[test]
+fn a_run_on_another_branch_cannot_release_or_report_a_tdd_claim_of_another_run() {
+    let w = World::new();
+    tdd_claim_with_pr(&w);
+    // This checkout belongs to another run of the same agent.
+    *w.workspace.head.borrow_mut() = Some("claude/issue-9".into());
+    assert!(release(w.services(), "claude", None).is_err());
+    assert!(report(w.services(), "claude", None, Outcome::Ready, "").is_err());
+    assert_eq!(w.tracker.claims(7).len(), 1);
+    // The owner of the branch still can.
+    *w.workspace.head.borrow_mut() = Some("claude/issue-7".into());
+    assert!(release(w.services(), "claude", None).is_ok());
+}
