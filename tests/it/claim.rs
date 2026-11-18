@@ -1152,3 +1152,39 @@ fn a_waits_text_after_a_sentence_holds_the_issue_back() {
         .insert(1, "Part of #7. Waits for: #9".into());
     assert_eq!(claimed(&w, "claude").issue, 2);
 }
+
+/// A tdd issue whose old branch is on origin and has no open pull request
+/// (faberline/aw#614: its pull request was closed, not merged).
+fn tdd_with_old_branch_only(w: &World, head: &str) {
+    w.workspace.remote.borrow_mut().push(head.into());
+    w.tracker.issue(7, &["agent:claude", "stage:tdd"]);
+}
+
+#[test]
+fn a_redo_starts_a_new_branch_when_the_old_branch_has_no_open_pull_request() {
+    let w = World::new();
+    tdd_with_old_branch_only(&w, "claude/issue-7");
+    w.tracker
+        .add_comment(7, &spec_ready("aw:redo"), "2026-02-01T00:00:00Z");
+    let c = claimed(&w, "claude");
+    assert_eq!((c.branch.as_str(), c.pr), ("claude/issue-7-r2", None));
+    // Nothing is closed, merged or deleted.
+    assert!(!w.workspace.calls().iter().any(|c| c.starts_with("merge")));
+    assert!(!w.tracker.calls().iter().any(|c| c.starts_with("close_pr")));
+}
+
+#[test]
+fn a_redo_with_no_old_branch_uses_the_plain_branch() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:claude", "stage:tdd"]);
+    w.tracker
+        .add_comment(7, &spec_ready("aw:redo"), "2026-02-01T00:00:00Z");
+    assert_eq!(claimed(&w, "claude").branch, "claude/issue-7");
+}
+
+#[test]
+fn an_old_branch_with_no_open_pull_request_and_no_redo_is_reused() {
+    let w = World::new();
+    tdd_with_old_branch_only(&w, "claude/issue-7");
+    assert_eq!(claimed(&w, "claude").branch, "claude/issue-7");
+}

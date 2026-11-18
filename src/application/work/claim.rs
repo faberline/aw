@@ -411,11 +411,15 @@ fn prepare_work_branch(
 ) -> Result<Option<PullRequest>> {
     let ws = s.workspace;
     let upstream = format!("origin/{}", claim.default_branch);
-    let Some(pr) = pr.filter(|p| p.head != claim.default_branch) else {
+    let pr = pr.filter(|p| p.head != claim.default_branch);
+    let redo = redo_requested(comments);
+    // A redo also applies when the old branch is on origin and has no open
+    // pull request (faberline/aw#614). Nothing is deleted.
+    if pr.is_none() && !(redo && ws.has_remote_branch(&claim.branch)?) {
         open_branch(s, claim)?;
         return Ok(None);
-    };
-    if !redo_requested(comments) {
+    }
+    if !redo {
         open_branch(s, claim)?;
         if ws.contains(&upstream)?
             || ws
@@ -426,14 +430,15 @@ fn prepare_work_branch(
         }
     }
     // Redo: a fresh branch from the default branch, never a force push.
-    let mut branch = rework_branch(&pr.head);
+    let old = pr.map_or_else(|| claim.branch.clone(), |p| p.head.clone());
+    let mut branch = rework_branch(&old);
     while ws.has_local_branch(&branch)? || ws.has_remote_branch(&branch)? {
         branch = rework_branch(&branch);
     }
     claim.branch = branch;
     claim.pr = None;
     ws.create_branch(&claim.branch, &upstream)?;
-    Ok(Some(pr.clone()))
+    Ok(pr.cloned())
 }
 
 fn open_branch(s: Services<'_>, claim: &Claim) -> Result<()> {
