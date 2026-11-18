@@ -495,7 +495,10 @@ Read code through the GitHub API when you do not need the clone:
   nothing and deletes nothing. Without `aw:redo`, such an old branch is
   reused as it is: `aw` does not read closed pull requests, so write
   `aw:redo` when the old work must not continue. The redo
-  happens once, at the next tdd claim; later claims continue the new branch.
+  happens once: a claim that gives a new branch, or a tdd or review signal
+  that is not `blocked`, ends it. A `blocked` signal, or a claim that kept the
+  old branch, does not end it (faberline/aw#620). Later claims continue the
+  new branch.
 - `$AW report <who> ready -F <file>`. The spec becomes the signal comment.
 
 ### tdd

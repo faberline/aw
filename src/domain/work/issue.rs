@@ -1,4 +1,5 @@
 use super::claim::ClaimMark;
+use super::pull_request::is_rework_branch;
 use super::signal::{Outcome, Signal};
 use super::stage::Stage;
 
@@ -227,9 +228,10 @@ pub fn desk_sent_back(comments: &[Comment]) -> bool {
 /// newest default branch.
 pub const REDO_MARKER: &str = "aw:redo";
 
-/// The newest spec signal asks for a redo, and no tdd or review work has
-/// started since. After a claim posts its mark, or a report posts its
-/// signal, the redo is done and must not repeat.
+/// The newest spec signal asks for a redo, and it is not done yet. The redo
+/// is done by a claim that gave a new branch, or by a tdd or review signal
+/// that is not `blocked`. A `blocked` signal, or a claim that kept the old
+/// branch, does not end it (faberline/aw#620).
 pub fn redo_requested(comments: &[Comment]) -> bool {
     let newest_spec = comments
         .iter()
@@ -243,12 +245,28 @@ pub fn redo_requested(comments: &[Comment]) -> bool {
         .lines()
         .skip(1)
         .any(|l| l.trim().eq_ignore_ascii_case(REDO_MARKER));
+    // The branch of the last work claim before the spec: a claim on another
+    // branch made a new one.
+    let before = comments
+        .iter()
+        .filter(|c| c.created_at < spec.created_at)
+        .filter_map(|c| Some((&c.created_at, ClaimMark::parse(&c.body)?)))
+        .filter(|(_, m)| m.stage != Stage::Spec)
+        .max_by_key(|(at, _)| *at)
+        .map(|(_, m)| m.branch);
     asked
-        && !comments.iter().any(|c| {
-            c.created_at >= spec.created_at
-                && (Signal::parse(&c.body).is_some_and(|s| s.stage != Stage::Spec)
-                    || ClaimMark::parse(&c.body).is_some_and(|m| m.stage != Stage::Spec))
-        })
+        && !comments
+            .iter()
+            .filter(|c| c.created_at >= spec.created_at)
+            .any(|c| {
+                Signal::parse(&c.body)
+                    .is_some_and(|s| s.stage != Stage::Spec && s.outcome != Outcome::Blocked)
+                    || ClaimMark::parse(&c.body).is_some_and(|m| {
+                        m.stage != Stage::Spec
+                            && before.as_ref() != Some(&m.branch)
+                            && (before.is_some() || is_rework_branch(&m.branch))
+                    })
+            })
 }
 
 /// A signal or a claim that `aw` wrote.
@@ -355,6 +373,35 @@ mod tests {
     }
 
     #[test]
+    fn only_a_new_branch_or_a_non_blocked_signal_ends_a_redo() {
+        let claim = |branch: &str, at: &str| {
+            comment(
+                &format!("<!-- aw:claim stage=tdd agent=claude branch={branch} pr=- at=1 -->"),
+                at,
+            )
+        };
+        let old = claim("c/issue-7", "2026-11-08T15:00:00Z");
+        let asked = comment(
+            &format!("{SPEC_READY}\n**aw**\n\naw:redo\n"),
+            "2026-11-08T16:00:00Z",
+        );
+        // A claim on the old branch keeps the redo; one on another branch ends it.
+        let same = claim("c/issue-7", "2026-11-08T17:00:00Z");
+        assert!(redo_requested(&[old.clone(), asked.clone(), same]));
+        let other = claim("c/issue-7-r2", "2026-11-08T17:00:00Z");
+        assert!(!redo_requested(&[old.clone(), asked.clone(), other]));
+        // With no claim before the spec, a plain branch keeps it too.
+        let plain = claim("c/issue-7", "2026-11-08T17:00:00Z");
+        assert!(redo_requested(&[asked.clone(), plain]));
+        // A tdd `ready` signal ends it.
+        let ready = comment(
+            "<!-- aw:signal stage=tdd agent=claude outcome=ready -->",
+            "2026-11-08T18:00:00Z",
+        );
+        assert!(!redo_requested(&[old, asked, ready]));
+    }
+
+    #[test]
     fn a_spec_redo_marker_asks_once() {
         let spec = |msg: &str| format!("{SPEC_READY}\n**aw**\n\n{msg}");
         let asked = comment(&spec("Start fresh.\naw:redo\n"), "2026-11-08T16:00:00Z");
@@ -371,7 +418,8 @@ mod tests {
             "<!-- aw:signal stage=tdd agent=claude outcome=blocked -->",
             "2026-11-08T17:00:00Z",
         );
-        assert!(!redo_requested(&[asked.clone(), blocked.clone()]));
+        // A `blocked` signal does not end the redo (faberline/aw#620).
+        assert!(redo_requested(&[asked.clone(), blocked.clone()]));
         // A newer spec that does not ask supersedes the old request.
         let newer = comment(&spec("Keep the branch."), "2026-11-08T18:00:00Z");
         assert!(!redo_requested(&[asked, newer]));
