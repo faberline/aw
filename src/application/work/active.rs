@@ -93,7 +93,12 @@ impl Board {
 pub(crate) fn active(s: Services<'_>, agent: &str, stage: Option<Stage>) -> Result<Option<Active>> {
     let board = board(s, agent)?;
     if let Some(active) = board.active(agent, stage) {
-        return Ok(Some(active));
+        // Two runs of one agent (two tdd routines) both see the newest
+        // claim of the agent. A tdd claim is this run's only when the
+        // checkout is on its branch (faberline/aw#630).
+        if !foreign_tdd_claim(s, &board.repo, &active.claim)? {
+            return Ok(Some(active));
+        }
     }
     let mut marks = Vec::new();
     for issue in &board.issues {
@@ -103,6 +108,17 @@ pub(crate) fn active(s: Services<'_>, agent: &str, stage: Option<Stage>) -> Resu
         }
     }
     newest_own(s, &board.repo, marks, stage)
+}
+
+/// A tdd claim whose branch is not the branch of this checkout. HEAD that
+/// is detached, or a directory that is not a clone, proves nothing.
+fn foreign_tdd_claim(s: Services<'_>, repo: &Repo, claim: &Claim) -> Result<bool> {
+    if claim.stage != Stage::Tdd || !in_checkout(s, &repo.name)? {
+        return Ok(false);
+    }
+    Ok(s.workspace
+        .current_branch()?
+        .is_some_and(|head| head != claim.branch))
 }
 
 /// The newest of the old claims in `marks` that belong to this run.

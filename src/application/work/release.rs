@@ -21,6 +21,16 @@ pub fn release(s: Services<'_>, agent: &str, stage: Option<Stage>) -> Result<(Cl
     s.tracker
         .delete_comment(held.comment_id)
         .with_context(|| format!("could not remove the claim on #{}", held.claim.issue))?;
+    // A tdd claim with a pull request has pushed work. Deleting the claim
+    // must not leave the issue silent (faberline/aw#630): say it.
+    if let (Stage::Tdd, Some(pr)) = (held.claim.stage, held.claim.pr) {
+        let note = format!(
+            "**aw** · `{agent}` · tdd · released the claim without a signal\n\n\
+             Branch `{}`, pull request #{pr}. The issue stays in tdd. The next tdd run takes it.",
+            held.claim.branch
+        );
+        s.tracker.comment(held.claim.issue, &note)?;
+    }
     let warnings = finish(s, &held.claim)?;
     Ok((held.claim, warnings))
 }

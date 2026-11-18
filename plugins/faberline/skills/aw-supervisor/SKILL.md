@@ -1328,6 +1328,8 @@ For each such issue in a stage that G40 counts as in backpressure: when no `aw:c
 
 Do not report an issue that has a live claim (G37) or the label `blocked`.
 
+Silent end after a rework (faberline/aw#630). Also report a `stage:tdd` issue whose newest signal is a review `failed`, whose open pull request has a head commit newer than that signal, whose checks on that head are all green, and that has no `aw:claim` or `aw:signal` comment newer than 60 minutes (the rework pushed a head and did not report `ready`). The report names the issue, the head sha, the time of the review `failed` signal and the age in minutes. Read the issue comments for a note "released the claim without a signal": quote its time. This check needs no label change and no new permission: the supervisor only reports. The desk or the next tdd run decides the move.
+
 ### Search for the same failure before you open an issue (G43)
 
 Before you open any issue for a failure (red `main`, failed job, failed test), search the open issues of `<target>` for the same run id and for the same failing test name or the same error text. Use REST (`search/issues` with `repo:<target> is:issue is:open`, or the list call and a filter).
