@@ -1188,3 +1188,24 @@ fn an_old_branch_with_no_open_pull_request_and_no_redo_is_reused() {
     tdd_with_old_branch_only(&w, "claude/issue-7");
     assert_eq!(claimed(&w, "claude").branch, "claude/issue-7");
 }
+
+#[test]
+fn a_blocked_signal_and_an_old_branch_claim_do_not_use_up_a_redo() {
+    // faberline/aw#620: spec `aw:redo`, then tdd `blocked`, then a claim
+    // that kept the old branch. The next claim still owes the redo.
+    let w = World::new();
+    tdd_with_old_branch_only(&w, "claude/issue-7");
+    let mark = "<!-- aw:claim stage=tdd agent=claude branch=claude/issue-7 pr=- at=1000 -->";
+    w.tracker.add_comment(7, mark, "2026-02-01T00:00:00Z");
+    w.tracker
+        .add_comment(7, &spec_ready("aw:redo"), "2026-02-02T00:00:00Z");
+    w.tracker.add_comment(7, mark, "2026-02-02T01:00:00Z");
+    w.tracker.add_comment(
+        7,
+        &signal(Stage::Tdd, "claude", Outcome::Blocked),
+        "2026-02-02T02:00:00Z",
+    );
+    w.tracker
+        .add_comment(7, "desk: use the redo", "2026-02-02T03:00:00Z");
+    assert_eq!(claimed(&w, "claude").branch, "claude/issue-7-r2");
+}

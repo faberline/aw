@@ -22,6 +22,11 @@ pub fn rework_branch(head: &str) -> String {
     format!("{base}-r{}", n + 1)
 }
 
+/// The branch name has a `-r<k>` suffix, so a redo made it.
+pub fn is_rework_branch(head: &str) -> bool {
+    split_rework(head).1 >= 2
+}
+
 /// The branch name without its `-r<k>` suffix, and `k` (1 without one).
 fn split_rework(head: &str) -> (&str, u64) {
     if let Some((base, k)) = head.rsplit_once("-r")
