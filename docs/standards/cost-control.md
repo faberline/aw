@@ -36,10 +36,40 @@ Cluster setup is in [test-cluster.md](test-cluster.md). CI design is in
    threshold, a coverage ratchet or a timeout. Reduce cost by selection,
    sharing and cheaper machines, not by less coverage.
 
-## Not yet available
+## Billing export to BigQuery
 
-The BigQuery billing export is not enabled. Cost in TWD for each pool is an
-estimate until it is enabled.
+Terraform makes the dataset `billing_export` in the test project, in
+`asia-east1` (`infra/gke-test/billing-export.tf`). Its tables never expire.
+Terraform cannot turn the export on, so the owner does this once in the
+console:
+
+1. Open Billing, then Billing export, then the BigQuery export tab.
+2. Under Standard usage cost, choose Edit settings.
+3. Choose the test project and the dataset `billing_export`, then save.
+
+Google adds its own export service account to the dataset at that moment. Do
+not add any member by hand. Rows start to arrive after the export is on
+(this can take some hours). Do not expect rows for the days before that.
+Until the first rows arrive, the TWD cost of each pool is an estimate.
+
+To read the cost of each node pool for each day, query the table
+`billing_export.gcp_billing_export_v1_<billing account id>` (the console shows
+the name). GKE puts the label `goog-k8s-node-pool-name` on the node VMs:
+
+```sql
+SELECT
+  DATE(usage_start_time, "Asia/Taipei") AS day,
+  (SELECT value FROM UNNEST(labels) WHERE key = "goog-k8s-node-pool-name") AS pool,
+  ROUND(SUM(cost + IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c), 0)), 1) AS twd
+FROM `<project>.billing_export.gcp_billing_export_v1_<billing account id>`
+WHERE usage_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)
+GROUP BY day, pool
+ORDER BY day, pool
+```
+
+A row with an empty pool is cost that is not a node (cluster fee, NAT,
+storage). The query assumes the bill currency is TWD; check `currency` in the
+table.
 
 ## Review log
 
