@@ -42,6 +42,8 @@ Another exception: G33 (below) lets you answer a blocked test issue of the known
 The routine prompt must list the G21 label writes for it; without them, G33 does not run, and the item goes to the desk.
 Another exception: G47 (below) lets you add labels to the issue for a new RustSec advisory.
 The routine prompt must list the G47 label writes; without them, G47 does not run, and the item goes to the desk.
+Another exception: G53 (below) lets you remove `blocked`, set one `stage:*` label and post one comment on a stale blocked issue.
+The routine prompt must list the G53 label writes; without them, G53 only reports on the status board.
 G25 (ghost runs) and G27 (the CI queue tracker) do not add writes. G27 only adds comments on faberline/aw#372.
 
 This cloud session blocks GitHub GraphQL.
@@ -123,6 +125,7 @@ Look only at these:
 - m. Issues with a `stage:*` label and no `blocked` label that nobody touched for more than 2 hours (pickup age, G34, below).
 - n. Issues in `stage:review` whose last review signal says that no open pull request closes them (G41, below).
 - o. Sent-back issues that no run touched for more than 2 hours while their stage is in rework-only mode (G42, below).
+- p. Every open issue with `blocked`, not only the changed ones (stale block sweep, G53, below).
 
 ### 5. Find root causes before you act
 
@@ -288,6 +291,7 @@ Write it in Traditional Chinese (Taiwan):
   One bullet for each root cause.
   Each bullet has: `緊急` when urgent; what it is; since when; what it blocks, with the chain; who it waits for (使用者, 中控, a routine, or another repository); the faberline/aw issue link.
 - `## 規格卡住` (G31): each open issue whose last signal is `stage=spec outcome=blocked`, one line each: the issue link, the age of the signal (from `date -u`, in hours or days), `split` or `Decision`, and the link of the open decision item. Write `none` when there are none.
+- `## 封鎖檢查` (G53): `檢查 <N> 個 blocked issue；解除或改指 <M> 個：#a, #b`, and the time of the sweep. Write the issue numbers that need a decision, one line each.
 - `## 已解除但沒人接手`.
 - `## 排隊太久` (G34): each issue with a `stage:*` label, without `blocked`, not touched for more than 2 hours, one line each. Write `none` when there are none.
 - `## 這一輪做了什麼`.
@@ -1455,3 +1459,26 @@ A thing that can be read is a release tag, an issue or a pull request, a workflo
 
 G38 is unchanged: it adds `blocked` for an open `Waits for:` prerequisite, and G52 reads that prerequisite again in each run, so a merged prerequisite is found in the same run.
 This rule adds no write. The routine prompt needs no new line.
+
+### Stale block sweep (G53)
+
+The check of G10 and G52 reads the issues that changed. A block can stay for days when nobody touches the issue (evidence, 2026-11-19: faberline/lumen had 102 open `blocked` issues; 9 of them had a reason that was gone for 5 to 10 days).
+So in each run, after step 4, do this sweep over all of them.
+
+1. List all open issues of `<target>` with the label `blocked`. Page through the list (`per_page=100`, follow `page`). Do not stop at the first page. Skip pull requests.
+2. For each issue find what it waits for: the last aw signal with `outcome=blocked`, the last `desk:` or supervisor comment, and each `Waits for:` line of the body (G38).
+3. Read each named blocker once: its `state` and `state_reason`. Keep the result in a table in this run and do not read the same blocker twice. The cost is one list call for each page and one read for each distinct blocker.
+4. Decide for each issue:
+   - Every named blocker is `closed` with `state_reason=completed`: remove `blocked` (label only), keep the `stage:*` label, and post one comment with each blocker number and its `closed_at`.
+   - A blocker is `closed` with `state_reason=not_planned`: read its `split` signal or its closing comment and find the issues that replace it. Post one comment `now waits for #X, #Y` and keep `blocked`. When no replacement exists, do not write to the issue: put it on the status board as needing a decision.
+   - A blocker is open: leave it.
+   - A blocker cannot be read: write `cannot verify: <name>` on the board (G52).
+   - The last comment is a decision of the user or of the desk that answers the blocked signal (a `desk:` comment, or a comment that quotes the user), no aw signal is newer, and the comment is more than 24 hours old: remove `blocked`, set the `stage:*` label that the decision names (`stage:spec` when it says the spec must be written again), and post one comment. When the decision does not name the next step clearly, do not guess: put it on the board.
+5. Never remove `blocked` when the reason is money, a paid run, a release tag, a thing the owner deferred, or a diagnosis that the issue is too large or needs a split. G52 reads a release tag and the other rules decide about the rest.
+6. Never act on a blocker that is only closed: read `state_reason` first. A blocker that is closed with another reason than `completed` or `not_planned` goes to the board.
+7. Write one comment for each issue and each change. When the issue already has your comment for the same blocker state, write nothing. Do not repeat a comment in a later run.
+8. Read the labels again before each write (G19) and check the `stage:*` and `agent:*` labels after it (G4).
+
+This rule has its own limit: at most 10 issues are changed in one run, and they do not count for the limit of step 11. The rest waits for the next run, and the board says how many are left.
+The board (step 10, `## 封鎖檢查`) gives two numbers in each run: how many blocked issues you checked, and how many blocks you removed or pointed again, with the issue numbers.
+G53 does not close issues, create issues, merge or change a pull request, and it does not touch a routine.
