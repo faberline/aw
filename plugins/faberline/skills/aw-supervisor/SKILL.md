@@ -1437,3 +1437,21 @@ The routine prompt must list the issue open and the two labels of step 3 for thi
 When a run has more than one failed or cancelled job, write the cause of each one. Do not stop at the first one.
 Read the repository rules for the other jobs too (for example the S6 rule in `STATUS.md`): a second failure can have its own known cause that the issue does not mention.
 When the run is still in progress, list the jobs that have not ended. Write them as "not ended" and add their causes in the next pass. Do not write the cause of the run as one line while a job is still open.
+
+### A wait reason is read in each run (G52)
+
+This rule adds to G10. G10 says to check a blocked issue. G52 says what the board may write about it (evidence, 2026-11-18: faberline/lumen#400 stayed `blocked` for "the tag exists first" for about 8 hours after core `v0.5.1` existed; the board of faberline/aw#256 repeated the wait reason and did not read the tag).
+
+For each `blocked` issue whose reason names a thing that can be read, read that thing in each run. Do not copy the reason of the last run or of the comment.
+A thing that can be read is a release tag, an issue or a pull request, a workflow run, or a merged commit, in a repository that the routine can read.
+
+1. The condition is not met: write on the board what you read and its state, for example `tag v0.5.1 not found`.
+2. The condition is met: do not write "waits for X". Follow G10 and G21:
+   - When G21 allows the label change (the four checks pass), remove `blocked` yourself and write it on the board.
+   - When it does not, and the blocking comment names who removes the label, or the unblock needs no new decision, open or reuse one `decision` issue of type `中控可決定` (step 8) with the evidence and the exact `執行清單`. Write on the board that it is open and link it.
+   - When the unblock needs a new decision, G10 and step 8 apply as before.
+3. You cannot read the thing (another repository without access, HTTP 403 or 404): write `cannot verify: <name of the thing>` on the board. Do not write "waits for".
+4. Each board line of a blocked issue gives the time (UTC) when the condition was last checked, for example `checked 2026-11-18T01:11Z`.
+
+G38 is unchanged: it adds `blocked` for an open `Waits for:` prerequisite, and G52 reads that prerequisite again in each run, so a merged prerequisite is found in the same run.
+This rule adds no write. The routine prompt needs no new line.
