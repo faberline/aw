@@ -35,7 +35,7 @@ use crate::interfaces::run::commands;
         aw ci check checks ci.yml and the ruleset against docs/standards/ci.md\n\
         aw standards check checks Cargo.toml files against docs/standards/core-reuse.md\n\
         aw meta check checks project README files against the README contract\n\
-        aw metadoc check checks a project's README and STATUS against their contracts\n\
+        aw metadoc check checks a project's README, STATUS and ROADMAP against their contracts\n\
         aw repo check checks the tracked files for clutter (docs/standards/repo-hygiene.md)\n\
         aw release-status    assesses a milestone release; it only reads\n\
         aw release-advance   creates the next release tag when the assessment did not change\n\
@@ -304,8 +304,8 @@ enum MetaCommand {
 #[derive(Subcommand)]
 enum MetadocCommand {
     /// Check the documents of a project folder: README (R1 to R12), STATUS
-    /// (S1 to S7) and the rules that tie them (P1). The ROADMAP and the
-    /// supporting guides are checked by later rules. Repository values come
+    /// (S1 to S7), ROADMAP (M1 to M6) and the rules that tie them (P1, P3,
+    /// P4). The supporting guides are checked by later rules. Repository values come
     /// from the `[meta]` table of `aw.toml`. Exit codes: 0 pass, 1 a finding,
     /// 2 a usage error.
     Check(MetaTarget),

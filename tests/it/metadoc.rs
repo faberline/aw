@@ -8,6 +8,7 @@ use std::process::{Command, Output};
 use aw::domain::meta::config::MetaConfig;
 use aw::domain::meta::ports::{CargoIndex, DocInput, MetaRepo, ReadmeInput};
 use aw::domain::meta::project::{self, MetadocReport};
+use aw::domain::meta::roadmap::{self, RoadmapReport};
 use aw::domain::meta::status::{self, StatusReport};
 use aw::domain::work::ports::{PortError, PortResult};
 
@@ -79,7 +80,33 @@ The demo command line.
 Each gate is a command that a person can run.
 ";
 
-const ROADMAP: &str = "# Demo roadmap\n\n### Wide input\n\n### Remote\n";
+const ROADMAP: &str = "# Demo roadmap
+
+## Purpose
+
+Say what the demo will add next.
+
+## Near-term outcomes
+
+### Wide input
+
+- ID: `wide-input`
+- Outcome: Run input of any size.
+- Boundary: Streams without a size limit.
+- Completion evidence: A test with a large file.
+- Tracking: Not assigned.
+
+## Later outcomes
+
+No items.
+
+## Non-goals
+
+### Remote
+
+- ID: `remote`
+- Reason: The demo never runs over a network.
+";
 
 /// An in-memory checkout.
 struct Fake(BTreeMap<String, String>);
@@ -149,6 +176,33 @@ fn run(text: &str) -> StatusReport {
 
 fn messages(text: &str, rule: &str) -> Vec<String> {
     run(text)
+        .findings
+        .into_iter()
+        .filter(|f| f.rule == rule)
+        .map(|f| f.message)
+        .collect()
+}
+
+fn road(text: &str) -> RoadmapReport {
+    let mut fake = Fake::with(STATUS);
+    fake.0.insert("ROADMAP.md".into(), text.into());
+    let doc = fake.document("ROADMAP.md").unwrap().unwrap();
+    roadmap::check(&doc, &fake)
+}
+
+fn road_case(rule: &str, fail: &str) {
+    let ok = road(ROADMAP);
+    assert!(ok.ok, "{:?}", ok.findings);
+    let bad = road(fail);
+    assert!(
+        bad.findings.iter().any(|f| f.rule == rule),
+        "{rule} not found: {:?}",
+        bad.findings
+    );
+}
+
+fn road_messages(text: &str, rule: &str) -> Vec<String> {
+    road(text)
         .findings
         .into_iter()
         .filter(|f| f.rule == rule)
@@ -468,6 +522,204 @@ fn findings_are_sorted_by_line_rule_and_message() {
     let keys: Vec<_> = report.findings.iter().map(|f| (f.line, f.rule)).collect();
     assert!(keys.is_sorted(), "{keys:?}");
     assert!(keys.len() >= 2, "{keys:?}");
+}
+
+#[test]
+fn the_base_roadmap_passes() {
+    let report = road(ROADMAP);
+    assert!(report.ok, "{:?}", report.findings);
+    let found: Vec<(&str, &str)> = report
+        .items
+        .iter()
+        .map(|i| (i.id.as_str(), i.horizon.as_str()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("wide-input", "Near-term outcomes"),
+            ("remote", "Non-goals")
+        ]
+    );
+    assert_eq!(report.items[0].fields["Tracking"], "Not assigned.");
+}
+
+#[test]
+fn m1_one_h1_no_h4_and_the_four_h2_headings_in_order() {
+    road_case(
+        "M1",
+        &ROADMAP.replace("# Demo roadmap\n", "# Demo roadmap\n\n# Again\n"),
+    );
+    road_case(
+        "M1",
+        &ROADMAP.replace("No items.", "#### Deep\n\nNo items."),
+    );
+    road_case("M1", &ROADMAP.replace("## Later outcomes", "## Later"));
+    assert_eq!(
+        road_messages(&ROADMAP.replace("## Later outcomes", "## Later"), "M1"),
+        ["ROADMAP heading '## Later outcomes' appears 0 times"]
+    );
+}
+
+#[test]
+fn m2_no_work_state_owner_dates_or_percentages() {
+    road_case(
+        "M2",
+        &ROADMAP.replace("Say what the demo will add next.", "Owner: me"),
+    );
+    road_case(
+        "M2",
+        &ROADMAP.replace("Say what the demo will add next.", "It is 50% done."),
+    );
+    let fenced = ROADMAP.replace("Say what the demo will add next.", "```\nETA: soon\n```");
+    assert!(road_messages(&fenced, "M2").is_empty());
+}
+
+#[test]
+fn m3_purpose_and_each_horizon_have_content() {
+    road_case(
+        "M3",
+        &ROADMAP.replace("Say what the demo will add next.\n", ""),
+    );
+    road_case("M3", &ROADMAP.replace("No items.", "Nothing yet."));
+    road_case("M3", &ROADMAP.replace("No items.", ""));
+    assert_eq!(
+        road_messages(&ROADMAP.replace("No items.", ""), "M3"),
+        ["Later outcomes must contain H3 items or exactly 'No items.'"]
+    );
+}
+
+#[test]
+fn m4_item_fields_ids_and_content() {
+    road_case(
+        "M4",
+        &ROADMAP.replace("- Boundary: Streams without a size limit.\n", ""),
+    );
+    road_case(
+        "M4",
+        &ROADMAP.replace(
+            "- Tracking: Not assigned.",
+            "- Tracking: Not assigned.\n- Owner: me",
+        ),
+    );
+    road_case("M4", &ROADMAP.replace("`wide-input`", "wide-input"));
+    road_case("M4", &ROADMAP.replace("`wide-input`", "`Wide_Input`"));
+    road_case("M4", &ROADMAP.replace("`wide-input`", "`other`"));
+    road_case(
+        "M4",
+        &ROADMAP.replace("- Outcome: Run input of any size.", "- Outcome: Fast."),
+    );
+    road_case(
+        "M4",
+        &ROADMAP.replace(
+            "- Reason: The demo never runs over a network.",
+            "- Reason: No.",
+        ),
+    );
+    assert_eq!(
+        road_messages(&ROADMAP.replace("`wide-input`", "`other`"), "M4"),
+        ["roadmap ID must match the H3 Markdown anchor"]
+    );
+    assert_eq!(
+        road_messages(
+            &ROADMAP.replace("- Boundary: Streams without a size limit.\n", ""),
+            "M4"
+        ),
+        [
+            "Boundary must state a concrete boundary or outcome",
+            "Near-term outcomes item fields must be exactly: ID | Outcome | Boundary | Completion evidence | Tracking"
+        ]
+    );
+    // Two items with one name or one ID are not unique.
+    let twice = ROADMAP.replace(
+        "## Later outcomes\n\nNo items.",
+        "## Later outcomes\n\n### Wide input\n\n- ID: `wide-input`\n- Outcome: Run input of any size.\n- Boundary: Streams without a size limit.\n- Completion evidence: A test with a large file.\n- Tracking: Not assigned.",
+    );
+    assert_eq!(
+        road_messages(&twice, "M4"),
+        ["roadmap names and IDs must be unique"]
+    );
+    // A field value may continue on lines that start with two spaces.
+    let wrapped = ROADMAP.replace(
+        "- Outcome: Run input of any size.",
+        "- Outcome:\n  Run input\n  of any size.",
+    );
+    assert!(road(&wrapped).ok, "{:?}", road(&wrapped).findings);
+}
+
+#[test]
+fn m5_tracking_is_not_assigned_or_a_link() {
+    road_case(
+        "M5",
+        &ROADMAP.replace("- Tracking: Not assigned.", "- Tracking: soon"),
+    );
+    let linked = ROADMAP.replace(
+        "- Tracking: Not assigned.",
+        "- Tracking: [#1](https://example.test/1)",
+    );
+    assert!(road(&linked).ok, "{:?}", road(&linked).findings);
+    // A non-goal has no Tracking field.
+    assert!(road_messages(ROADMAP, "M5").is_empty());
+}
+
+#[test]
+fn m6_relative_links_exist() {
+    road_case(
+        "M6",
+        &ROADMAP.replace(
+            "Say what the demo will add next.",
+            "See [gone](MISSING.md).",
+        ),
+    );
+    road_case(
+        "M6",
+        &ROADMAP.replace(
+            "Say what the demo will add next.",
+            "See [x](STATUS.md#nothing).",
+        ),
+    );
+    let fine = ROADMAP.replace(
+        "Say what the demo will add next.",
+        "See [s](STATUS.md#scope).",
+    );
+    assert!(road(&fine).ok, "{:?}", road(&fine).findings);
+}
+
+#[test]
+fn p3_a_status_roadmap_link_names_a_known_item_and_p4_a_current_surface_is_not_future_work() {
+    let unknown = STATUS.replace("ROADMAP.md#remote", "ROADMAP.md#wide-input");
+    assert!(project_report(&Fake::with(&unknown)).ok);
+    let mut fake = Fake::with(STATUS);
+    fake.0.insert(
+        "ROADMAP.md".into(),
+        ROADMAP
+            .replace("`remote`", "`gone`")
+            .replace("### Remote", "### Gone"),
+    );
+    let bad = project_report(&fake);
+    let set: Vec<&str> = bad.reports[0].findings.iter().map(|f| f.rule).collect();
+    assert_eq!(set, ["P3"]);
+    assert_eq!(
+        bad.reports[0].findings[0].message,
+        "STATUS surface 'remote' links unknown ROADMAP ID 'remote'"
+    );
+    // The ID `run` is a Supported surface and also a roadmap item.
+    let mut fake = Fake::with(STATUS);
+    fake.0.insert(
+        "ROADMAP.md".into(),
+        ROADMAP
+            .replace("`wide-input`", "`run`")
+            .replace("### Wide input", "### Run"),
+    );
+    let bad = project_report(&fake);
+    assert!(
+        bad.reports[0]
+            .findings
+            .iter()
+            .any(|f| f.rule == "P4"
+                && f.message == "current surface 'run' also appears as future work"),
+        "{:?}",
+        bad.reports[0].findings
+    );
 }
 
 fn project_report(fake: &Fake) -> MetadocReport {

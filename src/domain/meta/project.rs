@@ -8,6 +8,7 @@ use super::config::MetaConfig;
 use super::ports::{CargoIndex, DocInput, MetaRepo, ReadmeInput};
 use super::readme;
 use super::report::{Finding, ReadmeReport};
+use super::roadmap::{self, RoadmapReport};
 use super::status::{self, StatusReport};
 
 pub const SCHEMA: &str = "metadoc-report/1";
@@ -22,6 +23,7 @@ pub struct ProjectReport {
     pub ok: bool,
     pub readme: Option<ReadmeReport>,
     pub status: Option<StatusReport>,
+    pub roadmap: Option<RoadmapReport>,
     pub findings: Vec<Finding>,
 }
 
@@ -79,11 +81,42 @@ pub fn check(
         readme::check(&input, config, repo, cargo)
     });
     let status_report = docs[1].as_ref().map(|doc| status::check(doc, repo, cargo));
+    let roadmap_report = docs[2].as_ref().map(|doc| roadmap::check(doc, repo));
+
+    let roadmap_ids: Vec<&str> = roadmap_report
+        .iter()
+        .flat_map(|r| r.items.iter().map(|i| i.id.as_str()))
+        .collect();
+    for surface in status_report.iter().flat_map(|s| &s.surfaces) {
+        if let Some(id) = &surface.roadmap_id
+            && !roadmap_ids.contains(&id.as_str())
+        {
+            findings.push(Finding::new(
+                "P3",
+                1,
+                format!(
+                    "STATUS surface '{}' links unknown ROADMAP ID '{id}'",
+                    surface.id
+                ),
+            ));
+        }
+        if roadmap_ids.contains(&surface.id.as_str()) && surface.state == "Supported" {
+            findings.push(Finding::new(
+                "P4",
+                1,
+                format!(
+                    "current surface '{}' also appears as future work",
+                    surface.id
+                ),
+            ));
+        }
+    }
 
     findings.sort_by(|a, b| (a.line, a.rule, &a.message).cmp(&(b.line, b.rule, &b.message)));
     let ok = findings.is_empty()
         && readme_report.as_ref().is_some_and(|r| r.ok)
-        && status_report.as_ref().is_some_and(|s| s.ok);
+        && status_report.as_ref().is_some_and(|s| s.ok)
+        && roadmap_report.as_ref().is_some_and(|r| r.ok);
     Ok(ProjectReport {
         path: if dir.is_empty() {
             ".".into()
@@ -93,6 +126,7 @@ pub fn check(
         ok,
         readme: readme_report,
         status: status_report,
+        roadmap: roadmap_report,
         findings,
     })
 }
@@ -126,6 +160,17 @@ pub fn render(report: &MetadocReport) -> String {
             }
             for f in &status.findings {
                 let _ = writeln!(out, "  STATUS {} line {}: {}", f.rule, f.line, f.message);
+            }
+        }
+        if let Some(roadmap) = &r.roadmap {
+            let _ = writeln!(
+                out,
+                "  ROADMAP sha256={} items={}",
+                roadmap.sha256,
+                roadmap.items.len()
+            );
+            for f in &roadmap.findings {
+                let _ = writeln!(out, "  ROADMAP {} line {}: {}", f.rule, f.line, f.message);
             }
         }
         for f in &r.findings {

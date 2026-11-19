@@ -10,4 +10,5 @@ pub mod ports;
 pub mod project;
 pub mod readme;
 pub mod report;
+pub mod roadmap;
 pub mod status;
