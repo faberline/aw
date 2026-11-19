@@ -299,9 +299,36 @@ the workflow files as text and changes nothing.
     `functional`, `gates_step`, `acceptance_names`, `acceptance_run_name`
     (`{app}` is the app name), `maker_constants`, `candidate_gates`,
     `ci_gates`. An app without `candidate_gates` or `ci_gates` skips G1 or G2.
-- Not yet: the receipt maker (R1 to R7) and the fixture controls (X1, X2).
-  They are steps 3 to 5. The Python controls of steps 1 and 2 each have a
-  Rust test; the table is in `tests/it/release_contract.rs`.
+- Not yet: the `gcp` backend of the receipt maker and the fixture controls
+  (X1, X2). They are steps 4 and 5. The Python controls of steps 1 and 2 each
+  have a Rust test; the table is in `tests/it/release_contract.rs`.
+
+## `aw release-receipt` (aw#449, step 3 of 5)
+
+`aw release-receipt --app <name> --backend gke-acceptance
+--candidate-manifest <file> --gh-run <file> --evidence-dir <dir>
+--output <file> [--dir <path>]` ports `make-gke-release-receipt.py`, backend
+`gke-acceptance`. (`aw release` already deletes a claim, so the command has
+a hyphen.)
+
+- It reads the facts of the app from `[release.apps.<app>]` in `aw.toml`
+  (`targets`, `candidate_jobs`, `repository`, `image_owner`,
+  `manifest_schema`, `receipt_schema`, `receipt_name`, `functional`,
+  `gke_backend`). The Python `APPS` table goes away.
+- It binds the final candidate manifest to one `gke-acceptance` workflow run
+  (`gh run view <id> --json databaseId,attempt,conclusion,status,url,headSha,event,workflowName,displayTitle,jobs`)
+  and to its evidence bundle. It writes `<receipt_name>` as sorted, compact
+  JSON with one newline, and `<receipt_name>.sha256`.
+- It never reads, hashes or copies the `kubeconfig` of the bundle.
+- A refusal prints `GKE receipt refused: <reason>` on stderr, writes no file
+  and exits 1. A missing checkout or `aw.toml` exits 2. A usage error exits 1.
+- The receipt is byte for byte the receipt of the Python script on the same
+  input (checked on the `--self-test` fixtures of defer, 2026-11-20).
+- Small differences from Python: a run ID of the candidate must be ASCII
+  digits (Python `isdigit` also took other Unicode digits); the evidence
+  files are read before the sidecar check, not after.
+- Each negative control of the Python `--self-test` (31) is a Rust test; the
+  table is in `tests/it/release_receipt.rs`.
 
 ## Open points
 

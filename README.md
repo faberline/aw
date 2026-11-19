@@ -300,6 +300,7 @@ aw release-status --milestone 8                       # read only; prints the as
 aw release-advance --milestone 8 --expected <fingerprint>   # the one write: create the tag
 aw release-preflight --tag v0.5.0-rc.1 --commit <sha>   # inside the tag run; read only
 aw release-contract --app <name>                        # static check of an app's release workflows
+aw release-receipt --app <name> --backend gke-acceptance ...   # make the GKE release receipt; see docs/standards/release-tooling.md
 ```
 
 The repository keeps two reviewed files on its default branch:

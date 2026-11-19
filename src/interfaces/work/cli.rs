@@ -13,6 +13,7 @@ use crate::application::meta::{self, MetaServices};
 use crate::application::metadoc;
 use crate::application::release::{self, Advanced, ReleaseServices};
 use crate::application::release_contract::{self, ContractServices};
+use crate::application::release_receipt::{self, ReceiptRequest, ReceiptServices};
 use crate::application::repo::{self, RepoServices};
 use crate::application::run::{Client, Event, RunServices};
 use crate::application::standards::{self, StandardsServices};
@@ -200,6 +201,13 @@ enum Command {
     /// to C8, P1 to P7 and A2). It only reads. Exit codes: 0 pass, 1 a rule
     /// failed, 2 a usage error.
     ReleaseContract(ContractTarget),
+    /// Make the public, redacted GKE release receipt of one app: it binds the
+    /// final candidate manifest to one `gke-acceptance` workflow run and its
+    /// evidence bundle, and writes `<app>-gke-receipt.json` and its
+    /// `.sha256`. It reads the facts from `[release.apps.<app>]` in `aw.toml`.
+    /// Exit codes: 0 written, 1 refused or a usage error, 2 no checkout or no
+    /// `aw.toml`.
+    ReleaseReceipt(ReceiptTarget),
     /// Prove, inside the workflow run of a tag, that the tag is at the
     /// commit and that the milestone is ready for it. It only reads.
     ReleasePreflight {
@@ -262,6 +270,33 @@ pub struct ContractTarget {
     /// `release-contract-report/1` document.
     #[arg(long, value_enum, default_value_t = ReportFormat::Text)]
     pub format: ReportFormat,
+}
+
+/// What `aw release-receipt` reads and writes.
+#[derive(Args, Clone, Debug)]
+pub struct ReceiptTarget {
+    /// The app of `[release.apps.*]`.
+    #[arg(long)]
+    pub app: String,
+    /// The harness backend. It must be the `gke_backend` of the app.
+    #[arg(long)]
+    pub backend: String,
+    /// The final candidate manifest, as the candidate workflow made it.
+    #[arg(long, value_name = "FILE")]
+    pub candidate_manifest: PathBuf,
+    /// The receipt to write. Its name must be the `receipt_name` of the app.
+    #[arg(long, value_name = "FILE")]
+    pub output: PathBuf,
+    /// `gh run view <id> --json databaseId,attempt,conclusion,status,url,headSha,event,workflowName,displayTitle,jobs`
+    #[arg(long, value_name = "FILE")]
+    pub gh_run: Option<PathBuf>,
+    /// The downloaded `gke-acceptance-evidence-<run>-<attempt>` bundle.
+    #[arg(long, value_name = "DIR")]
+    pub evidence_dir: Option<PathBuf>,
+    /// A folder inside the checkout that holds `aw.toml`. Default: the
+    /// current directory.
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -530,6 +565,14 @@ impl Cli {
         }
     }
 
+    /// The target of `aw release-receipt`, if that is the command.
+    pub fn release_receipt_target(&self) -> Option<&ReceiptTarget> {
+        match &self.command {
+            Command::ReleaseReceipt(target) => Some(target),
+            _ => None,
+        }
+    }
+
     /// The target of `aw metadoc prompt`, if that is the command.
     pub fn metadoc_prompt_target(&self) -> Option<&PromptTarget> {
         match &self.command {
@@ -754,6 +797,29 @@ pub fn run_release_contract(services: ContractServices<'_>, target: &ContractTar
     }
 }
 
+/// Run `aw release-receipt`: write the receipt, or print the refusal and
+/// exit 1.
+pub fn run_release_receipt(services: ReceiptServices<'_>, target: &ReceiptTarget) -> Exit {
+    let request = ReceiptRequest {
+        app: &target.app,
+        backend: &target.backend,
+        candidate_manifest: &target.candidate_manifest,
+        output: &target.output,
+        gh_run: target.gh_run.as_deref(),
+        evidence_dir: target.evidence_dir.as_deref(),
+    };
+    match release_receipt::make(services, &request) {
+        Ok(_) => {
+            println!("GKE receipt written: {}", target.output.display());
+            Exit::Ok
+        }
+        Err(message) => {
+            eprintln!("{message}");
+            Exit::Failed
+        }
+    }
+}
+
 /// Run `aw metadoc prompt`: print the clean-reader task, or the findings and
 /// exit 1 when the check fails.
 pub fn run_metadoc_prompt(services: MetaServices<'_>, path: &str) -> Exit {
@@ -922,6 +988,9 @@ fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit
         }
         Command::Standards { .. } => {
             anyhow::bail!("`aw standards` needs its adapters; the composition root runs it")
+        }
+        Command::ReleaseReceipt(_) => {
+            anyhow::bail!("`aw release-receipt` needs its adapter; the composition root runs it")
         }
         Command::ReleaseContract(_) => {
             anyhow::bail!("`aw release-contract` needs its adapter; the composition root runs it")
