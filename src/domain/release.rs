@@ -2,12 +2,16 @@
 //! for the one next action. `docs/standards/release-tooling.md` is the
 //! standard. Nothing here reads or writes the outside world.
 
+pub mod app_check;
+pub mod app_rules;
 pub mod contract;
 pub mod digest;
+pub mod facts;
 pub mod policy;
 pub mod ports;
 pub mod state;
 pub mod tag;
+pub mod workflow;
 
 use crate::domain::work::ports::{PortError, PortResult};
 
