@@ -4,6 +4,7 @@
 
 pub mod app_check;
 pub mod app_rules;
+pub mod app_tables;
 pub mod contract;
 pub mod digest;
 pub mod facts;

@@ -316,3 +316,104 @@ pub fn promotion(app: &AppFacts, text: &str) -> Check {
     }
     Ok(())
 }
+
+/// A1: the acceptance workflow produces the run that the receipt reads: its
+/// run name, its top-level name, the jobs and steps the facts list, and
+/// `workflow_dispatch` as the only trigger. It runs only for an app whose
+/// facts list `acceptance_names`.
+pub fn acceptance(app: &AppFacts, text: &str) -> Check {
+    if !app.acceptance_run_name.is_empty() {
+        let run_name = app.acceptance_run_name.replace("{app}", &app.name);
+        if !text.contains(&run_name) {
+            return fail(
+                "A1",
+                "acceptance workflow: run-name does not match the receipt displayTitle",
+            );
+        }
+    }
+    if !text.lines().any(|l| l == "name: gke-acceptance") {
+        return fail(
+            "A1",
+            "acceptance workflow: top-level name is not gke-acceptance",
+        );
+    }
+    for name in &app.acceptance_names {
+        if !text.contains(&format!("name: {name}")) {
+            return fail("A1", format!("acceptance workflow: missing name: {name}"));
+        }
+    }
+    if !text.contains("workflow_dispatch") {
+        return fail(
+            "A1",
+            "acceptance workflow: workflow_dispatch trigger is missing",
+        );
+    }
+    // Trigger keys sit two spaces deep under `on:`; a step input such as
+    // `push: true` sits deeper and is not a trigger.
+    let other =
+        Regex::new(r"(?m)^  (pull_request|pull_request_target|push|schedule):").expect("fixed");
+    if other.is_match(text) {
+        return fail(
+            "A1",
+            "acceptance workflow: a trigger other than workflow_dispatch is set",
+        );
+    }
+    Ok(())
+}
+
+/// G1: the gates job of the candidate runs every declared gate.
+pub fn candidate_gates(app: &AppFacts, text: &str) -> Check {
+    if app.candidate_gates.is_empty() {
+        return Ok(());
+    }
+    let step = at(
+        "G1",
+        wf::job_block(text, &app.gates_job()).and_then(|job| wf::step_block(&job, &app.gates_step)),
+    )?;
+    let script = at("G1", wf::run_script(&step))?;
+    let lines = wf::logical_lines(&script);
+    for gate in &app.candidate_gates {
+        if !lines.contains(gate) {
+            return fail(
+                "G1",
+                format!("{} candidate: release gates must run {gate:?}", app.name),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// G2: PR CI (`ci.yml`) runs every declared gate, on `pull_request` and on
+/// `push` to main only, with pinned actions and read-only permission.
+pub fn ci_gates(app: &AppFacts, text: &str) -> Check {
+    if app.ci_gates.is_empty() {
+        return Ok(());
+    }
+    let triggers = at("G2", wf::triggers(text))?;
+    if triggers != ["pull_request", "push"] {
+        return fail(
+            "G2",
+            format!("ci: triggers must be pull_request and push, got {triggers:?}"),
+        );
+    }
+    if !at("G2", wf::top_block(text, "on"))?.contains("    branches: [main]") {
+        return fail("G2", "ci: push must be limited to main");
+    }
+    at("G2", wf::require_pinned("ci", text))?;
+    let lines: Vec<String> = wf::run_scripts(text)
+        .iter()
+        .flat_map(|script| wf::logical_lines(script))
+        .collect();
+    for gate in &app.ci_gates {
+        if !lines.contains(gate) {
+            return fail("G2", format!("ci: PR CI must run {gate:?}"));
+        }
+    }
+    if !text.contains("permissions:\n  contents: read") {
+        return fail(
+            "G2",
+            "ci: PR CI must run with read-only contents permission",
+        );
+    }
+    Ok(())
+}

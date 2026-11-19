@@ -1,12 +1,14 @@
 //! `aw release-contract`: check the release workflows of each app of a
 //! checkout against the release facts, and report.
 
+use std::collections::BTreeSet;
 use std::fmt::Write;
 
 use serde::Serialize;
 
 use super::app_rules::{self, Fail};
-use super::facts::AppFacts;
+use super::app_tables;
+use super::facts::{AppFacts, WORKFLOWS};
 use crate::domain::work::ports::PortResult;
 
 /// What the check reads from the checkout.
@@ -18,6 +20,15 @@ pub trait ContractRepo {
     fn exists(&self, path: &str) -> bool;
     /// The apps of `[release.apps.*]` in `aw.toml`.
     fn apps(&self) -> PortResult<Vec<AppFacts>>;
+    /// The lines that `source <apps_sh>; <function> <app>` prints. `Err` has
+    /// the reason when the shell fails.
+    fn shell_values(&self, apps_sh: &str, function: &str, app: &str)
+    -> Result<Vec<String>, String>;
+    /// Whether `source <apps_sh>; <function> <app>` exits 0. Exit 1 is false;
+    /// any other exit is an `Err`.
+    fn shell_predicate(&self, apps_sh: &str, function: &str, app: &str) -> Result<bool, String>;
+    /// The tables of the receipt maker script at `path`.
+    fn maker(&self, path: &str, constants: &[String]) -> Result<super::app_tables::Maker, String>;
 }
 
 /// The result of one app.
@@ -53,13 +64,29 @@ fn workflow(
 
 /// Check one app. A not-onboarded app must have no candidate workflow (A2);
 /// an onboarded app must have both workflows and pass C1 to C8 and P1 to P7.
-pub fn check_app(repo: &dyn ContractRepo, app: &AppFacts) -> AppReport {
+pub fn check_app(repo: &dyn ContractRepo, app: &AppFacts, shared: &BTreeSet<String>) -> AppReport {
     let mut findings = Vec::new();
     if app.onboarded {
         let candidate = app.candidate_workflow();
         findings.extend(workflow(repo, &candidate, |t| app_rules::candidate(app, t)));
         let promotion = app.promotion_workflow();
         findings.extend(workflow(repo, &promotion, |t| app_rules::promotion(app, t)));
+        if app.gke_backend == "gke-acceptance" && !app.acceptance_names.is_empty() {
+            let path = format!("{WORKFLOWS}/gke-acceptance.yml");
+            findings.extend(workflow(repo, &path, |t| app_rules::acceptance(app, t)));
+        }
+        if app.shared_scripts {
+            findings.extend(app_tables::tables(repo, app, shared));
+        }
+        if !app.candidate_gates.is_empty() {
+            findings.extend(workflow(repo, &app.candidate_workflow(), |t| {
+                app_rules::candidate_gates(app, t)
+            }));
+        }
+        if !app.ci_gates.is_empty() {
+            let path = format!("{WORKFLOWS}/ci.yml");
+            findings.extend(workflow(repo, &path, |t| app_rules::ci_gates(app, t)));
+        }
     } else if repo.exists(&app.candidate_workflow()) {
         findings.push(Fail {
             rule: "A2",
@@ -93,7 +120,12 @@ pub fn check(repo: &dyn ContractRepo, only: Option<&str>) -> PortResult<Contract
             "no [release.apps.<app>] table in aw.toml".into(),
         ));
     }
-    let reports: Vec<AppReport> = apps.iter().map(|a| check_app(repo, a)).collect();
+    let shared: BTreeSet<String> = apps
+        .iter()
+        .filter(|a| a.onboarded && a.shared_scripts)
+        .map(|a| a.name.clone())
+        .collect();
+    let reports: Vec<AppReport> = apps.iter().map(|a| check_app(repo, a, &shared)).collect();
     Ok(ContractReport {
         schema: "release-contract-report/1",
         ok: reports.iter().all(|r| r.ok),

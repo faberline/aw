@@ -260,7 +260,7 @@ its final tag. It replaces the Python release tool that each repository had
 - The S4 checker stays as it is. It reads `Cargo.toml` and `build.rs`; it is
   the wrong place for workflow and script files.
 
-## `aw release-contract` (aw#449, step 1 of 5)
+## `aw release-contract` (aw#449, steps 1 and 2 of 5)
 
 `aw release-contract [--app <name>] [--dir <path>] [--format text|json]`
 checks the candidate and promotion workflows of each app in the checked
@@ -281,9 +281,27 @@ the workflow files as text and changes nothing.
 - One deliberate difference from Python: a step that starts with its key
   (`- run: cargo build`) is read as a script. Python misses it, so a rebuild
   there passed. This is stricter, not weaker.
-- Not in this step: A1, tables against `apps.sh` (T1, T2), gates (G1, G2),
-  the receipt maker (R1 to R7) and the fixture controls (X1, X2). They are
-  steps 2 to 5.
+- Step 2 adds:
+  - **A1**: the acceptance workflow (`gke-acceptance.yml`) has the run name,
+    the top-level name, the jobs and steps, and only `workflow_dispatch`.
+    It runs when the app lists `acceptance_names`.
+  - **T1**: `apps.sh` (run with bash) says what `aw.toml` says; it does not
+    know `loom`.
+  - **T2**: the receipt maker tables (loaded with `python3 -I -B`) say what
+    `aw.toml` says, including `REPOSITORY`, `IMAGE_OWNER` and the constants
+    listed in `maker_constants`. Step 3 ports the receipt maker, and then
+    T2 needs no Python.
+  - **G1**: the gates job of the candidate runs each line of
+    `candidate_gates`. **G2**: `ci.yml` runs each line of `ci_gates`, on
+    `pull_request` and `push` to main only, with pinned actions and
+    read-only permission.
+  - New keys: `root`, `repository`, `receipt_schema`, `gke_backend`,
+    `functional`, `gates_step`, `acceptance_names`, `acceptance_run_name`
+    (`{app}` is the app name), `maker_constants`, `candidate_gates`,
+    `ci_gates`. An app without `candidate_gates` or `ci_gates` skips G1 or G2.
+- Not yet: the receipt maker (R1 to R7) and the fixture controls (X1, X2).
+  They are steps 3 to 5. The Python controls of steps 1 and 2 each have a
+  Rust test; the table is in `tests/it/release_contract.rs`.
 
 ## Open points
 
