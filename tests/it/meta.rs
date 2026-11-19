@@ -56,6 +56,9 @@ Read the guide.
 struct Fake;
 
 impl MetaRepo for Fake {
+    fn root(&self) -> String {
+        "/repo".into()
+    }
     fn project_dir(&self, _target: &str) -> PortResult<String> {
         unreachable!("the fixtures call the rules directly")
     }

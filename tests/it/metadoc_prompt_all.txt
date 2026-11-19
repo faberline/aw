@@ -1,0 +1,241 @@
+Read only these 10 files:
+- /repo/apps/lumen/README.md
+- /repo/apps/lumen/STATUS.md
+- /repo/apps/lumen/ROADMAP.md
+- /repo/apps/lumen/docs/protocol.md
+- /repo/apps/lumen/clients/README.md
+- /repo/apps/lumen/docs/indexing.md
+- /repo/apps/lumen/docs/querying.md
+- /repo/apps/lumen/docs/gke.md
+- /repo/apps/lumen/docs/client-integration.md
+- /repo/apps/lumen/docs/migration-0-5.md
+
+Do not inspect any other file, repository state, prior draft, conversation, or
+validator output. Do not edit anything. Compute each file SHA-256 yourself.
+The expected SHA-256 map is {"README.md": "0", "ROADMAP.md": "0", "STATUS.md": "0", "clients/README.md": "0", "docs/client-integration.md": "0", "docs/gke.md": "0", "docs/indexing.md": "0", "docs/migration-0-5.md": "0", "docs/protocol.md": "0", "docs/querying.md": "0"}. Stop and
+report stale_input if any value differs.
+
+Act as a first-time developer who must understand what the product does, what
+is supported now, and what is future work. Return JSON only:
+
+{
+  "sha256": {
+    "README.md": "<sha256>",
+    "STATUS.md": "<sha256>",
+    "ROADMAP.md": "<sha256>",
+    "docs/protocol.md": "<sha256>",
+    "clients/README.md": "<sha256>",
+    "docs/indexing.md": "<sha256>",
+    "docs/querying.md": "<sha256>",
+    "docs/gke.md": "<sha256>",
+    "docs/client-integration.md": "<sha256>",
+    "docs/migration-0-5.md": "<sha256>"
+  },
+  "status": "reviewed | stale_input",
+  "stated": {
+    "purpose": "<what the product is>",
+    "not_for": [
+      "<explicit product boundary>"
+    ],
+    "primary_workflow": [
+      "<ordered steps>"
+    ],
+    "functional_surfaces": [
+      "<main user-facing functions>"
+    ],
+    "capabilities": [
+      {
+        "name": "<heading>",
+        "id": "<id>",
+        "sources": [
+          "<source>"
+        ]
+      }
+    ]
+  },
+  "current_support": [
+    {
+      "name": "<surface>",
+      "id": "<id>",
+      "state": "<state>",
+      "scope": "<supported scope>",
+      "limits": "<limits>"
+    }
+  ],
+  "future": {
+    "near_term": [
+      {
+        "name": "<outcome>",
+        "id": "<id>"
+      }
+    ],
+    "later": [
+      {
+        "name": "<outcome>",
+        "id": "<id>"
+      }
+    ],
+    "non_goals": [
+      {
+        "name": "<non-goal>",
+        "id": "<id>"
+      }
+    ]
+  },
+  "inferences": [
+    "<clearly labelled inference>"
+  ],
+  "cross_document_contradictions": [
+    "<statement that conflicts across documents>"
+  ],
+  "missing_details": [
+    "<detail delegated to another maintained source or still hard to find>"
+  ],
+  "comprehension_score": 0,
+  "interfaces": {
+    "protocol": {
+      "contract_map": [
+        {
+          "fact": "<fact class>",
+          "canonical_source": "<source>",
+          "discovery": "<command or file>"
+        }
+      ],
+      "operation_families": [
+        "<operation family>"
+      ],
+      "current_boundaries": [
+        "<current protocol boundary>"
+      ]
+    },
+    "clients": {
+      "artifact_model": "<what is generated, committed, or published>",
+      "languages": [
+        {
+          "language": "<language>",
+          "generated_form": "<generated form>",
+          "transport": "<transport>",
+          "auth_input": "<auth input>",
+          "current_limits": "<limits>"
+        }
+      ],
+      "current_boundaries": [
+        "<current generated-client boundary>"
+      ]
+    },
+    "indexing": {
+      "contract_map": [
+        {
+          "fact": "<fact class>",
+          "canonical_source": "<source>",
+          "discovery": "<command or file>"
+        }
+      ],
+      "data_ownership": [
+        "<source and derived-index boundary>"
+      ],
+      "current_contract": [
+        "<current schema, write, durability, or rebuild fact>"
+      ],
+      "target_contract": [
+        "<future schema, write, durability, or rebuild fact>"
+      ],
+      "current_boundaries": [
+        "<current indexing boundary>"
+      ]
+    },
+    "querying": {
+      "contract_map": [
+        {
+          "fact": "<fact class>",
+          "canonical_source": "<source>",
+          "discovery": "<command or file>"
+        }
+      ],
+      "selection_and_hydration": [
+        "<selection and hydration responsibility>"
+      ],
+      "current_contract": [
+        "<current query or result fact>"
+      ],
+      "target_contract": [
+        "<future query, facet, metric, or limit fact>"
+      ],
+      "current_boundaries": [
+        "<current querying boundary>"
+      ]
+    },
+    "gke": {
+      "contract_map": [
+        {
+          "fact": "<fact class>",
+          "canonical_source": "<source>",
+          "discovery": "<command or file>"
+        }
+      ],
+      "support_tiers": [
+        "<current or target environment and support tier>"
+      ],
+      "runtime_topologies": [
+        "<pod, shard, replica, voter, and HA meaning>"
+      ],
+      "kubernetes_boundary": [
+        "<portable contract and GKE profile boundary>"
+      ],
+      "current_boundaries": [
+        "<current GKE or Kubernetes boundary>"
+      ]
+    },
+    "client_integration": {
+      "contract_map": [
+        {
+          "fact": "<fact class>",
+          "canonical_source": "<source>",
+          "discovery": "<command or file>"
+        }
+      ],
+      "responsibility_boundary": [
+        "<server, generated-client, template, or caller owner>"
+      ],
+      "connection_profiles": [
+        "<Standalone or Managed connection behavior>"
+      ],
+      "workload_template": [
+        "<current or target Kubernetes workload behavior>"
+      ],
+      "source_integration": [
+        "<source database and hydration behavior>"
+      ],
+      "current_boundaries": [
+        "<current client-integration boundary>"
+      ]
+    },
+    "migrations": [
+      {
+        "path": "<migration guide path>",
+        "compatibility_rows": [
+          {
+            "surface": "<surface>",
+            "from": "<0.4.x behavior>",
+            "to": "<0.5.0 behavior>",
+            "required_action": "<caller action>"
+          }
+        ],
+        "activation": [
+          "<managed activation rule>"
+        ],
+        "tools": [
+          "<migration tool>"
+        ]
+      }
+    ]
+  }
+}
+
+List every capability, support surface, roadmap outcome, and non-goal. Also list every contract-map row from each adopted guide, every generated-client language row, and every migration compatibility row from the adopted supporting guides. Keep current behavior separate from target behavior. Keep
+document facts separate from inferences. The score is diagnostic. Do not turn
+it into the verdict. Use an integer from 0 to 100. Use 100 when a first-time
+reader can recover every requested fact, state, boundary, and document
+relationship without a contradiction. Lower the score for an omitted or
+unclear requested fact. Do not lower it only because a detail is clearly
+delegated to a named maintained source.
