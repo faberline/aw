@@ -1415,3 +1415,20 @@ fn a_run_on_another_branch_cannot_release_or_report_a_tdd_claim_of_another_run()
     *w.workspace.head.borrow_mut() = Some("claude/issue-7".into());
     assert!(release(w.services(), "claude", None).is_ok());
 }
+
+#[test]
+fn tdd_ready_refuses_a_branch_that_has_diverged_from_the_remote_head() {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:other", "stage:tdd"]);
+    claim_issue(&w, "other");
+    // Another run pushed to the branch: origin has commits that HEAD lacks.
+    w.workspace.remote.borrow_mut().push("other/issue-7".into());
+    w.workspace
+        .diverged
+        .borrow_mut()
+        .push("other/issue-7".into());
+    let err = report(w.services(), "other", None, Outcome::Ready, "done").unwrap_err();
+    assert!(format!("{err:#}").contains("have diverged"), "{err:#}");
+    assert!(!w.workspace.calls().iter().any(|c| c.starts_with("push")));
+    assert_eq!(w.tracker.claims(7).len(), 1);
+}

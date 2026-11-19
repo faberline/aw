@@ -412,6 +412,17 @@ fn open_pr(s: Services<'_>, claim: &Claim, message: &str) -> Result<String> {
     if !s.workspace.is_clean()? {
         bail!("commit your changes before `aw report ready`; only commits are pushed");
     }
+    // The remote head must be part of this branch (faberline/sift#258). When
+    // another run pushed to it, say so before the push is refused.
+    if s.workspace.fetch_branch(&claim.branch)?
+        && !s.workspace.contains(&format!("origin/{}", claim.branch))?
+    {
+        bail!(
+            "`{0}` and origin/{0} have diverged: origin has commits that this branch lacks. \
+             Run `git merge origin/{0}`, run the checks again, then `aw report` again. Do not force push.",
+            claim.branch
+        );
+    }
     s.workspace
         .push(&claim.branch)
         .with_context(|| format!("could not push `{}`", claim.branch))?;

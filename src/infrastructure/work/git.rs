@@ -53,6 +53,20 @@ fn merge_with(git: &dyn Fn(&[&str]) -> PortResult<String>, upstream: &str) -> Po
     Ok(false)
 }
 
+/// Fetch one branch by name. A branch that `origin` does not have is
+/// `false`, not an error.
+fn fetch_branch_with(
+    git: &dyn Fn(&[&str]) -> PortResult<String>,
+    branch: &str,
+) -> PortResult<bool> {
+    let spec = format!("+refs/heads/{branch}:refs/remotes/origin/{branch}");
+    match git(&["fetch", "--quiet", "origin", &spec]) {
+        Ok(_) => Ok(true),
+        Err(error) if error.0.contains("couldn't find remote ref") => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 /// `git fetch`, then complete the history when the clone is shallow. A
 /// shallow clone (the cloud routines clone with a depth) cuts the history,
 /// so `git merge origin/main` finds no merge base and fails with
@@ -100,6 +114,10 @@ impl Workspace for GitCli {
 
     fn fetch(&self) -> PortResult<()> {
         fetch_with(&|args| run("git", args, None))
+    }
+
+    fn fetch_branch(&self, branch: &str) -> PortResult<bool> {
+        fetch_branch_with(&|args| run("git", args, None), branch)
     }
 
     fn has_local_branch(&self, branch: &str) -> PortResult<bool> {
@@ -164,7 +182,7 @@ impl Workspace for GitCli {
 mod tests {
     use std::cell::RefCell;
 
-    use super::{GitCli, fetch_with, github_repo, merge_with};
+    use super::{GitCli, fetch_branch_with, fetch_with, github_repo, merge_with};
     use crate::domain::work::ports::{PortError, PortResult, Workspace};
 
     /// A fake `git`: `merge` fails with `merge_error`, and `MERGE_HEAD`
@@ -222,6 +240,28 @@ mod tests {
         };
         fetch_with(&git).unwrap();
         seen.into_inner()
+    }
+
+    #[test]
+    fn fetch_branch_names_the_branch_and_reads_a_missing_one_as_false() {
+        let seen = RefCell::new(Vec::new());
+        let ok = |args: &[&str]| -> PortResult<String> {
+            seen.borrow_mut().push(args.join(" "));
+            Ok(String::new())
+        };
+        assert!(fetch_branch_with(&ok, "claude/issue-7").unwrap());
+        assert_eq!(
+            seen.into_inner(),
+            ["fetch --quiet origin +refs/heads/claude/issue-7:refs/remotes/origin/claude/issue-7"]
+        );
+        let missing = |_: &[&str]| -> PortResult<String> {
+            Err(PortError(
+                "fatal: couldn't find remote ref refs/heads/x".into(),
+            ))
+        };
+        assert!(!fetch_branch_with(&missing, "x").unwrap());
+        let broken = |_: &[&str]| -> PortResult<String> { Err(PortError("network down".into())) };
+        assert!(fetch_branch_with(&broken, "x").is_err());
     }
 
     #[test]

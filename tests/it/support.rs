@@ -452,6 +452,11 @@ pub struct FakeWorkspace {
     pub head: RefCell<Option<String>>,
     pub local: RefCell<Vec<String>>,
     pub remote: RefCell<Vec<String>>,
+    /// Branches of `origin` that `fetch` does not bring (a single-branch
+    /// clone). Only `fetch_branch` does.
+    pub hidden: RefCell<Vec<String>>,
+    /// HEAD lacks the commits of `origin/<branch>` for these branches.
+    pub diverged: RefCell<Vec<String>>,
     pub calls: RefCell<Vec<String>>,
     /// `git switch` fails, as it does in a linked worktree when another
     /// worktree has the branch checked out.
@@ -472,6 +477,8 @@ impl Default for FakeWorkspace {
             head: RefCell::new(Some("main".into())),
             local: RefCell::new(vec!["main".into()]),
             remote: RefCell::new(vec!["main".into()]),
+            hidden: RefCell::new(Vec::new()),
+            diverged: RefCell::new(Vec::new()),
             calls: RefCell::new(Vec::new()),
             switch_fails: Cell::new(false),
             behind: Cell::new(false),
@@ -510,6 +517,15 @@ impl Workspace for FakeWorkspace {
         Ok(())
     }
 
+    fn fetch_branch(&self, branch: &str) -> PortResult<bool> {
+        let mut hidden = self.hidden.borrow_mut();
+        if let Some(at) = hidden.iter().position(|b| b == branch) {
+            hidden.remove(at);
+            self.remote.borrow_mut().push(branch.into());
+        }
+        Ok(self.remote.borrow().iter().any(|b| b == branch))
+    }
+
     fn has_local_branch(&self, branch: &str) -> PortResult<bool> {
         Ok(self.local.borrow().iter().any(|b| b == branch))
     }
@@ -541,8 +557,13 @@ impl Workspace for FakeWorkspace {
         Ok(())
     }
 
-    fn contains(&self, _upstream: &str) -> PortResult<bool> {
-        Ok(!self.behind.get())
+    fn contains(&self, upstream: &str) -> PortResult<bool> {
+        let diverged = self
+            .diverged
+            .borrow()
+            .iter()
+            .any(|b| upstream == format!("origin/{b}"));
+        Ok(!self.behind.get() && !diverged)
     }
 
     fn merge(&self, upstream: &str) -> PortResult<bool> {

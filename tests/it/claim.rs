@@ -1209,3 +1209,26 @@ fn a_blocked_signal_and_an_old_branch_claim_do_not_use_up_a_redo() {
         .add_comment(7, "desk: use the redo", "2026-02-02T03:00:00Z");
     assert_eq!(claimed(&w, "claude").branch, "claude/issue-7-r2");
 }
+
+#[test]
+fn tdd_rework_starts_from_the_remote_head_even_when_fetch_does_not_bring_it() {
+    // A single-branch clone: `git fetch` brings main only (faberline/sift#258).
+    let w = World::new();
+    w.tracker.pr(51, "claude/issue-7", "Closes #7");
+    w.tracker.issue(7, &["agent:claude", "stage:tdd"]);
+    w.workspace
+        .hidden
+        .borrow_mut()
+        .push("claude/issue-7".into());
+    let c = claimed(&w, "claude");
+    assert_eq!((c.branch.as_str(), c.pr), ("claude/issue-7", Some(51)));
+    let calls = w.workspace.calls();
+    assert!(
+        calls.contains(&"create claude/issue-7 from origin/claude/issue-7".to_string()),
+        "{calls:?}"
+    );
+    assert!(
+        !calls.iter().any(|c| c.contains("from origin/main")),
+        "{calls:?}"
+    );
+}

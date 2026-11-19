@@ -412,6 +412,12 @@ fn prepare_work_branch(
     let ws = s.workspace;
     let upstream = format!("origin/{}", claim.default_branch);
     let pr = pr.filter(|p| p.head != claim.default_branch);
+    // A clone that fetches one branch does not see the branch of the pull
+    // request: the rework would start from the default branch and not push
+    // (faberline/sift#258). Fetch that branch by name.
+    let branch = pr.map_or(claim.branch.as_str(), |p| p.head.as_str());
+    ws.fetch_branch(branch)
+        .with_context(|| format!("could not fetch `{branch}` from origin"))?;
     let redo = redo_requested(comments);
     // A redo also applies when the old branch is on origin and has no open
     // pull request (faberline/aw#614). Nothing is deleted.
