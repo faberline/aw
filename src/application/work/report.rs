@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
-use super::active::{active, in_checkout};
+use super::active::{active, active_for_issue, in_checkout};
 use super::queue::update_next;
 use super::release::finish;
 use super::services::Services;
@@ -52,10 +52,45 @@ pub fn report(
     outcome: Outcome,
     message: &str,
 ) -> Result<Reported> {
-    let Some(held) = active(s, agent, stage)? else {
-        bail!("`{agent}` holds no claim; run `aw claim` first");
+    report_issue(s, agent, stage, None, outcome, message)
+}
+
+/// `report` for the issue `issue` that the run names. The claim of that
+/// issue counts, not the newest claim of the agent. When the claim was lost
+/// and the checkout is on the work branch of the issue, the signal is
+/// written as a new comment with a note (faberline/aw#637).
+pub fn report_issue(
+    s: Services<'_>,
+    agent: &str,
+    stage: Option<Stage>,
+    issue: Option<u64>,
+    outcome: Outcome,
+    message: &str,
+) -> Result<Reported> {
+    let (held, lost) = match issue {
+        Some(n) => active_for_issue(s, agent, stage, n)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "`{agent}` holds no claim for #{n}, and this checkout is not on its work branch; \
+                 run `aw claim` first"
+            )
+        })?,
+        None => (
+            active(s, agent, stage)?
+                .ok_or_else(|| anyhow::anyhow!("`{agent}` holds no claim; run `aw claim` first"))?,
+            false,
+        ),
     };
     let claim = held.claim;
+    let lost_note = format!(
+        "_The claim of this run on #{} was lost. This signal is written from the checkout on branch `{}`._\n\n",
+        claim.issue, claim.branch
+    );
+    // A tdd `ready` text is the body of the pull request: no note there.
+    let message = &if lost && outcome != Outcome::Ready {
+        format!("{lost_note}{}", message.trim())
+    } else {
+        message.to_string()
+    };
     if !outcome.allowed_in(claim.stage) {
         let allowed: Vec<&str> = Outcome::allowed(claim.stage)
             .iter()
@@ -119,9 +154,13 @@ pub fn report(
         (Stage::Tdd, Outcome::Ready) => "",
         _ => message,
     };
-    s.tracker
-        .edit_comment(held.comment_id, &signal.render(note, link.as_deref()))
-        .with_context(|| format!("could not post the signal on issue #{}", claim.issue))?;
+    let body = signal.render(note, link.as_deref());
+    if lost {
+        s.tracker.comment(claim.issue, &body)
+    } else {
+        s.tracker.edit_comment(held.comment_id, &body)
+    }
+    .with_context(|| format!("could not post the signal on issue #{}", claim.issue))?;
 
     move_labels(s, &claim, outcome, &mut warnings);
     warnings.extend(finish(s, &claim)?);

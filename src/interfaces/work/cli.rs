@@ -122,11 +122,19 @@ enum Command {
         /// Read the report text from a file, or `-` for stdin.
         #[arg(short = 'F', long)]
         file: Option<String>,
+        /// The issue this run worked on. Its claim counts, not the newest
+        /// claim of the agent. With a lost claim, a tdd run whose checkout
+        /// is on the work branch of the issue still reports.
+        #[arg(long)]
+        issue: Option<u64>,
     },
     /// Delete the claim without reporting.
     Release {
         #[command(flatten)]
         target: Target,
+        /// The issue this run worked on: release the claim of that issue.
+        #[arg(long)]
+        issue: Option<u64>,
     },
     /// Show the claim the agent holds.
     Status {
@@ -412,7 +420,7 @@ impl Cli {
         match &self.command {
             Command::Claim { target, .. }
             | Command::Report { target, .. }
-            | Command::Release { target }
+            | Command::Release { target, .. }
             | Command::Status { target } => target.repo.clone(),
             _ => None,
         }
@@ -698,15 +706,23 @@ fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit
             outcome,
             message,
             file,
+            issue,
         } => {
             let text = read_message(message, file)?;
-            let reported = work::report(s, &target.agent, target.stage(), outcome.into(), &text)?;
+            let reported = work::report_issue(
+                s,
+                &target.agent,
+                target.stage(),
+                issue,
+                outcome.into(),
+                &text,
+            )?;
             warn(&reported.warnings);
             print(&reported)?;
             Ok(Exit::Ok)
         }
-        Command::Release { target } => {
-            let (claim, warnings) = work::release(s, &target.agent, target.stage())?;
+        Command::Release { target, issue } => {
+            let (claim, warnings) = work::release_issue(s, &target.agent, target.stage(), issue)?;
             warn(&warnings);
             print(&claim)?;
             Ok(Exit::Ok)

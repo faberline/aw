@@ -776,6 +776,12 @@ Read code through the GitHub API when you do not need the clone:
   that an issue is "still claimed by" your agent name. Another run of the same
   agent (a second routine) may hold that claim: leave it, do not release it.
   `aw release` and `aw report` refuse a tdd claim when this checkout is on another branch.
+- Name the issue when you report or release: `$AW report <who> <outcome> --issue <N>`
+  and `$AW release <who> --issue <N>`, with the number that `aw claim` gave you.
+  Another run of the same agent may hold a newer claim. With `--issue`, `aw` uses
+  the claim of that issue. When your claim is gone and your checkout is on the
+  work branch of the issue, `aw report --issue` still writes the signal, with a
+  note that the claim was lost. Never report on an issue that you did not work on.
 - A tdd rework that pushed a head must end with `$AW report <who> ready` (when
   the work is done and the checks are green or still running), or with
   `blocked` and its reason. Do not end it with `release` and no word. A `release`
