@@ -2,6 +2,31 @@
 //! fixture. The passing fixture is the real pair of defer workflows (defer
 //! `main`, 2026-11-20), which the Python script `verify-release-contract.py`
 //! also accepts. A failing fixture changes one thing in that text.
+//!
+//! Python control -> Rust test, `candidate_controls` and `promotion_controls`
+//! of `verify-release-contract.py` (12 + 9, and no row is missing):
+//!
+//!   candidate: commit input renamed            -> c2_the_candidate_takes_version_and_commit
+//!   candidate: result job renamed              -> c3_the_candidate_has_the_job_set_of_the_app
+//!   candidate: action unpinned                 -> c4_candidate_actions_are_pinned
+//!   candidate: manifest schema bumped silently -> c5_a_silent_schema_bump_is_a_finding
+//!   candidate: verifier downgraded to local    -> c6_the_candidate_verifies_in_full_mode
+//!   candidate: commit identity proof dropped   -> c5_the_candidate_keeps_its_commit_guard
+//!   candidate: build result binding faked      -> c7_the_manifest_binds_the_build_result
+//!   candidate: main-only guard dropped         -> c5_the_main_only_guard_is_required
+//!   candidate: extra trigger added             -> c1_the_candidate_runs_only_on_workflow_dispatch
+//!   candidate: stale target archive downloaded -> c8_a_download_job_names_the_targets_of_the_app
+//!   candidate: manifest loop drops a target    -> c8_a_for_loop_names_the_targets_of_the_app
+//!   candidate: build matrix row dropped        -> c8_the_matrix_names_the_targets_of_the_app
+//!   promotion: tag push trigger added          -> p1_the_promotion_runs_only_on_workflow_dispatch
+//!   promotion: candidate run id input dropped  -> p2_the_promotion_takes_the_inputs_of_the_app
+//!   promotion: publish job renamed             -> p3_the_promotion_has_two_jobs
+//!   promotion: action unpinned                 -> p4_promotion_actions_are_pinned
+//!   promotion: rebuild inserted                -> p4_the_promotion_does_not_rebuild
+//!   promotion: retag from a mutable ref        -> p7_each_retag_takes_the_candidate_root
+//!   promotion: public verification dropped     -> p5_the_promotion_verifies_the_public_release
+//!   promotion: tag ref guard dropped           -> p5_the_tag_ref_guard_is_required
+//!   promotion: compatibility line reworded     -> p6_the_notes_carry_the_compatibility_line_once
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -283,6 +308,46 @@ fn c5_the_candidate_keeps_its_commit_guard() {
         "true",
     );
     candidate_breaks(&text, "C5", "required fragment absent");
+}
+
+#[test]
+fn c5_a_silent_schema_bump_is_a_finding() {
+    let text = change_all(
+        CANDIDATE,
+        "cclab.defer.candidate-manifest.v1",
+        "cclab.defer.candidate-manifest.v9",
+    );
+    candidate_breaks(&text, "C5", "required fragment absent");
+}
+
+#[test]
+fn c5_the_main_only_guard_is_required() {
+    let text = change_all(
+        CANDIDATE,
+        r#"[[ "$GITHUB_REF" == "refs/heads/main" ]]"#,
+        r#"[[ "$GITHUB_REF" == "refs/heads/release" ]]"#,
+    );
+    candidate_breaks(&text, "C5", "required fragment absent");
+}
+
+#[test]
+fn c7_the_manifest_binds_the_build_result() {
+    let text = change(
+        CANDIDATE,
+        r#"build:"${{ needs.build.result }}""#,
+        r#"build:"success""#,
+    );
+    candidate_breaks(&text, "C7", "must bind job build");
+}
+
+#[test]
+fn p5_the_tag_ref_guard_is_required() {
+    let text = change_all(
+        PROMOTION,
+        "refs/tags/defer@${{ inputs.version }}",
+        "refs/heads/main",
+    );
+    promotion_breaks(&text, "P5", "required fragment absent");
 }
 
 #[test]
