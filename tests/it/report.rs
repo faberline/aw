@@ -1432,3 +1432,124 @@ fn tdd_ready_refuses_a_branch_that_has_diverged_from_the_remote_head() {
     assert!(!w.workspace.calls().iter().any(|c| c.starts_with("push")));
     assert_eq!(w.tracker.claims(7).len(), 1);
 }
+
+/// Two runs of one agent: run A holds #1 (tdd), then run B claims #2 on a
+/// second issue. The newest claim of the agent is #2.
+fn overlap(w: &World) {
+    use crate::support::NOW;
+    use aw::domain::work::claim::ClaimMark;
+    w.tracker.issue(1, &["agent:claude", "stage:tdd"]);
+    w.tracker.issue(2, &["agent:claude", "stage:tdd"]);
+    let mark = |branch: &str, age: i64| ClaimMark {
+        agent: "claude".into(),
+        stage: Stage::Tdd,
+        branch: branch.into(),
+        pr: None,
+        claimed_at: NOW - age,
+    };
+    w.tracker.add_comment(
+        1,
+        &mark("claude/issue-1", 3000).render(),
+        "2027-01-15T07:10:00Z",
+    );
+    w.tracker.add_comment(
+        2,
+        &mark("claude/issue-2", 60).render(),
+        "2027-01-15T07:59:00Z",
+    );
+}
+
+#[test]
+fn report_with_an_issue_uses_the_claim_of_that_issue_not_the_newest_one() {
+    use aw::application::work::report_issue;
+    let w = World::new();
+    overlap(&w);
+    *w.workspace.head.borrow_mut() = Some("claude/issue-1".into());
+    let done = report_issue(
+        w.services(),
+        "claude",
+        None,
+        Some(1),
+        Outcome::Blocked,
+        "why",
+    )
+    .unwrap();
+    assert_eq!(done.issue, 1);
+    assert_eq!(w.tracker.signals(1).len(), 1);
+    // The claim of run B is untouched.
+    assert_eq!(w.tracker.claims(2).len(), 1);
+}
+
+#[test]
+fn a_lost_claim_still_records_the_signal_when_the_checkout_is_on_the_issue_branch() {
+    use aw::application::work::report_issue;
+    let w = World::new();
+    // Run B's claim on #2 exists. Run A's claim on #1 is gone.
+    w.tracker.issue(2, &["agent:claude", "stage:tdd"]);
+    claim_issue(&w, "claude");
+    w.tracker.issue(1, &["agent:claude", "stage:tdd"]);
+    *w.workspace.head.borrow_mut() = Some("claude/issue-1".into());
+    let done = report_issue(
+        w.services(),
+        "claude",
+        None,
+        Some(1),
+        Outcome::Blocked,
+        "5 tests fail",
+    )
+    .unwrap();
+    assert_eq!(done.issue, 1);
+    let note = w.tracker.last_comment(1);
+    assert!(note.contains("outcome=blocked"), "{note}");
+    assert!(note.contains("claim of this run on #1 was lost"), "{note}");
+    assert!(note.contains("5 tests fail"), "{note}");
+    // A checkout on another branch cannot make up a claim.
+    *w.workspace.head.borrow_mut() = Some("claude/issue-2".into());
+    assert!(report_issue(w.services(), "claude", None, Some(1), Outcome::Blocked, "x").is_err());
+}
+
+#[test]
+fn release_with_an_issue_removes_only_that_claim() {
+    use aw::application::work::release_issue;
+    let w = World::new();
+    overlap(&w);
+    *w.workspace.head.borrow_mut() = Some("claude/issue-1".into());
+    release_issue(w.services(), "claude", None, Some(1)).unwrap();
+    assert!(w.tracker.claims(1).is_empty());
+    assert_eq!(w.tracker.claims(2).len(), 1);
+}
+
+#[test]
+fn report_with_an_issue_refuses_what_it_cannot_tie_to_this_run() {
+    use aw::application::work::report_issue;
+    let w = World::new();
+    overlap(&w);
+    let try_report = |issue: u64, stage: Option<Stage>| {
+        report_issue(
+            w.services(),
+            "claude",
+            stage,
+            Some(issue),
+            Outcome::Blocked,
+            "x",
+        )
+        .is_err()
+    };
+    *w.workspace.head.borrow_mut() = Some("claude/issue-1".into());
+    // An issue that is not open for the agent.
+    assert!(try_report(99, None));
+    // The claim of #1 is tdd, not spec.
+    assert!(try_report(1, Some(Stage::Spec)));
+    // A claim of #2, but the checkout is on the branch of #1.
+    assert!(try_report(2, None));
+    // A lost claim is made up for tdd only.
+    w.tracker.issue(3, &["agent:claude", "stage:tdd"]);
+    *w.workspace.head.borrow_mut() = Some("claude/issue-3".into());
+    assert!(try_report(3, Some(Stage::Review)));
+    // A detached HEAD proves nothing.
+    *w.workspace.head.borrow_mut() = None;
+    assert!(try_report(3, None));
+    // A rework branch of the issue does.
+    *w.workspace.head.borrow_mut() = Some("claude/issue-3-r2".into());
+    assert!(!try_report(3, None));
+}

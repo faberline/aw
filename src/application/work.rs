@@ -8,8 +8,8 @@ pub mod report;
 pub mod services;
 
 pub use claim::{ClaimOutcome, claim, claim_with};
-pub use release::{release, status};
-pub use report::{Reported, report};
+pub use release::{release, release_issue, status};
+pub use report::{Reported, report, report_issue};
 pub use services::Services;
 
 pub use crate::domain::work::claim::Claim;

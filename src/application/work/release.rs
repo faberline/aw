@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 
-use super::active::{active, board, in_checkout};
+use super::active::{active, active_for_issue, board, in_checkout};
 use super::claim::switch_to;
 use super::services::Services;
 use crate::domain::work::claim::Claim;
@@ -15,7 +15,24 @@ pub fn status(s: Services<'_>, agent: &str, stage: Option<Stage>) -> Result<Opti
 /// Delete the claim comment without reporting. The issue stays eligible,
 /// so the next `aw claim` may take it again.
 pub fn release(s: Services<'_>, agent: &str, stage: Option<Stage>) -> Result<(Claim, Vec<String>)> {
-    let Some(held) = active(s, agent, stage)? else {
+    release_issue(s, agent, stage, None)
+}
+
+/// `release` for the issue `issue` that the run names: the claim of that
+/// issue, not the newest claim of the agent.
+pub fn release_issue(
+    s: Services<'_>,
+    agent: &str,
+    stage: Option<Stage>,
+    issue: Option<u64>,
+) -> Result<(Claim, Vec<String>)> {
+    let held = match issue {
+        Some(n) => active_for_issue(s, agent, stage, n)?
+            .filter(|(_, lost)| !lost)
+            .map(|(a, _)| a),
+        None => active(s, agent, stage)?,
+    };
+    let Some(held) = held else {
         bail!("`{agent}` holds no claim");
     };
     s.tracker

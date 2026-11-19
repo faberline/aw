@@ -8,6 +8,7 @@ use crate::domain::run::record::rfc3339;
 use crate::domain::work::claim::{Claim, ClaimMark, STALE_AFTER_SECONDS, latest_mark};
 use crate::domain::work::issue::{Comment, Issue, agent_label, claim_order};
 use crate::domain::work::ports::Repo;
+use crate::domain::work::pull_request::{find_for_issue, is_rework_branch, work_branch};
 use crate::domain::work::stage::Stage;
 
 /// How far back the board reads the comments of the repository. A claim
@@ -172,6 +173,64 @@ fn is_own_old_claim(stage: Stage, branch: &str, head: Option<&str>) -> bool {
         Stage::Spec => false,
         Stage::Tdd | Stage::Review => head == Some(branch),
     }
+}
+
+/// What `aw report --issue N` and `aw release --issue N` find: the claim
+/// of `agent` on issue `issue`, whatever other claim the agent has. With no
+/// such claim, a tdd run whose checkout is on the work branch of the issue
+/// still reports: the claim was lost (faberline/aw#637), so the report
+/// writes a new signal comment (`comment_id` 0) and `lost` is true.
+pub(crate) fn active_for_issue(
+    s: Services<'_>,
+    agent: &str,
+    stage: Option<Stage>,
+    issue: u64,
+) -> Result<Option<(Active, bool)>> {
+    let board = board(s, agent)?;
+    let Some(found) = board.issues.iter().find(|i| i.number == issue) else {
+        return Ok(None);
+    };
+    let comments = s.tracker.comments(issue)?;
+    if let Some((comment_id, mark)) = latest_mark(&comments, agent) {
+        let claim = Claim::from_mark(mark, found, &board.repo);
+        if stage.is_some_and(|wanted| claim.stage != wanted) {
+            return Ok(None);
+        }
+        if foreign_tdd_claim(s, &board.repo, &claim)? {
+            return Ok(None);
+        }
+        return Ok(Some((Active { claim, comment_id }, false)));
+    }
+    if stage.is_some_and(|wanted| wanted != Stage::Tdd) || !in_checkout(s, &board.repo.name)? {
+        return Ok(None);
+    }
+    let Some(head) = s.workspace.current_branch()? else {
+        return Ok(None);
+    };
+    let base = work_branch(agent, issue);
+    if head != base && !(is_rework_branch(&head) && head.starts_with(&format!("{base}-r"))) {
+        return Ok(None);
+    }
+    let pr = find_for_issue(&s.tracker.open_prs()?, issue).map(|p| p.number);
+    let claim = Claim {
+        repo: board.repo.name.clone(),
+        agent: agent.to_string(),
+        issue,
+        stage: Stage::Tdd,
+        title: found.title.clone(),
+        url: found.url.clone(),
+        branch: head,
+        pr,
+        default_branch: board.repo.default_branch.clone(),
+        claimed_at: s.clock.now(),
+    };
+    Ok(Some((
+        Active {
+            claim,
+            comment_id: 0,
+        },
+        true,
+    )))
 }
 
 /// True when the current directory is a checkout of `repo`. tdd needs one.
