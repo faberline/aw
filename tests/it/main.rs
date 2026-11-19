@@ -3,6 +3,7 @@ mod claim;
 mod cli;
 mod coverage;
 mod meta;
+mod metadoc;
 mod process;
 mod release_gate;
 mod release_workflow;

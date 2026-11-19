@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use toml::Table;
 
 use crate::domain::meta::config::MetaConfig;
-use crate::domain::meta::ports::{CargoIndex, MetaRepo, ReadmeInput};
+use crate::domain::meta::ports::{CargoIndex, DocInput, MetaRepo, ReadmeInput};
 use crate::domain::work::ports::{PortError, PortResult};
 use crate::infrastructure::work::process::run;
 
@@ -54,7 +54,88 @@ fn strings(value: Option<&toml::Value>) -> Option<Vec<String>> {
     )
 }
 
+fn slashed(p: &Path) -> String {
+    p.components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Supporting guides sit in `docs/` of the project folder.
+fn is_guide(name: &str) -> bool {
+    [
+        "protocol.md",
+        "indexing.md",
+        "querying.md",
+        "gke.md",
+        "client-integration.md",
+    ]
+    .contains(&name)
+        || (name.starts_with("migration-") && name.ends_with(".md"))
+}
+
 impl MetaRepo for LocalMeta {
+    fn project_dir(&self, target: &str) -> PortResult<String> {
+        let mut path = PathBuf::from(target);
+        if !path.is_absolute() {
+            path = self.root.join(path);
+        }
+        path = std::fs::canonicalize(&path).unwrap_or(path);
+        if path.is_file() {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let parent = path.parent().unwrap_or(&path);
+            let parent_name = parent.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if parent_name == "docs" && is_guide(name)
+                || (name == "README.md" && parent_name == "clients")
+            {
+                path = parent.parent().unwrap_or(parent).to_path_buf();
+            } else if ["README.md", "STATUS.md", "ROADMAP.md"].contains(&name) {
+                path = parent.to_path_buf();
+            } else {
+                return Err(PortError(format!(
+                    "target file must be a core project document, a conventional \
+                     supporting guide, or clients/README.md: {}",
+                    path.display()
+                )));
+            }
+        }
+        let rel = path
+            .strip_prefix(&self.root)
+            .map_err(|_| PortError(format!("target is outside the checkout: {target}")))?;
+        if !path.is_dir() {
+            return Err(PortError(format!(
+                "project directory does not exist: {}",
+                path.display()
+            )));
+        }
+        Ok(slashed(rel))
+    }
+
+    fn document(&self, path: &str) -> PortResult<Option<DocInput>> {
+        let full = self.root.join(path);
+        if !full.is_file() {
+            return Ok(None);
+        }
+        let raw = std::fs::read(&full)
+            .map_err(|e| PortError(format!("could not read {}: {e}", full.display())))?;
+        let text = String::from_utf8(raw.clone())
+            .map_err(|_| PortError(format!("{} is not UTF-8", full.display())))?;
+        Ok(Some(DocInput {
+            path: path.to_string(),
+            dir: Path::new(path).parent().map(slashed).unwrap_or_default(),
+            text,
+            sha256: format!("{:x}", Sha256::digest(&raw)),
+        }))
+    }
+
+    fn is_file(&self, path: &str) -> bool {
+        self.root.join(path).is_file()
+    }
+
+    fn read_text(&self, path: &str) -> Option<String> {
+        std::fs::read_to_string(self.root.join(path)).ok()
+    }
+
     fn config(&self) -> PortResult<MetaConfig> {
         let mut config = MetaConfig::default();
         let path = self.root.join("aw.toml");

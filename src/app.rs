@@ -37,6 +37,9 @@ pub fn run() -> ExitCode {
     if let Some(target) = parsed.meta_target() {
         return exit_code(meta_check(target));
     }
+    if let Some(target) = parsed.metadoc_target() {
+        return exit_code(metadoc_check(target));
+    }
     if let Some(target) = parsed.standards_target() {
         return exit_code(standards_check(target));
     }
@@ -159,6 +162,25 @@ fn meta_check(target: &MetaTarget) -> Exit {
         target.paths.clone()
     };
     cli::run_meta(MetaServices { repo: &repo }, &paths, target.format)
+}
+
+/// `aw metadoc check`: the project folders of `paths` (default `.`) in the
+/// checkout that holds `--dir` (default: the current directory).
+fn metadoc_check(target: &MetaTarget) -> Exit {
+    let dir = target.dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    let repo = match LocalMeta::open(&dir) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("aw: {err}");
+            return Exit::Nothing;
+        }
+    };
+    let paths = if target.paths.is_empty() {
+        vec![".".to_string()]
+    } else {
+        target.paths.clone()
+    };
+    cli::run_metadoc(MetaServices { repo: &repo }, &paths, target.format)
 }
 
 /// The milestone release gate, for `--repo` or the `origin` of the current

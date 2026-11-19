@@ -94,12 +94,25 @@ pub fn has_scheme(target: &str) -> bool {
 
 /// Replace every code span with spaces of the same length.
 pub fn blank_code_spans(line: &str) -> String {
-    let chars: Vec<char> = line.chars().collect();
+    let ranges = code_span_ranges(line);
     let mut out = String::new();
+    for (i, c) in line.chars().enumerate() {
+        out.push(if ranges.iter().any(|&(s, l)| i >= s && i < s + l) {
+            ' '
+        } else {
+            c
+        });
+    }
+    out
+}
+
+/// The code spans of one line as `(start, length)` in characters.
+pub fn code_span_ranges(line: &str) -> Vec<(usize, usize)> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = Vec::new();
     let mut i = 0;
     while i < chars.len() {
         if chars[i] != '`' {
-            out.push(chars[i]);
             i += 1;
             continue;
         }
@@ -117,16 +130,47 @@ pub fn blank_code_spans(line: &str) -> String {
         });
         match span {
             Some(len) => {
-                out.extend(std::iter::repeat_n(' ', len));
+                out.push((i, len));
                 i += len;
             }
-            None => {
-                out.push('`');
-                i += 1;
-            }
+            None => i += 1,
         }
     }
     out
+}
+
+/// The text of each code span with its backticks removed.
+pub fn code_spans(line: &str) -> Vec<String> {
+    let chars: Vec<char> = line.chars().collect();
+    code_span_ranges(line)
+        .into_iter()
+        .map(|(s, l)| {
+            let span: String = chars[s..s + l].iter().collect();
+            span.trim_matches('`').to_string()
+        })
+        .collect()
+}
+
+/// The text of a link or a code span without its markup.
+pub fn strip_inline(text: &str) -> String {
+    static LINK_FORM: LazyLock<Regex> = LazyLock::new(|| re(r"\[([^\]]+)\]\([^)]+\)"));
+    static CODE: LazyLock<Regex> = LazyLock::new(|| re(r"`([^`]+)`"));
+    let plain = LINK_FORM.replace_all(text, "$1");
+    CODE.replace_all(&plain, "$1").into_owned()
+}
+
+/// The GitHub anchor of a heading.
+pub fn github_slug(text: &str) -> String {
+    static DROP: LazyLock<Regex> = LazyLock::new(|| re(r"[^a-z0-9 _-]"));
+    static SEPARATORS: LazyLock<Regex> = LazyLock::new(|| re(r"[ _]+"));
+    static DASHES: LazyLock<Regex> = LazyLock::new(|| re(r"-+"));
+    let lower = strip_inline(text).to_lowercase();
+    let kept = DROP.replace_all(lower.trim(), "");
+    let joined = SEPARATORS.replace_all(&kept, "-");
+    DASHES
+        .replace_all(&joined, "-")
+        .trim_matches('-')
+        .to_string()
 }
 
 /// The link targets of the prose lines: no fenced block, no code span.

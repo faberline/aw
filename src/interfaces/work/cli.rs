@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use crate::application::ci::{self, CiServices};
 use crate::application::meta::{self, MetaServices};
+use crate::application::metadoc;
 use crate::application::release::{self, Advanced, ReleaseServices};
 use crate::application::repo::{self, RepoServices};
 use crate::application::run::{Client, Event, RunServices};
@@ -34,6 +35,7 @@ use crate::interfaces::run::commands;
         aw ci check checks ci.yml and the ruleset against docs/standards/ci.md\n\
         aw standards check checks Cargo.toml files against docs/standards/core-reuse.md\n\
         aw meta check checks project README files against the README contract\n\
+        aw metadoc check checks a project's README and STATUS against their contracts\n\
         aw repo check checks the tracked files for clutter (docs/standards/repo-hygiene.md)\n\
         aw release-status    assesses a milestone release; it only reads\n\
         aw release-advance   creates the next release tag when the assessment did not change\n\
@@ -165,6 +167,11 @@ enum Command {
         #[command(subcommand)]
         command: MetaCommand,
     },
+    /// Check the core documents of a project folder against their contracts.
+    Metadoc {
+        #[command(subcommand)]
+        command: MetadocCommand,
+    },
     /// Check the tracked files of a checkout for clutter.
     Repo {
         #[command(subcommand)]
@@ -294,7 +301,17 @@ enum MetaCommand {
     Check(MetaTarget),
 }
 
-/// What `aw meta check` reads.
+#[derive(Subcommand)]
+enum MetadocCommand {
+    /// Check the documents of a project folder: README (R1 to R12), STATUS
+    /// (S1 to S7) and the rules that tie them (P1). The ROADMAP and the
+    /// supporting guides are checked by later rules. Repository values come
+    /// from the `[meta]` table of `aw.toml`. Exit codes: 0 pass, 1 a finding,
+    /// 2 a usage error.
+    Check(MetaTarget),
+}
+
+/// What `aw meta check` and `aw metadoc check` read.
 #[derive(Args, Clone, Debug, Default)]
 pub struct MetaTarget {
     /// A README.md, or a folder that holds one, relative to the top of the
@@ -452,6 +469,16 @@ impl Cli {
         match &self.command {
             Command::Meta {
                 command: MetaCommand::Check(target),
+            } => Some(target),
+            _ => None,
+        }
+    }
+
+    /// The target of `aw metadoc check`, if that is the command.
+    pub fn metadoc_target(&self) -> Option<&MetaTarget> {
+        match &self.command {
+            Command::Metadoc {
+                command: MetadocCommand::Check(target),
             } => Some(target),
             _ => None,
         }
@@ -618,6 +645,33 @@ pub fn run_repo(services: RepoServices<'_>, target: &HygieneTarget) -> Exit {
     }
 }
 
+/// Run `aw metadoc check`: print the report; exit 1 when a document set has
+/// a finding and 2 when a target cannot be read.
+pub fn run_metadoc(services: MetaServices<'_>, paths: &[String], format: ReportFormat) -> Exit {
+    let report = match metadoc::check(services, paths) {
+        Ok(report) => report,
+        Err(err) => {
+            eprintln!("aw: {:#}", anyhow::Error::from(err));
+            return Exit::Nothing;
+        }
+    };
+    let printed = match format {
+        ReportFormat::Json => print(&report),
+        ReportFormat::Text => {
+            println!("{}", metadoc::render(&report));
+            Ok(())
+        }
+    };
+    match printed {
+        Ok(()) if report.ok => Exit::Ok,
+        Ok(()) => Exit::Failed,
+        Err(err) => {
+            eprintln!("aw: {err:#}");
+            Exit::Nothing
+        }
+    }
+}
+
 /// Run `aw meta check`: print the report; exit 1 when a README has a
 /// finding and 2 when a README cannot be read.
 pub fn run_meta(services: MetaServices<'_>, paths: &[String], format: ReportFormat) -> Exit {
@@ -758,6 +812,9 @@ fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit
         }
         Command::Meta { .. } => {
             anyhow::bail!("`aw meta` needs its adapter; the composition root runs it")
+        }
+        Command::Metadoc { .. } => {
+            anyhow::bail!("`aw metadoc` needs its adapter; the composition root runs it")
         }
         Command::Standards { .. } => {
             anyhow::bail!("`aw standards` needs its adapters; the composition root runs it")
