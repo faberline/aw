@@ -1188,6 +1188,7 @@ fn the_binary_needs_its_arguments() {
 //   run id invalid                        -> gcp_run_id_invalid
 //   image set wrong                       -> gcp_image_set_wrong
 //   image not root digest                 -> gcp_image_not_root_digest
+//   image tag, not a digest               -> gcp_image_tag_not_digest
 //   companion image empty                 -> gcp_companion_image_empty
 //   acceptance schema changed             -> gcp_acceptance_schema_changed
 //   acceptance other run                  -> gcp_acceptance_other_run
@@ -1480,6 +1481,13 @@ fn gcp_image_not_root_digest() {
     let mut g = Gcp::good();
     g.images["sift"] = json!("ghcr.io/faberline/sift@sha256:other");
     gcp_expect(&g, "root digest", "root digest");
+}
+
+#[test]
+fn gcp_image_tag_not_digest() {
+    let mut g = Gcp::good();
+    g.images["sift"] = json!("ghcr.io/faberline/sift:0.1.2");
+    gcp_expect(&g, "tag", "root digest");
 }
 
 #[test]

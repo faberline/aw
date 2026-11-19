@@ -299,8 +299,13 @@ the workflow files as text and changes nothing.
     `functional`, `gates_step`, `acceptance_names`, `acceptance_run_name`
     (`{app}` is the app name), `maker_constants`, `candidate_gates`,
     `ci_gates`. An app without `candidate_gates` or `ci_gates` skips G1 or G2.
-- Not yet: the fixture controls (X1, X2). They are step 5. The Python controls of steps 1 and 2 each
-  have a Rust test; the table is in `tests/it/release_contract.rs`.
+- Controls (step 5): each Python control of `candidate_controls`,
+  `promotion_controls` and `standalone_controls` has a Rust test. The tables
+  are at the top of `tests/it/release_contract.rs` and in its PR2 section.
+  Not ported: the offline release fixture of the Python script (2 positive
+  and 7 negative controls). It runs `candidate.sh` and
+  `verify-release-artifacts.sh`, which stay shell scripts (aw#449, "Not in
+  scope").
 
 ## `aw release-receipt` (aw#449, step 3 of 5)
 
