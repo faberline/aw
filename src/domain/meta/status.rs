@@ -73,6 +73,12 @@ pub struct StatusReport {
     pub findings: Vec<Finding>,
 }
 
+/// Whether a document carries a self-graded field, an owner, a date or a
+/// percent-complete figure (S2, M2).
+pub fn self_graded(text: &str) -> bool {
+    BANNED_FIELD.is_match(text) || PERCENT.is_match(text)
+}
+
 /// The ROADMAP anchors that the links of `cell` name.
 pub fn roadmap_link_ids(cell: &str) -> Vec<String> {
     link_targets(cell)
@@ -85,7 +91,7 @@ pub fn roadmap_link_ids(cell: &str) -> Vec<String> {
         .collect()
 }
 
-fn parse_id(cell: &str) -> String {
+pub fn parse_id(cell: &str) -> String {
     BACKTICKED
         .captures(cell)
         .map(|c| c[1].to_string())
@@ -120,7 +126,7 @@ pub fn check(input: &DocInput, repo: &dyn MetaRepo, cargo: &CargoIndex) -> Statu
     findings.extend(heading_findings);
 
     let text = prose.join("\n");
-    if BANNED_FIELD.is_match(&text) || PERCENT.is_match(&text) {
+    if self_graded(&text) {
         findings.push(Finding::new(
             "S2",
             1,

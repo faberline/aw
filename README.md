@@ -259,10 +259,13 @@ repository root) and `core_source` (the `Cargo.lock` source prefix of the
 
 `aw metadoc check` checks the core documents of a project folder: the
 README (rules `R1`–`R12`), the `STATUS.md` (rules `S1`–`S7`: one flat support
-matrix, a gate for each supported surface, a ROADMAP link for each limit) and
-the rules that tie them (`P1`: each core document exists). It is the Rust port
-of the defer `scripts/meta/project_docs_contract.py`, in steps: the ROADMAP,
-the supporting guides and the cross-document rules follow. It only reads.
+matrix, a gate for each supported surface, a ROADMAP link for each limit), the
+`ROADMAP.md` (rules `M1`–`M6`: flat H3 items under three horizons with
+fixed fields) and the rules that tie them (`P1` each core document exists,
+`P3` a STATUS link names a known ROADMAP item, `P4` a supported surface is not
+future work). It is the Rust port of the defer
+`scripts/meta/project_docs_contract.py`, in steps: the supporting guides and
+the other cross-document rules follow. It only reads.
 
 ```bash
 aw metadoc check                 # the project folder at the top of the checkout
