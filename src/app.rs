@@ -7,6 +7,7 @@ use crate::application::ci::CiServices;
 use crate::application::meta::MetaServices;
 use crate::application::release::ReleaseServices;
 use crate::application::release_contract::ContractServices;
+use crate::application::release_receipt::ReceiptServices;
 use crate::application::repo::RepoServices;
 use crate::application::run::RunServices;
 use crate::application::standards::{RepoTarget, StandardsServices};
@@ -17,13 +18,14 @@ use crate::infrastructure::ci::{GhBranchRules, GitHubFiles, LocalFiles};
 use crate::infrastructure::meta::LocalMeta;
 use crate::infrastructure::release::{GhRelease, YamlWorkflows};
 use crate::infrastructure::release_contract::LocalContract;
+use crate::infrastructure::release_receipt::LocalFiles as ReceiptFiles;
 use crate::infrastructure::repo::TrackedFiles;
 use crate::infrastructure::run::LedgerFile;
 use crate::infrastructure::standards::{LocalCore, LocalRepo, is_checkout};
 use crate::infrastructure::work::{GhCli, GitCli, SystemClock};
 use crate::interfaces::work::cli::{
-    self, CiTarget, ContractTarget, Exit, HygieneTarget, MetaTarget, PromptTarget, ReleaseCall,
-    StandardsTarget,
+    self, CiTarget, ContractTarget, Exit, HygieneTarget, MetaTarget, PromptTarget, ReceiptTarget,
+    ReleaseCall, StandardsTarget,
 };
 
 pub fn run() -> ExitCode {
@@ -45,6 +47,9 @@ pub fn run() -> ExitCode {
     }
     if let Some(target) = parsed.release_contract_target() {
         return exit_code(release_contract(target));
+    }
+    if let Some(target) = parsed.release_receipt_target() {
+        return exit_code(release_receipt(target));
     }
     if let Some(target) = parsed.metadoc_prompt_target() {
         return exit_code(metadoc_prompt(target));
@@ -203,6 +208,25 @@ fn release_contract(target: &ContractTarget) -> Exit {
         }
     };
     cli::run_release_contract(ContractServices { repo: &repo }, target)
+}
+
+/// `aw release-receipt`: the GKE release receipt of one app.
+fn release_receipt(target: &ReceiptTarget) -> Exit {
+    let dir = target.dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    let repo = match LocalContract::open(&dir) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("aw: {err}");
+            return Exit::Nothing;
+        }
+    };
+    cli::run_release_receipt(
+        ReceiptServices {
+            repo: &repo,
+            files: &ReceiptFiles,
+        },
+        target,
+    )
 }
 
 /// `aw metadoc prompt`: the clean-reader task of one project folder.

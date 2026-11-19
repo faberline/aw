@@ -10,6 +10,7 @@ pub mod digest;
 pub mod facts;
 pub mod policy;
 pub mod ports;
+pub mod receipt;
 pub mod state;
 pub mod tag;
 pub mod workflow;

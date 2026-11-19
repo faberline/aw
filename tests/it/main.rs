@@ -9,6 +9,7 @@ mod metadoc_prompt;
 mod process;
 mod release_contract;
 mod release_gate;
+mod release_receipt;
 mod release_workflow;
 mod repo;
 mod report;

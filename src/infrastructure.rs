@@ -2,6 +2,7 @@ pub mod ci;
 pub mod meta;
 pub mod release;
 pub mod release_contract;
+pub mod release_receipt;
 pub mod repo;
 pub mod run;
 pub mod standards;
