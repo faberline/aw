@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use aw::domain::meta::config::MetaConfig;
-use aw::domain::meta::ports::{CargoIndex, MetaRepo, ReadmeInput};
+use aw::domain::meta::ports::{CargoIndex, DocInput, MetaRepo, ReadmeInput};
 use aw::domain::meta::readme;
 use aw::domain::meta::report::ReadmeReport;
 use aw::domain::work::ports::PortResult;
@@ -56,6 +56,18 @@ Read the guide.
 struct Fake;
 
 impl MetaRepo for Fake {
+    fn project_dir(&self, _target: &str) -> PortResult<String> {
+        unreachable!("the fixtures call the rules directly")
+    }
+    fn document(&self, _path: &str) -> PortResult<Option<DocInput>> {
+        unreachable!("the fixtures call the rules directly")
+    }
+    fn is_file(&self, _path: &str) -> bool {
+        false
+    }
+    fn read_text(&self, _path: &str) -> Option<String> {
+        None
+    }
     fn config(&self) -> PortResult<MetaConfig> {
         Ok(MetaConfig::default())
     }

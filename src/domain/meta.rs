@@ -3,8 +3,11 @@
 
 pub mod capability;
 pub mod config;
+pub mod doc;
 pub mod gate;
 pub mod markdown;
 pub mod ports;
+pub mod project;
 pub mod readme;
 pub mod report;
+pub mod status;

@@ -1,5 +1,6 @@
 pub mod ci;
 pub mod meta;
+pub mod metadoc;
 pub mod release;
 pub mod repo;
 pub mod run;

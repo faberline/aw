@@ -255,6 +255,25 @@ values under `[meta]`: `source_prefixes` (default `apps`, `libs`, `crates`,
 repository root) and `core_source` (the `Cargo.lock` source prefix of the
 `core` crates).
 
+## Metadoc check
+
+`aw metadoc check` checks the core documents of a project folder: the
+README (rules `R1`–`R12`), the `STATUS.md` (rules `S1`–`S7`: one flat support
+matrix, a gate for each supported surface, a ROADMAP link for each limit) and
+the rules that tie them (`P1`: each core document exists). It is the Rust port
+of the defer `scripts/meta/project_docs_contract.py`, in steps: the ROADMAP,
+the supporting guides and the cross-document rules follow. It only reads.
+
+```bash
+aw metadoc check                 # the project folder at the top of the checkout
+aw metadoc check apps/x          # a project folder, or one of its core documents
+aw metadoc check --dir ../defer --format json
+```
+
+It exits 0 for a pass, 1 for a finding and 2 for a usage error. It reads the
+`[meta]` table of `aw.toml` like `aw meta check`. The JSON document has the
+schema `metadoc-report/1`.
+
 ## Milestone release gate
 
 Three commands decide when a milestone gets a release tag. They read one
