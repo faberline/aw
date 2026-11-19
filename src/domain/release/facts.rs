@@ -2,6 +2,8 @@
 //! repository sets them under `[release.apps.<app>]` in `aw.toml`; they
 //! replace the `APPS` table of the Python scripts and `apps.sh`.
 
+use std::collections::BTreeMap;
+
 /// The workflow folder of a checkout.
 pub const WORKFLOWS: &str = ".github/workflows";
 
@@ -29,6 +31,31 @@ pub struct AppFacts {
     pub image_owner: String,
     /// The one line of the release notes that the public verifier expects.
     pub compatibility_line: String,
+    /// The folder of the app in the repository (`.` for a one-app repository).
+    pub root: String,
+    /// The GitHub repository, `owner/name`.
+    pub repository: String,
+    /// The receipt schema, `<app>.gke-release-receipt/v1`.
+    pub receipt_schema: String,
+    /// The harness that makes the receipt: `gke-acceptance` or `gcp`.
+    pub gke_backend: String,
+    /// The functional fields that a receipt carries as passed.
+    pub functional: Vec<String>,
+    /// The name of the step of the gates job that runs the declared gates.
+    pub gates_step: String,
+    /// Names (jobs and steps) the acceptance workflow must carry. Empty:
+    /// the acceptance workflow is not checked (A1).
+    pub acceptance_names: Vec<String>,
+    /// The `run-name:` line of the acceptance workflow, `{app}` for the app
+    /// name. Empty: not checked.
+    pub acceptance_run_name: String,
+    /// Constants of the receipt maker and their values, besides
+    /// `REPOSITORY` and `IMAGE_OWNER`, which come from the facts above.
+    pub maker_constants: BTreeMap<String, String>,
+    /// The lines the candidate gates job must run. Empty: not checked.
+    pub candidate_gates: Vec<String>,
+    /// The lines `ci.yml` must run. Empty: not checked.
+    pub ci_gates: Vec<String>,
 }
 
 impl AppFacts {
@@ -57,6 +84,19 @@ impl AppFacts {
             receipt_name: format!("{name}-gke-receipt.json"),
             image_owner: "ghcr.io/faberline".into(),
             compatibility_line: String::new(),
+            root: ".".into(),
+            repository: format!("faberline/{name}"),
+            receipt_schema: format!("{name}.gke-release-receipt/v1"),
+            gke_backend: "gke-acceptance".into(),
+            functional: ["readyz", "round_trip", "durability"]
+                .map(String::from)
+                .to_vec(),
+            acceptance_names: Vec::new(),
+            acceptance_run_name: String::new(),
+            maker_constants: BTreeMap::new(),
+            gates_step: String::new(),
+            candidate_gates: Vec::new(),
+            ci_gates: Vec::new(),
         }
     }
 
@@ -72,6 +112,11 @@ impl AppFacts {
         }
         names.sort();
         names
+    }
+
+    /// The job that runs the declared gates of the candidate.
+    pub fn gates_job(&self) -> String {
+        format!("{}-release-gates", self.name)
     }
 
     /// The path of the candidate workflow, from the repository root.

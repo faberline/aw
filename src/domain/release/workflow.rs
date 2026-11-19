@@ -181,3 +181,76 @@ pub fn needs(job: &str) -> Result<Vec<String>, Reason> {
     };
     Ok(found[1].split(',').map(|s| s.trim().to_string()).collect())
 }
+
+/// The lines of the one step with this name inside a job block.
+pub fn step_block(job: &str, step: &str) -> Result<String, Reason> {
+    let lines: Vec<&str> = job.lines().collect();
+    let marker = format!("- name: {step}");
+    let starts: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.trim() == marker)
+        .map(|(i, _)| i)
+        .collect();
+    if starts.len() != 1 {
+        return Err(format!(
+            "step {step:?} must appear exactly once, found {}",
+            starts.len()
+        ));
+    }
+    let start = starts[0];
+    let base = indent(lines[start]);
+    let end = lines[start + 1..]
+        .iter()
+        .position(|l| !l.trim().is_empty() && indent(l) <= base && l.trim_start().starts_with("- "))
+        .map_or(lines.len(), |i| start + 1 + i);
+    Ok(lines[start..end].join("\n"))
+}
+
+/// The body of the one `run: |` block of a step.
+pub fn run_script(step: &str) -> Result<String, Reason> {
+    let lines: Vec<&str> = step.lines().collect();
+    let starts: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| matches!(l.trim(), "run: |" | "run: |-"))
+        .map(|(i, _)| i)
+        .collect();
+    if starts.len() != 1 {
+        return Err("step must carry exactly one block run script".into());
+    }
+    let base = indent(lines[starts[0]]);
+    let body: Vec<&str> = lines[starts[0] + 1..]
+        .iter()
+        .take_while(|l| l.trim().is_empty() || indent(l) > base)
+        .copied()
+        .collect();
+    Ok(body.join("\n"))
+}
+
+/// The non-comment lines of a script, with backslash continuations joined as
+/// a shell reads them.
+pub fn logical_lines(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    for raw in text.lines() {
+        let trimmed = raw.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(head) = trimmed.strip_suffix('\\') {
+            current.push_str(head.trim_end());
+            current.push(' ');
+            continue;
+        }
+        current.push_str(trimmed);
+        if !current.trim().is_empty() {
+            out.push(current.trim().to_string());
+        }
+        current.clear();
+    }
+    if !current.trim().is_empty() {
+        out.push(current.trim().to_string());
+    }
+    out
+}
