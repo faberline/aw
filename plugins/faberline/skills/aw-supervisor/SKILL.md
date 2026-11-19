@@ -1359,6 +1359,14 @@ A review `failed` signal with a line `flake: <test> outside the diff, no trackin
 
 The issue body gives the run ids. Label only the issue that this run created. Do not rerun more than once, close issues or change other labels.
 
+**Two classes of failure on `main`.** The wait for 2 runs above is only for the infrastructure class. Decide the class of each red `main` run before you wait, and write it on the board in one line: the class, the failing test or step, and the reason (for example `product: lock error from src, not a runner problem`).
+
+- **Infrastructure class:** runner lost, network, registry, a timeout with no test name, a cancelled job. Keep the rule above: wait for the second run, and rerun once (step 5).
+- **Product class:** one failed run opens the issue at once, when the failing step names a test and the panic, the assertion or the error text comes from product code or product state: a lock or file that is not released, data loss, a wrong result, a panic in `src`. A flaky timing guess is not a reason to wait. Evidence: faberline/sift run 44444329144 failed once with "lock Sift data root ...; another Sift process may be using it ... os error 11" in `bounded_ingest_burst_survives_drain_and_journal_reopen`, and it pointed at a lock that drain did not release.
+  1. Search first (G43): an open issue with the same test name gets the run link as a comment, and no second issue.
+  2. Otherwise open the issue as G28 says (labels under G28). The title or first lines have the run id and the test name. The body asks for the cause first, and says that a retry, an ignore, a skip or a longer timeout is not the fix.
+  3. When you cannot tell the class, treat it as infrastructure and say on the board that you could not tell.
+
 ### A threshold is not a desk decision (G45)
 
 An option that widens or lowers a perf threshold, a baseline, a coverage ratchet or a timeout is never `類型：中控可決定`. It is `類型：需要使用者` (a user decision). The desk cannot weaken a gate (evidence: faberline/aw#559).
