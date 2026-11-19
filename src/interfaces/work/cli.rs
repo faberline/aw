@@ -307,6 +307,11 @@ pub struct ReceiptTarget {
     /// Backend `gcp`: the `cleanup.json` of the acceptance run.
     #[arg(long, value_name = "FILE")]
     pub cleanup: Option<PathBuf>,
+    /// Backend `gcp`, from `production_since` on: the `acceptance.json` of
+    /// the production gates. The raw evidence of each gate is in
+    /// `evidence/<gate>.json` next to it.
+    #[arg(long, value_name = "FILE")]
+    pub production_acceptance: Option<PathBuf>,
     /// A folder inside the checkout that holds `aw.toml`. Default: the
     /// current directory.
     #[arg(long, value_name = "DIR")]
@@ -826,6 +831,7 @@ pub fn run_release_receipt(services: ReceiptServices<'_>, target: &ReceiptTarget
             images: target.images.as_deref(),
             acceptance: target.acceptance.as_deref(),
             cleanup: target.cleanup.as_deref(),
+            production: target.production_acceptance.as_deref(),
         },
     };
     match release_receipt::make(services, &request) {
