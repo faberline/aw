@@ -56,6 +56,14 @@ pub struct AppFacts {
     pub candidate_gates: Vec<String>,
     /// The lines `ci.yml` must run. Empty: not checked.
     pub ci_gates: Vec<String>,
+    /// Backend `gcp`: the schema of the acceptance block of the app.
+    pub acceptance_schema: String,
+    /// Backend `gcp`: companion images that the run must carry, by name.
+    pub image_companions: Vec<String>,
+    /// Backend `gcp`: companions that the functional receipt must carry.
+    pub acceptance_companions: Vec<String>,
+    /// Backend `gcp`: the keys of the acceptance block besides `functional`.
+    pub acceptance_extra_keys: Vec<String>,
 }
 
 impl AppFacts {
@@ -97,6 +105,10 @@ impl AppFacts {
             gates_step: String::new(),
             candidate_gates: Vec::new(),
             ci_gates: Vec::new(),
+            acceptance_schema: String::new(),
+            image_companions: Vec::new(),
+            acceptance_companions: Vec::new(),
+            acceptance_extra_keys: Vec::new(),
         }
     }
 

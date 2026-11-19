@@ -50,7 +50,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use aw::domain::release::facts::AppFacts;
-use aw::domain::release::receipt::{self, Inputs, ReceiptFiles};
+use aw::domain::release::receipt::{self, GcpPaths, Inputs, ReceiptFiles};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -271,6 +271,7 @@ impl Case {
                 output: &self.output,
                 gh_run: Some(Path::new("in/gh-run.json")),
                 evidence_dir: Some(Path::new("in/evidence")),
+                gcp: GcpPaths::default(),
             },
             &mem,
         );
@@ -399,21 +400,22 @@ fn wrong_backend() {
 #[test]
 fn an_unknown_backend_is_refused_after_the_facts_agree() {
     let mut app = defer();
-    app.gke_backend = "gcp".into();
+    app.gke_backend = "bogus".into();
     let mem = Case::good().mem();
     let err = receipt::make(
         &app,
         &Inputs {
-            backend: "gcp",
+            backend: "bogus",
             candidate_manifest: Path::new("in/final-candidate-manifest.json"),
             output: Path::new("out/defer-gke-receipt.json"),
             gh_run: None,
             evidence_dir: None,
+            gcp: GcpPaths::default(),
         },
         &mem,
     )
     .unwrap_err();
-    assert!(err.to_string().contains("unknown backend: gcp"), "{err}");
+    assert!(err.to_string().contains("unknown backend: bogus"), "{err}");
 }
 
 #[test]
@@ -457,6 +459,7 @@ fn the_gh_run_and_the_evidence_folder_are_needed() {
             output: Path::new("out/defer-gke-receipt.json"),
             gh_run: None,
             evidence_dir: None,
+            gcp: GcpPaths::default(),
         },
         &mem,
     )
@@ -663,6 +666,7 @@ fn gh_the_record_must_be_valid_json_and_an_object() {
                 output: &case.output,
                 gh_run: Some(Path::new("in/gh-run.json")),
                 evidence_dir: Some(Path::new("in/evidence")),
+                gcp: GcpPaths::default(),
             },
             &mem,
         )
@@ -1030,6 +1034,7 @@ fn another_app_with_other_targets_and_jobs_is_checked_by_its_facts() {
             output: Path::new("out/defer-gke-receipt.json"),
             gh_run: Some(Path::new("in/gh-run.json")),
             evidence_dir: Some(Path::new("in/evidence")),
+            gcp: GcpPaths::default(),
         },
         &mem,
     )
@@ -1166,4 +1171,424 @@ fn the_binary_needs_its_arguments() {
         .unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("required arguments"));
+}
+
+// ---- backend gcp ------------------------------------------------------------
+//
+// Python control (sift `--self-test`, gcp backend) -> Rust test
+//
+//   positive: receipt, run id, backend, evidence keys -> gcp_good_run_makes_the_receipt
+//   run schema changed                    -> gcp_run_schema_changed
+//   project id invalid                    -> gcp_project_invalid
+//   region invalid                        -> gcp_region_invalid
+//   zone outside region                   -> gcp_zone_outside_region
+//   git sha not the candidate             -> gcp_git_sha_mismatch
+//   dirty tree                            -> gcp_git_dirty
+//   rebuilt image                         -> gcp_image_rebuilt
+//   run id invalid                        -> gcp_run_id_invalid
+//   image set wrong                       -> gcp_image_set_wrong
+//   image not root digest                 -> gcp_image_not_root_digest
+//   companion image empty                 -> gcp_companion_image_empty
+//   acceptance schema changed             -> gcp_acceptance_schema_changed
+//   acceptance other run                  -> gcp_acceptance_other_run
+//   acceptance other project              -> gcp_acceptance_other_project
+//   acceptance set wrong                  -> gcp_acceptance_set_wrong
+//   app block keys wrong                  -> gcp_block_keys_wrong
+//   block schema changed                  -> gcp_block_schema_changed
+//   a functional field not passed         -> gcp_functional_not_passed
+//   gcs object absent                     -> gcp_gcs_object_absent
+//   gcs object empty                      -> gcp_gcs_object_empty
+//   topology claimed                      -> gcp_topology_claimed
+//   cleanup schema changed                -> gcp_cleanup_schema_changed
+//   cleanup not clean                     -> gcp_cleanup_not_clean
+//   cleanup other zone                    -> gcp_cleanup_other_zone
+//   cleanup preserved wrong               -> gcp_cleanup_preserved_wrong
+//   missing flags                         -> gcp_needs_all_four_files
+
+fn sift() -> AppFacts {
+    let mut app = AppFacts::shared("sift");
+    app.gke_backend = "gcp".into();
+    app.targets = vec![
+        "x86_64-unknown-linux-musl".into(),
+        "aarch64-unknown-linux-musl".into(),
+    ];
+    app.functional = [
+        "operator_reconcile_1x1",
+        "standard_gke_cri_collector",
+        "lumen_structured_stdout_materialized",
+        "scheduled_backup",
+        "gcs_backup",
+    ]
+    .map(String::from)
+    .to_vec();
+    app.acceptance_schema = "axiom.gcp.sift.acceptance.v1".into();
+    app.image_companions = vec!["lumen".into()];
+    app.acceptance_companions = vec!["lumen".into(), "auth".into()];
+    app.acceptance_extra_keys = [
+        "schema",
+        "gcs_object",
+        "gcs_object_bytes",
+        "topology_beyond_1x1",
+    ]
+    .map(String::from)
+    .to_vec();
+    app
+}
+
+fn sift_candidate() -> Value {
+    let mut c = candidate();
+    c["repository"] = json!("faberline/sift");
+    c["workflow_path"] = json!(".github/workflows/sift-release-candidate.yml");
+    c["workflow_ref"] =
+        json!("faberline/sift/.github/workflows/sift-release-candidate.yml@refs/heads/main");
+    c["tag"] = json!("sift@0.1.2");
+    c["version"] = json!("0.1.2");
+    c["schema"] = json!("cclab.sift.candidate-manifest.v1");
+    c["image"]["repository"] = json!("ghcr.io/faberline/sift");
+    c["run_url"] = json!("https://github.com/faberline/sift/actions/runs/12345/attempts/1");
+    c["pr"]["url"] = json!("https://github.com/faberline/sift/pull/7");
+    c["jobs"] = json!({
+        "identity": "success", "build": "success", "sift-release-gates": "success",
+        "ghcr-image-and-attest": "success", "manifest": "success",
+        "verify-candidate": "success", "result": "success",
+    });
+    c
+}
+
+struct Gcp {
+    candidate: Value,
+    run: Value,
+    images: Value,
+    acceptance: Value,
+    cleanup: Value,
+}
+
+impl Gcp {
+    fn good() -> Self {
+        let functional = [
+            "operator_reconcile_1x1",
+            "standard_gke_cri_collector",
+            "lumen_structured_stdout_materialized",
+            "scheduled_backup",
+            "gcs_backup",
+        ];
+        let mut block = json!({
+            "schema": "axiom.gcp.sift.acceptance.v1",
+            "gcs_object": "gs://bucket/object",
+            "gcs_object_bytes": 10,
+            "topology_beyond_1x1": "not_claimed",
+        });
+        for f in functional {
+            block[f] = json!("passed");
+        }
+        Gcp {
+            candidate: sift_candidate(),
+            run: json!({
+                "schema": "axiom.gcp.operator.run.v1",
+                "project_id": "axiom-accept-1",
+                "region": "asia-east1",
+                "gke_zone": "asia-east1-a",
+                "git_sha": &COMMIT[..12],
+                "git_dirty": false,
+                "image_provenance": "prebuilt",
+                "run_id": "rc-99001-1",
+            }),
+            images: json!({
+                "sift": format!("ghcr.io/faberline/sift@{}", digest("root")),
+                "lumen": "ghcr.io/faberline/lumen@sha256:abc",
+            }),
+            acceptance: json!({
+                "schema": "axiom.gcp.operator.acceptance.v1",
+                "run_id": "rc-99001-1",
+                "project_id": "axiom-accept-1",
+                "region": "asia-east1",
+                "acceptance": {"sift": block, "lumen": {}, "auth": {}},
+            }),
+            cleanup: json!({
+                "schema": "axiom.gcp.operator.cleanup.v1",
+                "run_id": "rc-99001-1",
+                "status": "clean",
+                "project_id": "axiom-accept-1",
+                "region": "asia-east1",
+                "gke_zone": "asia-east1-a",
+                "preserved": {"artifact_registry": true, "preexisting_apis": true},
+            }),
+        }
+    }
+
+    fn mem(&self) -> Mem {
+        let mem = Mem::default();
+        for (name, value) in [
+            ("cand.json", &self.candidate),
+            ("run.json", &self.run),
+            ("images.json", &self.images),
+            ("acceptance.json", &self.acceptance),
+            ("cleanup.json", &self.cleanup),
+        ] {
+            mem.files.borrow_mut().insert(
+                Path::new("in").join(name),
+                serde_json::to_vec_pretty(value).expect("json"),
+            );
+        }
+        mem
+    }
+
+    fn make(&self) -> Result<receipt::Receipt, receipt::Refusal> {
+        let mem = self.mem();
+        receipt::make(
+            &sift(),
+            &Inputs {
+                backend: "gcp",
+                candidate_manifest: Path::new("in/cand.json"),
+                output: Path::new("out/sift-gke-receipt.json"),
+                gh_run: None,
+                evidence_dir: None,
+                gcp: GcpPaths {
+                    run: Some(Path::new("in/run.json")),
+                    images: Some(Path::new("in/images.json")),
+                    acceptance: Some(Path::new("in/acceptance.json")),
+                    cleanup: Some(Path::new("in/cleanup.json")),
+                },
+            },
+            &mem,
+        )
+    }
+
+    fn block(&mut self) -> &mut Value {
+        &mut self.acceptance["acceptance"]["sift"]
+    }
+}
+
+fn gcp_expect(g: &Gcp, label: &str, part: &str) {
+    match g.make() {
+        Ok(_) => panic!("{label}: the negative control was accepted"),
+        Err(r) => {
+            let text = r.to_string();
+            assert!(text.starts_with("GKE receipt refused: "), "{label}: {text}");
+            assert!(text.contains(part), "{label}: {text}");
+        }
+    }
+}
+
+#[test]
+fn gcp_good_run_makes_the_receipt() {
+    let made = Gcp::good().make().unwrap();
+    let r = &made.value;
+    assert_eq!(r["gke"]["backend"], "gcp");
+    assert_eq!(r["gke"]["run_id"], "rc-99001-1");
+    assert_eq!(r["gke"]["image_provenance"], "prebuilt");
+    assert_eq!(r["gke"]["cleanup"]["status"], "clean");
+    assert_eq!(r["gke"]["functional"]["gcs_backup"], "passed");
+    let ev = r["evidence"].as_object().unwrap();
+    let mut names: Vec<&str> = ev.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        [
+            "acceptance_sha256",
+            "cleanup_sha256",
+            "images_sha256",
+            "run_sha256"
+        ]
+    );
+}
+
+#[test]
+fn gcp_needs_all_four_files() {
+    let mem = Gcp::good().mem();
+    let err = receipt::make(
+        &sift(),
+        &Inputs {
+            backend: "gcp",
+            candidate_manifest: Path::new("in/cand.json"),
+            output: Path::new("out/sift-gke-receipt.json"),
+            gh_run: None,
+            evidence_dir: None,
+            gcp: GcpPaths::default(),
+        },
+        &mem,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("--run, --images"), "{err}");
+}
+
+#[test]
+fn gcp_run_schema_changed() {
+    let mut g = Gcp::good();
+    g.run["schema"] = json!("x");
+    gcp_expect(&g, "run schema", "run schema changed");
+}
+
+#[test]
+fn gcp_project_invalid() {
+    let mut g = Gcp::good();
+    g.run["project_id"] = json!("A");
+    gcp_expect(&g, "project", "project identity");
+}
+
+#[test]
+fn gcp_region_invalid() {
+    let mut g = Gcp::good();
+    g.run["region"] = json!("mars");
+    gcp_expect(&g, "region", "region");
+}
+
+#[test]
+fn gcp_zone_outside_region() {
+    let mut g = Gcp::good();
+    g.run["gke_zone"] = json!("us-central1-a");
+    gcp_expect(&g, "zone", "zone");
+}
+
+#[test]
+fn gcp_git_sha_mismatch() {
+    let mut g = Gcp::good();
+    g.run["git_sha"] = json!("ffffffffffff");
+    gcp_expect(&g, "sha", "clean candidate commit");
+}
+
+#[test]
+fn gcp_git_dirty() {
+    let mut g = Gcp::good();
+    g.run["git_dirty"] = json!(true);
+    gcp_expect(&g, "dirty", "clean candidate commit");
+}
+
+#[test]
+fn gcp_image_rebuilt() {
+    let mut g = Gcp::good();
+    g.run["image_provenance"] = json!("built");
+    gcp_expect(&g, "rebuilt", "rebuilt");
+}
+
+#[test]
+fn gcp_run_id_invalid() {
+    let mut g = Gcp::good();
+    g.run["run_id"] = json!("-bad");
+    gcp_expect(&g, "run id", "run ID");
+}
+
+#[test]
+fn gcp_image_set_wrong() {
+    let mut g = Gcp::good();
+    g.images = json!({"sift": format!("ghcr.io/faberline/sift@{}", digest("root"))});
+    gcp_expect(&g, "image set", "image set");
+}
+
+#[test]
+fn gcp_image_not_root_digest() {
+    let mut g = Gcp::good();
+    g.images["sift"] = json!("ghcr.io/faberline/sift@sha256:other");
+    gcp_expect(&g, "root digest", "root digest");
+}
+
+#[test]
+fn gcp_companion_image_empty() {
+    let mut g = Gcp::good();
+    g.images["lumen"] = json!("");
+    gcp_expect(&g, "companion", "companion image lumen");
+}
+
+#[test]
+fn gcp_acceptance_schema_changed() {
+    let mut g = Gcp::good();
+    g.acceptance["schema"] = json!("x");
+    gcp_expect(&g, "acceptance schema", "functional receipt schema");
+}
+
+#[test]
+fn gcp_acceptance_other_run() {
+    let mut g = Gcp::good();
+    g.acceptance["run_id"] = json!("other");
+    gcp_expect(&g, "acceptance run", "different run");
+}
+
+#[test]
+fn gcp_acceptance_other_project() {
+    let mut g = Gcp::good();
+    g.acceptance["project_id"] = json!("other-project");
+    gcp_expect(&g, "acceptance project", "identity changed");
+}
+
+#[test]
+fn gcp_acceptance_set_wrong() {
+    let mut g = Gcp::good();
+    g.acceptance["acceptance"]
+        .as_object_mut()
+        .unwrap()
+        .remove("auth");
+    gcp_expect(&g, "acceptance set", "expected acceptance set");
+}
+
+#[test]
+fn gcp_block_keys_wrong() {
+    let mut g = Gcp::good();
+    g.block()
+        .as_object_mut()
+        .unwrap()
+        .remove("scheduled_backup");
+    gcp_expect(&g, "block keys", "incomplete");
+}
+
+#[test]
+fn gcp_block_schema_changed() {
+    let mut g = Gcp::good();
+    g.block()["schema"] = json!("x");
+    gcp_expect(&g, "block schema", "acceptance schema changed");
+}
+
+#[test]
+fn gcp_functional_not_passed() {
+    let mut g = Gcp::good();
+    g.block()["gcs_backup"] = json!("failed");
+    gcp_expect(&g, "functional", "not fully passed");
+}
+
+#[test]
+fn gcp_gcs_object_absent() {
+    let mut g = Gcp::good();
+    g.block()["gcs_object"] = json!("");
+    gcp_expect(&g, "gcs object", "object evidence is absent");
+}
+
+#[test]
+fn gcp_gcs_object_empty() {
+    let mut g = Gcp::good();
+    g.block()["gcs_object_bytes"] = json!(0);
+    gcp_expect(&g, "gcs bytes", "object is empty");
+}
+
+#[test]
+fn gcp_topology_claimed() {
+    let mut g = Gcp::good();
+    g.block()["topology_beyond_1x1"] = json!("proved");
+    gcp_expect(&g, "topology", "topology");
+}
+
+#[test]
+fn gcp_cleanup_schema_changed() {
+    let mut g = Gcp::good();
+    g.cleanup["schema"] = json!("x");
+    gcp_expect(&g, "cleanup schema", "cleanup schema");
+}
+
+#[test]
+fn gcp_cleanup_not_clean() {
+    let mut g = Gcp::good();
+    g.cleanup["status"] = json!("dirty");
+    gcp_expect(&g, "cleanup status", "not clean");
+}
+
+#[test]
+fn gcp_cleanup_other_zone() {
+    let mut g = Gcp::good();
+    g.cleanup["gke_zone"] = json!("asia-east1-b");
+    gcp_expect(&g, "cleanup zone", "gke_zone");
+}
+
+#[test]
+fn gcp_cleanup_preserved_wrong() {
+    let mut g = Gcp::good();
+    g.cleanup["preserved"]["artifact_registry"] = json!(false);
+    gcp_expect(&g, "preserved", "preserve");
 }

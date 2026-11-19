@@ -18,6 +18,7 @@ use crate::application::repo::{self, RepoServices};
 use crate::application::run::{Client, Event, RunServices};
 use crate::application::standards::{self, StandardsServices};
 use crate::application::work::{self, ClaimOutcome, Outcome, Services};
+use crate::domain::release::receipt::GcpPaths;
 use crate::domain::work::ports::PortError;
 use crate::domain::work::stage::Stage;
 use crate::interfaces::run::commands;
@@ -203,7 +204,8 @@ enum Command {
     ReleaseContract(ContractTarget),
     /// Make the public, redacted GKE release receipt of one app: it binds the
     /// final candidate manifest to one `gke-acceptance` workflow run and its
-    /// evidence bundle, and writes `<app>-gke-receipt.json` and its
+    /// evidence bundle, or (backend `gcp`) to the four files of a GCP
+    /// acceptance run, and writes `<app>-gke-receipt.json` and its
     /// `.sha256`. It reads the facts from `[release.apps.<app>]` in `aw.toml`.
     /// Exit codes: 0 written, 1 refused or a usage error, 2 no checkout or no
     /// `aw.toml`.
@@ -293,6 +295,18 @@ pub struct ReceiptTarget {
     /// The downloaded `gke-acceptance-evidence-<run>-<attempt>` bundle.
     #[arg(long, value_name = "DIR")]
     pub evidence_dir: Option<PathBuf>,
+    /// Backend `gcp`: the `run.json` of the acceptance run.
+    #[arg(long, value_name = "FILE")]
+    pub run: Option<PathBuf>,
+    /// Backend `gcp`: the `images.json` of the acceptance run.
+    #[arg(long, value_name = "FILE")]
+    pub images: Option<PathBuf>,
+    /// Backend `gcp`: the `acceptance.json` of the acceptance run.
+    #[arg(long, value_name = "FILE")]
+    pub acceptance: Option<PathBuf>,
+    /// Backend `gcp`: the `cleanup.json` of the acceptance run.
+    #[arg(long, value_name = "FILE")]
+    pub cleanup: Option<PathBuf>,
     /// A folder inside the checkout that holds `aw.toml`. Default: the
     /// current directory.
     #[arg(long, value_name = "DIR")]
@@ -807,6 +821,12 @@ pub fn run_release_receipt(services: ReceiptServices<'_>, target: &ReceiptTarget
         output: &target.output,
         gh_run: target.gh_run.as_deref(),
         evidence_dir: target.evidence_dir.as_deref(),
+        gcp: GcpPaths {
+            run: target.run.as_deref(),
+            images: target.images.as_deref(),
+            acceptance: target.acceptance.as_deref(),
+            cleanup: target.cleanup.as_deref(),
+        },
     };
     match release_receipt::make(services, &request) {
         Ok(_) => {
