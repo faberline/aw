@@ -64,6 +64,9 @@ pub struct AppFacts {
     pub acceptance_companions: Vec<String>,
     /// Backend `gcp`: the keys of the acceptance block besides `functional`.
     pub acceptance_extra_keys: Vec<String>,
+    /// From this version on, the receipt needs the production acceptance
+    /// (empty: never).
+    pub production_since: String,
 }
 
 impl AppFacts {
@@ -109,6 +112,7 @@ impl AppFacts {
             image_companions: Vec::new(),
             acceptance_companions: Vec::new(),
             acceptance_extra_keys: Vec::new(),
+            production_since: String::new(),
         }
     }
 

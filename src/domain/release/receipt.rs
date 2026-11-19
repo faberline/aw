@@ -18,6 +18,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use super::facts::AppFacts;
+use super::production;
 
 const ACCEPTANCE_JOB: &str = "deploy + verify on GKE";
 const VERIFY_IMAGE_STEP: &str = "Verify prebuilt image input";
@@ -65,6 +66,8 @@ pub struct GcpPaths<'a> {
     pub images: Option<&'a Path>,
     pub acceptance: Option<&'a Path>,
     pub cleanup: Option<&'a Path>,
+    /// `--production-acceptance`, for a version from `production_since` on.
+    pub production: Option<&'a Path>,
 }
 
 /// What the caller gives.
@@ -664,6 +667,40 @@ fn gcp_gke(
     Ok((gke, evidence))
 }
 
+/// The `gke`, `evidence` and `production` objects of a production receipt.
+fn production_gke(
+    app: &AppFacts,
+    input: &Inputs<'_>,
+    candidate: &Value,
+    image: &str,
+    files: &dyn ReceiptFiles,
+) -> Checked<(Value, Value, Option<Value>)> {
+    let proof = production::load_proof(
+        files,
+        input.gcp.production,
+        candidate,
+        image,
+        &app.name,
+        &app.image_owner,
+    )
+    .map_err(Refusal)?;
+    let commit = candidate["commit"].as_str().unwrap_or_default();
+    let functional: Map<String, Value> = production::GATES
+        .iter()
+        .map(|g| ((*g).to_string(), json!("passed")))
+        .collect();
+    let gke = json!({
+        "backend": GCP,
+        "run_id": format!("prod-{}-{}", &commit[..12], &proof.hash[..12]),
+        "image": image,
+        "image_provenance": "prebuilt",
+        "functional": functional,
+        "cleanup": proof.value["cleanup"],
+    });
+    let evidence = json!({"production_acceptance_sha256": proof.hash});
+    Ok((gke, evidence, Some(proof.value)))
+}
+
 /// Make the receipt of `app`, or refuse. Nothing is written.
 pub fn make(app: &AppFacts, input: &Inputs<'_>, files: &dyn ReceiptFiles) -> Checked<Receipt> {
     if app.gke_backend != input.backend {
@@ -680,13 +717,31 @@ pub fn make(app: &AppFacts, input: &Inputs<'_>, files: &dyn ReceiptFiles) -> Che
         app.name,
         candidate["root_digest"].as_str().unwrap_or_default()
     );
-    let (gke, evidence) = match input.backend {
-        GCP => gcp_gke(app, input, &candidate, &image, files)?,
-        GKE_ACCEPTANCE => acceptance_gke(app, input, &candidate, &image, files)?,
-        other => return fail(format!("unknown backend: {other}")),
+    let production = match (app.production_since.as_str(), candidate["version"].as_str()) {
+        ("", _) => false,
+        (since, Some(version)) => match production::at_least(version, since) {
+            Some(later) => later,
+            None => return fail("candidate version is not a dotted number"),
+        },
+        _ => return fail("candidate version is absent"),
     };
-    let value = json!({
-        "schema": app.receipt_schema,
+    let (gke, evidence, proof) = if production {
+        production_gke(app, input, &candidate, &image, files)?
+    } else {
+        let (gke, evidence) = match input.backend {
+            GCP => gcp_gke(app, input, &candidate, &image, files)?,
+            GKE_ACCEPTANCE => acceptance_gke(app, input, &candidate, &image, files)?,
+            other => return fail(format!("unknown backend: {other}")),
+        };
+        (gke, evidence, None)
+    };
+    let schema = if production {
+        format!("{}.gke-release-receipt/v2", app.name)
+    } else {
+        app.receipt_schema.clone()
+    };
+    let mut value = json!({
+        "schema": schema,
         "complete": true,
         "result": "passed",
         "candidate": candidate,
@@ -700,6 +755,9 @@ pub fn make(app: &AppFacts, input: &Inputs<'_>, files: &dyn ReceiptFiles) -> Che
             "command_output_retained": false,
         },
     });
+    if let Some(proof) = proof {
+        value["production"] = proof;
+    }
     let mut data = serde_json::to_string(&value).expect("a value always serializes");
     data.push('\n');
     let data = data.into_bytes();

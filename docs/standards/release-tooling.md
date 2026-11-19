@@ -351,8 +351,32 @@ values and nothing else of them.
   input (checked on the sift `--self-test` fixtures, 2026-11-20).
 - Each Python control of the gcp backend is a Rust test; the table is in
   `tests/it/release_receipt.rs`.
-- Not ported: the `--production-acceptance` path of sift 0.2.0 and later
-  (receipt schema `sift.gke-release-receipt/v2`). It is a separate step.
+
+### Production acceptance (sift 0.2.0 and later)
+
+`aw release-receipt --app sift --backend gcp --candidate-manifest <file>
+--production-acceptance <file> --output <file>` ports the production path of
+the Python script. The key `production_since = "0.2.0"` in `aw.toml` turns it
+on. A candidate with that version or a later one needs `--production-acceptance`
+and does not use the four gcp files. An older candidate keeps the four files.
+
+- The proof is `sift.production-acceptance/v2`. It holds the 12 gates, the
+  fixed Standard GKE topology and the cleanup. Every gate has exact keys,
+  exact types and the limits of the sift 0.2.0 contract. The limits are
+  constants of `src/domain/release/production.rs`. They are not facts of
+  `aw.toml`.
+- Each gate has a raw evidence file `<acceptance dir>/evidence/<gate>.json`.
+  The file must hash to `evidence_sha256` and must equal the gate without it.
+- The receipt has schema `<app>.gke-release-receipt/v2`, a top-level
+  `production` field with the proof, and one evidence value,
+  `production_acceptance_sha256`.
+- The receipt is byte for byte the receipt of the Python script on the same
+  input (checked with the generated and the gcp reference, 2026-11-20).
+- Each Python control is a Rust test; the table is in
+  `tests/it/release_receipt.rs`.
+- Not ported: `validate_release_receipt` and
+  `verify-production-receipt.py`. They verify a finished receipt. They are not
+  the maker.
 
 ## Open points
 

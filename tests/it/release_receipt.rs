@@ -1349,6 +1349,7 @@ impl Gcp {
                     images: Some(Path::new("in/images.json")),
                     acceptance: Some(Path::new("in/acceptance.json")),
                     cleanup: Some(Path::new("in/cleanup.json")),
+                    production: None,
                 },
             },
             &mem,
@@ -1599,4 +1600,790 @@ fn gcp_cleanup_preserved_wrong() {
     let mut g = Gcp::good();
     g.cleanup["preserved"]["artifact_registry"] = json!(false);
     gcp_expect(&g, "preserved", "preserve");
+}
+
+// ---- production acceptance (sift 0.2.0) ---------------------------------------
+//
+// Python control (`production_receipt.py` `self_test`) -> Rust test
+//
+//   positive: synthetic proof validates; migration proof validates; the
+//             generator makes the v2 receipt      -> prod_good_run_makes_the_receipt,
+//                                                    prod_migration_reference_is_accepted
+//   gate omitted (x12)                    -> prod_each_gate_is_required
+//   gate image differs (x12)              -> prod_each_gate_must_bind_the_image
+//   load_24h events 863999999             -> prod_load_24h_events_short
+//   gcs outage acknowledged after RPO     -> prod_gcs_outage_acknowledged_after_rpo
+//   all-disk restore lost 901 seconds     -> prod_all_disk_restore_lost_901_seconds
+//   delivery unknown recovery             -> prod_delivery_unknown_recovery
+//   source duration 1799                  -> prod_source_duration_1799
+//   source reference origin unknown       -> prod_source_origin_unknown
+//   source not complete                   -> prod_source_not_complete
+//   source differences 1                  -> prod_source_differences
+//   source records zero                   -> prod_source_records_zero
+//   source records are booleans           -> prod_source_records_booleans
+//   source records only logs              -> prod_source_records_only_logs
+//   source signals missing alerts         -> prod_source_signals_missing_alerts
+//   rollback set on a generated origin    -> prod_rollback_on_generated_origin
+//   migration without rollback            -> prod_migration_without_rollback
+//   schema v1 reinterpreted               -> prod_schema_v1
+//   bool as float latency                 -> prod_bool_as_float
+//   NaN cost                              -> prod_nan_cost
+//   bool as int                           -> prod_bool_as_int
+//   extra key bearer_token                -> prod_extra_key_bearer_token
+//   legacy evidence without the proof     -> prod_the_proof_is_required
+//   changed evidence bytes                -> prod_changed_evidence_bytes
+//   missing raw evidence                  -> prod_missing_raw_evidence
+//
+// Not ported: `validate_release_receipt` and its three controls (release
+// schema v1, complete 1, result failed). It is the verifier of a finished
+// receipt (`verify-production-receipt.py`), not the maker.
+
+const PROD_GATES: [&str; 12] = [
+    "functional",
+    "promql_oracle",
+    "control_failover",
+    "load_30m",
+    "load_24h",
+    "node_failure",
+    "pvc_restore",
+    "gcs_outage",
+    "all_disk_restore",
+    "source_fidelity",
+    "capacity",
+    "delivery",
+];
+
+fn sift_production() -> AppFacts {
+    let mut app = sift();
+    app.production_since = "0.2.0".into();
+    app
+}
+
+fn production_candidate() -> Value {
+    let mut c = sift_candidate();
+    c["version"] = json!("0.2.0");
+    c["tag"] = json!("sift@0.2.0");
+    c
+}
+
+fn merge(target: &mut Value, extra: Value) {
+    for (k, v) in extra.as_object().unwrap() {
+        target[k] = v.clone();
+    }
+}
+
+struct Prod {
+    candidate: Value,
+    proof: Value,
+    evidence: BTreeMap<String, Vec<u8>>,
+    raw_proof: Option<Vec<u8>>,
+}
+
+impl Prod {
+    fn image() -> String {
+        format!("ghcr.io/faberline/sift@{}", digest("root"))
+    }
+
+    fn base() -> Value {
+        let image = Self::image();
+        let cluster = "c".repeat(64);
+        let mut proof = json!({
+            "schema": "sift.production-acceptance/v2",
+            "source_commit": COMMIT,
+            "image": image,
+            "cluster_identity_sha256": cluster,
+            "topology": {"gke_mode": "standard", "store_voters": 3, "control_voters": 3},
+            "cleanup": {"status": "clean"},
+            "gates": {},
+        });
+        for name in PROD_GATES {
+            proof["gates"][name] = json!({
+                "result": "passed",
+                "source_commit": COMMIT,
+                "image": image,
+                "cluster_identity_sha256": cluster,
+                "evidence_sha256": "d".repeat(64),
+            });
+        }
+        let g = &mut proof["gates"];
+        for (name, seconds) in [("load_30m", 1800_i64), ("load_24h", 86_400)] {
+            merge(
+                &mut g[name],
+                json!({
+                    "duration_seconds": seconds,
+                    "acknowledged_events": seconds * 10_000,
+                    "offered_events_per_second": 10_000,
+                    "concurrent_queries": true,
+                    "concurrent_alerts": true,
+                    "log_query_p95_seconds": 1,
+                    "metric_query_p95_seconds": 1,
+                    "trace_read_p95_seconds": 0.5,
+                    "content_differences": 0,
+                    "identity_differences": 0,
+                    "incomplete_queries": 0,
+                }),
+            );
+        }
+        for name in ["node_failure", "pvc_restore"] {
+            g[name]["lost_acknowledged_events"] = json!(0);
+        }
+        for name in ["control_failover", "pvc_restore", "all_disk_restore"] {
+            g[name]["control_state_differences"] = json!(0);
+        }
+        g["control_failover"]["leader_changes"] = json!(1);
+        merge(
+            &mut g["gcs_outage"],
+            json!({"duration_seconds": 1000, "acknowledged_after_rpo_limit": 0,
+                   "collector_pending_preserved": true, "resumed": true}),
+        );
+        merge(
+            &mut g["all_disk_restore"],
+            json!({"lost_recent_seconds": 900, "identity_differences": 0}),
+        );
+        merge(
+            &mut g["source_fidelity"],
+            json!({"duration_seconds": 1800, "reference_origin": "generated", "differences": 0,
+                   "compared_signals": ["logs", "metrics", "traces", "alerts"],
+                   "compared_records": {"logs": 100, "metrics": 100, "traces": 100, "alerts": 100},
+                   "complete": true, "gcp_rollback_configured": false}),
+        );
+        merge(
+            &mut g["capacity"],
+            json!({"measured_samples": 100, "sample_mean_bytes": 1000, "cost_cap_usd": 100,
+                   "actual_cost_usd": 90, "capacity_exceeded": false, "pvc_sized_from_samples": true}),
+        );
+        merge(
+            &mut g["delivery"],
+            json!({"webhook_p95_seconds": 30, "retry_notification_ids_unchanged": true,
+                   "unknown_recovery_notifications": 0, "mute_verified": true, "hold_verified": true}),
+        );
+        merge(
+            &mut g["promql_oracle"],
+            json!({"prometheus_version": "3.5.0", "expressions_compared": 22}),
+        );
+        proof
+    }
+
+    /// Change the proof, then write the evidence file of each gate for it.
+    fn with(change: impl FnOnce(&mut Value)) -> Self {
+        let mut proof = Self::base();
+        change(&mut proof);
+        let mut evidence = BTreeMap::new();
+        if let Some(gates) = proof["gates"].as_object_mut() {
+            for (name, gate) in gates.iter_mut() {
+                let Some(map) = gate.as_object_mut() else {
+                    continue;
+                };
+                map.remove("evidence_sha256");
+                let bytes = serde_json::to_vec(&Value::Object(map.clone())).unwrap();
+                map.insert("evidence_sha256".into(), json!(sha256(&bytes)));
+                evidence.insert(format!("{name}.json"), bytes);
+            }
+        }
+        Prod {
+            candidate: production_candidate(),
+            proof,
+            evidence,
+            raw_proof: None,
+        }
+    }
+
+    fn good() -> Self {
+        Self::with(|_| {})
+    }
+
+    fn mem(&self) -> Mem {
+        let mem = Mem::default();
+        let put = |path: &str, bytes: Vec<u8>| {
+            mem.files.borrow_mut().insert(path.into(), bytes);
+        };
+        put(
+            "in/cand.json",
+            serde_json::to_vec_pretty(&self.candidate).unwrap(),
+        );
+        put(
+            "in/prod/acceptance.json",
+            self.raw_proof
+                .clone()
+                .unwrap_or_else(|| serde_json::to_vec(&self.proof).unwrap()),
+        );
+        for (name, bytes) in &self.evidence {
+            put(&format!("in/prod/evidence/{name}"), bytes.clone());
+        }
+        mem
+    }
+
+    fn run(&self, mem: &Mem, with_proof: bool) -> Result<receipt::Receipt, receipt::Refusal> {
+        receipt::make(
+            &sift_production(),
+            &Inputs {
+                backend: "gcp",
+                candidate_manifest: Path::new("in/cand.json"),
+                output: Path::new("out/sift-gke-receipt.json"),
+                gh_run: None,
+                evidence_dir: None,
+                gcp: GcpPaths {
+                    production: with_proof.then(|| Path::new("in/prod/acceptance.json")),
+                    ..GcpPaths::default()
+                },
+            },
+            mem,
+        )
+    }
+
+    fn make(&self) -> Result<receipt::Receipt, receipt::Refusal> {
+        self.run(&self.mem(), true)
+    }
+}
+
+fn prod_expect(p: &Prod, label: &str, part: &str) {
+    match p.make() {
+        Ok(_) => panic!("{label}: the negative control was accepted"),
+        Err(r) => {
+            let text = r.to_string();
+            assert!(
+                text.starts_with("GKE receipt refused: production receipt refused: "),
+                "{label}: {text}"
+            );
+            assert!(text.contains(part), "{label}: {text}");
+        }
+    }
+}
+
+fn prod_gate(name: &str, field: &str, value: Value, part: &str) {
+    let p = Prod::with(|p| p["gates"][name][field] = value);
+    prod_expect(&p, &format!("{name}.{field}"), part);
+}
+
+#[test]
+fn prod_good_run_makes_the_receipt() {
+    let made = Prod::good().make().unwrap();
+    let r = &made.value;
+    assert_eq!(r["schema"], "sift.gke-release-receipt/v2");
+    assert_eq!(r["gke"]["backend"], "gcp");
+    let run_id = r["gke"]["run_id"].as_str().unwrap();
+    assert!(
+        run_id.starts_with(&format!("prod-{}-", &COMMIT[..12])),
+        "{run_id}"
+    );
+    assert_eq!(r["gke"]["cleanup"], json!({"status": "clean"}));
+    assert_eq!(r["gke"]["functional"].as_object().unwrap().len(), 12);
+    assert_eq!(r["production"], Prod::good().proof);
+    let ev = r["evidence"].as_object().unwrap();
+    assert_eq!(ev.len(), 1);
+    assert!(ev["production_acceptance_sha256"].as_str().unwrap().len() == 64);
+}
+
+#[test]
+fn prod_a_version_before_the_start_needs_no_proof() {
+    // 0.1.2 stays on the four gcp files: the production path is not taken.
+    let g = Gcp::good();
+    let mem = g.mem();
+    let mut app = sift();
+    app.production_since = "0.2.0".into();
+    let made = receipt::make(
+        &app,
+        &Inputs {
+            backend: "gcp",
+            candidate_manifest: Path::new("in/cand.json"),
+            output: Path::new("out/sift-gke-receipt.json"),
+            gh_run: None,
+            evidence_dir: None,
+            gcp: GcpPaths {
+                run: Some(Path::new("in/run.json")),
+                images: Some(Path::new("in/images.json")),
+                acceptance: Some(Path::new("in/acceptance.json")),
+                cleanup: Some(Path::new("in/cleanup.json")),
+                production: None,
+            },
+        },
+        &mem,
+    )
+    .unwrap();
+    assert_eq!(made.value["schema"], "sift.gke-release-receipt/v1");
+    assert!(made.value.get("production").is_none());
+}
+
+#[test]
+fn prod_migration_reference_is_accepted() {
+    let p = Prod::with(|p| {
+        merge(
+            &mut p["gates"]["source_fidelity"],
+            json!({"reference_origin": "gcp", "gcp_rollback_configured": true}),
+        );
+    });
+    assert!(p.make().is_ok());
+}
+
+#[test]
+fn prod_each_gate_is_required() {
+    for name in PROD_GATES {
+        let p = Prod::with(|p| {
+            p["gates"].as_object_mut().unwrap().remove(name);
+        });
+        prod_expect(&p, name, "every production gate is required");
+    }
+}
+
+#[test]
+fn prod_each_gate_must_bind_the_image() {
+    for name in PROD_GATES {
+        let p = Prod::with(|p| {
+            let image = format!("{}bad", Prod::image());
+            p["gates"][name]["image"] = json!(image);
+        });
+        prod_expect(&p, name, "candidate differs");
+    }
+}
+
+#[test]
+fn prod_load_24h_events_short() {
+    prod_gate(
+        "load_24h",
+        "acknowledged_events",
+        json!(863_999_999),
+        "duration or count",
+    );
+}
+
+#[test]
+fn prod_gcs_outage_acknowledged_after_rpo() {
+    prod_gate(
+        "gcs_outage",
+        "acknowledged_after_rpo_limit",
+        json!(1),
+        "stop acknowledgements",
+    );
+}
+
+#[test]
+fn prod_all_disk_restore_lost_901_seconds() {
+    prod_gate(
+        "all_disk_restore",
+        "lost_recent_seconds",
+        json!(901),
+        "all-disk restore",
+    );
+}
+
+#[test]
+fn prod_delivery_unknown_recovery() {
+    prod_gate(
+        "delivery",
+        "unknown_recovery_notifications",
+        json!(1),
+        "state semantics",
+    );
+}
+
+#[test]
+fn prod_source_duration_1799() {
+    prod_gate(
+        "source_fidelity",
+        "duration_seconds",
+        json!(1799),
+        "30-minute",
+    );
+}
+
+#[test]
+fn prod_source_origin_unknown() {
+    prod_gate(
+        "source_fidelity",
+        "reference_origin",
+        json!("unknown"),
+        "reference origin",
+    );
+}
+
+#[test]
+fn prod_source_not_complete() {
+    prod_gate(
+        "source_fidelity",
+        "complete",
+        json!(false),
+        "source coverage",
+    );
+}
+
+#[test]
+fn prod_source_differences() {
+    prod_gate("source_fidelity", "differences", json!(1), "30-minute");
+}
+
+#[test]
+fn prod_source_records_zero() {
+    let zero = json!({"logs": 0, "metrics": 0, "traces": 0, "alerts": 0});
+    prod_gate(
+        "source_fidelity",
+        "compared_records",
+        zero,
+        "compared records",
+    );
+}
+
+#[test]
+fn prod_source_records_booleans() {
+    let flags = json!({"logs": true, "metrics": true, "traces": true, "alerts": true});
+    prod_gate(
+        "source_fidelity",
+        "compared_records",
+        flags,
+        "compared records",
+    );
+}
+
+#[test]
+fn prod_source_records_only_logs() {
+    prod_gate(
+        "source_fidelity",
+        "compared_records",
+        json!({"logs": 100}),
+        "compared source counts",
+    );
+}
+
+#[test]
+fn prod_source_signals_missing_alerts() {
+    prod_gate(
+        "source_fidelity",
+        "compared_signals",
+        json!(["logs", "metrics", "traces"]),
+        "source coverage",
+    );
+}
+
+#[test]
+fn prod_rollback_on_generated_origin() {
+    prod_gate(
+        "source_fidelity",
+        "gcp_rollback_configured",
+        json!(true),
+        "rollback",
+    );
+}
+
+#[test]
+fn prod_migration_without_rollback() {
+    let p = Prod::with(|p| {
+        p["gates"]["source_fidelity"]["reference_origin"] = json!("gcp");
+    });
+    prod_expect(&p, "migration", "rollback");
+}
+
+#[test]
+fn prod_schema_v1() {
+    let p = Prod::with(|p| p["schema"] = json!("sift.production-acceptance/v1"));
+    prod_expect(&p, "schema", "acceptance schema");
+}
+
+#[test]
+fn prod_bool_as_float() {
+    prod_gate(
+        "load_30m",
+        "log_query_p95_seconds",
+        json!(true),
+        "finite numeric",
+    );
+}
+
+#[test]
+fn prod_nan_cost() {
+    let mut p = Prod::good();
+    let text = serde_json::to_string(&p.proof).unwrap();
+    let text = text.replace("\"actual_cost_usd\":90", "\"actual_cost_usd\":NaN");
+    assert!(text.contains("NaN"));
+    p.raw_proof = Some(text.into_bytes());
+    prod_expect(&p, "nan", "not valid JSON");
+}
+
+#[test]
+fn prod_bool_as_int() {
+    prod_gate(
+        "node_failure",
+        "lost_acknowledged_events",
+        json!(false),
+        "wrong type",
+    );
+}
+
+#[test]
+fn prod_extra_key_bearer_token() {
+    prod_gate(
+        "functional",
+        "bearer_token",
+        json!("must-not-be-published"),
+        "fields differ",
+    );
+}
+
+#[test]
+fn prod_the_proof_is_required() {
+    let p = Prod::good();
+    let err = p.run(&p.mem(), false).unwrap_err().to_string();
+    assert!(err.contains("--production-acceptance is required"), "{err}");
+}
+
+#[test]
+fn prod_changed_evidence_bytes() {
+    let p = Prod::good();
+    let mem = p.mem();
+    let path = Path::new("in/prod/evidence/load_24h.json");
+    let mut bytes = mem.files.borrow()[path].clone();
+    bytes.push(b' ');
+    mem.files.borrow_mut().insert(path.into(), bytes);
+    let err = p.run(&mem, true).unwrap_err().to_string();
+    assert!(err.contains("load_24h evidence bytes differ"), "{err}");
+}
+
+#[test]
+fn prod_missing_raw_evidence() {
+    let p = Prod::good();
+    let mem = p.mem();
+    mem.files
+        .borrow_mut()
+        .remove(Path::new("in/prod/evidence/load_24h.json"));
+    let err = p.run(&mem, true).unwrap_err().to_string();
+    assert!(err.contains("load_24h evidence file is missing"), "{err}");
+}
+
+#[test]
+fn prod_evidence_data_must_equal_the_gate() {
+    // The bytes hash to the proof, but say something else.
+    let p = Prod::good();
+    let mem = p.mem();
+    let path = Path::new("in/prod/evidence/delivery.json");
+    let other = serde_json::to_vec(&json!({"result": "passed"})).unwrap();
+    let mut changed = p.proof.clone();
+    changed["gates"]["delivery"]["evidence_sha256"] = json!(sha256(&other));
+    mem.files.borrow_mut().insert(path.into(), other);
+    mem.files.borrow_mut().insert(
+        "in/prod/acceptance.json".into(),
+        serde_json::to_vec(&changed).unwrap(),
+    );
+    let err = p.run(&mem, true).unwrap_err().to_string();
+    assert!(err.contains("delivery evidence data differs"), "{err}");
+}
+
+#[test]
+fn prod_the_acceptance_file_has_limits() {
+    let p = Prod::good();
+    let mem = p.mem();
+    mem.files
+        .borrow_mut()
+        .insert("in/prod/acceptance.json".into(), vec![b' '; 40_000]);
+    let err = p.run(&mem, true).unwrap_err().to_string();
+    assert!(err.contains("acceptance size"), "{err}");
+    mem.files
+        .borrow_mut()
+        .remove(Path::new("in/prod/acceptance.json"));
+    let err = p.run(&mem, true).unwrap_err().to_string();
+    assert!(err.contains("regular acceptance file"), "{err}");
+    mem.files
+        .borrow_mut()
+        .insert("in/prod/acceptance.json".into(), b"{".to_vec());
+    let err = p.run(&mem, true).unwrap_err().to_string();
+    assert!(err.contains("not valid JSON"), "{err}");
+}
+
+#[test]
+fn prod_evidence_size_and_json_limits() {
+    let p = Prod::good();
+    let mem = p.mem();
+    let path = Path::new("in/prod/evidence/capacity.json");
+    mem.files.borrow_mut().insert(path.into(), Vec::new());
+    let err = p.run(&mem, true).unwrap_err().to_string();
+    assert!(err.contains("capacity evidence size"), "{err}");
+    // Bytes that hash right but are not JSON.
+    let junk = b"junk".to_vec();
+    let mut changed = p.proof.clone();
+    changed["gates"]["capacity"]["evidence_sha256"] = json!(sha256(&junk));
+    mem.files.borrow_mut().insert(path.into(), junk);
+    mem.files.borrow_mut().insert(
+        "in/prod/acceptance.json".into(),
+        serde_json::to_vec(&changed).unwrap(),
+    );
+    let err = p.run(&mem, true).unwrap_err().to_string();
+    assert!(err.contains("capacity evidence is not valid JSON"), "{err}");
+}
+
+#[test]
+fn prod_the_other_fixed_rules_refuse() {
+    // Rules that the Python self-test names through a gate or a field.
+    type Change = Box<dyn Fn(&mut Value)>;
+    let cases: Vec<(&str, Change, &str)> = vec![
+        (
+            "source commit",
+            Box::new(|p| p["source_commit"] = json!("f".repeat(40))),
+            "source commit differs",
+        ),
+        (
+            "image",
+            Box::new(|p| p["image"] = json!("x")),
+            "candidate image differs",
+        ),
+        (
+            "topology",
+            Box::new(|p| p["topology"]["store_voters"] = json!(5)),
+            "Standard GKE topology",
+        ),
+        (
+            "mode",
+            Box::new(|p| p["topology"]["gke_mode"] = json!("autopilot")),
+            "Standard GKE topology",
+        ),
+        (
+            "voters type",
+            Box::new(|p| p["topology"]["control_voters"] = json!("3")),
+            "control voters",
+        ),
+        (
+            "cluster",
+            Box::new(|p| p["cluster_identity_sha256"] = json!("X")),
+            "cluster identity",
+        ),
+        (
+            "cleanup",
+            Box::new(|p| p["cleanup"]["status"] = json!("leaked")),
+            "acceptance cleanup",
+        ),
+        (
+            "cleanup keys",
+            Box::new(|p| p["cleanup"]["x"] = json!(1)),
+            "cleanup fields differ",
+        ),
+        (
+            "proof keys",
+            Box::new(|p| {
+                p.as_object_mut().unwrap().remove("topology");
+            }),
+            "acceptance fields differ",
+        ),
+        (
+            "gate result",
+            Box::new(|p| p["gates"]["capacity"]["result"] = json!("failed")),
+            "capacity has not passed",
+        ),
+        (
+            "gate cluster",
+            Box::new(|p| p["gates"]["capacity"]["cluster_identity_sha256"] = json!("e".repeat(64))),
+            "capacity cluster differs",
+        ),
+        (
+            "throughput",
+            Box::new(|p| p["gates"]["load_30m"]["offered_events_per_second"] = json!(9_999)),
+            "sustained throughput",
+        ),
+        (
+            "concurrent",
+            Box::new(|p| p["gates"]["load_30m"]["concurrent_alerts"] = json!(false)),
+            "concurrent work",
+        ),
+        (
+            "log latency",
+            Box::new(|p| p["gates"]["load_30m"]["log_query_p95_seconds"] = json!(2.5)),
+            "log or metric latency",
+        ),
+        (
+            "trace latency",
+            Box::new(|p| p["gates"]["load_30m"]["trace_read_p95_seconds"] = json!(1.5)),
+            "trace latency",
+        ),
+        (
+            "content",
+            Box::new(|p| p["gates"]["load_30m"]["content_differences"] = json!(1)),
+            "exact data comparison",
+        ),
+        (
+            "incomplete",
+            Box::new(|p| p["gates"]["load_30m"]["incomplete_queries"] = json!(1)),
+            "incomplete queries",
+        ),
+        (
+            "node loss",
+            Box::new(|p| p["gates"]["node_failure"]["lost_acknowledged_events"] = json!(1)),
+            "acknowledged data loss",
+        ),
+        (
+            "control state",
+            Box::new(|p| p["gates"]["pvc_restore"]["control_state_differences"] = json!(1)),
+            "control mismatch",
+        ),
+        (
+            "leader",
+            Box::new(|p| p["gates"]["control_failover"]["leader_changes"] = json!(0)),
+            "no control leader change",
+        ),
+        (
+            "outage short",
+            Box::new(|p| p["gates"]["gcs_outage"]["duration_seconds"] = json!(900)),
+            "stop acknowledgements",
+        ),
+        (
+            "outage pending",
+            Box::new(|p| p["gates"]["gcs_outage"]["resumed"] = json!(false)),
+            "collection or recovery",
+        ),
+        (
+            "restore negative",
+            Box::new(|p| p["gates"]["all_disk_restore"]["lost_recent_seconds"] = json!(-1)),
+            "all-disk restore",
+        ),
+        (
+            "samples",
+            Box::new(|p| p["gates"]["capacity"]["measured_samples"] = json!(0)),
+            "real sample measurement",
+        ),
+        (
+            "cost",
+            Box::new(|p| p["gates"]["capacity"]["actual_cost_usd"] = json!(101)),
+            "cost cap",
+        ),
+        (
+            "capacity",
+            Box::new(|p| p["gates"]["capacity"]["capacity_exceeded"] = json!(true)),
+            "PVC sizing",
+        ),
+        (
+            "webhook",
+            Box::new(|p| p["gates"]["delivery"]["webhook_p95_seconds"] = json!(61)),
+            "notification latency",
+        ),
+        (
+            "prometheus",
+            Box::new(|p| p["gates"]["promql_oracle"]["prometheus_version"] = json!("3.4.0")),
+            "Prometheus oracle",
+        ),
+        (
+            "expressions",
+            Box::new(|p| p["gates"]["promql_oracle"]["expressions_compared"] = json!(21)),
+            "Prometheus oracle",
+        ),
+    ];
+    for (label, change, part) in cases {
+        let p = Prod::with(|p| change(p));
+        prod_expect(&p, label, part);
+    }
+}
+
+#[test]
+fn prod_a_candidate_version_that_is_not_a_number_is_refused() {
+    let mut p = Prod::good();
+    p.candidate["version"] = json!("0.2.x");
+    let err = p.make().unwrap_err().to_string();
+    assert!(err.contains("version"), "{err}");
+}
+
+#[test]
+fn prod_gate_evidence_hash_must_be_a_sha256() {
+    let p = Prod::good();
+    let mem = p.mem();
+    let mut changed = p.proof.clone();
+    changed["gates"]["capacity"]["evidence_sha256"] = json!("zz");
+    mem.files.borrow_mut().insert(
+        "in/prod/acceptance.json".into(),
+        serde_json::to_vec(&changed).unwrap(),
+    );
+    let err = p.run(&mem, true).unwrap_err().to_string();
+    assert!(err.contains("capacity evidence hash"), "{err}");
 }

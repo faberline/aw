@@ -12,7 +12,7 @@ use crate::domain::work::ports::{PortError, PortResult};
 use crate::infrastructure::work::process::run;
 
 /// The keys of an app table. Any other key is an error, so a typo is caught.
-const KEYS: [&str; 26] = [
+const KEYS: [&str; 27] = [
     "onboarded",
     "scripts_dir",
     "shared_scripts",
@@ -39,6 +39,7 @@ const KEYS: [&str; 26] = [
     "image_companions",
     "acceptance_companions",
     "acceptance_extra_keys",
+    "production_since",
 ];
 
 /// A git checkout; `root` is its top folder.
@@ -170,6 +171,9 @@ fn app_facts(name: &str, table: &Table) -> PortResult<AppFacts> {
     }
     if let Some(v) = text(table, name, "acceptance_schema")? {
         app.acceptance_schema = v;
+    }
+    if let Some(v) = text(table, name, "production_since")? {
+        app.production_since = v;
     }
     if let Some(v) = list(table, name, "image_companions")? {
         app.image_companions = v;
