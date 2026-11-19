@@ -7,6 +7,7 @@ mod metadoc;
 mod metadoc_guides;
 mod metadoc_prompt;
 mod process;
+mod release_contract;
 mod release_gate;
 mod release_workflow;
 mod repo;

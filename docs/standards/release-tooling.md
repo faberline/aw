@@ -260,6 +260,31 @@ its final tag. It replaces the Python release tool that each repository had
 - The S4 checker stays as it is. It reads `Cargo.toml` and `build.rs`; it is
   the wrong place for workflow and script files.
 
+## `aw release-contract` (aw#449, step 1 of 5)
+
+`aw release-contract [--app <name>] [--dir <path>] [--format text|json]`
+checks the candidate and promotion workflows of each app in the checked
+repository against the release facts. It replaces the static part of the
+Python script `verify-release-contract.py` (defer, relay, sift). It reads
+the workflow files as text and changes nothing.
+
+- Facts come from `[release.apps.<app>]` in `aw.toml`. Keys: `onboarded`,
+  `scripts_dir`, `shared_scripts`, `targets`, `candidate_jobs`,
+  `promotion_prefix`, `takes_attempt`, `manifest_schema`, `receipt_name`,
+  `image_owner`, `compatibility_line`. An unknown key is an error.
+- Rules: C1 to C8 (candidate), P1 to P7 (promotion), A2 (an app that is not
+  onboarded has no candidate workflow), W1 (a workflow file is missing).
+  Each workflow stops at its first broken rule, as the Python script does.
+- Output: `PASS <app>`, or `FAIL <app>` with one `  <rule> <message>` line
+  for each finding. JSON schema: `release-contract-report/1`. Exit code 0
+  for a pass, 1 for a finding, 2 for a usage error.
+- One deliberate difference from Python: a step that starts with its key
+  (`- run: cargo build`) is read as a script. Python misses it, so a rebuild
+  there passed. This is stricter, not weaker.
+- Not in this step: A1, tables against `apps.sh` (T1, T2), gates (G1, G2),
+  the receipt maker (R1 to R7) and the fixture controls (X1, X2). They are
+  steps 2 to 5.
+
 ## Open points
 
 - **Candidate frame.** The final candidate manifest binds the ids and the

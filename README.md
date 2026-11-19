@@ -299,6 +299,7 @@ repository through `gh`. `--repo` (or `AW_REPO`) names it; the default is the
 aw release-status --milestone 8                       # read only; prints the assessment
 aw release-advance --milestone 8 --expected <fingerprint>   # the one write: create the tag
 aw release-preflight --tag v0.5.0-rc.1 --commit <sha>   # inside the tag run; read only
+aw release-contract --app <name>                        # static check of an app's release workflows
 ```
 
 The repository keeps two reviewed files on its default branch:

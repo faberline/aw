@@ -12,6 +12,7 @@ use crate::application::ci::{self, CiServices};
 use crate::application::meta::{self, MetaServices};
 use crate::application::metadoc;
 use crate::application::release::{self, Advanced, ReleaseServices};
+use crate::application::release_contract::{self, ContractServices};
 use crate::application::repo::{self, RepoServices};
 use crate::application::run::{Client, Event, RunServices};
 use crate::application::standards::{self, StandardsServices};
@@ -194,6 +195,11 @@ enum Command {
         #[arg(long, value_name = "SHA256")]
         expected: String,
     },
+    /// Check the candidate and promotion workflows of each app of
+    /// `[release.apps.*]` in `aw.toml` against the release contract (rules C1
+    /// to C8, P1 to P7 and A2). It only reads. Exit codes: 0 pass, 1 a rule
+    /// failed, 2 a usage error.
+    ReleaseContract(ContractTarget),
     /// Prove, inside the workflow run of a tag, that the tag is at the
     /// commit and that the milestone is ready for it. It only reads.
     ReleasePreflight {
@@ -241,6 +247,21 @@ pub enum ReleaseCall {
         commit: String,
         milestone: Option<u64>,
     },
+}
+
+/// What `aw release-contract` reads.
+#[derive(Args, Clone, Debug, Default)]
+pub struct ContractTarget {
+    /// Check only this app. Default: every app of `[release.apps.*]`.
+    #[arg(long)]
+    pub app: Option<String>,
+    /// A folder inside the checkout. Default: the current directory.
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
+    /// `text` prints one line for each app and each finding; `json` prints a
+    /// `release-contract-report/1` document.
+    #[arg(long, value_enum, default_value_t = ReportFormat::Text)]
+    pub format: ReportFormat,
 }
 
 #[derive(Subcommand)]
@@ -501,6 +522,14 @@ impl Cli {
         }
     }
 
+    /// The target of `aw release-contract`, if that is the command.
+    pub fn release_contract_target(&self) -> Option<&ContractTarget> {
+        match &self.command {
+            Command::ReleaseContract(target) => Some(target),
+            _ => None,
+        }
+    }
+
     /// The target of `aw metadoc prompt`, if that is the command.
     pub fn metadoc_prompt_target(&self) -> Option<&PromptTarget> {
         match &self.command {
@@ -699,6 +728,32 @@ pub fn run_metadoc(services: MetaServices<'_>, paths: &[String], format: ReportF
     }
 }
 
+/// Run `aw release-contract`: print the report; exit 1 when a rule fails.
+pub fn run_release_contract(services: ContractServices<'_>, target: &ContractTarget) -> Exit {
+    let report = match release_contract::check(services, target.app.as_deref()) {
+        Ok(report) => report,
+        Err(err) => {
+            eprintln!("aw: {:#}", anyhow::Error::from(err));
+            return Exit::Nothing;
+        }
+    };
+    let printed = match target.format {
+        ReportFormat::Json => print(&report),
+        ReportFormat::Text => {
+            println!("{}", release_contract::render(&report));
+            Ok(())
+        }
+    };
+    match printed {
+        Ok(()) if report.ok => Exit::Ok,
+        Ok(()) => Exit::Failed,
+        Err(err) => {
+            eprintln!("aw: {err:#}");
+            Exit::Nothing
+        }
+    }
+}
+
 /// Run `aw metadoc prompt`: print the clean-reader task, or the findings and
 /// exit 1 when the check fails.
 pub fn run_metadoc_prompt(services: MetaServices<'_>, path: &str) -> Exit {
@@ -867,6 +922,9 @@ fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit
         }
         Command::Standards { .. } => {
             anyhow::bail!("`aw standards` needs its adapters; the composition root runs it")
+        }
+        Command::ReleaseContract(_) => {
+            anyhow::bail!("`aw release-contract` needs its adapter; the composition root runs it")
         }
         Command::ReleaseStatus { .. }
         | Command::ReleaseAdvance { .. }
