@@ -137,6 +137,11 @@ pub trait Workspace {
     /// No staged, unstaged or untracked changes.
     fn is_clean(&self) -> PortResult<bool>;
     fn fetch(&self) -> PortResult<()>;
+    /// Fetch `branch` from `origin` by name into `origin/<branch>`. A clone
+    /// that fetches one branch only (a single-branch clone) does not see
+    /// the branch of a pull request through `fetch`. `false`: `origin` has
+    /// no such branch.
+    fn fetch_branch(&self, branch: &str) -> PortResult<bool>;
     fn has_local_branch(&self, branch: &str) -> PortResult<bool>;
     fn has_remote_branch(&self, branch: &str) -> PortResult<bool>;
     fn switch(&self, branch: &str) -> PortResult<()>;
