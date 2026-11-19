@@ -48,6 +48,8 @@ struct Fake {
     /// Predicates that differ from the facts: function -> answer.
     predicate: BTreeMap<String, bool>,
     maker: Maker,
+    /// The shell or the maker loader fails.
+    broken: bool,
 }
 
 impl ContractRepo for Fake {
@@ -61,12 +63,18 @@ impl ContractRepo for Fake {
         Ok(self.apps.clone())
     }
     fn shell_values(&self, _: &str, function: &str, _: &str) -> Result<Vec<String>, String> {
+        if self.broken {
+            return Err("bash is broken".into());
+        }
         if let Some(lines) = self.shell.get(function) {
             return Ok(lines.clone());
         }
         shell_answer(&self.apps[0], function).ok_or_else(|| format!("no function {function}"))
     }
     fn shell_predicate(&self, _: &str, function: &str, app: &str) -> Result<bool, String> {
+        if self.broken {
+            return Err("bash is broken".into());
+        }
         if let Some(answer) = self.predicate.get(function) {
             return Ok(*answer);
         }
@@ -77,6 +85,9 @@ impl ContractRepo for Fake {
         })
     }
     fn maker(&self, _: &str, _: &[String]) -> Result<Maker, String> {
+        if self.broken {
+            return Err("python is broken".into());
+        }
         Ok(self.maker.clone())
     }
 }
@@ -177,6 +188,7 @@ fn fake_with(candidate: &str, promotion: &str, ci: &str, acceptance: &str) -> Fa
         apps: vec![app],
         shell: BTreeMap::new(),
         predicate: BTreeMap::new(),
+        broken: false,
     }
 }
 
@@ -927,4 +939,407 @@ fn the_binary_reads_the_receipt_maker_with_python() {
     assert_eq!(out.status.code(), Some(1));
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("T2 receipt maker HARNESS_STEP"), "{text}");
+}
+
+// ---- more controls: branches of the readers and the adapters ---------------
+
+#[test]
+fn c6_the_verifier_script_is_in_the_scripts_dir() {
+    let mut fake = fake(CANDIDATE, PROMOTION);
+    fake.apps[0].scripts_dir = "elsewhere".into();
+    let found = app_check::check(&fake, None).unwrap().apps[0]
+        .findings
+        .clone();
+    assert!(
+        found
+            .iter()
+            .any(|f| f.rule == "C6" && f.message.contains("must run elsewhere/")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn c8_a_for_loop_binds_the_archives() {
+    let text = change_all(CANDIDATE, "for target in", "for item in");
+    candidate_breaks(&text, "C8", "no `for target in");
+}
+
+#[test]
+fn c8_the_matrix_must_match_the_targets() {
+    let mut fake = fake(CANDIDATE, PROMOTION);
+    fake.apps[0].targets.pop();
+    let found = app_check::check(&fake, None).unwrap().apps[0]
+        .findings
+        .clone();
+    assert!(found.iter().any(|f| f.rule == "C8"), "{found:?}");
+}
+
+#[test]
+fn a1_workflow_dispatch_is_the_trigger() {
+    let text = change_all(ACCEPTANCE, "workflow_dispatch", "manual");
+    only(
+        with_acceptance(&text),
+        "A1",
+        "workflow_dispatch trigger is missing",
+    );
+}
+
+#[test]
+fn g1_the_gates_job_must_exist() {
+    let text = change(
+        CANDIDATE,
+        "  defer-release-gates:\n",
+        "  defer-release-gate:\n",
+    );
+    let found = findings(&text, PROMOTION);
+    assert!(
+        found
+            .iter()
+            .any(|f| f.rule == "G1" && f.message.contains("job defer-release-gates is absent")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn g1_the_gates_step_must_exist_once() {
+    let text = change(
+        CANDIDATE,
+        "name: Run declared Defer gates",
+        "name: Run gates",
+    );
+    let found = findings(&text, PROMOTION);
+    assert!(
+        found
+            .iter()
+            .any(|f| f.rule == "G1" && f.message.contains("must appear exactly once")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn g1_the_gates_step_has_one_run_block() {
+    let text = change(
+        CANDIDATE,
+        "      - name: Run declared Defer gates\n        shell: bash\n        run: |",
+        "      - name: Run declared Defer gates\n        shell: bash\n        run: echo",
+    );
+    let found = findings(&text, PROMOTION);
+    assert!(
+        found
+            .iter()
+            .any(|f| f.rule == "G1" && f.message.contains("exactly one block run script")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn g2_ci_needs_an_on_block() {
+    let text = change(CI, "\non:\n", "\nwhen:\n");
+    only(with_ci(&text), "G2", "top-level key 'on' is absent");
+}
+
+#[test]
+fn c7_the_result_job_needs_a_bracketed_list() {
+    let text = change_all(CANDIDATE, "needs: [", "needs: x[");
+    let found = findings(&text, PROMOTION);
+    assert!(found.iter().any(|f| f.rule == "C7"), "{found:?}");
+}
+
+#[test]
+fn a_continued_gate_line_is_one_gate() {
+    let text = change(
+        CANDIDATE,
+        "          cargo test --locked --workspace\n",
+        "          cargo test \\\n            --locked --workspace\n",
+    );
+    assert_eq!(findings(&text, PROMOTION), vec![]);
+}
+
+#[test]
+fn t_a_failing_bash_is_a_finding() {
+    let mut fake = fake(CANDIDATE, PROMOTION);
+    fake.broken = true;
+    let found = app_check::check(&fake, None).unwrap().apps[0]
+        .findings
+        .clone();
+    assert!(
+        found
+            .iter()
+            .any(|f| f.rule == "T1" && f.message.contains("bash is broken")),
+        "{found:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|f| f.rule == "T2" && f.message.contains("python is broken")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn t1_a_predicate_may_fail() {
+    let mut fake = fake(CANDIDATE, PROMOTION);
+    fake.broken = true;
+    fake.shell.insert("x".into(), vec![]);
+    let found = app_check::check(&fake, None).unwrap().apps[0]
+        .findings
+        .clone();
+    assert!(found.iter().any(|f| f.rule == "T1"), "{found:?}");
+}
+
+#[test]
+fn t1_the_remaining_apps_sh_answers_match() {
+    for function in [
+        "release_app_root",
+        "release_app_scripts_dir",
+        "release_app_gke_backend",
+        "release_app_receipt_name",
+        "release_app_receipt_schema",
+        "release_app_promotion_input_prefix",
+        "release_app_manifest_schema",
+        "release_app_candidate_jobs",
+        "release_app_functional_fields",
+    ] {
+        table_breaks(
+            |f| {
+                f.shell.insert(function.into(), vec!["x".into()]);
+            },
+            "T1",
+            function,
+        );
+    }
+}
+
+#[test]
+fn t1_apps_sh_agrees_on_the_attempt() {
+    table_breaks(
+        |f| {
+            f.predicate
+                .insert("release_app_promotion_takes_attempt".into(), false);
+        },
+        "T1",
+        "takes a run attempt",
+    );
+}
+
+#[test]
+fn t2_a_missing_receipt_maker_is_a_finding() {
+    table_breaks(
+        |f| {
+            f.files
+                .remove("scripts/release/make-gke-release-receipt.py");
+        },
+        "T2",
+        "missing file",
+    );
+}
+
+#[test]
+fn t2_every_table_of_the_receipt_maker_is_compared() {
+    type Break = (&'static str, fn(&mut Maker));
+    let breaks: [Break; 4] = [
+        ("backend", |m| {
+            m.apps.get_mut("defer").unwrap().backend = "gcp".into()
+        }),
+        ("functional", |m| {
+            m.apps.get_mut("defer").unwrap().functional.clear()
+        }),
+        ("candidate schema", |m| {
+            m.apps.get_mut("defer").unwrap().candidate_schema = "x".into()
+        }),
+        ("receipt schema", |m| {
+            m.apps.get_mut("defer").unwrap().receipt_schema = "x".into()
+        }),
+    ];
+    for (part, change) in breaks {
+        table_breaks(|f| change(&mut f.maker), "T2", part);
+    }
+}
+
+#[test]
+fn only_one_app_can_be_checked() {
+    let fake = fake(CANDIDATE, PROMOTION);
+    let report = app_check::check(&fake, Some("defer")).unwrap();
+    assert!(report.ok);
+    let mut empty = fake;
+    empty.apps.clear();
+    assert!(app_check::check(&empty, None).is_err());
+    assert!(app_check::check(&empty, Some("defer")).is_err());
+    assert_eq!(app_check::render(&report), "PASS defer");
+}
+
+fn toml_with(extra: &str) -> String {
+    change(
+        &toml(),
+        "[release.apps.defer]\n",
+        &format!("[release.apps.defer]\n{extra}\n"),
+    )
+}
+
+fn stderr_of(toml: &str, name: &str) -> String {
+    let dir = checkout(name, toml, CANDIDATE);
+    let out = run(&dir, &[]);
+    assert_eq!(out.status.code(), Some(2));
+    String::from_utf8_lossy(&out.stderr).to_string()
+}
+
+#[test]
+fn the_binary_accepts_every_key_at_its_default() {
+    let all = r#"onboarded = true
+scripts_dir = "scripts/release"
+shared_scripts = true
+candidate_jobs = ["identity", "build", "defer-release-gates", "ghcr-image-and-attest", "manifest", "verify-candidate", "result"]
+promotion_prefix = "gke_receipt"
+takes_attempt = true
+manifest_schema = "cclab.defer.candidate-manifest.v1"
+receipt_name = "defer-gke-receipt.json"
+image_owner = "ghcr.io/faberline"
+root = "."
+repository = "faberline/defer"
+receipt_schema = "defer.gke-release-receipt/v1"
+gke_backend = "gke-acceptance"
+functional = ["readyz", "round_trip", "durability"]"#;
+    let dir = checkout("all", &toml_with(all), CANDIDATE);
+    let out = run(&dir, &[]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
+fn the_binary_rejects_a_key_of_the_wrong_type() {
+    for (extra, part) in [
+        ("scripts_dir = 3", "scripts_dir must be a non-empty string"),
+        ("onboarded = \"yes\"", "onboarded must be true or false"),
+        (
+            "functional = []",
+            "functional must be a non-empty list of strings",
+        ),
+        (
+            "ci_gates = [1]",
+            "ci_gates must be a non-empty list of strings",
+        ),
+        (
+            "candidate_gates = [\"x\"]\ngates_step = \"\"",
+            "gates_step must be a non-empty string",
+        ),
+    ] {
+        let key = extra.split(' ').next().unwrap();
+        let kept: Vec<String> = toml()
+            .lines()
+            .filter(|l| !l.starts_with(&format!("{key} =")) && !l.starts_with("gates_step ="))
+            .map(String::from)
+            .collect();
+        let err = stderr_of(
+            &change(
+                &kept.join("\n"),
+                "[release.apps.defer]\n",
+                &format!("[release.apps.defer]\n{extra}\n"),
+            ),
+            "types",
+        );
+        assert!(err.contains(part), "{extra}: {err}");
+    }
+}
+
+#[test]
+fn the_binary_rejects_a_maker_constant_that_is_not_a_string() {
+    let text = format!("{}\nBAD = 3\n", toml());
+    let err = stderr_of(&text, "const");
+    assert!(
+        err.contains("maker_constants.BAD must be a string"),
+        "{err}"
+    );
+}
+
+#[test]
+fn the_binary_rejects_an_app_that_is_not_a_table() {
+    let err = stderr_of("[release.apps]\ndefer = 3\n", "notable");
+    assert!(err.contains("release.apps.defer must be a table"), "{err}");
+}
+
+#[test]
+fn the_binary_needs_gates_step_with_candidate_gates() {
+    let text = change(&toml(), "gates_step = \"Run declared Defer gates\"\n", "");
+    let err = stderr_of(&text, "gstep");
+    assert!(err.contains("gates_step is required"), "{err}");
+}
+
+#[test]
+fn the_binary_needs_targets_of_an_onboarded_app() {
+    let err = stderr_of(
+        "[release.apps.defer]\ncompatibility_line = \"x\"\n",
+        "notargets",
+    );
+    assert!(err.contains("targets is required"), "{err}");
+}
+
+#[test]
+fn the_binary_reports_a_broken_apps_sh_and_a_broken_maker() {
+    let dir = checkout("broken", &toml(), CANDIDATE);
+    std::fs::write(dir.join("scripts/release/apps.sh"), "exit 3\n").unwrap();
+    std::fs::write(
+        dir.join("scripts/release/make-gke-release-receipt.py"),
+        "raise SystemExit(4)\n",
+    )
+    .unwrap();
+    let out = run(&dir, &[]);
+    assert_eq!(out.status.code(), Some(1));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("T1 apps.sh release_app_root defer: exit 3"),
+        "{text}"
+    );
+    assert!(
+        text.contains("T2 could not load scripts/release/make-gke-release-receipt.py"),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_binary_reports_a_predicate_that_exits_2() {
+    let dir = checkout("pred", &toml(), CANDIDATE);
+    let path = dir.join("scripts/release/apps.sh");
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        text.replace(
+            "release_app_uses_shared_scripts() {",
+            "release_app_uses_shared_scripts() { exit 2;",
+        ),
+    )
+    .unwrap();
+    let out = run(&dir, &[]);
+    assert_eq!(out.status.code(), Some(1));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("release_app_uses_shared_scripts defer: exit 2"),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_binary_reports_a_maker_that_prints_nothing_useful() {
+    let dir = checkout("junk", &toml(), CANDIDATE);
+    std::fs::write(
+        dir.join("scripts/release/make-gke-release-receipt.py"),
+        "APPS = {}\ndef candidate_schema(a): return ''\ndef receipt_schema(a): return ''\ndef final_jobs(a): return {}\n",
+    )
+    .unwrap();
+    let out = run(&dir, &[]);
+    assert_eq!(out.status.code(), Some(1));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("T2 receipt maker knows"), "{text}");
+}
+
+#[test]
+fn the_binary_outside_a_git_checkout_stops() {
+    let dir = std::env::temp_dir().join(format!("aw-it-contract-nogit-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let out = run(&dir, &[]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not inside a git checkout"));
 }
