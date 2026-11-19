@@ -12,7 +12,7 @@ use aw::domain::meta::roadmap::{self, RoadmapReport};
 use aw::domain::meta::status::{self, StatusReport};
 use aw::domain::work::ports::{PortError, PortResult};
 
-const README: &str = "# Demo
+pub(crate) const README: &str = "# Demo
 
 ## Brief
 
@@ -53,7 +53,7 @@ Read the guide.
 - [Roadmap](ROADMAP.md)
 ";
 
-const STATUS: &str = "# Demo status
+pub(crate) const STATUS: &str = "# Demo status
 
 ## Scope
 
@@ -80,7 +80,7 @@ The demo command line.
 Each gate is a command that a person can run.
 ";
 
-const ROADMAP: &str = "# Demo roadmap
+pub(crate) const ROADMAP: &str = "# Demo roadmap
 
 ## Purpose
 
@@ -109,10 +109,10 @@ No items.
 ";
 
 /// An in-memory checkout.
-struct Fake(BTreeMap<String, String>);
+pub(crate) struct Fake(pub BTreeMap<String, String>);
 
 impl Fake {
-    fn with(status: &str) -> Self {
+    pub(crate) fn with(status: &str) -> Self {
         Fake(BTreeMap::from([
             ("README.md".to_string(), README.to_string()),
             ("STATUS.md".to_string(), status.to_string()),
@@ -152,6 +152,10 @@ impl MetaRepo for Fake {
         } else {
             format!("{base}/{target}")
         };
+        let full = full
+            .strip_prefix("apps/lumen/")
+            .unwrap_or(&full)
+            .to_string();
         full == "crates/demo" || full == "scripts/gate.sh" || self.0.contains_key(&full)
     }
     fn cargo_packages(&self) -> PortResult<CargoIndex> {
@@ -722,7 +726,7 @@ fn p3_a_status_roadmap_link_names_a_known_item_and_p4_a_current_surface_is_not_f
     );
 }
 
-fn project_report(fake: &Fake) -> MetadocReport {
+pub(crate) fn project_report(fake: &Fake) -> MetadocReport {
     let config = fake.config().unwrap();
     let cargo = fake.cargo_packages().unwrap();
     project::report(vec![project::check(fake, &config, &cargo, "").unwrap()])

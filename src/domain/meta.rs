@@ -5,6 +5,8 @@ pub mod capability;
 pub mod config;
 pub mod doc;
 pub mod gate;
+pub mod guides;
+pub mod lumen;
 pub mod markdown;
 pub mod ports;
 pub mod project;

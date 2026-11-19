@@ -262,10 +262,16 @@ README (rules `R1`–`R12`), the `STATUS.md` (rules `S1`–`S7`: one flat suppor
 matrix, a gate for each supported surface, a ROADMAP link for each limit), the
 `ROADMAP.md` (rules `M1`–`M6`: flat H3 items under three horizons with
 fixed fields) and the rules that tie them (`P1` each core document exists,
-`P3` a STATUS link names a known ROADMAP item, `P4` a supported surface is not
-future work). It is the Rust port of the defer
-`scripts/meta/project_docs_contract.py`, in steps: the supporting guides and
-the other cross-document rules follow. It only reads.
+`P2` the README links STATUS and ROADMAP, `P3` a STATUS link names a known
+ROADMAP item, `P4` a supported surface is not future work, `P5` the STATUS and
+ROADMAP titles follow the README title, `P6` a guide and its README link go
+together, `P7` no reversed Lumen claim in `apps/lumen`). The supporting guides
+(`docs/protocol.md`, `clients/README.md`, `docs/indexing.md`,
+`docs/querying.md`, `docs/gke.md`, `docs/client-integration.md` and each linked
+`docs/migration-*.md`) have fixed H2 headings and one fixed table (rules
+`D1`–`D4`). It is the Rust port of the defer
+`scripts/meta/project_docs_contract.py`, in steps: the clean-reader prompt
+follows. It only reads.
 
 ```bash
 aw metadoc check                 # the project folder at the top of the checkout

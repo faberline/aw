@@ -89,7 +89,7 @@ pub fn has_table_header(rows: &[(usize, Vec<String>)], header: &[&str]) -> bool 
 
 /// The path of `rel`, read from the folder `dir`; `None` when it leaves the
 /// checkout.
-fn resolve(dir: &str, rel: &str) -> Option<String> {
+pub fn resolve(dir: &str, rel: &str) -> Option<String> {
     let mut parts: Vec<&str> = dir.split('/').filter(|p| !p.is_empty()).collect();
     for part in rel.split('/') {
         match part {
