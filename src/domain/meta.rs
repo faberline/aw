@@ -10,6 +10,7 @@ pub mod lumen;
 pub mod markdown;
 pub mod ports;
 pub mod project;
+pub mod prompt;
 pub mod readme;
 pub mod report;
 pub mod roadmap;

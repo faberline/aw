@@ -20,7 +20,7 @@ use crate::infrastructure::run::LedgerFile;
 use crate::infrastructure::standards::{LocalCore, LocalRepo, is_checkout};
 use crate::infrastructure::work::{GhCli, GitCli, SystemClock};
 use crate::interfaces::work::cli::{
-    self, CiTarget, Exit, HygieneTarget, MetaTarget, ReleaseCall, StandardsTarget,
+    self, CiTarget, Exit, HygieneTarget, MetaTarget, PromptTarget, ReleaseCall, StandardsTarget,
 };
 
 pub fn run() -> ExitCode {
@@ -39,6 +39,9 @@ pub fn run() -> ExitCode {
     }
     if let Some(target) = parsed.metadoc_target() {
         return exit_code(metadoc_check(target));
+    }
+    if let Some(target) = parsed.metadoc_prompt_target() {
+        return exit_code(metadoc_prompt(target));
     }
     if let Some(target) = parsed.standards_target() {
         return exit_code(standards_check(target));
@@ -181,6 +184,19 @@ fn metadoc_check(target: &MetaTarget) -> Exit {
         target.paths.clone()
     };
     cli::run_metadoc(MetaServices { repo: &repo }, &paths, target.format)
+}
+
+/// `aw metadoc prompt`: the clean-reader task of one project folder.
+fn metadoc_prompt(target: &PromptTarget) -> Exit {
+    let dir = target.dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    let repo = match LocalMeta::open(&dir) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("aw: {err}");
+            return Exit::Nothing;
+        }
+    };
+    cli::run_metadoc_prompt(MetaServices { repo: &repo }, &target.path)
 }
 
 /// The milestone release gate, for `--repo` or the `origin` of the current

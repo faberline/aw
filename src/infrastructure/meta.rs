@@ -75,6 +75,9 @@ fn is_guide(name: &str) -> bool {
 }
 
 impl MetaRepo for LocalMeta {
+    fn root(&self) -> String {
+        self.root.to_string_lossy().into_owned()
+    }
     fn project_dir(&self, target: &str) -> PortResult<String> {
         let mut path = PathBuf::from(target);
         if !path.is_absolute() {

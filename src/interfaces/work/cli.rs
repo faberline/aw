@@ -36,6 +36,7 @@ use crate::interfaces::run::commands;
         aw standards check checks Cargo.toml files against docs/standards/core-reuse.md\n\
         aw meta check checks project README files against the README contract\n\
         aw metadoc check checks a project's README, STATUS and ROADMAP against their contracts\n\
+        aw metadoc prompt prints the clean-reader task for a project that passes the check\n\
         aw repo check checks the tracked files for clutter (docs/standards/repo-hygiene.md)\n\
         aw release-status    assesses a milestone release; it only reads\n\
         aw release-advance   creates the next release tag when the assessment did not change\n\
@@ -304,11 +305,27 @@ enum MetaCommand {
 #[derive(Subcommand)]
 enum MetadocCommand {
     /// Check the documents of a project folder: README (R1 to R12), STATUS
-    /// (S1 to S7), ROADMAP (M1 to M6) and the rules that tie them (P1, P3,
-    /// P4). The supporting guides are checked by later rules. Repository values come
+    /// (S1 to S7), ROADMAP (M1 to M6), the supporting guides (D1 to D4) and the
+    /// rules that tie them (P1 to P7). Repository values come
     /// from the `[meta]` table of `aw.toml`. Exit codes: 0 pass, 1 a finding,
     /// 2 a usage error.
     Check(MetaTarget),
+    /// Print the clean-reader task for a project folder: a prompt that asks a
+    /// fresh reader to restate the product from its adopted documents. It
+    /// prints nothing else and exits 1 with the findings when the
+    /// deterministic check fails.
+    Prompt(PromptTarget),
+}
+
+/// What `aw metadoc prompt` reads.
+#[derive(Args, Clone, Debug, Default)]
+pub struct PromptTarget {
+    /// A project folder, or one of its core documents, relative to the top of
+    /// the checkout.
+    pub path: String,
+    /// A folder inside the checkout. Default: the current directory.
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
 }
 
 /// What `aw meta check` and `aw metadoc check` read.
@@ -479,6 +496,16 @@ impl Cli {
         match &self.command {
             Command::Metadoc {
                 command: MetadocCommand::Check(target),
+            } => Some(target),
+            _ => None,
+        }
+    }
+
+    /// The target of `aw metadoc prompt`, if that is the command.
+    pub fn metadoc_prompt_target(&self) -> Option<&PromptTarget> {
+        match &self.command {
+            Command::Metadoc {
+                command: MetadocCommand::Prompt(target),
             } => Some(target),
             _ => None,
         }
@@ -667,6 +694,28 @@ pub fn run_metadoc(services: MetaServices<'_>, paths: &[String], format: ReportF
         Ok(()) => Exit::Failed,
         Err(err) => {
             eprintln!("aw: {err:#}");
+            Exit::Nothing
+        }
+    }
+}
+
+/// Run `aw metadoc prompt`: print the clean-reader task, or the findings and
+/// exit 1 when the check fails.
+pub fn run_metadoc_prompt(services: MetaServices<'_>, path: &str) -> Exit {
+    match metadoc::prompt(services, path) {
+        Ok(metadoc::Prompt::Text(text)) => {
+            println!("{text}");
+            Exit::Ok
+        }
+        Ok(metadoc::Prompt::Findings(report)) => {
+            println!("{}", metadoc::render(&report));
+            eprintln!(
+                "error: clean-reader review is skipped until deterministic findings are fixed"
+            );
+            Exit::Failed
+        }
+        Err(err) => {
+            eprintln!("aw: {:#}", anyhow::Error::from(err));
             Exit::Nothing
         }
     }

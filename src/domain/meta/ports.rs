@@ -42,6 +42,8 @@ pub trait MetaRepo {
     fn is_file(&self, path: &str) -> bool;
     /// The text of the file at `path`, if it is a readable text file.
     fn read_text(&self, path: &str) -> Option<String>;
+    /// The absolute path of the checkout's top folder.
+    fn root(&self) -> String;
     fn config(&self) -> PortResult<MetaConfig>;
     /// Resolve a user path (a README or a folder with one) and read it.
     fn readme(&self, target: &str) -> PortResult<ReadmeInput>;

@@ -1,0 +1,89 @@
+Read only these 3 files:
+- /repo/README.md
+- /repo/STATUS.md
+- /repo/ROADMAP.md
+
+Do not inspect any other file, repository state, prior draft, conversation, or
+validator output. Do not edit anything. Compute each file SHA-256 yourself.
+The expected SHA-256 map is {"README.md": "0", "ROADMAP.md": "0", "STATUS.md": "0"}. Stop and
+report stale_input if any value differs.
+
+Act as a first-time developer who must understand what the product does, what
+is supported now, and what is future work. Return JSON only:
+
+{
+  "sha256": {
+    "README.md": "<sha256>",
+    "STATUS.md": "<sha256>",
+    "ROADMAP.md": "<sha256>"
+  },
+  "status": "reviewed | stale_input",
+  "stated": {
+    "purpose": "<what the product is>",
+    "not_for": [
+      "<explicit product boundary>"
+    ],
+    "primary_workflow": [
+      "<ordered steps>"
+    ],
+    "functional_surfaces": [
+      "<main user-facing functions>"
+    ],
+    "capabilities": [
+      {
+        "name": "<heading>",
+        "id": "<id>",
+        "sources": [
+          "<source>"
+        ]
+      }
+    ]
+  },
+  "current_support": [
+    {
+      "name": "<surface>",
+      "id": "<id>",
+      "state": "<state>",
+      "scope": "<supported scope>",
+      "limits": "<limits>"
+    }
+  ],
+  "future": {
+    "near_term": [
+      {
+        "name": "<outcome>",
+        "id": "<id>"
+      }
+    ],
+    "later": [
+      {
+        "name": "<outcome>",
+        "id": "<id>"
+      }
+    ],
+    "non_goals": [
+      {
+        "name": "<non-goal>",
+        "id": "<id>"
+      }
+    ]
+  },
+  "inferences": [
+    "<clearly labelled inference>"
+  ],
+  "cross_document_contradictions": [
+    "<statement that conflicts across documents>"
+  ],
+  "missing_details": [
+    "<detail delegated to another maintained source or still hard to find>"
+  ],
+  "comprehension_score": 0
+}
+
+List every capability, support surface, roadmap outcome, and non-goal. Keep
+document facts separate from inferences. The score is diagnostic. Do not turn
+it into the verdict. Use an integer from 0 to 100. Use 100 when a first-time
+reader can recover every requested fact, state, boundary, and document
+relationship without a contradiction. Lower the score for an omitted or
+unclear requested fact. Do not lower it only because a detail is clearly
+delegated to a named maintained source.

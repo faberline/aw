@@ -123,6 +123,9 @@ impl Fake {
 }
 
 impl MetaRepo for Fake {
+    fn root(&self) -> String {
+        "/repo".into()
+    }
     fn project_dir(&self, target: &str) -> PortResult<String> {
         Ok(target.trim_start_matches('.').to_string())
     }
@@ -152,11 +155,8 @@ impl MetaRepo for Fake {
         } else {
             format!("{base}/{target}")
         };
-        let full = full
-            .strip_prefix("apps/lumen/")
-            .unwrap_or(&full)
-            .to_string();
-        full == "crates/demo" || full == "scripts/gate.sh" || self.0.contains_key(&full)
+        let bare = full.strip_prefix("apps/lumen/").unwrap_or(&full);
+        bare == "crates/demo" || bare == "scripts/gate.sh" || self.0.contains_key(&full)
     }
     fn cargo_packages(&self) -> PortResult<CargoIndex> {
         Ok(BTreeMap::from([(
@@ -788,7 +788,7 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(status.success(), "git {args:?}");
 }
 
-fn checkout(name: &str, status: &str) -> PathBuf {
+pub(crate) fn checkout(name: &str, status: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("aw-it-metadoc-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();

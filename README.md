@@ -270,14 +270,20 @@ together, `P7` no reversed Lumen claim in `apps/lumen`). The supporting guides
 `docs/querying.md`, `docs/gke.md`, `docs/client-integration.md` and each linked
 `docs/migration-*.md`) have fixed H2 headings and one fixed table (rules
 `D1`–`D4`). It is the Rust port of the defer
-`scripts/meta/project_docs_contract.py`, in steps: the clean-reader prompt
-follows. It only reads.
+`scripts/meta/project_docs_contract.py`. It only reads.
 
 ```bash
 aw metadoc check                 # the project folder at the top of the checkout
 aw metadoc check apps/x          # a project folder, or one of its core documents
 aw metadoc check --dir ../defer --format json
+aw metadoc prompt apps/x         # the clean-reader task for a project that passes
 ```
+
+`aw metadoc prompt` runs the same check on one project folder. When it passes,
+it prints the clean-reader task: a prompt that lists the adopted documents
+with their absolute paths and SHA-256 hashes, and asks a fresh reader to
+restate the product, the support state and the future work as JSON. When the
+check fails, it prints the findings and exits 1; no prompt is made.
 
 It exits 0 for a pass, 1 for a finding and 2 for a usage error. It reads the
 `[meta]` table of `aw.toml` like `aw meta check`. The JSON document has the
