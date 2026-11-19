@@ -24,8 +24,9 @@ const VERIFY_IMAGE_STEP: &str = "Verify prebuilt image input";
 const HARNESS_STEP: &str = "Run acceptance harness";
 const PARK_STEP: &str = "Park node pool (belt and suspenders)";
 
-/// The backend of the harness that this module proves.
+/// The two backends of the harness that this module proves.
 pub const GKE_ACCEPTANCE: &str = "gke-acceptance";
+pub const GCP: &str = "gcp";
 
 /// The reason a receipt is refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,6 +58,15 @@ pub trait ReceiptFiles {
     fn write(&self, path: &Path, bytes: &[u8]) -> Result<(), String>;
 }
 
+/// The four evidence files of backend `gcp`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GcpPaths<'a> {
+    pub run: Option<&'a Path>,
+    pub images: Option<&'a Path>,
+    pub acceptance: Option<&'a Path>,
+    pub cleanup: Option<&'a Path>,
+}
+
 /// What the caller gives.
 #[derive(Clone, Debug)]
 pub struct Inputs<'a> {
@@ -65,6 +75,7 @@ pub struct Inputs<'a> {
     pub output: &'a Path,
     pub gh_run: Option<&'a Path>,
     pub evidence_dir: Option<&'a Path>,
+    pub gcp: GcpPaths<'a>,
 }
 
 /// The receipt: its bytes, the sidecar text and the name of the sidecar.
@@ -404,6 +415,255 @@ fn validate_run(
     })
 }
 
+/// What the evidence of one GCP acceptance run proves.
+struct Gcp {
+    run_id: String,
+    functional: Value,
+    cleanup: Value,
+}
+
+fn names(items: &[String]) -> Vec<&str> {
+    let mut found: Vec<&str> = items.iter().map(String::as_str).collect();
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
+fn set_of(app: &AppFacts, extra: &[String]) -> Vec<String> {
+    let mut all = vec![app.name.clone()];
+    all.extend(extra.iter().cloned());
+    all
+}
+
+fn validate_gcp(
+    app: &AppFacts,
+    candidate: &Value,
+    run: &Value,
+    images: &Value,
+    acceptance: &Value,
+    cleanup: &Value,
+) -> Checked<Gcp> {
+    if str_of(run, "schema") != Some("axiom.gcp.operator.run.v1") {
+        return fail("GKE run schema changed");
+    }
+    let project = str_of(run, "project_id").filter(|p| matches("[a-z][a-z0-9-]{4,28}[a-z0-9]", p));
+    let Some(project) = project else {
+        return fail("GKE project identity is absent or invalid");
+    };
+    let region = str_of(run, "region").filter(|r| matches("[a-z]+-[a-z]+[0-9]", r));
+    let Some(region) = region else {
+        return fail("GKE region is absent or invalid");
+    };
+    let zone =
+        str_of(run, "gke_zone").filter(|z| matches(&format!("{}-[a-z]", regex::escape(region)), z));
+    let Some(zone) = zone else {
+        return fail("GKE zone is absent or does not belong to the run region");
+    };
+    let commit = candidate["commit"].as_str().unwrap_or_default();
+    if str_of(run, "git_sha") != Some(&commit[..12]) || run.get("git_dirty") != Some(&json!(false))
+    {
+        return fail("GKE run does not bind the clean candidate commit");
+    }
+    if str_of(run, "image_provenance") != Some("prebuilt") {
+        return fail("GKE run rebuilt the candidate image");
+    }
+    let run_id = str_of(run, "run_id").filter(|r| matches("[a-z0-9][a-z0-9-]{0,39}", r));
+    let Some(run_id) = run_id else {
+        return fail("GKE run ID is invalid");
+    };
+    let root = candidate["root_digest"].as_str().unwrap_or_default();
+    let image = format!("{}/{}@{root}", app.image_owner, app.name);
+    let mut expected = set_of(app, &app.image_companions);
+    expected.sort();
+    if names(
+        &keys(images)
+            .iter()
+            .map(|k| (*k).to_string())
+            .collect::<Vec<_>>(),
+    ) != names(&expected)
+    {
+        return fail("GKE runtime image set is not the candidate plus its companions");
+    }
+    if str_of(images, &app.name) != Some(image.as_str()) {
+        return fail("GKE runtime image is not the candidate root digest");
+    }
+    for companion in &app.image_companions {
+        if str_of(images, companion).is_none_or(str::is_empty) {
+            return fail(format!("GKE companion image {companion} is absent"));
+        }
+    }
+    if str_of(acceptance, "schema") != Some("axiom.gcp.operator.acceptance.v1") {
+        return fail("GKE functional receipt schema changed");
+    }
+    if str_of(acceptance, "run_id") != Some(run_id) {
+        return fail("GKE functional receipt belongs to a different run");
+    }
+    if str_of(acceptance, "project_id") != Some(project)
+        || str_of(acceptance, "region") != Some(region)
+    {
+        return fail("GKE functional receipt identity changed");
+    }
+    let map = acceptance.get("acceptance").filter(|m| m.is_object());
+    let want = set_of(app, &app.acceptance_companions);
+    let have: Vec<String> = map
+        .map(|m| keys(m).iter().map(|k| (*k).to_string()).collect())
+        .unwrap_or_default();
+    let mut want_sorted = want.clone();
+    want_sorted.sort();
+    if map.is_none() || names(&have) != names(&want_sorted) {
+        return fail("GKE functional receipt does not carry the expected acceptance set");
+    }
+    let block = map.and_then(|m| m.get(&app.name)).filter(|b| b.is_object());
+    let mut block_keys: Vec<String> = app.functional.clone();
+    block_keys.extend(app.acceptance_extra_keys.iter().cloned());
+    let have_block: Vec<String> = block
+        .map(|b| keys(b).iter().map(|k| (*k).to_string()).collect())
+        .unwrap_or_default();
+    let Some(block) = block.filter(|_| names(&have_block) == names(&block_keys)) else {
+        return fail(format!("{} GKE functional result is incomplete", app.name));
+    };
+    if str_of(block, "schema") != Some(app.acceptance_schema.as_str()) {
+        return fail(format!("{} GKE acceptance schema changed", app.name));
+    }
+    if app
+        .functional
+        .iter()
+        .any(|f| str_of(block, f) != Some("passed"))
+    {
+        return fail(format!(
+            "{} GKE functional result is not fully passed",
+            app.name
+        ));
+    }
+    if str_of(block, "gcs_object").is_none_or(str::is_empty) {
+        return fail(format!("{} GKE backup object evidence is absent", app.name));
+    }
+    if positive_int(block.get("gcs_object_bytes")).is_none() {
+        return fail(format!("{} GKE backup object is empty", app.name));
+    }
+    if str_of(block, "topology_beyond_1x1") != Some("not_claimed") {
+        return fail(format!(
+            "{} GKE receipt claims a topology the harness does not prove",
+            app.name
+        ));
+    }
+    if str_of(cleanup, "schema") != Some("axiom.gcp.operator.cleanup.v1") {
+        return fail("GKE cleanup schema changed");
+    }
+    if str_of(cleanup, "run_id") != Some(run_id) || str_of(cleanup, "status") != Some("clean") {
+        return fail("GKE cleanup is not clean for this run");
+    }
+    for (field, expected) in [
+        ("project_id", project),
+        ("region", region),
+        ("gke_zone", zone),
+    ] {
+        if str_of(cleanup, field) != Some(expected) {
+            return fail(format!("GKE cleanup {field} belongs to a different run"));
+        }
+    }
+    if cleanup.get("preserved")
+        != Some(&json!({"artifact_registry": true, "preexisting_apis": true}))
+    {
+        return fail("GKE cleanup did not preserve pre-existing resources");
+    }
+    let functional: Map<String, Value> = app
+        .functional
+        .iter()
+        .map(|f| (f.clone(), json!("passed")))
+        .collect();
+    Ok(Gcp {
+        run_id: run_id.to_string(),
+        functional: Value::Object(functional),
+        cleanup: json!({
+            "schema": "axiom.gcp.operator.cleanup.v1",
+            "status": "clean",
+            "preserved": {"artifact_registry": true, "preexisting_apis": true},
+        }),
+    })
+}
+
+/// The `gke` and `evidence` objects of backend `gke-acceptance`.
+fn acceptance_gke(
+    app: &AppFacts,
+    input: &Inputs<'_>,
+    candidate: &Value,
+    image: &str,
+    files: &dyn ReceiptFiles,
+) -> Checked<(Value, Value)> {
+    let (Some(gh_run), Some(evidence_dir)) = (input.gh_run, input.evidence_dir) else {
+        return fail("backend gke-acceptance needs --gh-run and --evidence-dir");
+    };
+    let (gh_raw, gh_json) = load_json(files, gh_run, "gh run record")?;
+    let proved = validate_run(app, candidate, &gh_json, evidence_dir, files)?;
+    let mut evidence = proved.evidence;
+    evidence["gh_run_sha256"] = json!(sha256(&gh_raw));
+    let functional: Map<String, Value> = app
+        .functional
+        .iter()
+        .map(|f| (f.clone(), json!("passed")))
+        .collect();
+    let gke = json!({
+        "backend": GKE_ACCEPTANCE,
+        "run_id": proved.run_id,
+        "run_url": proved.run_url,
+        "image": image,
+        "image_provenance": "prebuilt",
+        "functional": functional,
+        "cleanup": {
+            "schema": "axiom.gke-harness.cleanup.v1",
+            "status": "clean",
+            "namespace_deleted": true,
+            "node_pool_parked": true,
+        },
+    });
+    Ok((gke, evidence))
+}
+
+/// The `gke` and `evidence` objects of backend `gcp`.
+fn gcp_gke(
+    app: &AppFacts,
+    input: &Inputs<'_>,
+    candidate: &Value,
+    image: &str,
+    files: &dyn ReceiptFiles,
+) -> Checked<(Value, Value)> {
+    let g = &input.gcp;
+    let (Some(run), Some(images), Some(acceptance), Some(cleanup)) =
+        (g.run, g.images, g.acceptance, g.cleanup)
+    else {
+        return fail("backend gcp needs --run, --images, --acceptance, and --cleanup");
+    };
+    let (run_raw, run_json) = load_json(files, run, "GKE run evidence")?;
+    let (images_raw, images_json) = load_json(files, images, "GKE image evidence")?;
+    let (acceptance_raw, acceptance_json) =
+        load_json(files, acceptance, "GKE functional evidence")?;
+    let (cleanup_raw, cleanup_json) = load_json(files, cleanup, "GKE cleanup evidence")?;
+    let proved = validate_gcp(
+        app,
+        candidate,
+        &run_json,
+        &images_json,
+        &acceptance_json,
+        &cleanup_json,
+    )?;
+    let gke = json!({
+        "backend": GCP,
+        "run_id": proved.run_id,
+        "image": image,
+        "image_provenance": "prebuilt",
+        "functional": proved.functional,
+        "cleanup": proved.cleanup,
+    });
+    let evidence = json!({
+        "run_sha256": sha256(&run_raw),
+        "images_sha256": sha256(&images_raw),
+        "acceptance_sha256": sha256(&acceptance_raw),
+        "cleanup_sha256": sha256(&cleanup_raw),
+    });
+    Ok((gke, evidence))
+}
+
 /// Make the receipt of `app`, or refuse. Nothing is written.
 pub fn make(app: &AppFacts, input: &Inputs<'_>, files: &dyn ReceiptFiles) -> Checked<Receipt> {
     if app.gke_backend != input.backend {
@@ -412,48 +672,25 @@ pub fn make(app: &AppFacts, input: &Inputs<'_>, files: &dyn ReceiptFiles) -> Che
             app.name, app.gke_backend, input.backend
         ));
     }
-    if input.backend != GKE_ACCEPTANCE {
-        return fail(format!("unknown backend: {}", input.backend));
-    }
     let (raw, manifest) = load_json(files, input.candidate_manifest, "candidate manifest")?;
     let candidate = validate_candidate(app, &raw, &manifest)?;
-    let (Some(gh_run), Some(evidence_dir)) = (input.gh_run, input.evidence_dir) else {
-        return fail("backend gke-acceptance needs --gh-run and --evidence-dir");
-    };
-    let (gh_raw, gh_json) = load_json(files, gh_run, "gh run record")?;
-    let proved = validate_run(app, &candidate, &gh_json, evidence_dir, files)?;
-    let mut evidence = proved.evidence;
-    evidence["gh_run_sha256"] = json!(sha256(&gh_raw));
     let image = format!(
         "{}/{}@{}",
         app.image_owner,
         app.name,
         candidate["root_digest"].as_str().unwrap_or_default()
     );
-    let functional: Map<String, Value> = app
-        .functional
-        .iter()
-        .map(|f| (f.clone(), json!("passed")))
-        .collect();
+    let (gke, evidence) = match input.backend {
+        GCP => gcp_gke(app, input, &candidate, &image, files)?,
+        GKE_ACCEPTANCE => acceptance_gke(app, input, &candidate, &image, files)?,
+        other => return fail(format!("unknown backend: {other}")),
+    };
     let value = json!({
         "schema": app.receipt_schema,
         "complete": true,
         "result": "passed",
         "candidate": candidate,
-        "gke": {
-            "backend": GKE_ACCEPTANCE,
-            "run_id": proved.run_id,
-            "run_url": proved.run_url,
-            "image": image,
-            "image_provenance": "prebuilt",
-            "functional": functional,
-            "cleanup": {
-                "schema": "axiom.gke-harness.cleanup.v1",
-                "status": "clean",
-                "namespace_deleted": true,
-                "node_pool_parked": true,
-            },
-        },
+        "gke": gke,
         "evidence": evidence,
         "redaction": {
             "kubeconfig_retained": false,

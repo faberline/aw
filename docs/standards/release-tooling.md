@@ -299,8 +299,7 @@ the workflow files as text and changes nothing.
     `functional`, `gates_step`, `acceptance_names`, `acceptance_run_name`
     (`{app}` is the app name), `maker_constants`, `candidate_gates`,
     `ci_gates`. An app without `candidate_gates` or `ci_gates` skips G1 or G2.
-- Not yet: the `gcp` backend of the receipt maker and the fixture controls
-  (X1, X2). They are steps 4 and 5. The Python controls of steps 1 and 2 each
+- Not yet: the fixture controls (X1, X2). They are step 5. The Python controls of steps 1 and 2 each
   have a Rust test; the table is in `tests/it/release_contract.rs`.
 
 ## `aw release-receipt` (aw#449, step 3 of 5)
@@ -329,6 +328,26 @@ a hyphen.)
   files are read before the sidecar check, not after.
 - Each negative control of the Python `--self-test` (31) is a Rust test; the
   table is in `tests/it/release_receipt.rs`.
+
+### Backend `gcp` (step 4 of 5)
+
+`aw release-receipt --app <name> --backend gcp --candidate-manifest <file>
+--run <file> --images <file> --acceptance <file> --cleanup <file>
+--output <file>` ports the `gcp` backend of the same script (sift). It
+checks the four files of one GCP acceptance run: `run.json`, `images.json`,
+`acceptance.json` and `cleanup.json`. The receipt keeps their four SHA-256
+values and nothing else of them.
+
+- The backend of the app is `gke_backend = "gcp"` in `aw.toml`.
+- Four new keys carry what the Python table had: `acceptance_schema`,
+  `image_companions`, `acceptance_companions`, `acceptance_extra_keys`.
+  An app with backend `gke-acceptance` does not need them.
+- The receipt is byte for byte the receipt of the Python script on the same
+  input (checked on the sift `--self-test` fixtures, 2026-11-20).
+- Each Python control of the gcp backend is a Rust test; the table is in
+  `tests/it/release_receipt.rs`.
+- Not ported: the `--production-acceptance` path of sift 0.2.0 and later
+  (receipt schema `sift.gke-release-receipt/v2`). It is a separate step.
 
 ## Open points
 

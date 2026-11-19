@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crate::domain::release::app_check::ContractRepo;
-use crate::domain::release::receipt::{self, Inputs, ReceiptFiles};
+use crate::domain::release::receipt::{self, GcpPaths, Inputs, ReceiptFiles};
 
 pub use crate::domain::release::receipt::Receipt;
 
@@ -23,6 +23,7 @@ pub struct ReceiptRequest<'a> {
     pub output: &'a Path,
     pub gh_run: Option<&'a Path>,
     pub evidence_dir: Option<&'a Path>,
+    pub gcp: GcpPaths<'a>,
 }
 
 /// Make the receipt and write it with its `.sha256` sidecar. The `Err` is
@@ -45,6 +46,7 @@ pub fn make(s: ReceiptServices<'_>, request: &ReceiptRequest<'_>) -> Result<Rece
             output: request.output,
             gh_run: request.gh_run,
             evidence_dir: request.evidence_dir,
+            gcp: request.gcp,
         },
         s.files,
     )
