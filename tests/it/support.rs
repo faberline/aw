@@ -251,6 +251,12 @@ impl Tracker for FakeTracker {
         Ok(())
     }
 
+    fn edit_issue_body(&self, issue: u64, body: &str) -> PortResult<()> {
+        self.record(format!("edit_issue_body #{issue}"));
+        self.bodies.borrow_mut().insert(issue, body.into());
+        Ok(())
+    }
+
     fn remove_label(&self, issue: u64, label: &str) -> PortResult<()> {
         self.record(format!("remove_label #{issue} {label}"));
         for i in self

@@ -47,6 +47,8 @@ pub trait Tracker {
     fn edit_comment(&self, id: u64, body: &str) -> PortResult<()>;
     fn delete_comment(&self, id: u64) -> PortResult<()>;
     fn add_labels(&self, issue: u64, labels: &[String]) -> PortResult<()>;
+    /// Replace the body of an issue.
+    fn edit_issue_body(&self, issue: u64, body: &str) -> PortResult<()>;
     fn remove_label(&self, issue: u64, label: &str) -> PortResult<()>;
     /// The body, the labels and the milestone number of one issue.
     fn issue_detail(&self, issue: u64) -> PortResult<IssueDetail>;

@@ -231,7 +231,7 @@ pub fn waits_on(text: &str, made: &[(u64, String)]) -> Vec<u64> {
 /// A `Waits for:` that follows a sentence in the same line (`Part of #7.
 /// Waits for: #9`) moves to a line of its own. The child text that an agent
 /// writes made this form (faberline/aw#601).
-fn own_line_waits(line: &str) -> Vec<String> {
+pub(super) fn own_line_waits(line: &str) -> Vec<String> {
     let lower = line.to_ascii_lowercase();
     if let Some(at) = lower.find("waits for:")
         && at > 0
