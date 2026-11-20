@@ -445,10 +445,13 @@ Read code through the GitHub API when you do not need the clone:
   Too large: <one line that says why>.
 
   ## Child: <title of the first child>
-  <what it must do, its acceptance criteria, and `Waits for: <title of an earlier child>` when
-  it needs another child first (`aw` replaces the title with the issue
-  number of that child, so list the children in the order of the work;
-  for a prerequisite outside the split write `Waits for: #<number>`)>
+  <what it must do, its acceptance criteria, and `Waits for: <exact title of
+  another child>` on its own line when it needs that child first (`aw`
+  makes the children in the order of the waits, replaces each title with
+  the issue number of that child, and adds `blocked` and a comment while
+  that child is open; a title that names no child of this split, or a circle
+  of waits, fails the split and `aw` makes no child; for a prerequisite
+  outside the split write `Waits for: #<number>`)>
 
   ## Child: <title of the second child>
   ...

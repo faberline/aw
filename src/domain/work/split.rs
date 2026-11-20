@@ -146,6 +146,88 @@ pub fn number_waits(text: &str, made: &[(u64, String)]) -> String {
     lines.join("\n")
 }
 
+/// The lines of a child text that hold a `Waits for:` with no issue number:
+/// their text after the colon.
+fn title_waits(text: &str) -> Vec<String> {
+    text.lines()
+        .flat_map(own_line_waits)
+        .filter_map(|line| {
+            let rest = line
+                .trim_start()
+                .strip_prefix_ignore_case("waits for:")?
+                .to_string();
+            (!rest.contains('#')).then(|| rest.trim().trim_end_matches('.').to_lowercase())
+        })
+        .collect()
+}
+
+/// The positions of the children whose title a waits text names, except
+/// the child itself.
+fn named(children: &[Child], want: &str, me: usize) -> Vec<usize> {
+    children
+        .iter()
+        .enumerate()
+        .filter(|(at, c)| {
+            *at != me && !c.title.is_empty() && want.contains(&c.title.to_lowercase())
+        })
+        .map(|(at, _)| at)
+        .collect()
+}
+
+/// The order in which to make the children, so that each child is made after
+/// the children it waits for and `aw` can write their numbers into its body.
+/// A `Waits for:` line with no number must name a sibling; a line that names
+/// none, or a circle of waits, is an error and nothing is made.
+pub fn creation_order(children: &[Child]) -> Result<Vec<usize>, String> {
+    let mut deps: Vec<Vec<usize>> = Vec::new();
+    for (me, child) in children.iter().enumerate() {
+        let mut mine = Vec::new();
+        for want in title_waits(&child.body) {
+            let found = named(children, &want, me);
+            if found.is_empty() {
+                return Err(format!(
+                    "child {} (`{}`) has a `Waits for:` line with no issue number that names \
+                     no other child (`{}`). Write the exact title of a child of this split, \
+                     or `Waits for: #<number>` for an issue outside it",
+                    me + 1,
+                    child.title,
+                    want
+                ));
+            }
+            mine.extend(found);
+        }
+        deps.push(mine);
+    }
+    let mut order: Vec<usize> = Vec::new();
+    while order.len() < children.len() {
+        let next = (0..children.len())
+            .find(|at| !order.contains(at) && deps[*at].iter().all(|d| order.contains(d)));
+        let Some(at) = next else {
+            return Err(
+                "the children wait for each other in a circle; no child can come \
+                        first. Remove one `Waits for:` line"
+                    .to_string(),
+            );
+        };
+        order.push(at);
+    }
+    Ok(order)
+}
+
+/// The numbers of the earlier children that the `Waits for: <title>` lines of
+/// a child text name. These are the issues that the child waits for.
+pub fn waits_on(text: &str, made: &[(u64, String)]) -> Vec<u64> {
+    let mut numbers: Vec<u64> = Vec::new();
+    for want in title_waits(text) {
+        for (n, title) in made {
+            if !title.is_empty() && want.contains(&title.to_lowercase()) && !numbers.contains(n) {
+                numbers.push(*n);
+            }
+        }
+    }
+    numbers
+}
+
 /// A `Waits for:` that follows a sentence in the same line (`Part of #7.
 /// Waits for: #9`) moves to a line of its own. The child text that an agent
 /// writes made this form (faberline/aw#601).
@@ -295,5 +377,64 @@ mod tests {
             &made,
         );
         assert_eq!(out, "Text\nWaits for: #21\nWaits for: #5\nWaits for: other");
+    }
+
+    fn kids(list: &[(&str, &str)]) -> Vec<Child> {
+        list.iter()
+            .map(|(t, b)| Child {
+                title: t.to_string(),
+                body: b.to_string(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn children_without_waits_keep_their_order() {
+        let c = kids(&[("A", "Text."), ("B", "Text.")]);
+        assert_eq!(creation_order(&c).unwrap(), [0, 1]);
+    }
+
+    #[test]
+    fn a_child_is_made_after_the_child_it_waits_for() {
+        let c = kids(&[
+            ("Use it", "Text.\nWaits for: Add the port, Add the adapter"),
+            ("Add the port", "Text."),
+            ("Add the adapter", "Text.\nWaits for: Add the port"),
+        ]);
+        assert_eq!(creation_order(&c).unwrap(), [1, 2, 0]);
+    }
+
+    #[test]
+    fn a_waits_title_that_names_no_child_is_an_error() {
+        let c = kids(&[("A", "Text.\nWaits for: the port"), ("B", "Text.")]);
+        let err = creation_order(&c).unwrap_err();
+        assert!(err.contains("child 1 (`A`)"), "{err}");
+        assert!(err.contains("names no other child"), "{err}");
+        // A child does not wait for itself.
+        let own = kids(&[("A", "Text.\nWaits for: A"), ("B", "Text.")]);
+        assert!(creation_order(&own).is_err());
+    }
+
+    #[test]
+    fn a_circle_of_waits_is_an_error() {
+        let c = kids(&[("A", "Waits for: B"), ("B", "Waits for: A")]);
+        let err = creation_order(&c).unwrap_err();
+        assert!(err.contains("in a circle"), "{err}");
+    }
+
+    #[test]
+    fn a_numbered_waits_line_needs_no_sibling() {
+        let c = kids(&[("A", "Waits for: #5, other/repo#2"), ("B", "Text.")]);
+        assert_eq!(creation_order(&c).unwrap(), [0, 1]);
+    }
+
+    #[test]
+    fn the_issues_a_child_waits_for_are_the_numbers_of_its_titles() {
+        let made = vec![(21, "Add the port".to_string()), (22, "Other".to_string())];
+        assert_eq!(
+            waits_on("Waits for: Add the port.\nWaits for: #5", &made),
+            [21]
+        );
+        assert!(waits_on("Text.", &made).is_empty());
     }
 }

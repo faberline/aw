@@ -11,7 +11,9 @@ use crate::domain::work::issue::agent_label;
 use crate::domain::work::ports::{NewIssue, RequiredChecks, judge_required};
 use crate::domain::work::pull_request::{body_closing, find_for_issue};
 use crate::domain::work::signal::{Outcome, Signal, names_spec_gap};
-use crate::domain::work::split::{SplitPlan, child_body, child_parent, number_waits, replaced_by};
+use crate::domain::work::split::{
+    SplitPlan, child_body, child_parent, creation_order, number_waits, replaced_by, waits_on,
+};
 use crate::domain::work::stage::Stage;
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -200,6 +202,9 @@ fn split(
 ) -> Result<Reported> {
     let issue = claim.issue;
     let plan = SplitPlan::parse(message).map_err(|why| anyhow::anyhow!("#{issue}: {why}"))?;
+    // A `Waits for:` line that names no child fails here, before any child
+    // exists: the spec step must not leave a line with no number.
+    let order = creation_order(&plan.children).map_err(|why| anyhow::anyhow!("#{issue}: {why}"))?;
     let parent = s
         .tracker
         .issue_detail(issue)
@@ -228,7 +233,8 @@ fn split(
 
     let mut made: Vec<(u64, String)> = Vec::new();
     let mut refused = None;
-    for child in &plan.children {
+    for &at in &order {
+        let child = &plan.children[at];
         let new = NewIssue {
             title: child.title.clone(),
             body: child_body(issue, &number_waits(&child.body, &made)),
@@ -236,7 +242,15 @@ fn split(
             milestone: parent.milestone,
         };
         match s.tracker.create_issue(&new) {
-            Ok(number) => made.push((number, child.title.clone())),
+            Ok(number) => {
+                // The children it waits for are open: hold it now, so no run
+                // takes it first.
+                let waits = waits_on(&child.body, &made);
+                if !waits.is_empty() {
+                    hold(s, number, &waits, &mut warnings);
+                }
+                made.push((number, child.title.clone()));
+            }
             Err(err) => {
                 refused = Some(err);
                 break;
@@ -265,8 +279,8 @@ fn split(
                 note.push_str(&format!("- #{number} {title}\n"));
             }
             note.push_str("\nNot made:\n");
-            for child in &plan.children[made.len()..] {
-                note.push_str(&format!("- {}\n", child.title));
+            for &at in &order[made.len()..] {
+                note.push_str(&format!("- {}\n", plan.children[at].title));
             }
             note.push_str("\nA person must make the rest and close this issue.");
             warnings.push(format!(
@@ -312,6 +326,18 @@ fn split(
         children,
         warnings,
     })
+}
+
+/// Mark a new child as blocked by the open children it waits for.
+fn hold(s: Services<'_>, issue: u64, waits: &[u64], warnings: &mut Vec<String>) {
+    if let Err(err) = s.tracker.add_labels(issue, &["blocked".to_string()]) {
+        warnings.push(format!("could not add blocked to #{issue}: {err}"));
+    }
+    let open: Vec<String> = waits.iter().map(|n| format!("#{n} (open)")).collect();
+    let note = format!("blocked: waits for {}", open.join(", "));
+    if let Err(err) = s.tracker.comment(issue, &note) {
+        warnings.push(format!("could not comment on #{issue}: {err}"));
+    }
 }
 
 /// review passed on a branch behind the base branch, and `aw` updated it.
