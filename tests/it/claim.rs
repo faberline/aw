@@ -1244,3 +1244,75 @@ fn an_issue_that_names_itself_in_waits_for_is_still_claimed() {
         .insert(1, "Text.\nWaits for: #1".into());
     assert_eq!(claimed(&w, "claude").issue, 1);
 }
+
+fn respecs(w: &World, issue: u64, hours: &[&str]) {
+    for h in hours {
+        w.tracker.add_comment(
+            issue,
+            &signal(Stage::Tdd, "claude", Outcome::Respec),
+            &format!("2026-02-01T{h}:00:00Z"),
+        );
+    }
+}
+
+#[test]
+fn three_respec_signals_stop_the_spec_loop_and_ask_the_desk() {
+    // faberline/aw#659: lumen#47 had four respec signals and four specs.
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec", "p0"]);
+    w.tracker.issue(2, &["agent:claude", "stage:spec"]);
+    respecs(&w, 1, &["01", "02", "03"]);
+    // The loop issue is skipped, the next issue is claimed.
+    assert_eq!(claimed(&w, "claude").issue, 2);
+    let labels = w.tracker.issues.borrow()[0].labels.clone();
+    assert!(labels.contains(&"blocked".to_string()), "{labels:?}");
+    let text = w.tracker.last_comment(1);
+    assert!(text.contains("outcome=blocked"), "{text}");
+    assert!(
+        text.contains("Decision: the spec and tdd runs of #1"),
+        "{text}"
+    );
+    assert!(
+        w.tracker
+            .calls()
+            .contains(&"add_labels #1 blocked".to_string()),
+        "{:?}",
+        w.tracker.calls()
+    );
+}
+
+#[test]
+fn two_respec_signals_still_get_a_new_spec() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    respecs(&w, 1, &["01", "02"]);
+    assert_eq!(claimed(&w, "claude").issue, 1);
+}
+
+#[test]
+fn a_comment_of_a_person_starts_the_respec_count_again() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    respecs(&w, 1, &["01", "02", "03"]);
+    w.tracker
+        .add_comment(1, "desk: cover the live spec too.", "2026-02-01T04:00:00Z");
+    respecs(&w, 1, &["05"]);
+    assert_eq!(claimed(&w, "claude").issue, 1);
+}
+
+#[test]
+fn a_spec_claim_says_what_the_branch_and_the_pull_request_hold() {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    w.tracker
+        .branches
+        .borrow_mut()
+        .insert("claude/issue-1".into(), "33b73eea".into());
+    w.tracker.pr(5, "claude/issue-1", "Closes #1");
+    assert_eq!(claimed(&w, "claude").issue, 1);
+    // A failing read is a warning, not an error.
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    w.tracker.fail_branch_head.set(true);
+    assert_eq!(claimed(&w, "claude").issue, 1);
+}

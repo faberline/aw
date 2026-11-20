@@ -269,6 +269,28 @@ pub fn redo_requested(comments: &[Comment]) -> bool {
             })
 }
 
+/// After this many tdd `respec` signals with no answer of a person between
+/// them, the spec stage stops and asks the desk (faberline/aw#659).
+pub const RESPEC_LIMIT: usize = 3;
+
+/// The tdd `respec` signals that came after the newest comment of a person.
+/// A comment of a person (the desk, the planner) is the answer: it starts the
+/// count again.
+pub fn respecs_since_answer(comments: &[Comment]) -> usize {
+    let answered = comments
+        .iter()
+        .filter(|c| !is_aw_comment(&c.body))
+        .map(|c| c.created_at.as_str())
+        .max()
+        .unwrap_or("");
+    comments
+        .iter()
+        .filter(|c| c.created_at.as_str() > answered)
+        .filter_map(|c| Signal::parse(&c.body))
+        .filter(|s| s.stage == Stage::Tdd && s.outcome == Outcome::Respec)
+        .count()
+}
+
 /// A signal or a claim that `aw` wrote.
 fn is_aw_comment(body: &str) -> bool {
     Signal::parse(body).is_some() || ClaimMark::parse(body).is_some()

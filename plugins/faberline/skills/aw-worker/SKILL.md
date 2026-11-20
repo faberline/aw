@@ -397,6 +397,14 @@ Read code through the GitHub API when you do not need the clone:
 ### spec
 
 - Read the code; do not change it. Read every file that the change touches.
+- Before the spec says the branch has no earlier work, read what exists. `aw claim`
+  prints `aw: earlier work on #N: ...` on stderr when the branch of the tdd run
+  (`<agent>/issue-N`) is on origin, or when a pull request of the issue is open.
+  Read that branch (`git log origin/<default>..origin/<agent>/issue-N`, `git diff`)
+  and that pull request, and write the spec from them. When neither exists, you may say so.
+- After 3 tdd `respec` signals with no comment of a person between them, `aw claim`
+  does not give the issue to a spec run. It adds `blocked` and a `Decision:` comment,
+  and the supervisor opens a desk decision. Do not write a fourth spec by hand.
 - A Haiku subagent implements the spec. It knows only the spec and the
   repository. Write the spec so that it can finish without a question.
   Use exact names and paths, not descriptions. The spec checklist:

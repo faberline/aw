@@ -388,6 +388,18 @@ impl Tracker for GhCli {
         Ok(prs.into_iter().map(PullRequest::from).collect())
     }
 
+    fn branch_head(&self, branch: &str) -> PortResult<Option<String>> {
+        let repo = self.name()?;
+        match self.get(
+            &format!("repos/{repo}/branches/{branch}"),
+            Some(".commit.sha"),
+        ) {
+            Ok(out) => Ok(Some(out.trim().trim_matches('"').to_string())),
+            Err(err) if err.0.contains("404") || err.0.contains("Not Found") => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
     fn create_pr(
         &self,
         head: &str,
