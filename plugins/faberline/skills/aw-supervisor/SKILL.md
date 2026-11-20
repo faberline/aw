@@ -1213,6 +1213,9 @@ A `Waits for:` line with no issue number (only a title or text) is a spec gap.
 Find the issue by title in `<target>` and say so in the facts, and report it as a spec gap on the status board.
 The spec skill must write the issue number (`aw-worker`, spec step).
 Do not change the label for this line.
+Since aw 0.7.67 `aw report` does this itself when the first line of a spec or tdd signal is `Waits for: #N`: it sets the `Waits for:` line of the body to the numbers of the signal, and adds `blocked` and one comment `blocked: waits for #N (open)` while the named issue is open (a closed issue gets no `blocked`).
+So for an issue whose body line is old or missing and whose latest aw signal has `Waits for: #N` with numbers of the same repository, and the named issue is open (G24), and the signal is newer than the body: do the same yourself, in the same pass: edit the body line, add `blocked` and post the comment, and write it on the board. Open no `decision` issue. This extends the G38 exception to this case only.
+Every other case below stays with the desk: a prerequisite in another repository, a line with no number, a signal that is older than the body, or a signal and a body that name different open issues.
 When the body `Waits for:` line has no number but the latest aw signal on the issue has `Waits for: #N` (as in aw#498), open one `中控可決定` decision (step 8) that asks the desk to fix the body line and add `blocked`; do not add `blocked` yourself.
 Put the issues of one repository in one `decision` issue (G32).
 

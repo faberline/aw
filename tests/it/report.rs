@@ -1644,3 +1644,103 @@ fn children_that_wait_for_each_other_fail_the_split() {
     assert!(format!("{err:#}").contains("in a circle"));
     assert!(w.tracker.created.borrow().is_empty());
 }
+
+fn waits_world(body: &str) -> World {
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec"]);
+    w.tracker.issue(5, &["stage:tdd"]);
+    claim_issue(&w, "claude");
+    w.tracker.bodies.borrow_mut().insert(1, body.into());
+    w
+}
+
+#[test]
+fn a_signal_waits_line_updates_the_body_and_blocks_while_open() {
+    // The body names a closed issue (#4); the signal names an open one (#5).
+    let w = waits_world("Text.\nWaits for: #4\nEnd.");
+    let r = report(
+        w.services(),
+        "claude",
+        None,
+        Outcome::Blocked,
+        "Waits for: #5\nNeeds the port.",
+    )
+    .unwrap();
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert_eq!(w.tracker.bodies.borrow()[&1], "Text.\nWaits for: #5\nEnd.");
+    let labels = w.tracker.issues.borrow()[0].labels.clone();
+    assert!(labels.contains(&"blocked".to_string()), "{labels:?}");
+    assert_eq!(w.tracker.last_comment(1), "blocked: waits for #5 (open)");
+}
+
+#[test]
+fn a_signal_waits_line_is_added_to_a_body_that_has_none() {
+    let w = waits_world("Only text.");
+    report(
+        w.services(),
+        "claude",
+        None,
+        Outcome::Blocked,
+        "Waits for: #5",
+    )
+    .unwrap();
+    assert_eq!(w.tracker.bodies.borrow()[&1], "Only text.\n\nWaits for: #5");
+}
+
+#[test]
+fn a_closed_prerequisite_updates_the_body_but_adds_no_blocked() {
+    let w = waits_world("Text.");
+    report(
+        w.services(),
+        "claude",
+        None,
+        Outcome::Blocked,
+        "Waits for: #4",
+    )
+    .unwrap();
+    assert_eq!(w.tracker.bodies.borrow()[&1], "Text.\n\nWaits for: #4");
+    let calls = w.tracker.calls();
+    assert!(!calls.contains(&"comment #1".to_string()), "{calls:?}");
+}
+
+#[test]
+fn a_body_that_already_agrees_is_not_edited() {
+    let w = waits_world("Text.\nWaits for: #5");
+    report(
+        w.services(),
+        "claude",
+        None,
+        Outcome::Blocked,
+        "Waits for: #5",
+    )
+    .unwrap();
+    assert!(
+        !w.tracker
+            .calls()
+            .contains(&"edit_issue_body #1".to_string())
+    );
+}
+
+#[test]
+fn another_repo_or_no_number_or_a_later_line_is_left_alone() {
+    for message in [
+        "Waits for: faberline/core#7",
+        "Waits for: #5, faberline/core#7",
+        "Waits for: the port",
+        "Needs the port.\nWaits for: #5",
+    ] {
+        let w = waits_world("Text.\nWaits for: #4");
+        report(w.services(), "claude", None, Outcome::Blocked, message).unwrap();
+        assert_eq!(
+            w.tracker.bodies.borrow()[&1],
+            "Text.\nWaits for: #4",
+            "{message}"
+        );
+        assert!(
+            !w.tracker
+                .calls()
+                .contains(&"edit_issue_body #1".to_string()),
+            "{message}"
+        );
+    }
+}

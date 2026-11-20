@@ -68,6 +68,68 @@ pub fn parse(body: &str) -> Waits {
     waits
 }
 
+/// The same-repository issue numbers on the first line of a signal message,
+/// when that line is `Waits for: #n[, #m]` and names nothing else. A line
+/// with another repository or with text and no number gives `None`: that case
+/// stays with the desk.
+pub fn signal_numbers(message: &str) -> Option<Vec<u64>> {
+    let line = message.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let head = line.get(..10)?;
+    if !head.eq_ignore_ascii_case("waits for:") {
+        return None;
+    }
+    let waits = parse(line);
+    if waits.prerequisites.is_empty()
+        || !waits.without_number.is_empty()
+        || waits.prerequisites.iter().any(|p| p.repo.is_some())
+    {
+        return None;
+    }
+    Some(waits.prerequisites.iter().map(|p| p.number).collect())
+}
+
+/// The body with its `Waits for:` lines set to `numbers`. The first old line
+/// becomes the new line, the other old lines go, and a reference to another
+/// repository on an old line stays. A body with no such line gets one at the
+/// end.
+pub fn set_waits(body: &str, numbers: &[u64]) -> String {
+    let mut line_numbers: Vec<String> = numbers.iter().map(|n| format!("#{n}")).collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut at: Option<usize> = None;
+    for line in body.lines().flat_map(super::split::own_line_waits) {
+        let bare = line.trim_start_matches(|c: char| c.is_whitespace() || "-*>".contains(c));
+        let is_waits = bare
+            .get(..10)
+            .is_some_and(|h| h.eq_ignore_ascii_case("waits for:"));
+        if !is_waits {
+            out.push(line);
+            continue;
+        }
+        for p in parse(bare).prerequisites {
+            if p.repo.is_some() && !line_numbers.contains(&p.show()) {
+                line_numbers.push(p.show());
+            }
+        }
+        if at.is_none() {
+            at = Some(out.len());
+            out.push(String::new());
+        }
+    }
+    let new = format!("Waits for: {}", line_numbers.join(", "));
+    match at {
+        Some(i) => out[i] = new,
+        None => {
+            out.push(String::new());
+            out.push(new);
+        }
+    }
+    let mut text = out.join("\n");
+    if body.ends_with('\n') {
+        text.push('\n');
+    }
+    text
+}
+
 /// The byte index of a `Waits for:` that follows the end of a sentence in
 /// the same line (`.`, `;`, `!` or `?`, then a space).
 fn after_sentence(line: &str) -> Option<usize> {
@@ -118,5 +180,37 @@ mod tests {
     fn other_text_is_not_a_waits_line() {
         let w = parse("The adapter waits for #5 to merge.\nWaits for the port.");
         assert_eq!(w, Waits::default());
+    }
+
+    #[test]
+    fn a_signal_line_gives_same_repo_numbers_only() {
+        assert_eq!(signal_numbers("Waits for: #300\nmore"), Some(vec![300]));
+        assert_eq!(signal_numbers("\nwaits for: #3, #4."), Some(vec![3, 4]));
+        assert_eq!(signal_numbers("Waits for: faberline/core#7"), None);
+        assert_eq!(signal_numbers("Waits for: #3, faberline/core#7"), None);
+        assert_eq!(signal_numbers("Waits for: the port"), None);
+        assert_eq!(signal_numbers("Blocked.\nWaits for: #3"), None);
+        assert_eq!(signal_numbers(""), None);
+    }
+
+    #[test]
+    fn set_waits_replaces_adds_and_keeps_other_repos() {
+        assert_eq!(
+            set_waits("Text\nWaits for: #294\nEnd", &[300]),
+            "Text\nWaits for: #300\nEnd"
+        );
+        assert_eq!(set_waits("Text\n", &[300]), "Text\n\nWaits for: #300\n");
+        assert_eq!(set_waits("", &[3, 4]), "\nWaits for: #3, #4");
+        assert_eq!(
+            set_waits(
+                "A\nWaits for: #1\nB\n- waits for: faberline/core#7, #2",
+                &[9]
+            ),
+            "A\nWaits for: #9, faberline/core#7\nB"
+        );
+        assert_eq!(
+            set_waits("Part of #7. Waits for: #9", &[9]),
+            "Part of #7.\nWaits for: #9"
+        );
     }
 }

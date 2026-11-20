@@ -15,6 +15,7 @@ use crate::domain::work::split::{
     SplitPlan, child_body, child_parent, creation_order, number_waits, replaced_by, waits_on,
 };
 use crate::domain::work::stage::Stage;
+use crate::domain::work::waits::{set_waits, signal_numbers};
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct Reported {
@@ -165,6 +166,7 @@ pub fn report_issue(
     .with_context(|| format!("could not post the signal on issue #{}", claim.issue))?;
 
     move_labels(s, &claim, outcome, &mut warnings);
+    sync_waits(s, &claim, outcome, message, &mut warnings);
     warnings.extend(finish(s, &claim)?);
     // The merge made the other review pull requests behind. Start the CI of
     // the next one now, so a later run does not first have to claim it.
@@ -328,14 +330,86 @@ fn split(
     })
 }
 
+/// The first line of a spec or tdd signal says `Waits for: #n` (same
+/// repository). Make the issue body say the same, and hold the issue while
+/// a named issue is open, so the body, the signal and the label agree. A
+/// line with another repository or with no number is left to the desk.
+fn sync_waits(
+    s: Services<'_>,
+    claim: &Claim,
+    outcome: Outcome,
+    message: &str,
+    warnings: &mut Vec<String>,
+) {
+    if claim.stage == Stage::Review || (claim.stage == Stage::Tdd && outcome == Outcome::Ready) {
+        return;
+    }
+    let Some(numbers) = signal_numbers(message) else {
+        return;
+    };
+    let issue = claim.issue;
+    let detail = match s.tracker.issue_detail(issue) {
+        Ok(d) => d,
+        Err(err) => {
+            warnings.push(format!(
+                "could not read #{issue} to update its Waits for: {err}"
+            ));
+            return;
+        }
+    };
+    let body = set_waits(&detail.body, &numbers);
+    if body != detail.body
+        && let Err(err) = s.tracker.edit_issue_body(issue, &body)
+    {
+        warnings.push(format!(
+            "could not update the Waits for line of #{issue}: {err}"
+        ));
+    }
+    let mut open: Vec<u64> = Vec::new();
+    for n in numbers {
+        match s.tracker.issue_is_open(None, n) {
+            Ok(true) => open.push(n),
+            Ok(false) => {}
+            Err(err) => warnings.push(format!(
+                "could not read #{n}, a prerequisite of #{issue}: {err}"
+            )),
+        }
+    }
+    // The label of the outcome may already be there: read the labels again.
+    let held = s
+        .tracker
+        .issue_detail(issue)
+        .map(|d| d.labels.iter().any(|l| l == "blocked"))
+        .unwrap_or(false);
+    if open.is_empty() {
+        return;
+    }
+    if !held && let Err(err) = s.tracker.add_labels(issue, &["blocked".to_string()]) {
+        warnings.push(format!("could not add blocked to #{issue}: {err}"));
+    }
+    // One comment for one state: a second report of the same line adds none.
+    let note = hold_note(&open);
+    let said = s
+        .tracker
+        .comments(issue)
+        .map(|all| all.iter().any(|c| c.body.trim() == note))
+        .unwrap_or(false);
+    if !said && let Err(err) = s.tracker.comment(issue, &note) {
+        warnings.push(format!("could not comment on #{issue}: {err}"));
+    }
+}
+
+fn hold_note(waits: &[u64]) -> String {
+    let open: Vec<String> = waits.iter().map(|n| format!("#{n} (open)")).collect();
+    format!("blocked: waits for {}", open.join(", "))
+}
+
 /// Mark a new child as blocked by the open children it waits for.
 fn hold(s: Services<'_>, issue: u64, waits: &[u64], warnings: &mut Vec<String>) {
     if let Err(err) = s.tracker.add_labels(issue, &["blocked".to_string()]) {
         warnings.push(format!("could not add blocked to #{issue}: {err}"));
     }
-    let open: Vec<String> = waits.iter().map(|n| format!("#{n} (open)")).collect();
-    let note = format!("blocked: waits for {}", open.join(", "));
-    if let Err(err) = s.tracker.comment(issue, &note) {
+    if let Err(err) = s.tracker.comment(issue, &hold_note(waits)) {
         warnings.push(format!("could not comment on #{issue}: {err}"));
     }
 }

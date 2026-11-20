@@ -337,6 +337,13 @@ impl Tracker for GhCli {
             .map(|_| ())
     }
 
+    fn edit_issue_body(&self, issue: u64, body: &str) -> PortResult<()> {
+        let repo = self.name()?;
+        let path = format!("repos/{repo}/issues/{issue}");
+        self.send("PATCH", &path, Some(payload!({ "body": body })))
+            .map(|_| ())
+    }
+
     fn remove_label(&self, issue: u64, label: &str) -> PortResult<()> {
         let repo = self.name()?;
         let path = format!("repos/{repo}/issues/{issue}/labels/{}", encode(label));

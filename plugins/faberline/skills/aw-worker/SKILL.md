@@ -432,6 +432,12 @@ Read code through the GitHub API when you do not need the clone:
   yet, do not write a `Waits for:` line with text only: say in the signal that
   the prerequisite has no issue. The body line and the signal must name the
   same numbers.
+  Put `Waits for: #N` as the first line of the signal message. `aw report`
+  then sets the `Waits for:` line of the issue body to the same numbers (it
+  adds the line when the body has none) and, while a named issue of the same
+  repository is open, adds `blocked` and the comment `blocked: waits for #N
+  (open)`. A prerequisite in another repository, or one with no number, is
+  not changed by `aw`: the desk decides.
 - Keep it to one pull request: at most about six files and 400 changed
   lines. When one pull request is not enough, split the issue (below).
 - The pull request closes the issue: `aw report ready` always writes
