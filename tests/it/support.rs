@@ -19,6 +19,10 @@ pub struct FakeTracker {
     pub issues: RefCell<Vec<Issue>>,
     pub comments: RefCell<HashMap<u64, Vec<Comment>>>,
     pub prs: RefCell<Vec<PullRequest>>,
+    /// The branches on origin and their head commits.
+    pub branches: RefCell<HashMap<String, String>>,
+    /// `branch_head` fails.
+    pub fail_branch_head: Cell<bool>,
     /// Everything the use case changed, in order, e.g. `merge #5`.
     pub calls: RefCell<Vec<String>>,
     /// The comment reads, in order: `comments #7` or `comments_since <time>`.
@@ -339,6 +343,13 @@ impl Tracker for FakeTracker {
 
     fn open_prs(&self) -> PortResult<Vec<PullRequest>> {
         Ok(self.prs.borrow().clone())
+    }
+
+    fn branch_head(&self, branch: &str) -> PortResult<Option<String>> {
+        if self.fail_branch_head.get() {
+            return Err(PortError("branches: boom".into()));
+        }
+        Ok(self.branches.borrow().get(branch).cloned())
     }
 
     fn create_pr(

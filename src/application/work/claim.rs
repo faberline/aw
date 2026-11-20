@@ -5,8 +5,9 @@ use super::queue::update_next;
 use super::services::Services;
 use crate::domain::work::claim::{Claim, STALE_AFTER_SECONDS, latest_mark};
 use crate::domain::work::issue::{
-    Comment, EXPEDITE_LABEL, Issue, awaiting_report, claim_order_returned, desk_sent_back,
-    newest_signal_is, newest_signal_time, redo_requested, valid_agent,
+    Comment, EXPEDITE_LABEL, Issue, RESPEC_LIMIT, awaiting_report, claim_order_returned,
+    desk_sent_back, newest_signal_is, newest_signal_time, redo_requested, respecs_since_answer,
+    valid_agent,
 };
 use crate::domain::work::ports::Repo;
 use crate::domain::work::pull_request::{PullRequest, find_for_issue, rework_branch, work_branch};
@@ -155,6 +156,10 @@ pub fn claim_with(
         if waits_on_open_issue(s, issue, &repo.name)? {
             continue;
         }
+        if stage == Stage::Spec && respecs_since_answer(&comments) >= RESPEC_LIMIT {
+            stop_respec_loop(s, issue, agent)?;
+            continue;
+        }
         if stage == Stage::Tdd {
             if checkout.is_none() {
                 checkout = Some(in_checkout(s, &repo.name)?);
@@ -163,6 +168,9 @@ pub fn claim_with(
                 needs_checkout.push(format!("#{}", issue.number));
                 continue;
             }
+        }
+        if stage == Stage::Spec {
+            say_earlier_work(s, issue, agent, prs.as_deref());
         }
         let found = match stage {
             Stage::Spec => None,
@@ -355,6 +363,73 @@ fn branch_for(
         (Stage::Review, Some(pr)) => pr.head.clone(),
         (Stage::Review, None) => unreachable!("review claims always carry a pull request"),
     }
+}
+
+/// A spec run must not say "the branch has no earlier work" without
+/// looking. Say on stderr what the branch of the next tdd run and the open
+/// pull requests already hold (faberline/aw#659).
+fn say_earlier_work(s: Services<'_>, issue: &Issue, agent: &str, prs: Option<&[PullRequest]>) {
+    let branch = work_branch(agent, issue.number);
+    match s.tracker.branch_head(&branch) {
+        Ok(Some(sha)) => eprintln!(
+            "aw: earlier work on #{}: branch `{branch}` is on origin at {sha}. Read it \
+             (`git log origin/<default>..origin/{branch}`) before the spec says the branch is new",
+            issue.number
+        ),
+        Ok(None) => {}
+        Err(err) => eprintln!(
+            "aw: warning: could not read the branch `{branch}` of #{}: {err}",
+            issue.number
+        ),
+    }
+    let found = match prs {
+        Some(all) => find_for_issue(all, issue.number).cloned(),
+        None => match s.tracker.open_prs() {
+            Ok(all) => find_for_issue(&all, issue.number).cloned(),
+            Err(err) => {
+                eprintln!(
+                    "aw: warning: could not read the pull requests of #{}: {err}",
+                    issue.number
+                );
+                None
+            }
+        },
+    };
+    if let Some(pr) = found {
+        eprintln!(
+            "aw: earlier work on #{}: pull request #{} is open on branch `{}`. Read it before you write the spec",
+            issue.number, pr.number, pr.head
+        );
+    }
+}
+
+/// The spec and tdd stages sent this issue back and forth `RESPEC_LIMIT`
+/// times with no answer of a person. Do not write a fourth spec: ask the desk
+/// and hold the issue (faberline/aw#659).
+fn stop_respec_loop(s: Services<'_>, issue: &Issue, agent: &str) -> Result<()> {
+    eprintln!(
+        "aw: skipped #{}: {RESPEC_LIMIT} tdd respec signals with no answer; asked the desk",
+        issue.number
+    );
+    let signal = Signal {
+        stage: Stage::Spec,
+        agent: agent.to_string(),
+        outcome: Outcome::Blocked,
+    };
+    let text = format!(
+        "Decision: the spec and tdd runs of #{n} did not converge after {RESPEC_LIMIT} tdd respec signals\n\n\
+         aw did not write a new spec. Read the respec signals above: each one names a fact that \
+         the spec did not check. Decide what the next spec must cover, or change the issue. A \
+         comment of a person on this issue, and removing `blocked`, starts the spec stage again.",
+        n = issue.number
+    );
+    s.tracker
+        .comment(issue.number, &signal.render(&text, None))
+        .with_context(|| format!("could not comment on issue #{}", issue.number))?;
+    s.tracker
+        .add_labels(issue.number, &["blocked".to_string()])
+        .with_context(|| format!("could not label issue #{}", issue.number))?;
+    Ok(())
 }
 
 /// Record a blocked signal so the planner sees why the issue was skipped.

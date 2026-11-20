@@ -59,6 +59,9 @@ pub trait Tracker {
     /// Close the issue as not planned: other issues replace it.
     fn close_issue(&self, issue: u64) -> PortResult<()>;
     fn open_prs(&self) -> PortResult<Vec<PullRequest>>;
+    /// The commit at the head of a branch on origin, or `None` when the
+    /// branch does not exist.
+    fn branch_head(&self, branch: &str) -> PortResult<Option<String>>;
     fn create_pr(&self, head: &str, base: &str, title: &str, body: &str)
     -> PortResult<PullRequest>;
     fn edit_pr_body(&self, pr: u64, body: &str) -> PortResult<()>;
