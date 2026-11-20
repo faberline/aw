@@ -1744,3 +1744,64 @@ fn another_repo_or_no_number_or_a_later_line_is_left_alone() {
         );
     }
 }
+
+#[test]
+fn the_som_291_signal_line_changes_nothing_and_warns() {
+    // faberline/aw#664: #290 is closed; the line names #291, the issue itself.
+    let w = World::new();
+    w.tracker.issue(291, &["agent:claude", "stage:spec"]);
+    claim_issue(&w, "claude");
+    w.tracker.bodies.borrow_mut().insert(291, "Text.".into());
+    let r = report(
+        w.services(),
+        "claude",
+        None,
+        Outcome::Ready,
+        "Waits for: #290 is closed (merged as bc138eb), so nothing is open. Spec for #291. More.",
+    )
+    .unwrap();
+    assert_eq!(w.tracker.bodies.borrow()[&291], "Text.");
+    let calls = w.tracker.calls();
+    assert!(
+        !calls.contains(&"edit_issue_body #291".to_string()),
+        "{calls:?}"
+    );
+    assert!(!calls.contains(&"comment #291".to_string()), "{calls:?}");
+    let labels = w.tracker.issues.borrow()[0].labels.clone();
+    assert!(!labels.contains(&"blocked".to_string()), "{labels:?}");
+    assert!(
+        r.warnings.iter().any(|m| m.contains("not a clean list")),
+        "{:?}",
+        r.warnings
+    );
+}
+
+#[test]
+fn a_signal_never_makes_an_issue_wait_for_itself() {
+    let w = waits_world("Text.");
+    report(
+        w.services(),
+        "claude",
+        None,
+        Outcome::Blocked,
+        "Waits for: #1",
+    )
+    .unwrap();
+    assert_eq!(w.tracker.bodies.borrow()[&1], "Text.");
+    let calls = w.tracker.calls();
+    assert!(
+        !calls.contains(&"edit_issue_body #1".to_string()),
+        "{calls:?}"
+    );
+    // The own number is dropped; the other one stays.
+    let w = waits_world("Text.");
+    report(
+        w.services(),
+        "claude",
+        None,
+        Outcome::Blocked,
+        "Waits for: #1 and #5.",
+    )
+    .unwrap();
+    assert_eq!(w.tracker.bodies.borrow()[&1], "Text.\n\nWaits for: #5");
+}

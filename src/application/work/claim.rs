@@ -306,6 +306,10 @@ fn waits_on_open_issue(s: Services<'_>, issue: &Issue, repo: &str) -> Result<boo
     }
     let mut open = Vec::new();
     for p in &waits.prerequisites {
+        // An issue never waits for itself (faberline/aw#664).
+        if p.repo.is_none() && p.number == issue.number {
+            continue;
+        }
         let same = p.repo.as_deref().is_none_or(|r| r == repo);
         // A dependency that cannot be read (another repository without
         // access, 403, 404) is a wait for this one issue, not an error
