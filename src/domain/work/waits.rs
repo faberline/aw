@@ -78,14 +78,32 @@ pub fn signal_numbers(message: &str) -> Option<Vec<u64>> {
     if !head.eq_ignore_ascii_case("waits for:") {
         return None;
     }
-    let waits = parse(line);
-    if waits.prerequisites.is_empty()
-        || !waits.without_number.is_empty()
-        || waits.prerequisites.iter().any(|p| p.repo.is_some())
-    {
+    // Only a clean list: `#n`, `#n, #m`, `#n and #m`, an end dot. Other prose
+    // on the line (`Waits for: #290 is closed ..., Spec for #291.`) is not a
+    // list of prerequisites (faberline/aw#664).
+    let clean = Regex::new(r"(?i)^#\d+(?:\s*(?:,|&|and)?\s*#\d+)*\s*\.?$")
+        .expect("the clean list pattern is valid");
+    if !clean.is_match(line[10..].trim()) {
         return None;
     }
-    Some(waits.prerequisites.iter().map(|p| p.number).collect())
+    let mut numbers: Vec<u64> = Vec::new();
+    for p in parse(line).prerequisites {
+        if !numbers.contains(&p.number) {
+            numbers.push(p.number);
+        }
+    }
+    Some(numbers)
+}
+
+/// True when the first line of a signal starts with `Waits for:` but is not a
+/// clean list of numbers, so `aw report` does not use it.
+pub fn signal_waits_is_unclean(message: &str) -> bool {
+    let Some(line) = message.lines().map(str::trim).find(|l| !l.is_empty()) else {
+        return false;
+    };
+    line.get(..10)
+        .is_some_and(|h| h.eq_ignore_ascii_case("waits for:"))
+        && signal_numbers(message).is_none()
 }
 
 /// The body with its `Waits for:` lines set to `numbers`. The first old line
@@ -191,6 +209,20 @@ mod tests {
         assert_eq!(signal_numbers("Waits for: the port"), None);
         assert_eq!(signal_numbers("Blocked.\nWaits for: #3"), None);
         assert_eq!(signal_numbers(""), None);
+    }
+
+    #[test]
+    fn a_line_with_other_prose_is_not_a_clean_list() {
+        let som =
+            "Waits for: #290 is closed (merged as bc138eb), so nothing is open. Spec for #291.";
+        assert_eq!(signal_numbers(som), None);
+        assert!(signal_waits_is_unclean(som));
+        assert_eq!(signal_numbers("Waits for: #3 and #4"), Some(vec![3, 4]));
+        assert_eq!(signal_numbers("Waits for: #3 #4"), Some(vec![3, 4]));
+        assert_eq!(signal_numbers("Waits for: #3, #3"), Some(vec![3]));
+        assert!(!signal_waits_is_unclean("Waits for: #3"));
+        assert!(!signal_waits_is_unclean("Needs more."));
+        assert!(!signal_waits_is_unclean(""));
     }
 
     #[test]

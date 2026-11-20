@@ -437,7 +437,10 @@ Read code through the GitHub API when you do not need the clone:
   adds the line when the body has none) and, while a named issue of the same
   repository is open, adds `blocked` and the comment `blocked: waits for #N
   (open)`. A prerequisite in another repository, or one with no number, is
-  not changed by `aw`: the desk decides.
+  not changed by `aw`: the desk decides. Use this first line only for a clean
+  list (`Waits for: #1, #2`). If the line has other words (for example
+  `Waits for: #290 is closed ...`), `aw report` changes nothing and prints a
+  warning. An issue never waits for itself, and a closed number adds no `blocked`.
 - Keep it to one pull request: at most about six files and 400 changed
   lines. When one pull request is not enough, split the issue (below).
 - The pull request closes the issue: `aw report ready` always writes

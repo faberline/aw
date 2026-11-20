@@ -1232,3 +1232,15 @@ fn tdd_rework_starts_from_the_remote_head_even_when_fetch_does_not_bring_it() {
         "{calls:?}"
     );
 }
+
+#[test]
+fn an_issue_that_names_itself_in_waits_for_is_still_claimed() {
+    // faberline/aw#664: som#291 had `Waits for: #290, #291`.
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:tdd"]);
+    w.tracker
+        .bodies
+        .borrow_mut()
+        .insert(1, "Text.\nWaits for: #1".into());
+    assert_eq!(claimed(&w, "claude").issue, 1);
+}

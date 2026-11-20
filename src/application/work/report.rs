@@ -15,7 +15,7 @@ use crate::domain::work::split::{
     SplitPlan, child_body, child_parent, creation_order, number_waits, replaced_by, waits_on,
 };
 use crate::domain::work::stage::Stage;
-use crate::domain::work::waits::{set_waits, signal_numbers};
+use crate::domain::work::waits::{set_waits, signal_numbers, signal_waits_is_unclean};
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct Reported {
@@ -344,10 +344,21 @@ fn sync_waits(
     if claim.stage == Stage::Review || (claim.stage == Stage::Tdd && outcome == Outcome::Ready) {
         return;
     }
-    let Some(numbers) = signal_numbers(message) else {
+    let issue = claim.issue;
+    let Some(mut numbers) = signal_numbers(message) else {
+        if signal_waits_is_unclean(message) {
+            warnings.push(format!(
+                "the first line of the signal for #{issue} starts with `Waits for:` but is not a \
+                 clean list like `Waits for: #1, #2`; the body and labels are not changed"
+            ));
+        }
         return;
     };
-    let issue = claim.issue;
+    // An issue never waits for itself.
+    numbers.retain(|n| *n != issue);
+    if numbers.is_empty() {
+        return;
+    }
     let detail = match s.tracker.issue_detail(issue) {
         Ok(d) => d,
         Err(err) => {
