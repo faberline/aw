@@ -1553,3 +1553,94 @@ fn report_with_an_issue_refuses_what_it_cannot_tie_to_this_run() {
     *w.workspace.head.borrow_mut() = Some("claude/issue-3-r2".into());
     assert!(!try_report(3, None));
 }
+
+const SPLIT_WAITS: &str = "Too large.\n\n\
+    ## Child: Use the port\nThe caller.\nWaits for: Add the port, Add the adapter\n\n\
+    ## Child: Add the port\nThe trait.\n\n\
+    ## Child: Add the adapter\nThe adapter.\nWaits for: Add the port.\n";
+
+#[test]
+fn a_child_that_waits_for_a_sibling_gets_its_number_and_blocked() {
+    let w = split_world();
+    let r = report(w.services(), "claude", None, Outcome::Split, SPLIT_WAITS).unwrap();
+    assert_eq!(r.outcome, Outcome::Split);
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    // The children that are waited for come first, so their numbers exist.
+    let created = w.tracker.created.borrow();
+    let titles: Vec<&str> = created.iter().map(|(_, n)| n.title.as_str()).collect();
+    assert_eq!(titles, ["Add the port", "Add the adapter", "Use the port"]);
+    assert!(created[0].1.body.ends_with("The trait."));
+    assert!(created[1].1.body.ends_with("The adapter.\nWaits for: #201"));
+    assert!(
+        created[2]
+            .1
+            .body
+            .ends_with("The caller.\nWaits for: #201, #202")
+    );
+    // The waiting children are held at once, with a comment that names the
+    // open prerequisites.
+    let calls = w.tracker.calls();
+    assert!(
+        calls.contains(&"add_labels #202 blocked".to_string()),
+        "{calls:?}"
+    );
+    assert!(
+        calls.contains(&"add_labels #203 blocked".to_string()),
+        "{calls:?}"
+    );
+    assert!(
+        !calls.iter().any(|c| c.starts_with("add_labels #201")),
+        "{calls:?}"
+    );
+    assert_eq!(
+        w.tracker.last_comment(202),
+        "blocked: waits for #201 (open)"
+    );
+    assert_eq!(
+        w.tracker.last_comment(203),
+        "blocked: waits for #201 (open), #202 (open)"
+    );
+    let note = w.tracker.last_comment(1);
+    assert!(note.contains("- #201 Add the port\n- #202 Add the adapter\n- #203 Use the port"));
+}
+
+#[test]
+fn a_split_without_waits_blocks_no_child() {
+    let w = split_world();
+    report(w.services(), "claude", None, Outcome::Split, SPLIT).unwrap();
+    let calls = w.tracker.calls();
+    assert!(
+        !calls.iter().any(|c| c.starts_with("add_labels")),
+        "{calls:?}"
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|c| c == "comment #201" || c == "comment #202"),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn a_waits_title_with_no_sibling_fails_the_split_and_makes_nothing() {
+    let w = split_world();
+    let message =
+        "Too large.\n\n## Child: A\nText.\nWaits for: the missing port\n\n## Child: B\nText.\n";
+    let err = report(w.services(), "claude", None, Outcome::Split, message).unwrap_err();
+    let text = format!("{err:#}");
+    assert!(text.contains("child 1 (`A`)"), "{text}");
+    assert!(text.contains("names no other child"), "{text}");
+    assert!(w.tracker.calls().is_empty(), "{:?}", w.tracker.calls());
+    assert!(w.tracker.created.borrow().is_empty());
+    assert_eq!(w.tracker.claims(1).len(), 1);
+}
+
+#[test]
+fn children_that_wait_for_each_other_fail_the_split() {
+    let w = split_world();
+    let message =
+        "Too large.\n\n## Child: A\nText.\nWaits for: B\n\n## Child: B\nText.\nWaits for: A\n";
+    let err = report(w.services(), "claude", None, Outcome::Split, message).unwrap_err();
+    assert!(format!("{err:#}").contains("in a circle"));
+    assert!(w.tracker.created.borrow().is_empty());
+}

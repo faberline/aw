@@ -1208,6 +1208,7 @@ All other uses of adding `blocked` stay with the desk.
 The routine prompt must list this label write; without it, ask the desk with a `decision` issue (step 8).
 `aw claim` also passes over such an issue without a label, so the label is for the planner and the status board.
 
+Since aw 0.7.66 `aw report split` writes the numbers and `blocked` for the children of one split itself, and refuses a split with a title that names no child. So a `Waits for:` line with no number on a child that has the `aw:child` mark is no longer a normal case: report it as a spec gap and name the aw version of the run.
 A `Waits for:` line with no issue number (only a title or text) is a spec gap.
 Find the issue by title in `<target>` and say so in the facts, and report it as a spec gap on the status board.
 The spec skill must write the issue number (`aw-worker`, spec step).
