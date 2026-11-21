@@ -255,6 +255,22 @@ values under `[meta]`: `source_prefixes` (default `apps`, `libs`, `crates`,
 repository root) and `core_source` (the `Cargo.lock` source prefix of the
 `core` crates).
 
+## Security check
+
+`aw security check` checks the tracked files of a checkout against the
+[security standard](docs/standards/security.md): advisories in CI and on a
+schedule (SEC1, SEC2), images pinned by digest (SEC3) and GitHub Actions pinned
+by SHA with least-privilege `permissions` (SEC5). SEC4 and SEC6 print as
+`manual`. Every finding is a warning; the exit code is 0 unless `--strict` is
+given. `--format json` prints a `security-report/1` document. Exceptions
+(`rule`, `reason`, `expires`) go in `aw.toml`. The reusable workflow
+`.github/workflows/advisories.yml` runs the advisory check every day and opens
+one issue for each repository.
+
+```bash
+aw security check --dir ../sift
+```
+
 ## Metadoc check
 
 `aw metadoc check` checks the core documents of a project folder: the
@@ -317,7 +333,8 @@ Checks:
 - `blocked-new` (`--since` minutes, default 70).
 - `blocked-no-reason`: no `Waits for:` line, no comment that names a wait, a
   decision or an owner, no hold label. The reasons found are counted in the
-  counts line: `blocked 12 (waits-for 7, comment 4, label 1, no reason 0)`.
+  counts line: `blocked 12 (waits-for 7, comment 4, label 1, no reason 0)`; `hold N` appears when a
+  comment holds an issue for a person.
 - `stuck-stage` (`--stale-hours`, default 6): one line for each stage (count and
   the three oldest). A `stage:review` issue and an `expedite` issue show one by
   one.
@@ -327,7 +344,10 @@ Checks:
   closed as not planned (split); name the children. A wait is read from the
   newest comment that says `waits for #A, #B` or `blocked until #A`, else from
   the `Waits for:` line; text in brackets (`(child A2 of #401)`) names no
-  blocker.
+  blocker. `aw#195` and `owner/repo#7` name an issue of that repository. When
+  the newest such comment gives a hold reason with no issue number (`stays
+  blocked`, `paid`, `needs the owner`, `out of <milestone>`), the issue is a
+  `hold` in the counts line, not a `waits-for-done`.
 - `routine-quiet`, and in the aw section `decision-open` and `pipeline-open`.
 
 It exits 0 when every call worked, even if it lists items. It exits 1 when a

@@ -1,0 +1,89 @@
+# Daily advisory check for a Rust repository. aw owns this file. See
+# docs/standards/security.md, rule SEC2.
+#
+# A repository keeps a thin `.github/workflows/advisories.yml` that runs on a
+# schedule and calls this workflow. The example is
+# docs/standards/examples/advisories-caller.yml.
+#
+# The job runs `cargo deny check advisories` on the default branch. When it
+# finds an advisory, it opens one issue with the title below, or adds a
+# comment to the open one. When the check is clean again, it closes that issue.
+# It changes no code and costs one short job a day.
+name: advisories
+
+on:
+  workflow_call:
+    inputs:
+      cargo_deny_version:
+        description: The cargo-deny release to run.
+        type: string
+        default: "0.20.2"
+      cargo_deny_sha256:
+        description: The SHA-256 of the x86_64 musl release archive of that version.
+        type: string
+        default: "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
+
+permissions: {}
+
+jobs:
+  advisories:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    env:
+      TITLE: "security: new advisories on main"
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.cargo_deny_version }}
+      SHA256: ${{ inputs.cargo_deny_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install cargo-deny
+        run: |
+          set -euo pipefail
+          name="cargo-deny-${VERSION}-x86_64-unknown-linux-musl"
+          curl --fail --silent --show-error --location \
+            --output /tmp/deny.tar.gz \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/${VERSION}/${name}.tar.gz"
+          echo "${SHA256}  /tmp/deny.tar.gz" | sha256sum --check --strict
+          tar -xzf /tmp/deny.tar.gz -C /usr/local/bin --strip-components=1 "${name}/cargo-deny"
+          cargo deny --version
+      - name: Check advisories
+        id: deny
+        run: |
+          set +e
+          cargo deny --color never check advisories > deny.txt 2>&1
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          tail -n 80 deny.txt
+      - name: Open, update or close the issue
+        run: |
+          set -euo pipefail
+          number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "\"${TITLE}\" in:title" --json number,title \
+            --jq "map(select(.title == env.TITLE)) | .[0].number // empty")"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if [ "${{ steps.deny.outputs.code }}" = "0" ]; then
+            if [ -n "$number" ]; then
+              gh issue close "$number" --repo "$GITHUB_REPOSITORY" \
+                --comment "The advisory check is clean again: ${run_url}"
+            fi
+            exit 0
+          fi
+          {
+            echo "\`cargo deny check advisories\` fails on the default branch."
+            echo
+            echo "Run: ${run_url}"
+            echo
+            echo '```text'
+            tail -n 60 deny.txt
+            echo '```'
+            echo
+            echo "Fix: update the crate, or ignore the advisory in \`deny.toml\` with a reason and \`expires YYYY-MM-DD\` (docs/standards/security.md, SEC1)."
+          } > body.md
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body-file body.md
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file body.md
+          fi
+          exit 1

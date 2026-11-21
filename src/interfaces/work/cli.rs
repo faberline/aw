@@ -16,6 +16,7 @@ use crate::application::release_contract::{self, ContractServices};
 use crate::application::release_receipt::{self, ReceiptRequest, ReceiptServices};
 use crate::application::repo::{self, RepoServices};
 use crate::application::run::{Client, Event, RunServices};
+use crate::application::security::{self, SecurityServices};
 use crate::application::standards::{self, StandardsServices};
 use crate::application::work::{self, ClaimOutcome, Outcome, Services};
 use crate::domain::desk::report::Report;
@@ -187,6 +188,11 @@ enum Command {
         #[command(subcommand)]
         command: RepoCommand,
     },
+    /// Check the tracked files of a checkout against the security standard.
+    Security {
+        #[command(subcommand)]
+        command: SecurityCommand,
+    },
     /// Assess a milestone release: the state, the one next action and the
     /// fingerprint of the inputs. It only reads.
     ReleaseStatus {
@@ -356,6 +362,30 @@ enum RepoCommand {
     /// table of `aw.toml`. Exit codes: 0 pass, 1 a new violation or a stale
     /// baseline entry, 2 a usage error.
     Check(HygieneTarget),
+}
+
+#[derive(Subcommand)]
+enum SecurityCommand {
+    /// Check the tracked files against the rules SEC1 to SEC6 of
+    /// docs/standards/security.md. A finding is a warning: the exit code is 0
+    /// unless `--strict` is given. Exit codes: 0 pass, 1 a warning with
+    /// `--strict`, 2 a usage error.
+    Check(SecurityTarget),
+}
+
+/// What `aw security check` reads.
+#[derive(Args, Clone, Debug, Default)]
+pub struct SecurityTarget {
+    /// A folder inside the checkout. Default: the current directory.
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
+    /// `text` prints one line for each finding; `json` prints a
+    /// `security-report/1` document.
+    #[arg(long, value_enum, default_value_t = ReportFormat::Text)]
+    pub format: ReportFormat,
+    /// A warning fails the check (exit 1).
+    #[arg(long)]
+    pub strict: bool,
 }
 
 /// What `aw repo check` reads.
@@ -599,6 +629,16 @@ impl Cli {
         }
     }
 
+    /// The target of `aw security check`, if that is the command.
+    pub fn security_target(&self) -> Option<&SecurityTarget> {
+        match &self.command {
+            Command::Security {
+                command: SecurityCommand::Check(target),
+            } => Some(target),
+            _ => None,
+        }
+    }
+
     /// The target of `aw meta check`, if that is the command.
     pub fn meta_target(&self) -> Option<&MetaTarget> {
         match &self.command {
@@ -806,6 +846,26 @@ pub fn run_repo(services: RepoServices<'_>, target: &HygieneTarget) -> Exit {
             Ok(report.ok)
         })
     };
+    match result {
+        Ok(true) => Exit::Ok,
+        Ok(false) => Exit::Failed,
+        Err(err) => {
+            eprintln!("aw: {err}");
+            Exit::Nothing
+        }
+    }
+}
+
+/// Run `aw security check`: print the report; exit 1 only with `--strict`
+/// and a warning.
+pub fn run_security(services: SecurityServices<'_>, target: &SecurityTarget) -> Exit {
+    let result = security::check(services, target.strict).and_then(|report| {
+        match target.format {
+            ReportFormat::Json => print(&report).map_err(|e| PortError(format!("{e:#}")))?,
+            ReportFormat::Text => println!("{}", security::render(&report)),
+        }
+        Ok(report.ok)
+    });
     match result {
         Ok(true) => Exit::Ok,
         Ok(false) => Exit::Failed,
@@ -1072,6 +1132,9 @@ fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit
         }
         Command::Repo { .. } => {
             anyhow::bail!("`aw repo` needs its adapter; the composition root runs it")
+        }
+        Command::Security { .. } => {
+            anyhow::bail!("`aw security` needs its adapter; the composition root runs it")
         }
         Command::Meta { .. } => {
             anyhow::bail!("`aw meta` needs its adapter; the composition root runs it")

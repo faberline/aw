@@ -84,12 +84,16 @@ fn is_work(i: &IssueFact) -> bool {
 /// How a blocked issue says what it waits for.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Reason {
+    Hold,
     Waits,
     Comment,
     Label,
 }
 
 fn reason_of(i: &IssueFact) -> Option<Reason> {
+    if i.on_hold() {
+        return Some(Reason::Hold);
+    }
     if !i.waits().is_empty() || !waits::parse(&i.body).without_number.is_empty() {
         return Some(Reason::Waits);
     }
@@ -110,6 +114,7 @@ fn blocked_reasons(f: &RepoFacts) -> BlockedReasons {
     let mut r = BlockedReasons::default();
     for i in f.issues.iter().filter(|i| i.blocked()) {
         match reason_of(i) {
+            Some(Reason::Hold) => r.hold += 1,
             Some(Reason::Waits) => r.waits += 1,
             Some(Reason::Comment) => r.comment += 1,
             Some(Reason::Label) => r.label += 1,
@@ -343,7 +348,7 @@ fn queue_empty(f: &RepoFacts, out: &mut Vec<Item>) {
 fn waits_for_done(f: &RepoFacts, out: &mut Vec<Item>) {
     for i in f.issues.iter().filter(|i| i.blocked()) {
         let w = i.waits();
-        if w.is_empty() {
+        if w.is_empty() || i.on_hold() {
             continue;
         }
         let names: Vec<String> = w.iter().map(|p| p.show()).collect();

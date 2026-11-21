@@ -7,5 +7,6 @@ pub mod release_contract;
 pub mod release_receipt;
 pub mod repo;
 pub mod run;
+pub mod security;
 pub mod standards;
 pub mod work;
