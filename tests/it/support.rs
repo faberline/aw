@@ -474,6 +474,11 @@ pub struct FakeWorkspace {
     pub hidden: RefCell<Vec<String>>,
     /// HEAD lacks the commits of `origin/<branch>` for these branches.
     pub diverged: RefCell<Vec<String>>,
+    /// The local branch has commits that `origin/<branch>` lacks and cannot
+    /// fast-forward to it.
+    pub local_only: RefCell<Vec<String>>,
+    /// The tree turns dirty after `fetch` (a change that lands during the run).
+    pub dirty_after_fetch: Cell<bool>,
     pub calls: RefCell<Vec<String>>,
     /// `git switch` fails, as it does in a linked worktree when another
     /// worktree has the branch checked out.
@@ -496,6 +501,8 @@ impl Default for FakeWorkspace {
             remote: RefCell::new(vec!["main".into()]),
             hidden: RefCell::new(Vec::new()),
             diverged: RefCell::new(Vec::new()),
+            local_only: RefCell::new(Vec::new()),
+            dirty_after_fetch: Cell::new(false),
             calls: RefCell::new(Vec::new()),
             switch_fails: Cell::new(false),
             behind: Cell::new(false),
@@ -531,6 +538,9 @@ impl Workspace for FakeWorkspace {
 
     fn fetch(&self) -> PortResult<()> {
         self.record("fetch".into());
+        if self.dirty_after_fetch.get() {
+            self.clean.set(false);
+        }
         Ok(())
     }
 
@@ -571,6 +581,29 @@ impl Workspace for FakeWorkspace {
 
     fn fast_forward(&self, upstream: &str) -> PortResult<()> {
         self.record(format!("ff {upstream}"));
+        if self
+            .local_only
+            .borrow()
+            .iter()
+            .any(|b| upstream == format!("origin/{b}"))
+        {
+            return Err(PortError(format!(
+                "fatal: Not possible to fast-forward, aborting ({upstream})"
+            )));
+        }
+        Ok(())
+    }
+
+    fn backup_head(&self, name: &str) -> PortResult<()> {
+        self.record(format!("backup {name}"));
+        Ok(())
+    }
+
+    fn reset_hard(&self, target: &str) -> PortResult<()> {
+        self.record(format!("reset {target}"));
+        self.local_only
+            .borrow_mut()
+            .retain(|b| target != format!("origin/{b}"));
         Ok(())
     }
 

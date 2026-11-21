@@ -78,6 +78,12 @@ For tdd, `aw claim` refuses a dirty working tree (untracked files included).
 Outside a clone of the repository it skips tdd issues and names them in its
 exit-2 message.
 
+The work branch on `origin` is the truth. A local work branch that only lags
+fast-forwards. A local work branch with commits that `origin` lacks is kept
+under `refs/aw/backup/<branch>-<time>` and reset to `origin/<branch>`; `aw
+claim` says so on stderr. If the tree turns dirty first, the issue gets a
+blocked signal that names `git branch -f <branch> origin/<branch>`.
+
 `aw report` does the stage's GitHub side effect and edits the claim comment
 into the signal comment. After tdd it switches back to the default branch
 when the tree is clean:
