@@ -358,3 +358,119 @@ fn a_unix_time_is_a_utc_date() {
     assert_eq!(date_of(1_795_219_200), "2026-11-21");
     assert_eq!(date_of(1_709_208_001), "2024-02-29");
 }
+
+// The binary on real git checkouts.
+
+fn git(dir: &std::path::Path, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+}
+
+fn checkout(name: &str, remote: Option<&str>, files: &[(&str, &str)]) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("aw-it-sec-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    git(&dir, &["init", "-q"]);
+    if let Some(url) = remote {
+        git(&dir, &["remote", "add", "origin", url]);
+    }
+    for (path, text) in files {
+        let full = dir.join(path);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(full, text).unwrap();
+    }
+    git(&dir, &["add", "-A"]);
+    dir
+}
+
+fn aw(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_aw"))
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap()
+}
+
+fn out(o: &std::process::Output) -> String {
+    String::from_utf8_lossy(&o.stdout).into_owned()
+}
+
+#[test]
+fn the_binary_warns_and_exits_0_and_strict_exits_1() {
+    let dir = checkout(
+        "warn",
+        Some("https://github.com/faberline/lumen.git"),
+        &[
+            ("Cargo.toml", "[package]\nname = \"lumen\"\n"),
+            (".github/workflows/ci.yml", "on: [push]\njobs: {}\n"),
+            ("Dockerfile", "FROM lumen-base:ci\nFROM debian:12\n"),
+        ],
+    );
+    let run = aw(&dir, &["security", "check"]);
+    assert_eq!(run.status.code(), Some(0), "{run:?}");
+    let text = out(&run);
+    assert!(
+        text.contains("SEC3 warn Dockerfile: image `debian:12`"),
+        "{text}"
+    );
+    assert!(!text.contains("lumen-base"), "{text}");
+    assert!(text.contains("SEC5 warn .github/workflows/ci.yml: no top-level"));
+    assert!(text.contains("SEC4 manual"));
+    assert!(text.contains("warn only"));
+    assert_eq!(
+        aw(&dir, &["security", "check", "--strict"]).status.code(),
+        Some(1)
+    );
+    let json = aw(&dir, &["security", "check", "--format", "json"]);
+    let doc: serde_json::Value = serde_json::from_str(&out(&json)).unwrap();
+    assert_eq!(doc["schema"], "security-report/1");
+    assert_eq!(doc["ok"], true);
+}
+
+#[test]
+fn the_binary_reads_the_exceptions_of_aw_toml_and_the_folder_name_as_repo_name() {
+    let toml = "[[standards.security.exception]]\nrule = \"SEC3\"\nreason = \"r\"\nexpires = \"2999-01-01\"\n";
+    let dir = checkout(
+        "excepted",
+        None,
+        &[("Dockerfile", "FROM debian:12\n"), ("aw.toml", toml)],
+    );
+    let text = out(&aw(&dir, &["security", "check"]));
+    assert!(text.contains("SEC3 excepted Dockerfile"), "{text}");
+    assert!(text.contains("0 warnings, 1 excepted"), "{text}");
+    // The folder name is the repo name when there is no remote.
+    let named = checkout("none", None, &[("Dockerfile", "FROM aw-it-sec-x:1\n")]);
+    let own = format!("FROM {}:1\n", named.file_name().unwrap().to_string_lossy());
+    std::fs::write(named.join("Dockerfile"), own).unwrap();
+    let text = out(&aw(&named, &["security", "check"]));
+    assert!(!text.contains("SEC3"), "{text}");
+}
+
+#[test]
+fn the_binary_reports_usage_errors_with_exit_2() {
+    let dir = checkout(
+        "broken",
+        None,
+        &[(
+            "aw.toml",
+            "[[standards.security.exception]]\nrule = \"SEC3\"\n",
+        )],
+    );
+    assert_eq!(aw(&dir, &["security", "check"]).status.code(), Some(2));
+    let outside = std::env::temp_dir().join(format!("aw-it-sec-{}-none", std::process::id()));
+    std::fs::create_dir_all(&outside).unwrap();
+    let run = aw(
+        &dir,
+        &["security", "check", "--dir", &outside.to_string_lossy()],
+    );
+    assert_eq!(run.status.code(), Some(2), "{run:?}");
+    // A tracked file that is not text is skipped.
+    let bin = checkout("bin", None, &[("Dockerfile", "x")]);
+    std::fs::write(bin.join("Dockerfile"), [0xff_u8, 0xfe, 0xfd]).unwrap();
+    assert_eq!(aw(&bin, &["security", "check"]).status.code(), Some(0));
+}
