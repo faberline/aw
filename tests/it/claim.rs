@@ -1316,3 +1316,64 @@ fn a_spec_claim_says_what_the_branch_and_the_pull_request_hold() {
     w.tracker.fail_branch_head.set(true);
     assert_eq!(claimed(&w, "claude").issue, 1);
 }
+
+fn diverged_world(branch: &str) -> World {
+    let w = World::new();
+    w.tracker.issue(7, &["agent:other", "stage:tdd", "p1"]);
+    w.tracker.pr(5, branch, "Closes #7");
+    w.workspace.local.borrow_mut().push(branch.into());
+    w.workspace.remote.borrow_mut().push(branch.into());
+    w
+}
+
+#[test]
+fn a_local_work_branch_that_only_lags_fast_forwards() {
+    let w = diverged_world("other/issue-7");
+    let c = claimed_tdd(&w);
+    assert_eq!(c.branch, "other/issue-7");
+    let calls = w.workspace.calls();
+    assert!(
+        calls.contains(&"ff origin/other/issue-7".to_string()),
+        "{calls:?}"
+    );
+    assert!(!calls.iter().any(|c| c.starts_with("reset ")), "{calls:?}");
+}
+
+#[test]
+fn a_local_work_branch_with_extra_commits_is_backed_up_and_reset_to_origin() {
+    let w = diverged_world("other/issue-7");
+    w.workspace
+        .local_only
+        .borrow_mut()
+        .push("other/issue-7".into());
+    let c = claimed_tdd(&w);
+    assert_eq!(c.branch, "other/issue-7");
+    let calls = w.workspace.calls();
+    let at = |what: &str| calls.iter().position(|c| c.starts_with(what));
+    let backup = at("backup refs/aw/backup/other/issue-7-").expect("a backup ref");
+    let reset = at("reset origin/other/issue-7").expect("a reset");
+    assert!(backup < reset, "{calls:?}");
+    assert!(w.tracker.signals(7).is_empty(), "no blocked signal");
+}
+
+#[test]
+fn a_diverged_branch_with_a_dirty_tree_is_a_blocked_signal_that_names_the_fix() {
+    let w = diverged_world("other/issue-7");
+    w.workspace
+        .local_only
+        .borrow_mut()
+        .push("other/issue-7".into());
+    w.workspace.dirty_after_fetch.set(true);
+    // The dirty tree stops the run, and #7 says why.
+    let err = claim(w.services(), "other", Some(Stage::Tdd), &[], &[]).unwrap_err();
+    assert!(format!("{err:#}").contains("git branch -f"), "{err:#}");
+    let signals = w.tracker.signals(7);
+    assert_eq!(signals.len(), 1);
+    assert_eq!(signals[0].outcome, Outcome::Blocked);
+    let comments = w.tracker.last_comment(7);
+    assert!(
+        comments.contains("git branch -f other/issue-7 origin/other/issue-7"),
+        "{comments}"
+    );
+    assert!(!w.workspace.calls().iter().any(|c| c.starts_with("reset ")));
+}

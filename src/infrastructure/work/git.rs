@@ -156,6 +156,14 @@ impl Workspace for GitCli {
         self.git(&["merge", "--ff-only", "--quiet", upstream])
     }
 
+    fn backup_head(&self, name: &str) -> PortResult<()> {
+        self.git(&["update-ref", name, "HEAD"])
+    }
+
+    fn reset_hard(&self, target: &str) -> PortResult<()> {
+        self.git(&["reset", "--hard", "--quiet", target])
+    }
+
     fn contains(&self, upstream: &str) -> PortResult<bool> {
         succeeds("git", &["merge-base", "--is-ancestor", upstream, "HEAD"])
     }

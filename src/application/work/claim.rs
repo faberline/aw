@@ -529,7 +529,7 @@ fn prepare_work_branch(
 fn open_branch(s: Services<'_>, claim: &Claim) -> Result<()> {
     let ws = s.workspace;
     if ws.has_local_branch(&claim.branch)? {
-        switch_to(s, &claim.branch)?;
+        align_work_branch(s, &claim.branch)?;
     } else if ws.has_remote_branch(&claim.branch)? {
         ws.create_branch(&claim.branch, &format!("origin/{}", claim.branch))?;
     } else {
@@ -549,6 +549,39 @@ fn close_superseded(s: Services<'_>, old: &PullRequest, branch: &str) -> Result<
     s.tracker
         .close_pr(old.number)
         .with_context(|| format!("could not close #{}", old.number))?;
+    Ok(())
+}
+
+/// Switch to the local work branch. The branch on `origin` is the truth
+/// (faberline/aw#690): a local branch that is only behind fast-forwards; a
+/// local branch with commits that `origin` lacks goes under a backup ref
+/// `refs/aw/backup/<branch>-<time>`, then resets to `origin/<branch>`. The
+/// checkout is clean here (`ready_checkout`); a dirty one is an error that
+/// names the fix.
+fn align_work_branch(s: Services<'_>, branch: &str) -> Result<()> {
+    let ws = s.workspace;
+    ws.switch(branch)?;
+    if !ws.has_remote_branch(branch)? {
+        return Ok(());
+    }
+    let upstream = format!("origin/{branch}");
+    if ws.fast_forward(&upstream).is_ok() {
+        return Ok(());
+    }
+    if !ws.is_clean()? {
+        bail!(
+            "`{branch}` has diverged from {upstream} and the working tree has changes; \
+             commit, stash or remove them, then run `git branch -f {branch} {upstream}`"
+        );
+    }
+    let backup = format!("refs/aw/backup/{branch}-{}", s.clock.now());
+    ws.backup_head(&backup)
+        .with_context(|| format!("could not keep `{branch}` under {backup}"))?;
+    ws.reset_hard(&upstream)
+        .with_context(|| format!("could not reset `{branch}` to {upstream}"))?;
+    eprintln!(
+        "aw: `{branch}` had commits that {upstream} lacks; kept them under {backup} and reset `{branch}` to {upstream}"
+    );
     Ok(())
 }
 

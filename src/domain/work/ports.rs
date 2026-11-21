@@ -152,6 +152,11 @@ pub trait Workspace {
     fn switch(&self, branch: &str) -> PortResult<()>;
     fn create_branch(&self, branch: &str, start: &str) -> PortResult<()>;
     fn fast_forward(&self, upstream: &str) -> PortResult<()>;
+    /// Keep HEAD under the ref `name` (`refs/aw/backup/...`), so a reset
+    /// loses no commit.
+    fn backup_head(&self, name: &str) -> PortResult<()>;
+    /// `git reset --hard target` on the clean tree.
+    fn reset_hard(&self, target: &str) -> PortResult<()>;
     /// `upstream` is already part of HEAD, so the branch is not behind it.
     fn contains(&self, upstream: &str) -> PortResult<bool>;
     /// Merge `upstream` into HEAD without a rebase. `true` when it merged
