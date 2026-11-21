@@ -462,7 +462,11 @@ fn the_binary_reports_usage_errors_with_exit_2() {
         )],
     );
     assert_eq!(aw(&dir, &["security", "check"]).status.code(), Some(2));
-    let outside = std::env::temp_dir().join(format!("aw-it-sec-{}-none", std::process::id()));
+    // A folder of its own: no other test makes a checkout here (the name `none`
+    // belongs to a checkout of another test, and tests run in parallel).
+    let outside =
+        std::env::temp_dir().join(format!("aw-it-sec-{}-not-a-checkout", std::process::id()));
+    let _ = std::fs::remove_dir_all(&outside);
     std::fs::create_dir_all(&outside).unwrap();
     let run = aw(
         &dir,
