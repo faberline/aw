@@ -30,11 +30,11 @@ fn issue(number: u64, labels: &[&str], updated: &str) -> IssueFact {
     }
 }
 
-fn comment(body: &str) -> Option<CommentFact> {
-    Some(CommentFact {
+fn comment(body: &str) -> Vec<CommentFact> {
+    vec![CommentFact {
         body: body.to_string(),
         created_at: NOW.to_string(),
-    })
+    }]
 }
 
 fn facts(issues: Vec<IssueFact>) -> RepoFacts {
@@ -67,18 +67,21 @@ fn main_red_names_workflow_run_and_sha() {
             id: 7,
             sha: "abcdef0123456".into(),
             conclusion: "failure".into(),
+            ..RunFact::default()
         },
         RunFact {
             workflow: "docs".into(),
             id: 8,
             sha: "abcdef0123456".into(),
             conclusion: "success".into(),
+            ..RunFact::default()
         },
         RunFact {
             workflow: "nightly".into(),
             id: 9,
             sha: "1234567890".into(),
             conclusion: "cancelled".into(),
+            ..RunFact::default()
         },
     ];
     let items = repo_section(&f, &settings()).items;
@@ -92,9 +95,9 @@ fn main_red_names_workflow_run_and_sha() {
 #[test]
 fn blocked_new_shows_the_first_comment_line() {
     let mut recent = issue(2, &["blocked"], "2026-11-21T11:30:00Z");
-    recent.newest_comment = comment("<!-- aw -->\n\nWaits for: #5\nmore");
+    recent.comments = comment("<!-- aw -->\n\nWaits for: #5\nmore");
     let mut old = issue(3, &["blocked"], "2026-11-20T01:00:00Z");
-    old.newest_comment = comment("Waits for: #5");
+    old.comments = comment("Waits for: #5");
     let items = repo_section(&facts(vec![recent, old]), &settings()).items;
     let new: Vec<_> = items.iter().filter(|i| i.check == "blocked-new").collect();
     assert_eq!(new.len(), 1);
@@ -116,9 +119,9 @@ fn blocked_new_without_a_comment_is_still_listed() {
 #[test]
 fn blocked_no_reason_needs_a_wait_in_comment_or_body() {
     let mut said = issue(1, &["blocked"], "2026-11-20T01:00:00Z");
-    said.newest_comment = comment("Decision: the owner must pick A or B");
+    said.comments = comment("Decision: the owner must pick A or B");
     let mut silent = issue(2, &["blocked"], "2026-11-20T01:00:00Z");
-    silent.newest_comment = comment("looking at it");
+    silent.comments = comment("looking at it");
     let mut body = issue(3, &["blocked"], "2026-11-20T01:00:00Z");
     body.body = "text\nWaits for: #9".into();
     let none = issue(4, &["blocked"], "2026-11-20T01:00:00Z");
@@ -156,6 +159,7 @@ fn pr_stuck_covers_behind_dirty_failed_and_quiet() {
         updated_at: at.into(),
         merge_state: state.into(),
         failed_checks: failed,
+        issue: None,
     };
     let mut f = facts(vec![issue(1, &["stage:tdd"], fresh())]);
     f.prs = vec![
@@ -301,7 +305,7 @@ fn patrol_adds_the_aw_section_and_marks_a_failed_repo_unknown() {
     assert!(md.contains("nothing to look at"));
     assert!(
         md.trim_end()
-            .ends_with("To look at: decision-open 2, pipeline-open 2, unknown 1")
+            .starts_with("To look at: decision-open 2, pipeline-open 2, unknown 1")
     );
     let json: serde_json::Value = serde_json::from_str(&report.json()).unwrap();
     assert!(
@@ -426,11 +430,8 @@ fn the_gh_reader_builds_the_facts_from_json() {
     assert_eq!(f.issues.len(), 2, "a pull request is not an issue");
     assert!(f.issues[0].blocked());
     assert_eq!(f.issues[0].stage(), Some("tdd"));
-    assert_eq!(
-        f.issues[0].newest_comment.as_ref().unwrap().body,
-        "Waits for: #9"
-    );
-    assert!(f.issues[1].newest_comment.is_none());
+    assert_eq!(f.issues[0].newest_comment().unwrap().body, "Waits for: #9");
+    assert!(f.issues[1].comments.is_empty());
     assert_eq!(f.closed_refs, ["#9"]);
     assert_eq!(f.prs.len(), 1);
     assert_eq!(f.prs[0].merge_state, "behind");
@@ -458,17 +459,280 @@ fn a_failed_call_is_named_and_not_a_clean_repo() {
 }
 
 #[test]
-fn the_cli_patrol_needs_a_config_or_a_repo() {
-    let bin = env!("CARGO_BIN_EXE_aw");
+fn without_a_desk_table_the_built_in_list_is_used() {
+    use aw::infrastructure::desk::{DeskConfig, load_config};
     let dir = std::env::temp_dir().join(format!("aw-desk-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let out = std::process::Command::new(bin)
-        .args(["desk", "patrol", "--dir"])
-        .arg(&dir)
-        .output()
-        .unwrap();
-    // No aw.toml in this folder or above it (the temp dir): exit 2.
-    assert_eq!(out.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("aw.toml"));
+    // No aw.toml in this folder or above it (the temp dir): no config.
+    assert_eq!(load_config(&dir).unwrap(), None);
+    std::fs::write(dir.join("aw.toml"), "[meta]\nx = 1\n").unwrap();
+    assert_eq!(load_config(&dir).unwrap(), None);
+    std::fs::write(
+        dir.join("aw.toml"),
+        "[desk]\norg = \"o\"\nrepos = [\"a\"]\n",
+    )
+    .unwrap();
+    assert_eq!(load_config(&dir).unwrap().unwrap().repos, ["a"]);
+    std::fs::write(dir.join("aw.toml"), "not toml [").unwrap();
+    assert!(load_config(&dir).is_err());
     std::fs::remove_dir_all(&dir).ok();
+    let builtin = DeskConfig::builtin();
+    assert_eq!(builtin.org, "faberline");
+    assert_eq!(builtin.aw, "aw");
+    assert_eq!(builtin.repos.len(), 9);
+}
+
+fn blocked(n: u64, body: &str) -> IssueFact {
+    let mut i = issue(n, &["blocked"], "2026-11-20T01:00:00Z");
+    i.body = body.into();
+    i
+}
+
+fn done_or_split(f: &RepoFacts) -> Vec<String> {
+    repo_section(f, &settings())
+        .items
+        .into_iter()
+        .filter(|i| i.check.starts_with("waits-for"))
+        .map(|i| format!("{} {}", i.check, i.what))
+        .collect()
+}
+
+#[test]
+fn a_parent_in_brackets_is_not_a_blocker() {
+    // "(child A2 of #401)" names the parent. The blocker is #402, still open.
+    let mut f = facts(vec![blocked(1, "Waits for: #402 (child A2 of #401)")]);
+    f.closed_refs = vec!["#401".into()];
+    assert!(done_or_split(&f).is_empty());
+    f.closed_refs = vec!["#402".into()];
+    assert_eq!(done_or_split(&f), ["waits-for-done #1 issue 1"]);
+}
+
+#[test]
+fn a_wait_closed_as_not_planned_is_a_split_and_not_done() {
+    let mut f = facts(vec![blocked(1, "Waits for: #300, #301")]);
+    f.closed_refs = vec!["#301".into()];
+    f.split_refs = vec!["#300".into()];
+    assert_eq!(done_or_split(&f), ["waits-for-split #1 issue 1"]);
+    let why = repo_section(&f, &settings())
+        .items
+        .into_iter()
+        .find(|i| i.check == "waits-for-split")
+        .unwrap()
+        .why;
+    assert!(why.contains("#300") && why.contains("not planned"), "{why}");
+}
+
+#[test]
+fn a_comment_that_says_now_waits_for_replaces_the_body_line() {
+    // lumen#383: the body names #379 (closed); the comment says #382 (open).
+    let mut i = blocked(1, "Waits for: #379");
+    i.comments = comment("Supervisor sweep: now waits for #382");
+    let mut f = facts(vec![i.clone()]);
+    f.closed_refs = vec!["#379".into()];
+    assert!(done_or_split(&f).is_empty());
+    f.closed_refs = vec!["#382".into()];
+    assert_eq!(done_or_split(&f), ["waits-for-done #1 issue 1"]);
+    // som#304: the desk says blocked until two issues are merged.
+    i.comments = comment("desk: blocked until #308, #309 are merged");
+    assert_eq!(
+        i.waits().iter().map(|p| p.show()).collect::<Vec<_>>(),
+        ["#308", "#309"]
+    );
+    // A comment that ends a wait changes nothing.
+    i.comments = comment("it no longer waits for #5");
+    assert_eq!(i.waits()[0].show(), "#379");
+}
+
+#[test]
+fn a_reason_in_any_comment_or_label_counts() {
+    // lumen#515: the desk comment is not the newest one.
+    let mut desk = blocked(1, "");
+    desk.comments = vec![
+        CommentFact {
+            body: "desk: blocked until #325 is merged".into(),
+            created_at: NOW.into(),
+        },
+        CommentFact {
+            body: "looking at it".into(),
+            created_at: NOW.into(),
+        },
+    ];
+    let mut label = blocked(2, "");
+    label.labels.push("decision".into());
+    let mut owner = blocked(3, "");
+    owner.comments = comment("the owner must pay for the run");
+    let silent = blocked(4, "");
+    let f = facts(vec![desk, label, owner, silent]);
+    let section = repo_section(&f, &settings());
+    let none: Vec<_> = section
+        .items
+        .iter()
+        .filter(|i| i.check == "blocked-no-reason")
+        .collect();
+    assert_eq!(none.len(), 1);
+    assert_eq!(none[0].what, "#4 issue 4");
+    let r = section.counts.unwrap().blocked_reasons;
+    assert_eq!((r.waits, r.comment, r.label, r.none), (1, 1, 1, 1));
+    let md = Report::new(vec![repo_section(&f, &settings())]).markdown();
+    assert!(md.contains("blocked 4 (waits-for 1, comment 1, label 1, no reason 1)"));
+}
+
+#[test]
+fn main_red_skips_old_hand_started_runs() {
+    let run = |id, event: &str, at: &str| RunFact {
+        workflow: format!(".github/workflows/w{id}.yml"),
+        id,
+        event: event.into(),
+        created_at: at.into(),
+        conclusion: "failure".into(),
+        ..RunFact::default()
+    };
+    let mut f = facts(vec![issue(1, &["stage:tdd"], fresh())]);
+    f.main_runs = vec![
+        run(1, "push", "2026-11-01T00:00:00Z"),
+        run(2, "schedule", "2026-11-01T00:00:00Z"),
+        run(3, "workflow_dispatch", "2026-11-01T00:00:00Z"),
+        run(4, "workflow_dispatch", "2026-11-21T11:30:00Z"),
+    ];
+    let reds: Vec<_> = repo_section(&f, &settings())
+        .items
+        .into_iter()
+        .map(|i| i.what)
+        .collect();
+    assert_eq!(
+        reds,
+        [
+            "run 1 of workflow .github/workflows/w1.yml",
+            "run 2 of workflow .github/workflows/w2.yml",
+            "run 4 of workflow .github/workflows/w4.yml",
+        ]
+    );
+}
+
+#[test]
+fn stuck_stage_is_one_line_for_each_stage_except_review_and_expedite() {
+    let mut issues = vec![
+        issue(1, &["stage:spec"], "2026-11-10T00:00:00Z"),
+        issue(2, &["stage:spec"], "2026-11-12T00:00:00Z"),
+        issue(3, &["stage:spec"], "2026-11-11T00:00:00Z"),
+        issue(4, &["stage:spec"], "2026-11-13T00:00:00Z"),
+        issue(5, &["stage:tdd"], "2026-11-20T00:00:00Z"),
+        issue(6, &["stage:review"], "2026-11-20T00:00:00Z"),
+        issue(7, &["stage:tdd", "expedite"], "2026-11-20T00:00:00Z"),
+        issue(8, &["stage:tdd"], fresh()),
+    ];
+    issues.push(issue(9, &["stage:spec", "blocked"], "2026-11-01T00:00:00Z"));
+    let items: Vec<_> = repo_section(&facts(issues), &settings())
+        .items
+        .into_iter()
+        .filter(|i| i.check == "stuck-stage")
+        .collect();
+    let whats: Vec<&str> = items.iter().map(|i| i.what.as_str()).collect();
+    assert_eq!(
+        whats,
+        [
+            "#6 issue 6",
+            "#7 issue 7",
+            "stage spec: 4 issues",
+            "stage tdd: 1 issues"
+        ]
+    );
+    assert!(
+        items[2]
+            .why
+            .contains("oldest #1 (276h), #3 (252h), #2 (228h)"),
+        "{}",
+        items[2].why
+    );
+}
+
+#[test]
+fn a_pr_of_a_blocked_or_closed_issue_is_an_old_pr() {
+    let pr = |n, issue: Option<u64>| PrFact {
+        number: n,
+        title: format!("pr {n}"),
+        updated_at: "2026-11-01T00:00:00Z".into(),
+        merge_state: "dirty".into(),
+        failed_checks: false,
+        issue,
+    };
+    let mut f = facts(vec![
+        issue(1, &["stage:tdd"], fresh()),
+        issue(2, &["blocked"], fresh()),
+    ]);
+    f.prs = vec![
+        pr(10, Some(1)),
+        pr(11, Some(2)),
+        pr(12, Some(99)),
+        pr(13, None),
+    ];
+    let items: Vec<_> = repo_section(&f, &settings())
+        .items
+        .into_iter()
+        .filter(|i| i.check == "pr-stuck")
+        .map(|i| i.what)
+        .collect();
+    assert_eq!(items, ["PR #10 pr 10", "PR #13 pr 13", "old PRs: #11, #12"]);
+}
+
+#[test]
+fn only_keeps_the_named_checks_and_the_summary_comes_first() {
+    let mut f = facts(vec![
+        blocked(1, ""),
+        issue(2, &["stage:tdd"], "2026-11-01T00:00:00Z"),
+    ]);
+    f.main_runs = vec![RunFact {
+        workflow: "ci".into(),
+        id: 1,
+        conclusion: "failure".into(),
+        ..RunFact::default()
+    }];
+    let all = Report::new(vec![repo_section(&f, &settings())]);
+    assert!(all.summary.contains("main-red 1"));
+    let one = all.only(&["blocked-no-reason".to_string()]);
+    assert_eq!(one.summary, "To look at: blocked-no-reason 1");
+    assert!(
+        one.markdown()
+            .starts_with("To look at: blocked-no-reason 1\n")
+    );
+    assert!(aw::domain::desk::checks::CHECKS.contains(&"waits-for-split"));
+}
+
+#[test]
+fn the_gh_reader_reads_the_split_state_the_workflow_path_and_the_pr_issue() {
+    let mut m = gh_fixture();
+    m.insert(
+        "repos/o/r/issues?state=open".into(),
+        r#"[{"number":1,"title":"a","updated_at":"2026-11-21T11:00:00Z",
+             "body":"Waits for: #300 (child A2 of #401)","labels":[{"name":"blocked"}]}]"#
+            .into(),
+    );
+    m.insert(
+        "repos/o/r/issues/1/comments?sort=created".into(),
+        "[]".into(),
+    );
+    // #401 is not in the map: asking for it would fail the read.
+    m.insert(
+        "repos/o/r/issues/300".into(),
+        r#"{"state":"closed","state_reason":"not_planned"}"#.into(),
+    );
+    m.insert(
+        "repos/o/r/pulls/5".into(),
+        r#"{"mergeable_state":"clean","body":"Closes #1\n\nmore"}"#.into(),
+    );
+    m.insert(
+        "repos/o/r/actions/runs?branch=main&status=completed".into(),
+        r#"{"workflow_runs":[
+          {"name":"gke: fix a thing","path":".github/workflows/g.yml","event":"push","created_at":"2026-11-21T01:00:00Z","id":3,"head_sha":"s3","conclusion":"failure"},
+          {"name":"gke: older","path":".github/workflows/g.yml","event":"push","created_at":"2026-11-20T01:00:00Z","id":2,"head_sha":"s2","conclusion":"failure"}]}"#
+            .into(),
+    );
+    let f = GhDesk::with_api(Paths(m)).facts("o/r").unwrap();
+    assert!(f.closed_refs.is_empty());
+    assert_eq!(f.split_refs, ["#300"]);
+    assert_eq!(f.prs[0].issue, Some(1));
+    assert_eq!(f.main_runs.len(), 1);
+    assert_eq!(f.main_runs[0].workflow, ".github/workflows/g.yml");
+    assert_eq!(f.main_runs[0].id, 3);
+    assert_eq!(f.main_runs[0].event, "push");
 }

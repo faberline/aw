@@ -304,12 +304,31 @@ aw desk patrol --since 120 --stale-hours 12 --json
 ```
 
 The repositories, in order, are `[desk] repos` of `aw.toml` (`org`, `repos`,
-`aw`). `--repo` (repeatable) replaces that list for one run. Checks:
-`main-red`, `blocked-new` (`--since` minutes, default 70),
-`blocked-no-reason`, `stuck-stage` (`--stale-hours`, default 6), `pr-stuck`,
-`queue-empty`, `waits-for-done`, `routine-quiet`, and in the aw section
-`decision-open` and `pipeline-open`. The last line counts the items for each
-check, or says `nothing to look at`.
+`aw`). `--repo` (repeatable) replaces that list for one run. Outside the aw
+checkout (no `aw.toml` with a `[desk]` table in the folder or above it) the
+built-in list is used. The first line counts the items for each check, or says
+`nothing to look at`. `--only <check>` (repeatable) keeps the items of the
+named checks.
+
+Checks:
+
+- `main-red`: the newest completed run of each workflow file on main failed. A
+  red run started by hand counts only inside the `--since` window.
+- `blocked-new` (`--since` minutes, default 70).
+- `blocked-no-reason`: no `Waits for:` line, no comment that names a wait, a
+  decision or an owner, no hold label. The reasons found are counted in the
+  counts line: `blocked 12 (waits-for 7, comment 4, label 1, no reason 0)`.
+- `stuck-stage` (`--stale-hours`, default 6): one line for each stage (count and
+  the three oldest). A `stage:review` issue and an `expedite` issue show one by
+  one.
+- `pr-stuck`: a PR whose issue is blocked or closed is one `old PRs` line.
+- `queue-empty`.
+- `waits-for-done`: every wait closed as completed. `waits-for-split`: a wait
+  closed as not planned (split); name the children. A wait is read from the
+  newest comment that says `waits for #A, #B` or `blocked until #A`, else from
+  the `Waits for:` line; text in brackets (`(child A2 of #401)`) names no
+  blocker.
+- `routine-quiet`, and in the aw section `decision-open` and `pipeline-open`.
 
 It exits 0 when every call worked, even if it lists items. It exits 1 when a
 repository cannot be read; that repository is listed as `unknown`, never as

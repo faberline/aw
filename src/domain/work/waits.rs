@@ -30,8 +30,6 @@ pub struct Waits {
 /// Read every line that starts with `Waits for:` (case-insensitive,
 /// leading spaces, list marker or quote mark allowed).
 pub fn parse(body: &str) -> Waits {
-    let reference = Regex::new(r"(?:([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+))?#(\d+)")
-        .expect("the reference pattern is valid");
     let mut waits = Waits::default();
     for line in body.lines() {
         let line = line.trim_start_matches(|c: char| c.is_whitespace() || "-*>".contains(c));
@@ -47,25 +45,37 @@ pub fn parse(body: &str) -> Waits {
             continue;
         }
         let rest = line[10..].trim();
-        let mut found = false;
-        for cap in reference.captures_iter(rest) {
-            let Ok(number) = cap[2].parse::<u64>() else {
-                continue;
-            };
-            found = true;
-            let p = Prerequisite {
-                repo: cap.get(1).map(|m| m.as_str().to_string()),
-                number,
-            };
+        let found = references(rest);
+        if found.is_empty() {
+            waits.without_number.push(rest.to_string());
+        }
+        for p in found {
             if !waits.prerequisites.contains(&p) {
                 waits.prerequisites.push(p);
             }
         }
-        if !found {
-            waits.without_number.push(rest.to_string());
-        }
     }
     waits
+}
+
+/// Every issue reference (`#7`, `owner/name#7`) in a text, once each.
+pub fn references(text: &str) -> Vec<Prerequisite> {
+    let reference = Regex::new(r"(?:([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+))?#(\d+)")
+        .expect("the reference pattern is valid");
+    let mut found: Vec<Prerequisite> = Vec::new();
+    for cap in reference.captures_iter(text) {
+        let Ok(number) = cap[2].parse::<u64>() else {
+            continue;
+        };
+        let p = Prerequisite {
+            repo: cap.get(1).map(|m| m.as_str().to_string()),
+            number,
+        };
+        if !found.contains(&p) {
+            found.push(p);
+        }
+    }
+    found
 }
 
 /// The same-repository issue numbers on the first line of a signal message,

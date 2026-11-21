@@ -205,17 +205,24 @@ fn metadoc_check(target: &MetaTarget) -> Exit {
 fn desk_patrol(target: &PatrolTarget) -> Exit {
     let dir = target.dir.clone().unwrap_or_else(|| PathBuf::from("."));
     let config = match crate::infrastructure::desk::load_config(&dir) {
-        Ok(config) => config,
-        Err(_) if !target.repo.is_empty() => crate::infrastructure::desk::DeskConfig {
-            org: "faberline".to_string(),
-            repos: Vec::new(),
-            aw: "aw".to_string(),
-        },
+        Ok(Some(config)) => config,
+        Ok(None) => crate::infrastructure::desk::DeskConfig::builtin(),
         Err(err) => {
             eprintln!("aw: {err:#}");
             return Exit::Nothing;
         }
     };
+    if let Some(bad) = target
+        .only
+        .iter()
+        .find(|c| !crate::domain::desk::checks::CHECKS.contains(&c.as_str()))
+    {
+        eprintln!(
+            "aw: unknown check `{bad}`; the checks are {}",
+            crate::domain::desk::checks::CHECKS.join(", ")
+        );
+        return Exit::Nothing;
+    }
     let (repos, aw) =
         crate::application::desk::repo_names(&config.org, &config.repos, &config.aw, &target.repo);
     let now = Clock::now(&SystemClock);
@@ -225,7 +232,8 @@ fn desk_patrol(target: &PatrolTarget) -> Exit {
         stale_secs: target.stale_hours as i64 * 3600,
     };
     let source = crate::infrastructure::desk::GhDesk::new();
-    let report = crate::application::desk::patrol(&source, &repos, &aw, &settings);
+    let report =
+        crate::application::desk::patrol(&source, &repos, &aw, &settings).only(&target.only);
     cli::run_desk_patrol(&report, target.json)
 }
 

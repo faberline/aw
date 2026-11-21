@@ -388,7 +388,9 @@ enum DeskCommand {
     /// Read each pipeline repository through `gh` and print a Markdown
     /// checklist of what the desk must look at (main-red, blocked-new,
     /// blocked-no-reason, stuck-stage, pr-stuck, queue-empty, waits-for-done,
-    /// decision-open, pipeline-open, routine-quiet). It changes nothing.
+    /// waits-for-split, decision-open, pipeline-open, routine-quiet). The
+    /// summary line comes first. Outside the aw checkout it reads the
+    /// built-in repository list. It changes nothing.
     /// Exit codes: 0 done, 1 a repository could not be read, 2 a usage error.
     Patrol(PatrolTarget),
 }
@@ -400,6 +402,9 @@ pub struct PatrolTarget {
     /// Default: `[desk] repos` of `aw.toml`.
     #[arg(long, value_name = "REPO")]
     pub repo: Vec<String>,
+    /// Show only the items of this check. Repeat it.
+    #[arg(long, value_name = "CHECK")]
+    pub only: Vec<String>,
     /// `blocked-new` looks at blocked issues changed in this many minutes.
     #[arg(long, value_name = "MINUTES", default_value_t = 70)]
     pub since: u64,
