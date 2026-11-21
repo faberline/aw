@@ -1,0 +1,18 @@
+# Copy to `.github/workflows/advisories.yml` of a Rust repository (SEC2 of
+# docs/standards/security.md). Replace <40-hex commit> with a commit of
+# faberline/aw main; Dependabot or a person updates it.
+name: advisories
+
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  advisories:
+    permissions:
+      contents: read
+      issues: write
+    uses: faberline/aw/.github/workflows/advisories.yml@<40-hex commit>

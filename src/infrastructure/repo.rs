@@ -32,6 +32,11 @@ impl TrackedFiles {
             .map_err(|e| PortError(format!("could not read {}: {e}", out.trim())))?;
         Ok(TrackedFiles { root })
     }
+
+    /// The top folder of the checkout.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
 }
 
 fn allows(table: &Table, key: &str) -> PortResult<Vec<Allow>> {

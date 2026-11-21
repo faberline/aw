@@ -46,6 +46,21 @@ impl IssueFact {
         self.comments.last()
     }
 
+    /// The newest comment that names a wait or a hold gives a hold reason
+    /// with no issue number (`stays blocked`, `paid`, `needs the owner`,
+    /// `out of <milestone>`). Such an issue waits for a person, not for an issue.
+    pub fn on_hold(&self) -> bool {
+        for c in self.comments.iter().rev() {
+            if !comment_waits(&c.body).is_empty() {
+                return false;
+            }
+            if says_hold(&c.body) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// What the issue waits for now. The newest comment that names a wait
     /// (`now waits for #A, #B`, `blocked until #A is merged`) replaces the
     /// `Waits for:` line of the body. Text in parentheses names no blocker
@@ -80,6 +95,47 @@ fn strip_parens(text: &str) -> String {
     out
 }
 
+fn says_hold(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    [
+        "stays blocked",
+        "stay blocked",
+        "paid",
+        "needs the owner",
+        "need the owner",
+        "needs the user",
+        "no paid run",
+        "out of m",
+        "out of the milestone",
+    ]
+    .iter()
+    .any(|w| lower.contains(w))
+}
+
+/// Every `#N`, `name#N` and `owner/name#N` of a comment line. `name#N`
+/// (`aw#195`) is the repository `name` of the same owner.
+fn comment_references(text: &str) -> Vec<Prerequisite> {
+    static REF: OnceLock<Regex> = OnceLock::new();
+    let re = REF.get_or_init(|| {
+        Regex::new(r"(?:([A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9._-]+)?))?#(\d+)")
+            .expect("the comment reference pattern is valid")
+    });
+    let mut found: Vec<Prerequisite> = Vec::new();
+    for cap in re.captures_iter(text) {
+        let Ok(number) = cap[2].parse::<u64>() else {
+            continue;
+        };
+        let p = Prerequisite {
+            repo: cap.get(1).map(|m| m.as_str().to_string()),
+            number,
+        };
+        if !found.contains(&p) {
+            found.push(p);
+        }
+    }
+    found
+}
+
 fn comment_waits(text: &str) -> Vec<Prerequisite> {
     static PHRASE: OnceLock<Regex> = OnceLock::new();
     let phrase = PHRASE.get_or_init(|| {
@@ -94,7 +150,7 @@ fn comment_waits(text: &str) -> Vec<Prerequisite> {
         }
         let line = strip_parens(line);
         if let Some(cap) = phrase.captures(&line) {
-            for p in waits::references(&cap[1]) {
+            for p in comment_references(&cap[1]) {
                 if !found.contains(&p) {
                     found.push(p);
                 }

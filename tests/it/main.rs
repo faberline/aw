@@ -15,5 +15,6 @@ mod release_workflow;
 mod repo;
 mod report;
 mod runs;
+mod security;
 mod standards;
 mod support;

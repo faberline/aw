@@ -736,3 +736,42 @@ fn the_gh_reader_reads_the_split_state_the_workflow_path_and_the_pr_issue() {
     assert_eq!(f.main_runs[0].id, 3);
     assert_eq!(f.main_runs[0].event, "push");
 }
+
+#[test]
+fn a_comment_reference_with_a_repo_name_is_that_repo() {
+    let mut i = issue(2, &["blocked"], "2026-11-20T01:00:00Z");
+    i.comments = comment("Waits for aw#195 and faberline/reach#7 and #9");
+    let shown: Vec<String> = i.waits().iter().map(|p| p.show()).collect();
+    assert_eq!(shown, vec!["aw#195", "faberline/reach#7", "#9"]);
+}
+
+#[test]
+fn a_hold_comment_without_an_issue_number_is_a_hold_not_waits_for_done() {
+    let mut i = issue(2, &["blocked"], "2026-11-20T01:00:00Z");
+    i.body = "Waits for: #5".into();
+    i.comments = comment("Stays blocked: no paid run is approved.");
+    let mut f = facts(vec![i]);
+    f.closed_refs = vec!["#5".into()];
+    let section = repo_section(&f, &settings());
+    assert!(section.items.iter().all(|i| i.check != "waits-for-done"));
+    let r = section.counts.unwrap().blocked_reasons;
+    assert_eq!((r.hold, r.waits), (1, 0));
+    let md = Report::new(vec![repo_section(&f, &settings())]).markdown();
+    assert!(md.contains("blocked 1 (waits-for 0, hold 1, comment 0, label 0, no reason 0)"));
+}
+
+#[test]
+fn a_newer_comment_with_a_wait_ends_the_hold() {
+    let mut i = issue(2, &["blocked"], "2026-11-20T01:00:00Z");
+    i.comments = vec![
+        CommentFact {
+            body: "Stays blocked: paid".into(),
+            created_at: NOW.into(),
+        },
+        CommentFact {
+            body: "Now waits for #5".into(),
+            created_at: NOW.into(),
+        },
+    ];
+    assert!(!i.on_hold());
+}

@@ -10,6 +10,7 @@ use crate::application::release_contract::ContractServices;
 use crate::application::release_receipt::ReceiptServices;
 use crate::application::repo::RepoServices;
 use crate::application::run::RunServices;
+use crate::application::security::SecurityServices;
 use crate::application::standards::{RepoTarget, StandardsServices};
 use crate::application::work::Services;
 use crate::domain::ci::ports::{BranchRules, CiFiles};
@@ -26,7 +27,7 @@ use crate::infrastructure::standards::{LocalCore, LocalRepo, is_checkout};
 use crate::infrastructure::work::{GhCli, GitCli, SystemClock};
 use crate::interfaces::work::cli::{
     self, CiTarget, ContractTarget, Exit, HygieneTarget, MetaTarget, PatrolTarget, PromptTarget,
-    ReceiptTarget, ReleaseCall, StandardsTarget,
+    ReceiptTarget, ReleaseCall, SecurityTarget, StandardsTarget,
 };
 
 pub fn run() -> ExitCode {
@@ -39,6 +40,9 @@ pub fn run() -> ExitCode {
     }
     if let Some(target) = parsed.repo_target() {
         return exit_code(repo_check(target));
+    }
+    if let Some(target) = parsed.security_target() {
+        return exit_code(security_check(target));
     }
     if let Some(target) = parsed.meta_target() {
         return exit_code(meta_check(target));
@@ -119,6 +123,20 @@ fn repo_check(target: &HygieneTarget) -> Exit {
         }
     };
     cli::run_repo(RepoServices { files: &repo }, target)
+}
+
+/// `aw security check`: the tracked files of the checkout that holds `--dir`
+/// (default: the current directory).
+fn security_check(target: &SecurityTarget) -> Exit {
+    let dir = target.dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    let repo = match TrackedFiles::open(&dir) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("aw: {err}");
+            return Exit::Nothing;
+        }
+    };
+    cli::run_security(SecurityServices { files: &repo }, target)
 }
 
 /// `aw standards check`: the repositories of `--repo` (default `.`) against

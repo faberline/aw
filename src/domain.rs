@@ -4,5 +4,6 @@ pub mod meta;
 pub mod release;
 pub mod repo;
 pub mod run;
+pub mod security;
 pub mod standards;
 pub mod work;

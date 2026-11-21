@@ -48,6 +48,7 @@ Promote a guideline only when all three are true:
 | S7 | [CI stages](ci.md) | every repository with CI | `aw ci check` | `[[standards.ci.exception]]` in `aw.toml` | active since 2026-11-09; 0 of 8 repositories pass (`aw` misses only the ruleset) |
 | S8 | [Test coverage](coverage.md): 100 % line coverage, reached by a ratchet | every Rust repository | the coverage action, `.github/actions/coverage` | `[[standards.coverage.exclude]]` in `aw.toml` | active since 2026-11-10; `aw` adopted, then `lumen`, then the rest |
 | S9 | [Repo hygiene](repo-hygiene.md): no session leftovers, home paths, dated documents or oversized files; a ratchet to an empty baseline | every repository | `aw repo check` | `[hygiene]` table in `aw.toml` | active since `aw` 0.7.40; every repository adopts it in its `lint` job; an empty baseline is required for `1.0.0` |
+| S10 | [Security](security.md): advisories in CI and on a schedule, images pinned by digest, third-party components listed, GitHub Actions pinned and least-privilege, hardened manifests | every repository | `aw security check` (SEC1, SEC2, SEC3, SEC5; SEC4 and SEC6 by hand) | `[[standards.security.exception]]` in `aw.toml` (reason and end date) | candidate since `aw` 0.7.73; warns only; the desk makes it required after each repository fixes its gaps |
 
 A candidate becomes active when its checker is on `aw` main.
 

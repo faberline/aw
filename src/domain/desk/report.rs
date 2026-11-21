@@ -28,6 +28,9 @@ pub struct Counts {
 pub struct BlockedReasons {
     /// A `Waits for:` line, or a comment that names the blockers.
     pub waits: usize,
+    /// The newest comment holds the issue for a person (paid, owner, out of
+    /// the milestone) and names no issue.
+    pub hold: usize,
     /// A comment that names a decision, an owner or a wait.
     pub comment: usize,
     /// A hold label (`decision`, paid, owner).
@@ -81,8 +84,13 @@ impl Report {
                 let merge = c.last_merge.as_deref().unwrap_or("none");
                 let why = if c.blocked > 0 {
                     let r = &c.blocked_reasons;
+                    let hold = if r.hold > 0 {
+                        format!("hold {}, ", r.hold)
+                    } else {
+                        String::new()
+                    };
                     format!(
-                        " (waits-for {}, comment {}, label {}, no reason {})",
+                        " (waits-for {}, {hold}comment {}, label {}, no reason {})",
                         r.waits, r.comment, r.label, r.none
                     )
                 } else {
