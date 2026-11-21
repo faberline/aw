@@ -18,8 +18,21 @@ pub struct Counts {
     pub tdd: usize,
     pub review: usize,
     pub blocked: usize,
+    pub blocked_reasons: BlockedReasons,
     pub open_prs: usize,
     pub last_merge: Option<String>,
+}
+
+/// How the blocked issues of a repository say what they wait for.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct BlockedReasons {
+    /// A `Waits for:` line, or a comment that names the blockers.
+    pub waits: usize,
+    /// A comment that names a decision, an owner or a wait.
+    pub comment: usize,
+    /// A hold label (`decision`, paid, owner).
+    pub label: usize,
+    pub none: usize,
 }
 
 /// One repository (or the aw section).
@@ -44,20 +57,40 @@ impl Report {
         Report { sections, summary }
     }
 
+    /// The report with only the items of the named checks.
+    pub fn only(mut self, checks: &[String]) -> Self {
+        if checks.is_empty() {
+            return self;
+        }
+        for s in &mut self.sections {
+            s.items.retain(|i| checks.contains(&i.check));
+        }
+        Report::new(self.sections)
+    }
+
     /// True when a repository could not be read.
     pub fn has_unknown(&self) -> bool {
         self.sections.iter().any(|s| s.unknown.is_some())
     }
 
     pub fn markdown(&self) -> String {
-        let mut out = String::new();
+        let mut out = format!("{}\n\n", self.summary);
         for s in &self.sections {
             out.push_str(&format!("## {}\n\n", s.name));
             if let Some(c) = &s.counts {
                 let merge = c.last_merge.as_deref().unwrap_or("none");
+                let why = if c.blocked > 0 {
+                    let r = &c.blocked_reasons;
+                    format!(
+                        " (waits-for {}, comment {}, label {}, no reason {})",
+                        r.waits, r.comment, r.label, r.none
+                    )
+                } else {
+                    String::new()
+                };
                 out.push_str(&format!(
-                    "open {}, spec {}, tdd {}, review {}, blocked {}, open PRs {}, last merge {}\n\n",
-                    c.open, c.spec, c.tdd, c.review, c.blocked, c.open_prs, merge
+                    "open {}, spec {}, tdd {}, review {}, blocked {}{}, open PRs {}, last merge {}\n\n",
+                    c.open, c.spec, c.tdd, c.review, c.blocked, why, c.open_prs, merge
                 ));
             }
             if let Some(call) = &s.unknown {
@@ -71,7 +104,6 @@ impl Report {
             }
             out.push('\n');
         }
-        out.push_str(&format!("{}\n", self.summary));
         out
     }
 

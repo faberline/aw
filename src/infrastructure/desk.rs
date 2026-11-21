@@ -3,12 +3,11 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde_json::Value;
 
 use crate::domain::desk::facts::{CommentFact, IssueFact, PrFact, RepoFacts, RunFact};
 use crate::domain::desk::ports::{DeskSource, ReadError};
-use crate::domain::work::waits;
 use crate::infrastructure::work::process::run;
 
 const PAGE: usize = 100;
@@ -92,24 +91,27 @@ impl<A: Api> GhDesk<A> {
                     .as_array()
                     .map(|a| a.iter().map(|l| text(&l["name"])).collect())
                     .unwrap_or_default(),
-                newest_comment: None,
+                comments: Vec::new(),
             };
             if issue.blocked() {
-                issue.newest_comment = self.newest_comment(repo, issue.number)?;
+                issue.comments = self.comments(repo, issue.number)?;
             }
             issues.push(issue);
         }
         Ok(issues)
     }
 
-    fn newest_comment(&self, repo: &str, number: u64) -> Result<Option<CommentFact>, ReadError> {
+    fn comments(&self, repo: &str, number: u64) -> Result<Vec<CommentFact>, ReadError> {
         let rows = self.rows(&format!(
             "repos/{repo}/issues/{number}/comments?sort=created"
         ))?;
-        Ok(rows.last().map(|c| CommentFact {
-            body: text(&c["body"]),
-            created_at: text(&c["created_at"]),
-        }))
+        Ok(rows
+            .iter()
+            .map(|c| CommentFact {
+                body: text(&c["body"]),
+                created_at: text(&c["created_at"]),
+            })
+            .collect())
     }
 
     fn prs(&self, repo: &str) -> Result<Vec<PrFact>, ReadError> {
@@ -135,23 +137,32 @@ impl<A: Api> GhDesk<A> {
                 updated_at: text(&row["updated_at"]),
                 merge_state: text(&one["mergeable_state"]),
                 failed_checks: failed,
+                issue: linked_issue(&text(&one["body"])),
             });
         }
         Ok(prs)
     }
 
-    /// The newest completed run of each workflow on main.
+    /// The newest completed run of each workflow file on main. The title of a
+    /// run can hold the commit message, so the file path is the key.
     fn main_runs(&self, repo: &str) -> Result<Vec<RunFact>, ReadError> {
         let path = format!("repos/{repo}/actions/runs?branch=main&status=completed");
         let value = self.json(&format!("{path}&per_page={PAGE}"))?;
         let mut runs: Vec<RunFact> = Vec::new();
         for r in value["workflow_runs"].as_array().into_iter().flatten() {
-            let workflow = text(&r["name"]);
+            let path = text(&r["path"]);
+            let workflow = if path.is_empty() {
+                text(&r["name"])
+            } else {
+                path
+            };
             if runs.iter().any(|x| x.workflow == workflow) {
                 continue;
             }
             runs.push(RunFact {
                 workflow,
+                event: text(&r["event"]),
+                created_at: text(&r["created_at"]),
                 id: r["id"].as_u64().unwrap_or(0),
                 sha: text(&r["head_sha"]),
                 conclusion: text(&r["conclusion"]),
@@ -180,29 +191,49 @@ impl<A: Api> GhDesk<A> {
             .map(str::to_string))
     }
 
-    /// The `Waits for:` references of blocked issues that are closed.
-    fn closed_refs(&self, repo: &str, issues: &[IssueFact]) -> Result<Vec<String>, ReadError> {
+    /// The waits of blocked issues that are closed: first those closed as
+    /// completed, then those closed as not planned (split) or duplicate.
+    fn closed_refs(
+        &self,
+        repo: &str,
+        issues: &[IssueFact],
+    ) -> Result<(Vec<String>, Vec<String>), ReadError> {
         let org = repo.split('/').next().unwrap_or("");
-        let mut closed = Vec::new();
+        let mut done = Vec::new();
+        let mut split = Vec::new();
+        let mut seen: Vec<String> = Vec::new();
         for issue in issues.iter().filter(|i| i.blocked()) {
-            for p in waits::parse(&issue.body).prerequisites {
+            for p in issue.waits() {
                 let shown = p.show();
-                if closed.contains(&shown) {
+                if seen.contains(&shown) {
                     continue;
                 }
+                seen.push(shown.clone());
                 let target = match &p.repo {
                     Some(r) if r.contains('/') => r.clone(),
                     Some(r) => format!("{org}/{r}"),
                     None => repo.to_string(),
                 };
                 let one = self.json(&format!("repos/{target}/issues/{}", p.number))?;
-                if one["state"].as_str() == Some("closed") {
-                    closed.push(shown);
+                if one["state"].as_str() != Some("closed") {
+                    continue;
+                }
+                match one["state_reason"].as_str() {
+                    Some("not_planned" | "duplicate") => split.push(shown),
+                    _ => done.push(shown),
                 }
             }
         }
-        Ok(closed)
+        Ok((done, split))
     }
+}
+
+/// The issue of the first `Closes #N` / `Fixes #N` / `Refs #N` line of a PR
+/// body. A reference with a repository name is another repository.
+fn linked_issue(body: &str) -> Option<u64> {
+    let pattern = regex::Regex::new(r"(?i)\b(?:closes|fixes|resolves|refs?)\s+#(\d+)")
+        .expect("the issue link pattern is valid");
+    pattern.captures(body).and_then(|c| c[1].parse().ok())
 }
 
 fn text(v: &Value) -> String {
@@ -212,7 +243,7 @@ fn text(v: &Value) -> String {
 impl<A: Api> DeskSource for GhDesk<A> {
     fn facts(&self, repo: &str) -> Result<RepoFacts, ReadError> {
         let issues = self.issues(repo)?;
-        let closed_refs = self.closed_refs(repo, &issues)?;
+        let (closed_refs, split_refs) = self.closed_refs(repo, &issues)?;
         Ok(RepoFacts {
             repo: repo.to_string(),
             prs: self.prs(repo)?,
@@ -220,6 +251,7 @@ impl<A: Api> DeskSource for GhDesk<A> {
             last_merge: self.last_merge(repo)?,
             last_commit: self.last_commit(repo)?,
             closed_refs,
+            split_refs,
             issues,
         })
     }
@@ -233,19 +265,39 @@ pub struct DeskConfig {
     pub aw: String,
 }
 
-/// Read `[desk]` of the `aw.toml` in `dir` (or a parent folder).
-pub fn load_config(dir: &Path) -> Result<DeskConfig> {
+impl DeskConfig {
+    /// The repositories of the pipeline, for a run outside the aw checkout.
+    pub fn builtin() -> Self {
+        DeskConfig {
+            org: "faberline".to_string(),
+            repos: [
+                "sift", "core", "lumen", "som", "defer", "tape", "relay", "keep", "kit",
+            ]
+            .iter()
+            .map(|r| r.to_string())
+            .collect(),
+            aw: "aw".to_string(),
+        }
+    }
+}
+
+/// Read `[desk]` of the `aw.toml` in `dir` (or a parent folder). `None` when
+/// no `aw.toml` there has a `[desk]` table: the caller uses the built-in list.
+pub fn load_config(dir: &Path) -> Result<Option<DeskConfig>> {
     let mut at = Some(dir);
     while let Some(d) = at {
         let file = d.join("aw.toml");
         if file.is_file() {
             let raw = std::fs::read_to_string(&file)
                 .with_context(|| format!("could not read {}", file.display()))?;
-            return parse_config(&raw);
+            let table: toml::Table = raw.parse().context("aw.toml is not valid TOML")?;
+            if table.contains_key("desk") {
+                return parse_config(&raw).map(Some);
+            }
         }
         at = d.parent();
     }
-    bail!("no aw.toml found; run `aw desk patrol` inside the aw checkout or give --repo")
+    Ok(None)
 }
 
 pub fn parse_config(raw: &str) -> Result<DeskConfig> {

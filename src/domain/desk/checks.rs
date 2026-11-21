@@ -1,9 +1,24 @@
 //! The named checks of the desk patrol. Each check reads facts only.
 
 use super::facts::{IssueFact, RepoFacts};
-use super::report::{Counts, Item, Section};
+use super::report::{BlockedReasons, Counts, Item, Section};
 use super::time::epoch;
 use crate::domain::work::waits;
+
+/// The names of the checks, for `--only`.
+pub const CHECKS: [&str; 11] = [
+    "main-red",
+    "blocked-new",
+    "blocked-no-reason",
+    "stuck-stage",
+    "pr-stuck",
+    "queue-empty",
+    "waits-for-done",
+    "waits-for-split",
+    "routine-quiet",
+    "decision-open",
+    "pipeline-open",
+];
 
 /// The limits of one patrol.
 #[derive(Clone, Copy, Debug)]
@@ -52,6 +67,11 @@ fn names_a_wait(text: &str) -> bool {
         "waiting",
         "blocked on",
         "blocked by",
+        "blocked until",
+        "blocked:",
+        "owner",
+        "aw#",
+        "faberline/aw/issues",
     ]
     .iter()
     .any(|w| lower.contains(w))
@@ -59,6 +79,44 @@ fn names_a_wait(text: &str) -> bool {
 
 fn is_work(i: &IssueFact) -> bool {
     i.stage().is_some() && !i.blocked()
+}
+
+/// How a blocked issue says what it waits for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reason {
+    Waits,
+    Comment,
+    Label,
+}
+
+fn reason_of(i: &IssueFact) -> Option<Reason> {
+    if !i.waits().is_empty() || !waits::parse(&i.body).without_number.is_empty() {
+        return Some(Reason::Waits);
+    }
+    if i.comments.iter().any(|c| names_a_wait(&c.body)) {
+        return Some(Reason::Comment);
+    }
+    let held = ["decision", "paid", "owner", "hold"];
+    if i.labels
+        .iter()
+        .any(|l| l != "blocked" && held.iter().any(|h| l.contains(h)))
+    {
+        return Some(Reason::Label);
+    }
+    None
+}
+
+fn blocked_reasons(f: &RepoFacts) -> BlockedReasons {
+    let mut r = BlockedReasons::default();
+    for i in f.issues.iter().filter(|i| i.blocked()) {
+        match reason_of(i) {
+            Some(Reason::Waits) => r.waits += 1,
+            Some(Reason::Comment) => r.comment += 1,
+            Some(Reason::Label) => r.label += 1,
+            None => r.none += 1,
+        }
+    }
+    r
 }
 
 /// The section of one repository.
@@ -70,11 +128,12 @@ pub fn repo_section(f: &RepoFacts, s: &Settings) -> Section {
         tdd: count_stage("tdd"),
         review: count_stage("review"),
         blocked: f.issues.iter().filter(|i| i.blocked()).count(),
+        blocked_reasons: blocked_reasons(f),
         open_prs: f.prs.len(),
         last_merge: f.last_merge.clone(),
     };
     let mut items = Vec::new();
-    main_red(f, &mut items);
+    main_red(f, s, &mut items);
     blocked_new(f, s, &mut items);
     blocked_no_reason(f, &mut items);
     stuck_stage(f, s, &mut items);
@@ -100,28 +159,36 @@ pub fn unknown_section(repo: &str, call: &str) -> Section {
     }
 }
 
-/// 1. The newest completed run of a workflow on main failed or was cancelled.
-fn main_red(f: &RepoFacts, out: &mut Vec<Item>) {
+/// Check 1: The newest completed run of a workflow file on main failed or was
+/// cancelled. A red run started by hand counts only inside the `--since`
+/// window. A newer green run hides an older red one (the reader keeps only
+/// the newest run of each workflow file).
+fn main_red(f: &RepoFacts, s: &Settings, out: &mut Vec<Item>) {
     for r in &f.main_runs {
-        if r.conclusion == "failure" || r.conclusion == "cancelled" {
-            let sha: String = r.sha.chars().take(7).collect();
-            out.push(item(
-                "main-red",
-                format!("run {} of workflow {}", r.id, r.workflow),
-                format!("main is {} at {sha}", r.conclusion),
-            ));
+        if r.conclusion != "failure" && r.conclusion != "cancelled" {
+            continue;
         }
+        if r.event == "workflow_dispatch"
+            && age(s.now, &r.created_at).is_none_or(|a| a > s.since_secs)
+        {
+            continue;
+        }
+        let sha: String = r.sha.chars().take(7).collect();
+        out.push(item(
+            "main-red",
+            format!("run {} of workflow {}", r.id, r.workflow),
+            format!("main is {} at {sha}", r.conclusion),
+        ));
     }
 }
 
-/// 2. A blocked issue changed within the `--since` window.
+/// Check 2: A blocked issue changed within the `--since` window.
 fn blocked_new(f: &RepoFacts, s: &Settings, out: &mut Vec<Item>) {
     for i in f.issues.iter().filter(|i| i.blocked()) {
         let recent = age(s.now, &i.updated_at).is_some_and(|a| a <= s.since_secs);
         if recent {
             let line = i
-                .newest_comment
-                .as_ref()
+                .newest_comment()
                 .map(|c| first_line(&c.body))
                 .unwrap_or_default();
             let why = if line.is_empty() {
@@ -138,15 +205,12 @@ fn blocked_new(f: &RepoFacts, s: &Settings, out: &mut Vec<Item>) {
     }
 }
 
-/// 3. A blocked issue whose newest comment does not say what it waits for.
+/// Check 3: A blocked issue with no reason: no `Waits for:` line, no comment that
+/// names a wait or a decision, no hold label. The reasons found are counted
+/// in the counts line of the repository.
 fn blocked_no_reason(f: &RepoFacts, out: &mut Vec<Item>) {
     for i in f.issues.iter().filter(|i| i.blocked()) {
-        let has_reason = i
-            .newest_comment
-            .as_ref()
-            .is_some_and(|c| names_a_wait(&c.body))
-            || !waits::parse(&i.body).prerequisites.is_empty();
-        if !has_reason {
+        if reason_of(i).is_none() {
             out.push(item(
                 "blocked-no-reason",
                 format!("#{} {}", i.number, i.title),
@@ -156,26 +220,59 @@ fn blocked_no_reason(f: &RepoFacts, out: &mut Vec<Item>) {
     }
 }
 
-/// 4. A staged, unblocked issue that has not changed for a long time.
+/// Check 4: A staged, unblocked issue that has not changed for a long time. A
+/// review issue and an `expedite` issue show one by one. The rest show as one
+/// line for each stage: the count and the three oldest.
 fn stuck_stage(f: &RepoFacts, s: &Settings, out: &mut Vec<Item>) {
+    let mut crowd: Vec<(&str, Vec<(i64, u64)>)> = vec![("spec", vec![]), ("tdd", vec![])];
     for i in f.issues.iter().filter(|i| is_work(i)) {
-        if let Some(a) = age(s.now, &i.updated_at).filter(|a| *a > s.stale_secs) {
+        let Some(a) = age(s.now, &i.updated_at).filter(|a| *a > s.stale_secs) else {
+            continue;
+        };
+        let stage = i.stage().unwrap_or("?");
+        if stage == "review" || i.has("expedite") {
             out.push(item(
                 "stuck-stage",
                 format!("#{} {}", i.number, i.title),
-                format!(
-                    "stage {}, not updated for {}h",
-                    i.stage().unwrap_or("?"),
-                    hours(a)
-                ),
+                format!("stage {stage}, not updated for {}h", hours(a)),
             ));
+        } else if let Some((_, list)) = crowd.iter_mut().find(|(n, _)| *n == stage) {
+            list.push((a, i.number));
         }
+    }
+    for (stage, mut list) in crowd {
+        if list.is_empty() {
+            continue;
+        }
+        list.sort_by(|x, y| y.0.cmp(&x.0).then(x.1.cmp(&y.1)));
+        let oldest: Vec<String> = list
+            .iter()
+            .take(3)
+            .map(|(a, n)| format!("#{n} ({}h)", hours(*a)))
+            .collect();
+        out.push(item(
+            "stuck-stage",
+            format!("stage {stage}: {} issues", list.len()),
+            format!("not updated for a long time; oldest {}", oldest.join(", ")),
+        ));
     }
 }
 
-/// 5. An open PR that is behind, dirty, failing, or quiet.
+/// Check 5: An open PR that is behind, dirty, failing, or quiet. A PR whose issue is
+/// blocked or closed is an old PR: one line with the numbers.
 fn pr_stuck(f: &RepoFacts, s: &Settings, out: &mut Vec<Item>) {
+    let mut old: Vec<u64> = Vec::new();
     for p in &f.prs {
+        let issue_gone = p
+            .issue
+            .is_some_and(|n| match f.issues.iter().find(|i| i.number == n) {
+                None => true,
+                Some(i) => i.blocked(),
+            });
+        if issue_gone {
+            old.push(p.number);
+            continue;
+        }
         let mut why: Vec<String> = Vec::new();
         match p.merge_state.as_str() {
             "behind" => why.push("BEHIND main".to_string()),
@@ -196,9 +293,17 @@ fn pr_stuck(f: &RepoFacts, s: &Settings, out: &mut Vec<Item>) {
             ));
         }
     }
+    if !old.is_empty() {
+        let numbers: Vec<String> = old.iter().map(|n| format!("#{n}")).collect();
+        out.push(item(
+            "pr-stuck",
+            format!("old PRs: {}", numbers.join(", ")),
+            "the issue of each is blocked or closed".to_string(),
+        ));
+    }
 }
 
-/// 6. No unblocked issue in any stage.
+/// Check 6: No unblocked issue in any stage.
 fn queue_empty(f: &RepoFacts, out: &mut Vec<Item>) {
     if f.issues.iter().any(is_work) {
         return;
@@ -216,11 +321,7 @@ fn queue_empty(f: &RepoFacts, out: &mut Vec<Item>) {
         .iter()
         .filter(|i| i.blocked())
         .map(|i| {
-            let w: Vec<String> = waits::parse(&i.body)
-                .prerequisites
-                .iter()
-                .map(|p| p.show())
-                .collect();
+            let w: Vec<String> = i.waits().iter().map(|p| p.show()).collect();
             if w.is_empty() {
                 format!("#{} waits for nothing named", i.number)
             } else {
@@ -236,18 +337,31 @@ fn queue_empty(f: &RepoFacts, out: &mut Vec<Item>) {
     out.push(item("queue-empty", f.repo.clone(), why));
 }
 
-/// 7. `Waits for: #N` where every #N is closed and the issue is still blocked.
+/// Check 7: A blocked issue whose waits are all closed as completed (`waits-for-done`),
+/// or one of whose waits closed as not planned, that is, split
+/// (`waits-for-split`: the children are the new blockers).
 fn waits_for_done(f: &RepoFacts, out: &mut Vec<Item>) {
     for i in f.issues.iter().filter(|i| i.blocked()) {
-        let w = waits::parse(&i.body);
-        if w.prerequisites.is_empty() {
+        let w = i.waits();
+        if w.is_empty() {
             continue;
         }
-        if w.prerequisites
+        let names: Vec<String> = w.iter().map(|p| p.show()).collect();
+        let split: Vec<&str> = names
             .iter()
-            .all(|p| f.closed_refs.contains(&p.show()))
-        {
-            let names: Vec<String> = w.prerequisites.iter().map(|p| p.show()).collect();
+            .filter(|n| f.split_refs.contains(n))
+            .map(|n| n.as_str())
+            .collect();
+        if !split.is_empty() {
+            out.push(item(
+                "waits-for-split",
+                format!("#{} {}", i.number, i.title),
+                format!(
+                    "waits for {}, closed as not planned (split); name the children",
+                    split.join(" ")
+                ),
+            ));
+        } else if names.iter().all(|n| f.closed_refs.contains(n)) {
             out.push(item(
                 "waits-for-done",
                 format!("#{} {}", i.number, i.title),
@@ -257,7 +371,7 @@ fn waits_for_done(f: &RepoFacts, out: &mut Vec<Item>) {
     }
 }
 
-/// 10. Unblocked work exists but nothing changed for a long time.
+/// Check 10: Unblocked work exists but nothing changed for a long time.
 fn routine_quiet(f: &RepoFacts, s: &Settings, out: &mut Vec<Item>) {
     if !f.issues.iter().any(is_work) {
         return;
