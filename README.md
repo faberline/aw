@@ -289,6 +289,32 @@ It exits 0 for a pass, 1 for a finding and 2 for a usage error. It reads the
 `[meta]` table of `aw.toml` like `aw meta check`. The JSON document has the
 schema `metadoc-report/1`.
 
+## Desk patrol
+
+`aw desk patrol` is the checklist for a desk round. It reads the pipeline
+repositories through `gh` and changes nothing. It prints a Markdown checklist:
+one section for each repository and one for aw. Each repository section starts
+with a counts line (open, spec, tdd, review, blocked, open PRs, last merge).
+Each item is `- [ ] <what to look at>: <why> (<check>)`.
+
+```bash
+aw desk patrol                       # every repository of [desk] in aw.toml
+aw desk patrol --repo sift --repo core
+aw desk patrol --since 120 --stale-hours 12 --json
+```
+
+The repositories, in order, are `[desk] repos` of `aw.toml` (`org`, `repos`,
+`aw`). `--repo` (repeatable) replaces that list for one run. Checks:
+`main-red`, `blocked-new` (`--since` minutes, default 70),
+`blocked-no-reason`, `stuck-stage` (`--stale-hours`, default 6), `pr-stuck`,
+`queue-empty`, `waits-for-done`, `routine-quiet`, and in the aw section
+`decision-open` and `pipeline-open`. The last line counts the items for each
+check, or says `nothing to look at`.
+
+It exits 0 when every call worked, even if it lists items. It exits 1 when a
+repository cannot be read; that repository is listed as `unknown`, never as
+clean. The list is a start: the desk still reads each item.
+
 ## Milestone release gate
 
 Three commands decide when a milestone gets a release tag. They read one

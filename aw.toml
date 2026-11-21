@@ -1,5 +1,12 @@
 # aw's own settings for the Faberline standards (docs/standards/).
 
+# `aw desk patrol`: the repositories the desk looks at, the most important
+# first. `--repo` replaces this list for one run.
+[desk]
+org = "faberline"
+repos = ["sift", "core", "lumen", "som", "defer", "tape", "relay", "keep", "kit"]
+aw = "aw"
+
 # S8 test coverage: docs/standards/coverage.md. CI raises `line`; it never
 # goes down.
 [standards.coverage]

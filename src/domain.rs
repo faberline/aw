@@ -1,4 +1,5 @@
 pub mod ci;
+pub mod desk;
 pub mod meta;
 pub mod release;
 pub mod repo;

@@ -13,6 +13,7 @@ use crate::application::run::RunServices;
 use crate::application::standards::{RepoTarget, StandardsServices};
 use crate::application::work::Services;
 use crate::domain::ci::ports::{BranchRules, CiFiles};
+use crate::domain::work::ports::Clock;
 use crate::infrastructure::ci::files::origin_repo;
 use crate::infrastructure::ci::{GhBranchRules, GitHubFiles, LocalFiles};
 use crate::infrastructure::meta::LocalMeta;
@@ -24,8 +25,8 @@ use crate::infrastructure::run::LedgerFile;
 use crate::infrastructure::standards::{LocalCore, LocalRepo, is_checkout};
 use crate::infrastructure::work::{GhCli, GitCli, SystemClock};
 use crate::interfaces::work::cli::{
-    self, CiTarget, ContractTarget, Exit, HygieneTarget, MetaTarget, PromptTarget, ReceiptTarget,
-    ReleaseCall, StandardsTarget,
+    self, CiTarget, ContractTarget, Exit, HygieneTarget, MetaTarget, PatrolTarget, PromptTarget,
+    ReceiptTarget, ReleaseCall, StandardsTarget,
 };
 
 pub fn run() -> ExitCode {
@@ -44,6 +45,9 @@ pub fn run() -> ExitCode {
     }
     if let Some(target) = parsed.metadoc_target() {
         return exit_code(metadoc_check(target));
+    }
+    if let Some(target) = parsed.desk_target() {
+        return exit_code(desk_patrol(target));
     }
     if let Some(target) = parsed.release_contract_target() {
         return exit_code(release_contract(target));
@@ -195,6 +199,34 @@ fn metadoc_check(target: &MetaTarget) -> Exit {
         target.paths.clone()
     };
     cli::run_metadoc(MetaServices { repo: &repo }, &paths, target.format)
+}
+
+/// `aw desk patrol`: what the desk must look at, read through `gh`.
+fn desk_patrol(target: &PatrolTarget) -> Exit {
+    let dir = target.dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    let config = match crate::infrastructure::desk::load_config(&dir) {
+        Ok(config) => config,
+        Err(_) if !target.repo.is_empty() => crate::infrastructure::desk::DeskConfig {
+            org: "faberline".to_string(),
+            repos: Vec::new(),
+            aw: "aw".to_string(),
+        },
+        Err(err) => {
+            eprintln!("aw: {err:#}");
+            return Exit::Nothing;
+        }
+    };
+    let (repos, aw) =
+        crate::application::desk::repo_names(&config.org, &config.repos, &config.aw, &target.repo);
+    let now = Clock::now(&SystemClock);
+    let settings = crate::domain::desk::checks::Settings {
+        now,
+        since_secs: target.since as i64 * 60,
+        stale_secs: target.stale_hours as i64 * 3600,
+    };
+    let source = crate::infrastructure::desk::GhDesk::new();
+    let report = crate::application::desk::patrol(&source, &repos, &aw, &settings);
+    cli::run_desk_patrol(&report, target.json)
 }
 
 /// `aw release-contract`: the release workflows of the apps of one checkout.

@@ -18,6 +18,7 @@ use crate::application::repo::{self, RepoServices};
 use crate::application::run::{Client, Event, RunServices};
 use crate::application::standards::{self, StandardsServices};
 use crate::application::work::{self, ClaimOutcome, Outcome, Services};
+use crate::domain::desk::report::Report;
 use crate::domain::release::receipt::GcpPaths;
 use crate::domain::work::ports::PortError;
 use crate::domain::work::stage::Stage;
@@ -170,6 +171,11 @@ enum Command {
     Meta {
         #[command(subcommand)]
         command: MetaCommand,
+    },
+    /// What the desk looks at: read-only checks over the pipeline repositories.
+    Desk {
+        #[command(subcommand)]
+        command: DeskCommand,
     },
     /// Check the core documents of a project folder against their contracts.
     Metadoc {
@@ -378,6 +384,38 @@ enum MetaCommand {
 }
 
 #[derive(Subcommand)]
+enum DeskCommand {
+    /// Read each pipeline repository through `gh` and print a Markdown
+    /// checklist of what the desk must look at (main-red, blocked-new,
+    /// blocked-no-reason, stuck-stage, pr-stuck, queue-empty, waits-for-done,
+    /// decision-open, pipeline-open, routine-quiet). It changes nothing.
+    /// Exit codes: 0 done, 1 a repository could not be read, 2 a usage error.
+    Patrol(PatrolTarget),
+}
+
+/// What `aw desk patrol` reads.
+#[derive(Args, Clone, Debug, Default)]
+pub struct PatrolTarget {
+    /// Patrol only this repository (`name` or `owner/name`). Repeat it.
+    /// Default: `[desk] repos` of `aw.toml`.
+    #[arg(long, value_name = "REPO")]
+    pub repo: Vec<String>,
+    /// `blocked-new` looks at blocked issues changed in this many minutes.
+    #[arg(long, value_name = "MINUTES", default_value_t = 70)]
+    pub since: u64,
+    /// `stuck-stage`, `pr-stuck` and `routine-quiet` fire after this many
+    /// hours without an update.
+    #[arg(long, value_name = "HOURS", default_value_t = 6)]
+    pub stale_hours: u64,
+    /// Print the same data as JSON.
+    #[arg(long)]
+    pub json: bool,
+    /// A folder inside the aw checkout. Default: the current directory.
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
+}
+
+#[derive(Subcommand)]
 enum MetadocCommand {
     /// Check the documents of a project folder: README (R1 to R12), STATUS
     /// (S1 to S7), ROADMAP (M1 to M6), the supporting guides (D1 to D4) and the
@@ -571,6 +609,16 @@ impl Cli {
         match &self.command {
             Command::Metadoc {
                 command: MetadocCommand::Check(target),
+            } => Some(target),
+            _ => None,
+        }
+    }
+
+    /// The target of `aw desk patrol`, if that is the command.
+    pub fn desk_target(&self) -> Option<&PatrolTarget> {
+        match &self.command {
+            Command::Desk {
+                command: DeskCommand::Patrol(target),
             } => Some(target),
             _ => None,
         }
@@ -787,6 +835,20 @@ pub fn run_metadoc(services: MetaServices<'_>, paths: &[String], format: ReportF
             eprintln!("aw: {err:#}");
             Exit::Nothing
         }
+    }
+}
+
+/// Print the patrol report. Exit 1 when a repository could not be read.
+pub fn run_desk_patrol(report: &Report, json: bool) -> Exit {
+    if json {
+        println!("{}", report.json());
+    } else {
+        print!("{}", report.markdown());
+    }
+    if report.has_unknown() {
+        Exit::Failed
+    } else {
+        Exit::Ok
     }
 }
 
@@ -1008,6 +1070,9 @@ fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit
         }
         Command::Meta { .. } => {
             anyhow::bail!("`aw meta` needs its adapter; the composition root runs it")
+        }
+        Command::Desk { .. } => {
+            anyhow::bail!("`aw desk` needs its adapter; the composition root runs it")
         }
         Command::Metadoc { .. } => {
             anyhow::bail!("`aw metadoc` needs its adapter; the composition root runs it")
