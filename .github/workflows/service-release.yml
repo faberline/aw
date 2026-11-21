@@ -94,6 +94,9 @@ on:
         default: true
         type: boolean
 
+# Each job below sets its own permissions. The caller grants the most they may use.
+permissions: {}
+
 jobs:
   verify-inputs:
     name: prove immutable tag and candidate receipt

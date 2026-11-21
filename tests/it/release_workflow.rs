@@ -107,7 +107,11 @@ fn the_jobs_are_verify_then_publish() {
         jobs["publish-release"]["needs"].as_str(),
         Some("verify-inputs")
     );
-    assert!(workflow.get("permissions").is_none());
+    // Top level grants nothing (SEC5); each job sets its own rights.
+    assert_eq!(
+        workflow["permissions"].as_mapping().map(|m| m.len()),
+        Some(0)
+    );
     assert!(workflow.get("concurrency").is_none());
 }
 
