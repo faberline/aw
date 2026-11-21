@@ -19,6 +19,7 @@ Run one pass, then stop.
 Nobody reads your final answer in time.
 Nobody reads your comments in `<target>` in time.
 The control desk reads only faberline/aw issues, once each hour.
+The desk round starts with `aw desk patrol`: it lists what to look at in every repository (main-red, blocked-new, stuck-stage, pr-stuck, queue-empty, waits-for-done, decision-open, pipeline-open). The desk still reads each item; the list does not replace the check.
 So each finding that needs a person or the desk must be in a faberline/aw issue.
 It must also be in the status board (step 10).
 

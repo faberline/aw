@@ -2,6 +2,7 @@ mod ci;
 mod claim;
 mod cli;
 mod coverage;
+mod desk;
 mod meta;
 mod metadoc;
 mod metadoc_guides;
