@@ -76,7 +76,10 @@ pub fn check_app(repo: &dyn ContractRepo, app: &AppFacts, shared: &BTreeSet<Stri
             findings.extend(workflow(repo, &path, |t| app_rules::acceptance(app, t)));
         }
         if app.shared_scripts {
-            findings.extend(app_tables::tables(repo, app, shared));
+            let caller = repo
+                .read(&promotion)
+                .is_some_and(|t| app_rules::is_caller(&t));
+            findings.extend(app_tables::tables(repo, app, shared, caller));
         }
         if !app.candidate_gates.is_empty() {
             findings.extend(workflow(repo, &app.candidate_workflow(), |t| {

@@ -1408,3 +1408,143 @@ fn the_binary_outside_a_git_checkout_stops() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("not inside a git checkout"));
 }
+
+// ---- aw#677: the caller form of the promotion (P3 to P6) and T2 ------------
+//
+// keep-release.yml of faberline/keep (main 0404c0d, 2026-11-20) is the
+// fixture. keep has no receipt maker of its own: `aw release-receipt` reads
+// the facts from aw.toml.
+
+const KEEP_PROMOTION: &str = include_str!("release_contract_keep_promotion.yml");
+
+fn keep() -> AppFacts {
+    let mut app = AppFacts::shared("keep");
+    app.compatibility_line = COMPATIBILITY.into();
+    app
+}
+
+fn keep_promotion_breaks(text: &str, rule: &str, part: &str) {
+    let found = aw::domain::release::app_rules::promotion(&keep(), text).unwrap_err();
+    assert_eq!(found.rule, rule, "{found:?}");
+    assert!(found.message.contains(part), "{found:?}");
+}
+
+#[test]
+fn the_keep_caller_form_passes_p1_to_p6() {
+    assert_eq!(
+        aw::domain::release::app_rules::promotion(&keep(), KEEP_PROMOTION),
+        Ok(())
+    );
+}
+
+#[test]
+fn p3_the_caller_form_has_the_one_job_release() {
+    let text = change(KEEP_PROMOTION, "  release:\n", "  publish:\n");
+    keep_promotion_breaks(&text, "P3", "the one job release");
+}
+
+#[test]
+fn p3_the_caller_must_call_the_shared_workflow() {
+    // A second job next to the call is the old form's job set: refused.
+    let text = format!("{KEEP_PROMOTION}  extra:\n    runs-on: ubuntu-latest\n");
+    keep_promotion_breaks(&text, "P3", "the one job release");
+}
+
+#[test]
+fn p4_the_caller_form_pins_the_shared_workflow() {
+    let sha = "eddb20c39f82655f1b41348230f5bb0925827122";
+    let text = change(KEEP_PROMOTION, sha, "main");
+    keep_promotion_breaks(&text, "P4", "not pinned to a 40-hex commit");
+}
+
+#[test]
+fn p5_the_caller_form_keeps_the_concurrency_group() {
+    let text = change(KEEP_PROMOTION, "cancel-in-progress: false\n", "");
+    // The group line stays; only a changed group is a finding.
+    assert_eq!(
+        aw::domain::release::app_rules::promotion(&keep(), &text),
+        Ok(())
+    );
+    let text = change(KEEP_PROMOTION, "keep-release-promotion-", "keep-release-");
+    keep_promotion_breaks(&text, "P5", "required fragment absent");
+}
+
+#[test]
+fn p5_the_caller_form_names_the_app() {
+    let text = change(KEEP_PROMOTION, "      app: keep\n", "      app: defer\n");
+    keep_promotion_breaks(&text, "P5", "the call must pass `app: keep`");
+}
+
+#[test]
+fn p5_the_caller_form_has_the_permissions_of_the_shared_workflow() {
+    let text = change(KEEP_PROMOTION, "      packages: write\n", "");
+    keep_promotion_breaks(&text, "P5", "needs the permission packages: write");
+}
+
+#[test]
+fn p6_the_caller_form_passes_every_input_on() {
+    let text = change(
+        KEEP_PROMOTION,
+        "      candidate_run_id: ${{ inputs.candidate_run_id }}\n",
+        "      candidate_run_id: \"1\"\n",
+    );
+    keep_promotion_breaks(&text, "P6", "the call must pass the input candidate_run_id");
+}
+
+#[test]
+fn p6_the_caller_form_carries_the_compatibility_line_once() {
+    let text = change(KEEP_PROMOTION, "no HTTP, CLI,", "HTTP and CLI changed, no");
+    keep_promotion_breaks(&text, "P6", "compatibility_note exactly once, got 0");
+}
+
+#[test]
+fn the_caller_form_still_rebuilds_nothing() {
+    let text = format!("{KEEP_PROMOTION}        run: docker build .\n");
+    keep_promotion_breaks(&text, "P4", "must not rebuild");
+}
+
+/// A fake whose promotion is the keep caller form with the app renamed, so
+/// the defer candidate fixture and facts stay in use.
+fn caller_fake(with_maker: bool) -> Fake {
+    let promotion = KEEP_PROMOTION.replace("keep", "defer");
+    let mut fake = fake(CANDIDATE, &promotion);
+    if !with_maker {
+        fake.files
+            .remove("scripts/release/make-gke-release-receipt.py");
+    }
+    fake
+}
+
+#[test]
+fn t2_a_caller_form_repository_needs_no_python_receipt_maker() {
+    let fake = caller_fake(false);
+    let report = app_check::check(&fake, None).unwrap();
+    assert!(report.apps[0].ok, "{:?}", report.apps[0].findings);
+}
+
+#[test]
+fn t2_a_caller_form_repository_with_a_maker_is_still_compared() {
+    let mut fake = caller_fake(true);
+    fake.maker.apps.get_mut("defer").unwrap().targets = vec!["wrong".into()];
+    let report = app_check::check(&fake, None).unwrap();
+    assert!(
+        report.apps[0]
+            .findings
+            .iter()
+            .any(|f| f.rule == "T2" && f.message.contains("targets")),
+        "{:?}",
+        report.apps[0].findings
+    );
+}
+
+#[test]
+fn t2_the_old_form_without_a_maker_is_still_a_finding() {
+    let mut fake = fake(CANDIDATE, PROMOTION);
+    fake.files
+        .remove("scripts/release/make-gke-release-receipt.py");
+    let report = app_check::check(&fake, None).unwrap();
+    let found = &report.apps[0].findings;
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].rule, "T2");
+    assert!(found[0].message.contains("missing file"));
+}

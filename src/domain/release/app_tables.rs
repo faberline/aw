@@ -112,9 +112,22 @@ fn apps_sh(repo: &dyn ContractRepo, app: &AppFacts) -> Check {
 }
 
 /// T2: the receipt maker says what the facts say.
-fn receipt_maker(repo: &dyn ContractRepo, app: &AppFacts, shared: &BTreeSet<String>) -> Check {
+///
+/// A repository whose promotion calls the shared `service-release.yml` has no
+/// receipt maker of its own: `aw release-receipt` reads these facts from
+/// `aw.toml`, so there is no table to compare. A repository that still has the
+/// script is checked as before.
+fn receipt_maker(
+    repo: &dyn ContractRepo,
+    app: &AppFacts,
+    shared: &BTreeSet<String>,
+    caller: bool,
+) -> Check {
     let path = format!("{}/make-gke-release-receipt.py", app.scripts_dir);
     if !repo.exists(&path) {
+        if caller {
+            return Ok(());
+        }
         return fail("T2", format!("missing file: {path}"));
     }
     let mut expected: BTreeMap<&str, &str> = BTreeMap::from([
@@ -181,8 +194,13 @@ fn receipt_maker(repo: &dyn ContractRepo, app: &AppFacts, shared: &BTreeSet<Stri
 }
 
 /// T1 and T2 of one app: the first broken rule of each.
-pub fn tables(repo: &dyn ContractRepo, app: &AppFacts, shared: &BTreeSet<String>) -> Vec<Fail> {
-    [apps_sh(repo, app), receipt_maker(repo, app, shared)]
+pub fn tables(
+    repo: &dyn ContractRepo,
+    app: &AppFacts,
+    shared: &BTreeSet<String>,
+    caller: bool,
+) -> Vec<Fail> {
+    [apps_sh(repo, app), receipt_maker(repo, app, shared, caller)]
         .into_iter()
         .filter_map(Result::err)
         .collect()
