@@ -150,6 +150,11 @@ impl<A: Api> GhDesk<A> {
         let value = self.json(&format!("{path}&per_page={PAGE}"))?;
         let mut runs: Vec<RunFact> = Vec::new();
         for r in value["workflow_runs"].as_array().into_iter().flatten() {
+            // Only a push or a schedule run says main is red. A run started by
+            // hand (`workflow_dispatch`) is a drill or a retry.
+            if !matches!(r["event"].as_str(), None | Some("push" | "schedule")) {
+                continue;
+            }
             let path = text(&r["path"]);
             let workflow = if path.is_empty() {
                 text(&r["name"])
@@ -193,17 +198,14 @@ impl<A: Api> GhDesk<A> {
 
     /// The waits of blocked issues that are closed: first those closed as
     /// completed, then those closed as not planned (split) or duplicate.
-    fn closed_refs(
-        &self,
-        repo: &str,
-        issues: &[IssueFact],
-    ) -> Result<(Vec<String>, Vec<String>), ReadError> {
+    fn closed_refs(&self, repo: &str, issues: &[IssueFact]) -> Result<ClosedRefs, ReadError> {
         let org = repo.split('/').next().unwrap_or("");
-        let mut done = Vec::new();
-        let mut split = Vec::new();
+        let mut out = ClosedRefs::default();
         let mut seen: Vec<String> = Vec::new();
         for issue in issues.iter().filter(|i| i.blocked()) {
-            for p in issue.waits() {
+            let mut refs = issue.waits();
+            refs.extend(issue.other_repo_mentions());
+            for p in refs {
                 let shown = p.show();
                 if seen.contains(&shown) {
                     continue;
@@ -214,18 +216,34 @@ impl<A: Api> GhDesk<A> {
                     Some(r) => format!("{org}/{r}"),
                     None => repo.to_string(),
                 };
-                let one = self.json(&format!("repos/{target}/issues/{}", p.number))?;
+                // A reference that cannot be read is one `unknown` item for
+                // its issue, not a failed repository.
+                let one = match self.json(&format!("repos/{target}/issues/{}", p.number)) {
+                    Ok(one) => one,
+                    Err(call) => {
+                        out.unreadable.push((shown, call));
+                        continue;
+                    }
+                };
                 if one["state"].as_str() != Some("closed") {
                     continue;
                 }
                 match one["state_reason"].as_str() {
-                    Some("not_planned" | "duplicate") => split.push(shown),
-                    _ => done.push(shown),
+                    Some("not_planned" | "duplicate") => out.split.push(shown),
+                    _ => out.done.push(shown),
                 }
             }
         }
-        Ok((done, split))
+        Ok(out)
     }
+}
+
+/// What the references of blocked issues turned out to be.
+#[derive(Default)]
+struct ClosedRefs {
+    done: Vec<String>,
+    split: Vec<String>,
+    unreadable: Vec<(String, String)>,
 }
 
 /// The issue of the first `Closes #N` / `Fixes #N` / `Refs #N` line of a PR
@@ -243,15 +261,16 @@ fn text(v: &Value) -> String {
 impl<A: Api> DeskSource for GhDesk<A> {
     fn facts(&self, repo: &str) -> Result<RepoFacts, ReadError> {
         let issues = self.issues(repo)?;
-        let (closed_refs, split_refs) = self.closed_refs(repo, &issues)?;
+        let refs = self.closed_refs(repo, &issues)?;
         Ok(RepoFacts {
             repo: repo.to_string(),
             prs: self.prs(repo)?,
             main_runs: self.main_runs(repo)?,
             last_merge: self.last_merge(repo)?,
             last_commit: self.last_commit(repo)?,
-            closed_refs,
-            split_refs,
+            closed_refs: refs.done,
+            split_refs: refs.split,
+            unreadable_refs: refs.unreadable,
             issues,
         })
     }

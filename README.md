@@ -326,13 +326,14 @@ built-in list is used. The first line counts the items for each check, or says
 `nothing to look at`. `--only <check>` (repeatable) keeps the items of the
 named checks.
 
-Checks:
+Checks (the repositories are read in parallel; aw is one section even when the list names it):
 
-- `main-red`: the newest completed run of each workflow file on main failed. A
-  red run started by hand counts only inside the `--since` window.
+- `main-red`: the newest completed run of each workflow file on main failed. Only
+  a push or schedule run counts; a run started by hand (`workflow_dispatch`) never does.
 - `blocked-new` (`--since` minutes, default 70).
 - `blocked-no-reason`: no `Waits for:` line, no comment that names a wait, a
-  decision or an owner, no hold label. The reasons found are counted in the
+  decision or an owner, no hold label. A newest comment that is an `aw:signal ... outcome=blocked`
+  with text after the marker is a reason (`comment`). The reasons found are counted in the
   counts line: `blocked 12 (waits-for 7, comment 4, label 1, no reason 0)`; `hold N` appears when a
   comment holds an issue for a person. A wait with one more human condition
   (`#259 is merged and a second released version exists`) is a hold too.
@@ -348,7 +349,11 @@ Checks:
   blocker. `aw#195` and `owner/repo#7` name an issue of that repository. When
   the newest such comment gives a hold reason with no issue number (`stays
   blocked`, `paid`, `needs the owner`, `out of <milestone>`), the issue is a
-  `hold` in the counts line, not a `waits-for-done`.
+  `hold` in the counts line, not a `waits-for-done`. In `core#600, #601 and #602` the
+  bare numbers are in `core`. A reference that cannot be read is one
+  `waits-unknown` item for its issue; the repository is still read.
+- `blocker-done-elsewhere`: a blocked issue with no wait phrase whose newest comment
+  names issues of other repositories that are all closed as completed (or split).
 - `routine-quiet`, and in the aw section `decision-open` and `pipeline-open`.
 
 It exits 0 when every call worked, even if it lists items. It exits 1 when a

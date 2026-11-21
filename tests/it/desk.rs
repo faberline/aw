@@ -578,7 +578,7 @@ fn a_reason_in_any_comment_or_label_counts() {
 }
 
 #[test]
-fn main_red_skips_old_hand_started_runs() {
+fn main_red_skips_every_hand_started_run() {
     let run = |id, event: &str, at: &str| RunFact {
         workflow: format!(".github/workflows/w{id}.yml"),
         id,
@@ -604,7 +604,6 @@ fn main_red_skips_old_hand_started_runs() {
         [
             "run 1 of workflow .github/workflows/w1.yml",
             "run 2 of workflow .github/workflows/w2.yml",
-            "run 4 of workflow .github/workflows/w4.yml",
         ]
     );
 }
@@ -793,4 +792,160 @@ fn a_wait_with_another_human_condition_is_a_hold() {
     ));
     assert!(hold("Waits for #259 and a second released version"));
     assert!(!hold("Now waits for #5"));
+}
+
+fn blocked_with(number: u64, body: &str, comment_text: &str) -> IssueFact {
+    let mut i = issue(number, &["blocked", "stage:spec"], fresh());
+    i.body = body.to_string();
+    if !comment_text.is_empty() {
+        i.comments = comment(comment_text);
+    }
+    i
+}
+
+#[test]
+fn a_bare_number_after_a_named_one_is_in_that_repository() {
+    // lumen#533: `core#600, #601 and #602` named three issues of core.
+    let i = blocked_with(
+        533,
+        "",
+        "now waits for core#600, #601, #602 and #603 in a core release tag",
+    );
+    let shown: Vec<String> = i.waits().iter().map(|p| p.show()).collect();
+    assert_eq!(shown, ["core#600", "core#601", "core#602", "core#603"]);
+    let i = blocked_with(1, "", "waits for #5 and faberline/core#7, #8");
+    let shown: Vec<String> = i.waits().iter().map(|p| p.show()).collect();
+    assert_eq!(shown, ["#5", "faberline/core#7", "faberline/core#8"]);
+}
+
+#[test]
+fn a_reference_that_cannot_be_read_is_one_unknown_item_not_a_failed_repo() {
+    let mut m = gh_fixture();
+    m.insert(
+        "repos/o/r/issues/1/comments?sort=created".into(),
+        r#"[{"body":"Waits for: #9 and p/q#404","created_at":"2026-11-21T00:00:00Z"}]"#.into(),
+    );
+    let f = GhDesk::with_api(Paths(m)).facts("o/r").unwrap();
+    assert_eq!(f.unreadable_refs.len(), 1);
+    assert_eq!(f.unreadable_refs[0].0, "p/q#404");
+    assert!(f.unreadable_refs[0].1.contains("HTTP 404"));
+    let items = repo_section(&f, &settings()).items;
+    let unknown: Vec<_> = items
+        .iter()
+        .filter(|i| i.check == "waits-unknown")
+        .collect();
+    assert_eq!(unknown.len(), 1);
+    assert!(unknown[0].what.starts_with("#1 "));
+    assert!(unknown[0].why.contains("p/q#404"));
+}
+
+#[test]
+fn the_aw_section_is_printed_once_when_the_list_names_aw() {
+    let mut aw = facts(vec![issue(10, &["decision"], fresh())]);
+    aw.repo = "faberline/aw".into();
+    let source = Fake(HashMap::from([("faberline/aw".to_string(), Ok(aw))]));
+    let report = patrol(
+        &source,
+        &["faberline/aw".to_string()],
+        "faberline/aw",
+        &settings(),
+    );
+    assert_eq!(report.sections.len(), 1);
+    assert_eq!(report.sections[0].items[0].check, "decision-open");
+}
+
+#[test]
+fn a_hand_started_run_is_not_read_as_a_main_run() {
+    let mut m = gh_fixture();
+    m.insert(
+        "repos/o/r/actions/runs?branch=main&status=completed".into(),
+        r#"{"workflow_runs":[
+          {"name":"drill","path":".github/workflows/drill.yml","event":"workflow_dispatch","id":9,"head_sha":"s9","conclusion":"failure"},
+          {"name":"drill","path":".github/workflows/drill.yml","event":"push","id":8,"head_sha":"s8","conclusion":"success"}]}"#
+            .into(),
+    );
+    let f = GhDesk::with_api(Paths(m)).facts("o/r").unwrap();
+    assert_eq!(f.main_runs.len(), 1);
+    assert_eq!(f.main_runs[0].id, 8);
+    assert!(
+        !repo_section(&f, &settings())
+            .items
+            .iter()
+            .any(|i| i.check == "main-red")
+    );
+}
+
+#[test]
+fn a_blocked_signal_with_text_is_the_reason() {
+    let signal = "<!-- aw:signal stage=spec agent=claude outcome=blocked -->\nThe generator has no retry hooks yet.";
+    let with_text = blocked_with(1, "", signal);
+    let bare = blocked_with(
+        2,
+        "",
+        "<!-- aw:signal stage=spec agent=claude outcome=blocked -->",
+    );
+    let f = facts(vec![with_text, bare]);
+    let items = checks_of(&f);
+    assert!(!items.iter().any(|c| c.starts_with("blocked-no-reason #1 ")));
+    assert!(items.iter().any(|c| c.starts_with("blocked-no-reason #2")));
+    let reasons = repo_section(&f, &settings())
+        .counts
+        .unwrap()
+        .blocked_reasons;
+    assert_eq!((reasons.comment, reasons.none), (1, 1));
+}
+
+#[test]
+fn blocker_done_elsewhere_lists_a_blocked_issue_whose_named_issues_are_done() {
+    let mut f = facts(vec![
+        blocked_with(
+            1,
+            "",
+            "Needs the generator work in faberline/core#34 first.",
+        ),
+        blocked_with(2, "", "See faberline/core#35 (split into #36)."),
+        blocked_with(3, "", "Needs faberline/core#40."),
+        blocked_with(4, "", "Needs the owner; see faberline/core#34."),
+    ]);
+    f.closed_refs = vec!["faberline/core#34".into()];
+    f.split_refs = vec!["faberline/core#35".into()];
+    let found: Vec<_> = repo_section(&f, &settings())
+        .items
+        .into_iter()
+        .filter(|i| i.check == "blocker-done-elsewhere")
+        .collect();
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found[0].what.starts_with("#1 "));
+    assert!(found[0].why.contains("all closed as completed"));
+    assert!(found[1].what.starts_with("#2 "));
+    assert!(found[1].why.contains("split"));
+}
+
+#[test]
+fn the_patrol_reads_the_repositories_in_parallel() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Slow(AtomicUsize);
+    impl DeskSource for Slow {
+        fn facts(&self, repo: &str) -> Result<RepoFacts, ReadError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            // Each read waits until all four are inside: it ends only when the
+            // reads run at the same time.
+            let start = std::time::Instant::now();
+            while self.0.load(Ordering::SeqCst) < 4 {
+                if start.elapsed().as_secs() > 5 {
+                    return Err("the reads did not run together".to_string());
+                }
+                std::thread::yield_now();
+            }
+            let mut f = facts(vec![issue(1, &["stage:tdd"], fresh())]);
+            f.repo = repo.to_string();
+            Ok(f)
+        }
+    }
+    let source = Slow(AtomicUsize::new(0));
+    let repos: Vec<String> = ["a", "b", "c"].iter().map(|r| format!("o/{r}")).collect();
+    let report = patrol(&source, &repos, "o/aw", &settings());
+    assert!(!report.has_unknown(), "{}", report.markdown());
+    let names: Vec<_> = report.sections.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["o/a", "o/b", "o/c", "o/aw"]);
 }

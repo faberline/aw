@@ -6,28 +6,49 @@ use crate::domain::desk::report::Report;
 
 /// Patrol `repos` (full `owner/name`) and the aw repository `aw_repo`.
 pub fn patrol(
-    source: &dyn DeskSource,
+    source: &(dyn DeskSource + Sync),
     repos: &[String],
     aw_repo: &str,
     settings: &Settings,
 ) -> Report {
-    let mut sections = Vec::new();
-    for repo in repos {
-        sections.push(match source.facts(repo) {
-            Ok(facts) => checks::repo_section(&facts, settings),
-            Err(call) => checks::unknown_section(repo, &call),
+    // aw is one section, the aw one. A list that names aw does not add a second.
+    let others: Vec<&String> = repos.iter().filter(|r| r.as_str() != aw_repo).collect();
+    // Each repository is read in its own thread: ten repositories take the
+    // time of the slowest one.
+    let sections: Vec<_> = std::thread::scope(|scope| {
+        let handles: Vec<_> = others
+            .iter()
+            .map(|repo| {
+                scope.spawn(move || match source.facts(repo) {
+                    Ok(facts) => checks::repo_section(&facts, settings),
+                    Err(call) => checks::unknown_section(repo, &call),
+                })
+            })
+            .collect();
+        let aw = scope.spawn(|| match source.facts(aw_repo) {
+            Ok(facts) => {
+                let mut section = checks::repo_section(&facts, settings);
+                section
+                    .items
+                    .retain(|i| matches!(i.check.as_str(), "main-red" | "pr-stuck"));
+                section.items.extend(checks::aw_section(&facts).items);
+                section
+            }
+            Err(call) => checks::unknown_section(aw_repo, &call),
         });
-    }
-    sections.push(match source.facts(aw_repo) {
-        Ok(facts) => {
-            let mut section = checks::repo_section(&facts, settings);
-            section
-                .items
-                .retain(|i| matches!(i.check.as_str(), "main-red" | "pr-stuck"));
-            section.items.extend(checks::aw_section(&facts).items);
-            section
-        }
-        Err(call) => checks::unknown_section(aw_repo, &call),
+        let mut all: Vec<_> = handles
+            .into_iter()
+            .zip(others.iter())
+            .map(|(h, repo)| {
+                h.join()
+                    .unwrap_or_else(|_| checks::unknown_section(repo, "the read panicked"))
+            })
+            .collect();
+        all.push(
+            aw.join()
+                .unwrap_or_else(|_| checks::unknown_section(aw_repo, "the read panicked")),
+        );
+        all
     });
     Report::new(sections)
 }
