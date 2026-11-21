@@ -334,7 +334,8 @@ Checks:
 - `blocked-no-reason`: no `Waits for:` line, no comment that names a wait, a
   decision or an owner, no hold label. The reasons found are counted in the
   counts line: `blocked 12 (waits-for 7, comment 4, label 1, no reason 0)`; `hold N` appears when a
-  comment holds an issue for a person.
+  comment holds an issue for a person. A wait with one more human condition
+  (`#259 is merged and a second released version exists`) is a hold too.
 - `stuck-stage` (`--stale-hours`, default 6): one line for each stage (count and
   the three oldest). A `stage:review` issue and an `expedite` issue show one by
   one.

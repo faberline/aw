@@ -1,0 +1,16 @@
+# aw's own daily advisory run (SEC2 of docs/standards/security.md).
+name: advisories-daily
+
+on:
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  advisories:
+    permissions:
+      contents: read
+      issues: write
+    uses: faberline/aw/.github/workflows/advisories.yml@d56643e91ace8f3f42eb46b35657e403c96d6085

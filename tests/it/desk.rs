@@ -775,3 +775,22 @@ fn a_newer_comment_with_a_wait_ends_the_hold() {
     ];
     assert!(!i.on_hold());
 }
+
+#[test]
+fn a_wait_with_another_human_condition_is_a_hold() {
+    let hold = |body: &str| {
+        IssueFact {
+            comments: vec![CommentFact {
+                body: body.to_string(),
+                ..CommentFact::default()
+            }],
+            ..IssueFact::default()
+        }
+        .on_hold()
+    };
+    assert!(hold(
+        "Stays blocked until #259 is merged and a second released version exists"
+    ));
+    assert!(hold("Waits for #259 and a second released version"));
+    assert!(!hold("Now waits for #5"));
+}

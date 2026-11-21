@@ -2,9 +2,9 @@
 # It holds the tools that faberline CI otherwise downloads in every job.
 # .github/workflows/ci-image.yml builds it every week and on a change here.
 
-FROM ghcr.io/astral-sh/uv:0.13.7 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 AS uv
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 
 ARG KIND_VERSION=v0.29.0
 ARG KIND_SHA256=c72eda46430f065fb45c5f70e7c957cc9209402ef309294821978677c8fb3284

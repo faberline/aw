@@ -29,3 +29,11 @@ reason = "The shared GKE test cluster config (infra/gke-test)."
 [[hygiene.root]]
 path = "plugins"
 reason = "The shared Faberline skills (plugins/faberline); the marketplace installs them."
+
+# S10 security: docs/standards/security.md. aw builds ci-rust itself; the proof
+# jobs read the moving tag on purpose, so a digest would go stale at each build.
+[[standards.security.exception]]
+rule = "SEC3"
+path = ".github/ci/proof-jobs.yaml"
+reason = "ci-rust is built by aw in ci-image.yml; the proof jobs follow its tag. Pin the digest when ci-image.yml writes it."
+expires = "2026-12-31"

@@ -52,7 +52,9 @@ impl IssueFact {
     pub fn on_hold(&self) -> bool {
         for c in self.comments.iter().rev() {
             if !comment_waits(&c.body).is_empty() {
-                return false;
+                // A wait with one more human condition (`and a second released
+                // version exists`) is a hold: the issue number alone does not end it.
+                return says_hold(&c.body) || has_extra_condition(&c.body);
             }
             if says_hold(&c.body) {
                 return true;
@@ -93,6 +95,19 @@ fn strip_parens(text: &str) -> String {
         }
     }
     out
+}
+
+fn has_extra_condition(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    [
+        "second released",
+        "released version",
+        "and a second",
+        "owner decides",
+        "owner approves",
+    ]
+    .iter()
+    .any(|w| lower.contains(w))
 }
 
 fn says_hold(text: &str) -> bool {

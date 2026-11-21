@@ -7,7 +7,7 @@
 # stable and holds kind and uv, which a work Job does not use. The tag of this
 # image is the Rust version, so a manifest pins the toolchain with the image.
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 
 ARG RUST_VERSION=1.99.1
 ARG SCCACHE_VERSION=v0.19.0
