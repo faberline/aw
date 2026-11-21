@@ -299,6 +299,24 @@ the workflow files as text and changes nothing.
     `functional`, `gates_step`, `acceptance_names`, `acceptance_run_name`
     (`{app}` is the app name), `maker_constants`, `candidate_gates`,
     `ci_gates`. An app without `candidate_gates` or `ci_gates` skips G1 or G2.
+- Caller form (aw#677): a promotion workflow whose `uses:` is
+  `faberline/aw/.github/workflows/service-release.yml@<40-hex>` is a thin
+  caller. It has the one job `release`, so P3 reads the caller rules: the job
+  calls the shared workflow at a pinned commit (P4, and no build step), the
+  concurrency group `<app>-release-promotion-${{ inputs.version }}` and
+  `app: <app>` are there, the job has the five permissions the shared workflow
+  needs (`actions`, `attestations`, `pull-requests`: read; `contents`,
+  `packages`: write), every promotion input is passed on as
+  `<input>: ${{ inputs.<input> }}` (P6) and `compatibility_note` carries the
+  compatibility line exactly once. The gates P4 to P7 of the old form live in
+  `service-release.yml`; `tests/it/release_workflow.rs` guards them. The old
+  form (`verify-inputs` and `publish-release`) still passes its own rules.
+- T2 and the caller form: a repository whose promotion is a caller has no
+  receipt maker of its own, because `aw release-receipt` reads the facts from
+  `aw.toml`. T2 then has no table to compare and passes when
+  `make-gke-release-receipt.py` is absent. A caller-form repository that still
+  has the script is compared as before. The old form without the script is
+  still `T2 missing file`.
 - Controls (step 5): each Python control of `candidate_controls`,
   `promotion_controls` and `standalone_controls` has a Rust test. The tables
   are at the top of `tests/it/release_contract.rs` and in its PR2 section.

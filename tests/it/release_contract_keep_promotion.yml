@@ -1,0 +1,57 @@
+name: keep-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact Keep semver without the keep@ prefix.
+        required: true
+        type: string
+      candidate_run_id:
+        description: Exact successful keep-release-candidate run ID.
+        required: true
+        type: string
+      candidate_run_attempt:
+        description: Exact successful keep-release-candidate run attempt.
+        required: true
+        type: string
+      gke_receipt_b64:
+        description: Base64 of the sanitized keep-gke-receipt.json bytes.
+        required: true
+        type: string
+      gke_receipt_sha256:
+        description: Lowercase SHA-256 of the sanitized keep-gke-receipt.json bytes.
+        required: true
+        type: string
+      gke_receipt_sidecar_b64:
+        description: Base64 of the exact keep-gke-receipt.json.sha256 sidecar bytes.
+        required: true
+        type: string
+      gke_receipt_sidecar_sha256:
+        description: Lowercase SHA-256 of the exact keep-gke-receipt.json.sha256 sidecar bytes.
+        required: true
+        type: string
+
+concurrency:
+  group: keep-release-promotion-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    permissions:
+      actions: read
+      attestations: read
+      contents: write
+      packages: write
+      pull-requests: read
+    uses: faberline/aw/.github/workflows/service-release.yml@eddb20c39f82655f1b41348230f5bb0925827122 # aw 0.7.29
+    with:
+      app: keep
+      version: ${{ inputs.version }}
+      candidate_run_id: ${{ inputs.candidate_run_id }}
+      candidate_run_attempt: ${{ inputs.candidate_run_attempt }}
+      gke_receipt_b64: ${{ inputs.gke_receipt_b64 }}
+      gke_receipt_sha256: ${{ inputs.gke_receipt_sha256 }}
+      gke_receipt_sidecar_b64: ${{ inputs.gke_receipt_sidecar_b64 }}
+      gke_receipt_sidecar_sha256: ${{ inputs.gke_receipt_sidecar_sha256 }}
+      compatibility_note: "- Compatibility: no HTTP, CLI, wire format, on-disk format, or Kubernetes manifest shape changed in this release."

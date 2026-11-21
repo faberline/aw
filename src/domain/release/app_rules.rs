@@ -239,6 +239,9 @@ pub fn promotion(app: &AppFacts, text: &str) -> Check {
         );
     }
     let jobs = at("P3", wf::job_ids(text))?;
+    if is_caller(text) {
+        return caller_promotion(app, text, &label, &jobs);
+    }
     if jobs != ["publish-release", "verify-inputs"] {
         return fail(
             "P3",
@@ -311,6 +314,92 @@ pub fn promotion(app: &AppFacts, text: &str) -> Check {
             return fail(
                 "P7",
                 format!("{label}: every retag must source the candidate root digest: {line}"),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The shared promotion workflow of `aw`. A service repository that keeps a
+/// thin `<app>-release.yml` calls it; the gates (P4 to P7) are in that file.
+pub const SERVICE_RELEASE: &str = "faberline/aw/.github/workflows/service-release.yml";
+
+/// True when the promotion workflow calls the shared one.
+pub fn is_caller(text: &str) -> bool {
+    wf::actions(text)
+        .iter()
+        .any(|a| a.starts_with(&format!("{SERVICE_RELEASE}@")))
+}
+
+/// P3 to P6 for the caller form: one job `release` that calls the shared
+/// promotion workflow at a pinned commit, with the app name, every input and
+/// the compatibility line passed on, and the permissions the shared workflow
+/// needs. P1 and P2 ran before. The shared workflow carries the rest of P4 to
+/// P7 and aw's own tests guard it (`tests/it/release_workflow.rs`).
+fn caller_promotion(app: &AppFacts, text: &str, label: &str, jobs: &[String]) -> Check {
+    let name = &app.name;
+    if jobs != ["release"] {
+        return fail(
+            "P3",
+            format!("{label}: the caller form has the one job release, got {jobs:?}"),
+        );
+    }
+    let block = at("P3", wf::job_block(text, "release"))?;
+    let uses = Regex::new(r"(?m)^    uses:\s*(\S+)")
+        .expect("fixed pattern")
+        .captures(&block)
+        .map(|c| c[1].to_string());
+    if !uses.is_some_and(|u| u.starts_with(&format!("{SERVICE_RELEASE}@"))) {
+        return fail(
+            "P3",
+            format!("{label}: the job release must call {SERVICE_RELEASE}"),
+        );
+    }
+    at("P4", wf::require_pinned(label, text))?;
+    at("P4", wf::require_no_rebuild(label, text))?;
+    let group = format!("group: {name}-release-promotion-${{{{ inputs.version }}}}");
+    if !text.contains(&group) {
+        return fail(
+            "P5",
+            format!("{label}: required fragment absent: {group:?}"),
+        );
+    }
+    let app_line = format!("      app: {name}");
+    if !block.lines().any(|l| l == app_line) {
+        return fail("P5", format!("{label}: the call must pass `app: {name}`"));
+    }
+    for permission in [
+        "actions: read",
+        "attestations: read",
+        "contents: write",
+        "packages: write",
+        "pull-requests: read",
+    ] {
+        if !block.lines().any(|l| l.trim() == permission) {
+            return fail(
+                "P5",
+                format!("{label}: the job release needs the permission {permission}"),
+            );
+        }
+    }
+    for input in app.promotion_inputs() {
+        let pass = format!("      {input}: ${{{{ inputs.{input} }}}}");
+        if !block.lines().any(|l| l == pass) {
+            return fail(
+                "P6",
+                format!("{label}: the call must pass the input {input} on: {pass:?}"),
+            );
+        }
+    }
+    if app.shared_scripts && !app.compatibility_line.is_empty() {
+        let note = format!("compatibility_note: \"{}\"", app.compatibility_line);
+        let count = block.lines().filter(|l| l.trim() == note).count();
+        if count != 1 {
+            return fail(
+                "P6",
+                format!(
+                    "{label}: the call must pass the compatibility line of the release facts as compatibility_note exactly once, got {count}"
+                ),
             );
         }
     }
