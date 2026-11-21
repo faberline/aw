@@ -6,7 +6,7 @@ use super::time::epoch;
 use crate::domain::work::waits;
 
 /// The names of the checks, for `--only`.
-pub const CHECKS: [&str; 11] = [
+pub const CHECKS: [&str; 13] = [
     "main-red",
     "blocked-new",
     "blocked-no-reason",
@@ -15,6 +15,8 @@ pub const CHECKS: [&str; 11] = [
     "queue-empty",
     "waits-for-done",
     "waits-for-split",
+    "waits-unknown",
+    "blocker-done-elsewhere",
     "routine-quiet",
     "decision-open",
     "pipeline-open",
@@ -97,6 +99,9 @@ fn reason_of(i: &IssueFact) -> Option<Reason> {
     if !i.waits().is_empty() || !waits::parse(&i.body).without_number.is_empty() {
         return Some(Reason::Waits);
     }
+    if i.blocked_signal_reason() {
+        return Some(Reason::Comment);
+    }
     if i.comments.iter().any(|c| names_a_wait(&c.body)) {
         return Some(Reason::Comment);
     }
@@ -145,6 +150,8 @@ pub fn repo_section(f: &RepoFacts, s: &Settings) -> Section {
     pr_stuck(f, s, &mut items);
     queue_empty(f, &mut items);
     waits_for_done(f, &mut items);
+    waits_unknown(f, &mut items);
+    blocker_done_elsewhere(f, &mut items);
     routine_quiet(f, s, &mut items);
     Section {
         name: f.repo.clone(),
@@ -165,17 +172,15 @@ pub fn unknown_section(repo: &str, call: &str) -> Section {
 }
 
 /// Check 1: The newest completed run of a workflow file on main failed or was
-/// cancelled. A red run started by hand counts only inside the `--since`
-/// window. A newer green run hides an older red one (the reader keeps only
-/// the newest run of each workflow file).
-fn main_red(f: &RepoFacts, s: &Settings, out: &mut Vec<Item>) {
+/// cancelled. A run started by hand (`workflow_dispatch`) never counts. A
+/// newer green run hides an older red one (the reader keeps only the newest
+/// push or schedule run of each workflow file).
+fn main_red(f: &RepoFacts, _s: &Settings, out: &mut Vec<Item>) {
     for r in &f.main_runs {
         if r.conclusion != "failure" && r.conclusion != "cancelled" {
             continue;
         }
-        if r.event == "workflow_dispatch"
-            && age(s.now, &r.created_at).is_none_or(|a| a > s.since_secs)
-        {
+        if r.event == "workflow_dispatch" {
             continue;
         }
         let sha: String = r.sha.chars().take(7).collect();
@@ -371,6 +376,72 @@ fn waits_for_done(f: &RepoFacts, out: &mut Vec<Item>) {
                 "waits-for-done",
                 format!("#{} {}", i.number, i.title),
                 format!("waits for {}, all closed, still blocked", names.join(" ")),
+            ));
+        }
+    }
+}
+
+/// Check: A blocked issue that waits for a reference that could not be read
+/// (a deleted issue, a repository with no access). The issue is `unknown`; the
+/// repository is still read.
+fn waits_unknown(f: &RepoFacts, out: &mut Vec<Item>) {
+    for i in f.issues.iter().filter(|i| i.blocked()) {
+        let mut refs = i.waits();
+        refs.extend(i.other_repo_mentions());
+        let bad: Vec<String> = refs
+            .iter()
+            .map(|p| p.show())
+            .filter(|n| f.unreadable_refs.iter().any(|(r, _)| r == n))
+            .collect();
+        if bad.is_empty() {
+            continue;
+        }
+        let call = f
+            .unreadable_refs
+            .iter()
+            .find(|(r, _)| *r == bad[0])
+            .map(|(_, c)| c.as_str())
+            .unwrap_or("");
+        out.push(item(
+            "waits-unknown",
+            format!("#{} {}", i.number, i.title),
+            format!("unknown: could not read {} ({call})", bad.join(" ")),
+        ));
+    }
+}
+
+/// Check: A blocked issue that names no wait, but whose newest comment points
+/// at issues of other repositories, all closed as completed. A closed one that
+/// was split (not planned) is listed too: its open children are the new blockers.
+fn blocker_done_elsewhere(f: &RepoFacts, out: &mut Vec<Item>) {
+    let unreadable = |n: &String| f.unreadable_refs.iter().any(|(r, _)| r == n);
+    for i in f.issues.iter().filter(|i| i.blocked() && !i.on_hold()) {
+        let names: Vec<String> = i.other_repo_mentions().iter().map(|p| p.show()).collect();
+        if names.is_empty() || names.iter().any(unreadable) {
+            continue;
+        }
+        let split: Vec<&str> = names
+            .iter()
+            .filter(|n| f.split_refs.contains(n))
+            .map(|n| n.as_str())
+            .collect();
+        if !split.is_empty() {
+            out.push(item(
+                "blocker-done-elsewhere",
+                format!("#{} {}", i.number, i.title),
+                format!(
+                    "the newest comment names {}, closed as not planned (split); name the children",
+                    split.join(" ")
+                ),
+            ));
+        } else if names.iter().all(|n| f.closed_refs.contains(n)) {
+            out.push(item(
+                "blocker-done-elsewhere",
+                format!("#{} {}", i.number, i.title),
+                format!(
+                    "the newest comment names {}, all closed as completed, still blocked",
+                    names.join(" ")
+                ),
             ));
         }
     }

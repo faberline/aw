@@ -63,6 +63,37 @@ impl IssueFact {
         false
     }
 
+    /// The newest comment is a `blocked` signal (`<!-- aw:signal ...
+    /// outcome=blocked -->`) with text after the marker: the text is the reason.
+    pub fn blocked_signal_reason(&self) -> bool {
+        let Some(c) = self.newest_comment() else {
+            return false;
+        };
+        let body = c.body.trim_start();
+        if !body.starts_with("<!-- aw:signal") {
+            return false;
+        }
+        let Some((marker, rest)) = body.split_once("-->") else {
+            return false;
+        };
+        marker.contains("outcome=blocked") && !rest.trim().is_empty()
+    }
+
+    /// References to issues of another repository in the newest comment, when
+    /// the issue names no wait. Such an issue may wait for them with no wait phrase.
+    pub fn other_repo_mentions(&self) -> Vec<Prerequisite> {
+        if !self.waits().is_empty() {
+            return Vec::new();
+        }
+        let Some(c) = self.newest_comment() else {
+            return Vec::new();
+        };
+        comment_references(&c.body)
+            .into_iter()
+            .filter(|p| p.repo.is_some())
+            .collect()
+    }
+
     /// What the issue waits for now. The newest comment that names a wait
     /// (`now waits for #A, #B`, `blocked until #A is merged`) replaces the
     /// `Waits for:` line of the body. Text in parentheses names no blocker
@@ -136,14 +167,38 @@ fn comment_references(text: &str) -> Vec<Prerequisite> {
             .expect("the comment reference pattern is valid")
     });
     let mut found: Vec<Prerequisite> = Vec::new();
+    // `core#600, #601, #602 and #603`: a bare number in a comma list after a
+    // named one is in that repository, not in the repository of the issue.
+    // `reach#7 and #9` is two repositories: a bare number after only `and`
+    // is the repository of the issue, unless the list already used commas.
+    let mut last: Option<String> = None;
+    let mut chain = false;
+    let mut end = 0;
     for cap in re.captures_iter(text) {
+        let whole = cap.get(0).expect("a match has a whole");
         let Ok(number) = cap[2].parse::<u64>() else {
             continue;
         };
-        let p = Prerequisite {
-            repo: cap.get(1).map(|m| m.as_str().to_string()),
-            number,
+        let named = cap.get(1).map(|m| m.as_str().to_string());
+        let between = text[end..whole.start()].trim();
+        end = whole.end();
+        let repo = if named.is_some() {
+            last.clone_from(&named);
+            chain = false;
+            named
+        } else {
+            let list = matches!(between, "," | ", and" | ", &" | ",and");
+            let joined = list || (chain && matches!(between, "and" | "&"));
+            if last.is_some() && joined {
+                chain = true;
+                last.clone()
+            } else {
+                last = None;
+                chain = false;
+                None
+            }
         };
+        let p = Prerequisite { repo, number };
         if !found.contains(&p) {
             found.push(p);
         }
@@ -218,4 +273,6 @@ pub struct RepoFacts {
     pub closed_refs: Vec<String>,
     /// References of waits that closed as not planned (split) or duplicate.
     pub split_refs: Vec<String>,
+    /// References that could not be read, with the failed call.
+    pub unreadable_refs: Vec<(String, String)>,
 }
