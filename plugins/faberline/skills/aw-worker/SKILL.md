@@ -185,7 +185,7 @@ Every issue in the flow has the label `agent:claude`.
 - Never work in a person's checkout, such as `~/faberlines/<repo>`.
 
 Use the Rust `aw`: `AW=~/.local/share/aw-rs/bin/aw`.
-`$AW --version` must print `aw 0.7.26` or newer.
+`$AW --version` must print `aw 0.7.77` or newer.
 When it is older, install the new one with the command below, then check again.
 `~/.local/bin/aw` can be an old Python tool with the same name; do not use it.
 When no binary passes the check, stop and report it.
