@@ -178,14 +178,18 @@ Every issue in the flow has the label `agent:claude`.
   repositories), use the repositories that the session checked out.
   Use them in name order. When the list is empty, stop and report `no aw repository`.
 - tdd needs a clone. In a cloud session, use the checkout of the repository
-  that the session started with. Otherwise use
-  `~/faberlines/.aw-workers/claude/<name>` (`<name>` is the repository name
-  without the owner). When it is missing, create it:
-  `gh repo clone <owner>/<name> ~/faberlines/.aw-workers/claude/<name>`.
-- Never work in a person's checkout, such as `~/faberlines/<repo>`.
+  that the session started with. On a computer, use a Git worktree of the
+  repository in `<repo>/.claude/worktrees/<name>` (`<repo>` is the person's
+  checkout, `<name>` is a name for this run). When it is missing, create it:
+  `git -C <repo> fetch origin`, then
+  `git -C <repo> worktree add --detach .claude/worktrees/<name> origin/<default branch>`.
+- Never work in a person's checkout itself, such as `~/faberlines/<repo>`.
+- On a computer, put transient output below `/tmp`: build output (for Rust,
+  `CARGO_TARGET_DIR=/tmp/cargo-target/<repo>-<name>`), coverage reports and
+  temporary files. Do not write it in the worktree or in the person's checkout.
 
 Use the Rust `aw`: `AW=~/.local/share/aw-rs/bin/aw`.
-`$AW --version` must print `aw 0.7.77` or newer.
+`$AW --version` must print `aw 0.7.78` or newer.
 When it is older, install the new one with the command below, then check again.
 `~/.local/bin/aw` can be an old Python tool with the same name; do not use it.
 When no binary passes the check, stop and report it.

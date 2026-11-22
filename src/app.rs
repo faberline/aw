@@ -76,12 +76,12 @@ pub fn run() -> ExitCode {
         workspace: &workspace,
         clock: &clock,
     };
-    let root = workers_dir();
-    let ledger = LedgerFile::in_dir(&root);
+    let workers = workers_dir();
+    let ledger = LedgerFile::in_dir(&workers.clone().unwrap_or_else(data_dir));
     let runs = RunServices {
         ledger: &ledger,
         clock: &clock,
-        root: &root,
+        root: workers.as_deref(),
     };
     exit_code(cli::run(services, runs, parsed))
 }
@@ -325,14 +325,19 @@ fn exit_code(exit: Exit) -> ExitCode {
     }
 }
 
-/// `AW_WORKERS_DIR`, else `~/faberlines/.aw-workers`: the worker clones and
-/// the run ledger.
-fn workers_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("AW_WORKERS_DIR").filter(|d| !d.is_empty()) {
-        return PathBuf::from(dir);
-    }
+/// `AW_WORKERS_DIR`, when it is set: a directory that holds worker clones
+/// and the run ledger. There is no default workers directory.
+fn workers_dir() -> Option<PathBuf> {
+    std::env::var_os("AW_WORKERS_DIR")
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+}
+
+/// `~/.local/share/aw-rs`: the default place of the run ledger. A build
+/// cannot make the ledger again, so it does not go below `/tmp`.
+fn data_dir() -> PathBuf {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_default();
-    home.join("faberlines").join(".aw-workers")
+    home.join(".local").join("share").join("aw-rs")
 }

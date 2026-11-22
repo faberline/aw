@@ -79,7 +79,8 @@ Issue work runs through the `aw` CLI in the
 Each run plans first, then claims and reports until it must wait for CI or
 has finished three stages. `aw report` moves the `stage:` label, so the next
 claim can continue at once. In a cloud session, tdd uses the session's
-checkout; on a computer it uses `~/faberlines/.aw-workers/claude/<repo>`.
+checkout; on a computer it uses a Git worktree in
+`<repo>/.claude/worktrees/<name>`, with transient output below `/tmp`.
 The run's own model (Sonnet) plans, writes specs and runs `aw`. In tdd a
 Haiku subagent writes the tests and code from the spec. In review an Opus
 subagent gives the verdict. So each spec follows a checklist: exact files
