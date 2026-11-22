@@ -292,6 +292,66 @@ pub fn respecs_since_answer(comments: &[Comment]) -> usize {
 }
 
 /// A signal or a claim that `aw` wrote.
+/// Backpressure limits (aw-worker skill, "Backpressure"): with this many
+/// issues in `stage:review`, tdd and spec start no new work.
+pub const BACKPRESSURE_REVIEW_LIMIT: usize = 3;
+/// With this many issues in `stage:tdd`, spec starts no new work.
+pub const BACKPRESSURE_TDD_LIMIT: usize = 5;
+
+/// Issues of the desk and the supervisor (the status board, a decision, a
+/// pipeline problem). They never get a `stage:` label, so a check does not
+/// count them as issues that wait for triage. Empty this list to count them.
+pub const CONTROL_LABELS: [&str; 3] = ["status", "decision", "pipeline"];
+
+/// Why the plan step of the aw-worker skill (section 2, steps 1 to 3) has
+/// work for this open issue, judged from its labels and comments. `None`:
+/// the plan leaves it alone. The rules lean to "has work": a false
+/// positive only costs a full run, a false negative would skip planning.
+pub fn plan_attention(labels: &[String], comments: &[Comment]) -> Option<&'static str> {
+    let has = |name: &str| labels.iter().any(|l| l == name);
+    if CONTROL_LABELS.iter().any(|c| has(c)) {
+        return None;
+    }
+    let signal = latest_signal_at(comments);
+    if has("stage:done") {
+        return Some("done-still-open");
+    }
+    let blocked_signal = signal
+        .as_ref()
+        .is_some_and(|(_, s)| s.outcome == Outcome::Blocked);
+    if has("blocked") || blocked_signal {
+        // A blocked issue that only waits for a person stays quiet. A new
+        // comment of a person after the signal, or a label with no signal,
+        // is something the plan may answer.
+        let answered = signal.as_ref().is_some_and(|(at, _)| {
+            comments
+                .iter()
+                .any(|c| c.created_at.as_str() > *at && !is_aw_comment(&c.body))
+        });
+        return if (has("blocked") && !blocked_signal) || answered {
+            Some("blocked-answerable")
+        } else {
+            None
+        };
+    }
+    match Stage::from_labels(labels) {
+        None => (!labels.iter().any(|l| l.starts_with("stage:"))).then_some("untriaged"),
+        Some(stage) => {
+            let (_, s) = signal?;
+            let moves = s.stage == stage
+                && match stage {
+                    Stage::Spec => s.outcome == Outcome::Ready,
+                    Stage::Tdd => matches!(s.outcome, Outcome::Ready | Outcome::Respec),
+                    Stage::Review => matches!(
+                        s.outcome,
+                        Outcome::Failed | Outcome::Closed | Outcome::Passed
+                    ),
+                };
+            moves.then_some("label-move")
+        }
+    }
+}
+
 fn is_aw_comment(body: &str) -> bool {
     Signal::parse(body).is_some() || ClaimMark::parse(body).is_some()
 }

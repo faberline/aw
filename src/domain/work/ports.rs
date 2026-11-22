@@ -38,6 +38,9 @@ pub struct NewIssue {
 pub trait Tracker {
     fn repo(&self) -> PortResult<Repo>;
     fn open_issues(&self, label: &str) -> PortResult<Vec<Issue>>;
+    /// Every open issue of the repository (pull requests left out), with
+    /// or without an agent label. `aw claim --check` reads it for the plan.
+    fn all_open_issues(&self) -> PortResult<Vec<Issue>>;
     fn comments(&self, issue: u64) -> PortResult<Vec<Comment>>;
     /// The comments on all issues of the repository that changed at or
     /// after `since` (RFC 3339 UTC), each with its issue number. One list

@@ -1,12 +1,14 @@
 //! Use cases: claim one issue, report on it, or release it.
 
 mod active;
+pub mod check;
 pub mod claim;
 mod queue;
 pub mod release;
 pub mod report;
 pub mod services;
 
+pub use check::{Check, NoWork, Verdict, check};
 pub use claim::{ClaimOutcome, claim, claim_with};
 pub use release::{release, release_issue, status};
 pub use report::{Reported, report, report_issue};

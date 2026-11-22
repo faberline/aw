@@ -22,6 +22,24 @@ pub enum ClaimOutcome {
     Nothing(String),
 }
 
+/// What `select` found. `Available` exists in `Mode::Check` only: this
+/// issue would be claimed, and nothing was posted, labelled or checked out.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Selected {
+    Claimed(Claim),
+    Nothing(String),
+    /// The agent still holds a live claim on this issue.
+    Held {
+        why: String,
+        issue: u64,
+        stage: Stage,
+    },
+    Available {
+        issue: u64,
+        stage: Stage,
+    },
+}
+
 /// Take the first issue `agent` may work on and record the claim as an
 /// issue comment. Only tdd touches the working tree: it must be a clean
 /// checkout of the repository, and the work branch is checked out.
@@ -40,6 +58,17 @@ pub fn claim(
     claim_with(s, agent, only, skip, has, false)
 }
 
+/// What a claim does with the work it finds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Mode {
+    /// Post the claim, prepare the branch, and write the signals that a
+    /// passed-over issue needs.
+    Claim,
+    /// Write nothing: only say whether `Claim` would take an issue
+    /// (`aw claim --check`). Both modes run the same selection code.
+    Check,
+}
+
 /// `claim`, and with `rework_only` it takes only an issue that a later
 /// stage sent back: a tdd issue with an open pull request or whose newest
 /// signal is a review `failed`, and a spec issue whose newest signal is a
@@ -54,6 +83,25 @@ pub fn claim_with(
     has: &[String],
     rework_only: bool,
 ) -> Result<ClaimOutcome> {
+    Ok(
+        match select(s, agent, only, skip, has, rework_only, Mode::Claim)? {
+            Selected::Claimed(claim) => ClaimOutcome::Claimed(claim),
+            Selected::Nothing(why) | Selected::Held { why, .. } => ClaimOutcome::Nothing(why),
+            Selected::Available { .. } => unreachable!("only a check finds an available issue"),
+        },
+    )
+}
+
+pub(super) fn select(
+    s: Services<'_>,
+    agent: &str,
+    only: Option<Stage>,
+    skip: &[u64],
+    has: &[String],
+    rework_only: bool,
+    mode: Mode,
+) -> Result<Selected> {
+    let dry = mode == Mode::Check;
     if rework_only && !matches!(only, Some(Stage::Spec | Stage::Tdd)) {
         bail!("--rework-only needs --stage spec or --stage tdd");
     }
@@ -64,19 +112,25 @@ pub fn claim_with(
     let board = board(s, agent)?;
     if let Some(active) = board.active(agent, only) {
         if !active.claim.is_stale(now) {
-            return Ok(ClaimOutcome::Nothing(format!(
-                "issue #{} ({}) is still claimed by `{agent}`; run `aw report` or `aw release` first, but only if this run made that claim (another run of `{agent}` may hold it: do not release it)",
-                active.claim.issue, active.claim.stage
-            )));
+            return Ok(Selected::Held {
+                why: format!(
+                    "issue #{} ({}) is still claimed by `{agent}`; run `aw report` or `aw release` first, but only if this run made that claim (another run of `{agent}` may hold it: do not release it)",
+                    active.claim.issue, active.claim.stage
+                ),
+                issue: active.claim.issue,
+                stage: active.claim.stage,
+            });
         }
-        s.tracker
-            .delete_comment(active.comment_id)
-            .with_context(|| {
-                format!(
-                    "could not remove the stale claim on #{}",
-                    active.claim.issue
-                )
-            })?;
+        if !dry {
+            s.tracker
+                .delete_comment(active.comment_id)
+                .with_context(|| {
+                    format!(
+                        "could not remove the stale claim on #{}",
+                        active.claim.issue
+                    )
+                })?;
+        }
     }
 
     let repo = &board.repo;
@@ -144,10 +198,14 @@ pub fn claim_with(
         if let Some((_, mark)) = &own
             && now - mark.claimed_at < STALE_AFTER_SECONDS
         {
-            return Ok(ClaimOutcome::Nothing(format!(
-                "issue #{} ({}) is still claimed by `{agent}`; run `aw report` or `aw release` first",
-                issue.number, mark.stage
-            )));
+            return Ok(Selected::Held {
+                why: format!(
+                    "issue #{} ({}) is still claimed by `{agent}`; run `aw report` or `aw release` first",
+                    issue.number, mark.stage
+                ),
+                issue: issue.number,
+                stage: mark.stage,
+            });
         }
         if let Some(need) = issue.missing_need(has) {
             needs_other.push(format!("#{} needs `{need}`", issue.number));
@@ -157,7 +215,9 @@ pub fn claim_with(
             continue;
         }
         if stage == Stage::Spec && respecs_since_answer(&comments) >= RESPEC_LIMIT {
-            stop_respec_loop(s, issue, agent)?;
+            if !dry {
+                stop_respec_loop(s, issue, agent)?;
+            }
             continue;
         }
         if stage == Stage::Tdd {
@@ -169,7 +229,7 @@ pub fn claim_with(
                 continue;
             }
         }
-        if stage == Stage::Spec {
+        if stage == Stage::Spec && !dry {
             say_earlier_work(s, issue, agent, prs.as_deref());
         }
         let found = match stage {
@@ -186,7 +246,9 @@ pub fn claim_with(
         let pr = if stage == Stage::Review {
             match found {
                 None => {
-                    block(s, issue, agent, "No open pull request closes this issue.")?;
+                    if !dry {
+                        block(s, issue, agent, "No open pull request closes this issue.")?;
+                    }
                     continue;
                 }
                 // One agent may review its own pull request in a later run.
@@ -197,6 +259,12 @@ pub fn claim_with(
             found
         };
 
+        if dry {
+            return Ok(Selected::Available {
+                issue: issue.number,
+                stage,
+            });
+        }
         let mut claim = Claim {
             repo: repo.name.clone(),
             agent: agent.to_string(),
@@ -246,7 +314,7 @@ pub fn claim_with(
         if let Some(old) = superseded {
             close_superseded(s, &old, &claim.branch)?;
         }
-        return Ok(ClaimOutcome::Claimed(claim));
+        return Ok(Selected::Claimed(claim));
     }
 
     let mut why = match only {
@@ -271,7 +339,7 @@ pub fn claim_with(
     }
     // No review issue is left to claim. When no review pull request can
     // merge next and no update is in flight, start the CI of the next one.
-    if !rework_only && matches!(only, None | Some(Stage::Review)) {
+    if !dry && !rework_only && matches!(only, None | Some(Stage::Review)) {
         let mut warnings = Vec::new();
         if let Some(pr) = update_next(s, &repo.default_branch, None, &mut warnings) {
             why.push_str(&format!(
@@ -282,7 +350,7 @@ pub fn claim_with(
             eprintln!("aw: {warning}");
         }
     }
-    Ok(ClaimOutcome::Nothing(why))
+    Ok(Selected::Nothing(why))
 }
 
 /// An issue that a later stage sent back to `stage`.

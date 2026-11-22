@@ -272,6 +272,14 @@ impl Tracker for GhCli {
         Ok(issues.into_iter().map(Issue::from).collect())
     }
 
+    fn all_open_issues(&self) -> PortResult<Vec<Issue>> {
+        let repo = self.name()?;
+        let path = format!("repos/{repo}/issues?state=open&per_page=100");
+        let out = self.get_all(&path, ISSUE_JQ)?;
+        let issues: Vec<IssueJson> = parse_lines(&out, "issue list")?;
+        Ok(issues.into_iter().map(Issue::from).collect())
+    }
+
     fn comments(&self, issue: u64) -> PortResult<Vec<Comment>> {
         let repo = self.name()?;
         let path = format!("repos/{repo}/issues/{issue}/comments?per_page=100");

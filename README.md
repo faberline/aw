@@ -62,6 +62,13 @@ to do. An agent holds at most one claim in a repository.
 `aw claim --skip <issue>` passes over that issue; repeat it for more. A
 worker uses it for a review whose checks are still running.
 
+`aw claim --check` (0.7.79) writes nothing and prints one line: `work ...`
+(exit 0) or `no-work ... reason=<empty-queue|backpressure|all-blocked|passed-over>`
+(exit 2). It selects like `aw claim` (same code) and applies the backpressure
+limits of the aw-worker skill, so a routine can stop before it reads the skill.
+With `--stage spec` it also looks for plan work (triage, a label move, an
+answered blocked issue).
+
 An issue with a `needs:<thing>` label is work that only some machines can
 do, for example `needs:mac` for a model training run on the local Mac.
 `aw claim` passes over it unless the worker says it has the thing:
