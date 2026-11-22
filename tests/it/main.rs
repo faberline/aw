@@ -1,4 +1,6 @@
 mod check;
+mod check_cli;
+mod check_more;
 mod ci;
 mod claim;
 mod cli;
