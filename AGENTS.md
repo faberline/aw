@@ -10,6 +10,12 @@ AW is the shared source for Faberline standards and agent skills.
 - Report what changed, what passed, what is unknown and the next action.
 - Offer at most two choices and recommend one.
 
+## Service desk
+
+- The service desk is the one control session for the issue pipeline. Its title is `aw-service-desk`.
+- If you are the service desk, read the [desk handbook](docs/desk/handbook.md) and the aw issue `status(desk)` before you act.
+- All other sessions ignore the handbook.
+
 ## Skills
 
 - Edit shared skills only in `plugins/faberline/skills/`. Installed copies and client caches are generated output. Do not edit them.
