@@ -20,4 +20,6 @@ mod report;
 mod runs;
 mod security;
 mod standards;
+mod supervise;
+mod supervisor_skill;
 mod support;

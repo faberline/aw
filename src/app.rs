@@ -50,6 +50,9 @@ pub fn run() -> ExitCode {
     if let Some(target) = parsed.metadoc_target() {
         return exit_code(metadoc_check(target));
     }
+    if let Some(target) = parsed.supervise_target() {
+        return exit_code(supervise_check(target));
+    }
     if let Some(target) = parsed.desk_target() {
         return exit_code(desk_patrol(target));
     }
@@ -217,6 +220,26 @@ fn metadoc_check(target: &MetaTarget) -> Exit {
         target.paths.clone()
     };
     cli::run_metadoc(MetaServices { repo: &repo }, &paths, target.format)
+}
+
+/// `aw supervise --check`: has anything changed since the last full run?
+fn supervise_check(target: &cli::SuperviseTarget) -> Exit {
+    let repo = if target.repo.contains('/') {
+        target.repo.clone()
+    } else {
+        format!("faberline/{}", target.repo)
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let source = crate::infrastructure::desk::GhDesk::new();
+    match crate::application::supervise::check(&source, &repo, &target.board_repo, now) {
+        Ok(check) => cli::run_supervise_check(&check),
+        Err(call) => {
+            eprintln!("aw: {call}");
+            Exit::Failed
+        }
+    }
 }
 
 /// `aw desk patrol`: what the desk must look at, read through `gh`.

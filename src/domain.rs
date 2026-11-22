@@ -6,4 +6,5 @@ pub mod repo;
 pub mod run;
 pub mod security;
 pub mod standards;
+pub mod supervise;
 pub mod work;

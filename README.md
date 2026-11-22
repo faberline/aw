@@ -69,6 +69,17 @@ limits of the aw-worker skill, so a routine can stop before it reads the skill.
 With `--stage spec` it also looks for plan work (triage, a label move, an
 answered blocked issue).
 
+`aw supervise --check --repo <owner/name>` (0.7.80) writes nothing and prints
+one line: `quick ...` (exit 0) or `full reason=<no-board|no-marker|changed|stale>`
+(exit 2); exit 1 is an error. It reads one repository through REST and hashes
+what the supervisor acts on: main and its workflows, the stage and blocked
+counts, the `decision`, `pipeline` and `needs-human` issues, the closed blockers
+of blocked issues, queued and running runs, and open pull requests. It compares
+the hash with the marker `<!-- aw:supervise fp=<hex> full=<UTC time> -->` in the
+body of the `status(<name>)` board (`--board-repo`, default `faberline/aw`). The
+answer is `quick` only for the same hash and a last full run under 6 hours old;
+the day changes at 04:00 UTC, so each day has one full run.
+
 An issue with a `needs:<thing>` label is work that only some machines can
 do, for example `needs:mac` for a model training run on the local Mac.
 `aw claim` passes over it unless the worker says it has the thing:
