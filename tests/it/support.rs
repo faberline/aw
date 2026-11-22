@@ -184,6 +184,10 @@ impl Tracker for FakeTracker {
             .collect())
     }
 
+    fn all_open_issues(&self) -> PortResult<Vec<Issue>> {
+        Ok(self.issues.borrow().clone())
+    }
+
     fn comments(&self, issue: u64) -> PortResult<Vec<Comment>> {
         self.reads.borrow_mut().push(format!("comments #{issue}"));
         Ok(self

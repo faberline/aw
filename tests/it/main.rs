@@ -1,3 +1,4 @@
+mod check;
 mod ci;
 mod claim;
 mod cli;

@@ -6,6 +6,20 @@ user-invocable: true
 
 # aw-worker
 
+## Quick exit (before you read the rest)
+
+Run `aw claim --check --agent claude --repo <owner>/<name> --stage <stage>`
+(`aw` 0.7.79 or newer). It writes nothing, uses the selection and
+backpressure rules of `aw claim`, and prints one line.
+
+- Exit 2, `no-work ... reason=<empty-queue|backpressure|all-blocked|passed-over>`:
+  do not read the rest. Final answer: `no work: <stage> <repo> <reason>`. Stop.
+- Exit 0, `work ... reason=<claim|held|plan>`: read the rest and run as usual.
+- Exit 1 (error): read the rest and run as usual.
+- The spec check covers plan steps 1 to 3, and ignores issues labelled
+  `status`, `decision` or `pipeline`. It does not cover step 4 (release) or
+  step 5 (coverage issue): at 03:00 UTC a spec run reads the rest on exit 2 too.
+
 One agent does all the work: `claude`. It runs on an hourly schedule.
 Each run plans first. Then it takes issues through their stages, one claim
 at a time, until it must wait for CI or has finished three stages.
@@ -189,7 +203,7 @@ Every issue in the flow has the label `agent:claude`.
   temporary files. Do not write it in the worktree or in the person's checkout.
 
 Use the Rust `aw`: `AW=~/.local/share/aw-rs/bin/aw`.
-`$AW --version` must print `aw 0.7.78` or newer.
+`$AW --version` must print `aw 0.7.79` or newer.
 When it is older, install the new one with the command below, then check again.
 `~/.local/bin/aw` can be an old Python tool with the same name; do not use it.
 When no binary passes the check, stop and report it.

@@ -114,6 +114,12 @@ enum Command {
         /// under backpressure.
         #[arg(long)]
         rework_only: bool,
+        /// Write nothing. Say whether a claim has work now, with the same
+        /// selection and backpressure rules, as one line on stdout:
+        /// `work ...` (exit 0) or `no-work ... reason=<why>` (exit 2). Run
+        /// it first: on `no-work`, the run ends at once.
+        #[arg(long, conflicts_with = "rework_only")]
+        check: bool,
     },
     /// Finish the claimed stage.
     Report {
@@ -1067,7 +1073,23 @@ fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit
             target,
             skip,
             has,
+            rework_only: _,
+            check,
+        } if check => {
+            let found = work::check(s, &target.agent, target.stage(), &skip, &has)?;
+            println!("{found}");
+            Ok(if found.has_work() {
+                Exit::Ok
+            } else {
+                Exit::Nothing
+            })
+        }
+        Command::Claim {
+            target,
+            skip,
+            has,
             rework_only,
+            ..
         } => match work::claim_with(s, &target.agent, target.stage(), &skip, &has, rework_only)? {
             ClaimOutcome::Claimed(claim) => {
                 print(&claim)?;
