@@ -6,6 +6,19 @@ user-invocable: true
 
 # aw-supervisor
 
+## Quick exit
+
+Do this before you read the rest of this file. It needs `aw` 0.7.80 or newer. With an older `aw`, or when `aw supervise` is an unknown command, skip it and run in full.
+
+1. Run `aw supervise --check --repo <owner>/<repo>` (from the routine prompt). It reads through REST and writes nothing. Exit 0 is `quick`, exit 2 is `full`, exit 1 is an error.
+2. `quick`: the state fingerprint is the one in the board and the last full run is under 6 hours old. Do only this, then stop and do not read the rest of this file:
+   - Read the body of the board `status(<repo>)` (step 10). Replace the time after `更新：` with `date -u` of this run. Change nothing else, the marker line included. PATCH the body from a file (G22, G26).
+   - Final answer, one line: `快速結束：沒有變化（<fp>）`.
+3. `full`, an error, or no marker in the board: run the whole skill. The first line starts with `full reason=` and gives the reason.
+4. At the end of a full run, after your last write, run the check again and write its `fp` in the board (step 10) as `<!-- aw:supervise fp=<fp> full=<UTC time> -->`, with `date -u +%Y-%m-%dT%H:%M:%SZ`. The second run counts your own writes. If the second check fails, write no marker: the next run is a full run.
+
+The fingerprint covers: the main commit and the result of its workflows (G28), the count of `stage:spec`, `stage:tdd` and `stage:review` issues, `blocked` issues with their update times and their closed blockers (G10, G53), `decision`, `pipeline` and `needs-human` issues with their update times (G21, G54), queued and running runs, and open pull requests with their update time, merge state and failed checks. The UTC day changes at 04:00 (a full run each day, for G47). The fingerprint cannot see: a time-based item (stuck stage, quiet routine, slow queue), a comment on an issue that has no control label, and the check of a pull request that stays green. A full run at least every 6 hours covers them.
+
 The supervisor watches the pipeline of one repository.
 The routine prompt gives the repository as `<owner>/<repo>`.
 Below, `<repo>` means the repository name without the owner.
@@ -300,6 +313,7 @@ Write it in Traditional Chinese (Taiwan):
   Each bullet has: `緊急` when urgent; what it is; since when; what it blocks, with the chain; who it waits for (使用者, 中控, a routine, or another repository); the faberline/aw issue link.
 - `## 規格卡住` (G31): each open issue whose last signal is `stage=spec outcome=blocked`, one line each: the issue link, the age of the signal (from `date -u`, in hours or days), `split` or `Decision`, and the link of the open decision item. Write `none` when there are none.
 - `## 封鎖檢查` (G53): `檢查 <N> 個 blocked issue；解除或改指 <M> 個：#a, #b`, and the time of the sweep. Write the issue numbers that need a decision, one line each.
+- The marker line of the quick exit, directly under `更新：`.
 - `## 已解除但沒人接手`.
 - `## 排隊太久` (G34): each issue with a `stage:*` label, without `blocked`, not touched for more than 2 hours, one line each. Write `none` when there are none.
 - `## 這一輪做了什麼`.
@@ -336,6 +350,15 @@ List each root cause and its action, with links.
 Do not send push notifications.
 
 ## Extra rules
+
+### Rules in separate files
+
+These rule groups are read only in the case that they name. Read the file with `Read`; it is in the same folder as this file. The rule numbers stay the same. A step that cites one of these rules with "below" means that file.
+
+- Read `special-desk-decisions.md` (G21, G54) when an open decision issue has a desk answer that you may carry out yourself, or when a label-only desk decision waits.
+- Read `special-blocked-recheck.md` (G10, G53) when a blocked issue is new or changed, when the blocker of a blocked issue may be closed, or in the stale block sweep.
+- Read `special-split-proposed.md` (G17) when an issue has a split proposed and no child issues.
+- Read `special-tdd-blocked-spec.md` (G16, G31) when a tdd issue is blocked on an incomplete spec, or a spec blocked signal needs a same-round answer.
 
 ### Claim check (G4)
 
@@ -389,84 +412,6 @@ Do these things:
 Example failure: lumen stopped for 14 hours.
 `aw claim` exited 1 in each run.
 The supervisor reported `正常`.
-
-### Re-check blocked issues (G10)
-
-In each run, look at each issue with the label `blocked`.
-Check if the reason still holds.
-Examples of a gone reason: the failed check is now green; the dependency issue is now closed; the tag now exists.
-
-Check the fact first.
-Read the pull request or the issue that the blocked issue waited for.
-Use `gh api repos/<owner>/<repo>/pulls/<n>` or `gh api repos/<owner>/<repo>/issues/<n>`.
-Note its state.
-Note its merge time (`merged_at`) or its close time (`closed_at`).
-A pull request can be closed but not merged.
-Then say so in the facts, and check that the work it carried is not needed.
-Write these facts in the decision.
-
-#### A wait for a fix in another repository (pin check)
-
-An issue can wait for a fix in another repository.
-This repository can pin that repository by tag.
-Then the wait condition is met only when both are true:
-
-- a tag that contains the fix exists in the other repository;
-- this repository pins that tag.
-
-A closed upstream issue is not enough.
-A fix that is only on the `main` branch of the other repository is not enough.
-In the same pass, check both facts and write both in the decision:
-
-- the pin: the `tag =` lines in `Cargo.toml` of this repository;
-- the upstream tags: `gh api repos/<owner>/<repo>/tags` and the commit that holds the fix.
-
-When one fact is missing, the reason is not gone.
-Do not remove `blocked`.
-Do not recommend to remove it.
-Say what is missing: a new upstream tag, or a pin change in this repository.
-Example failure: decision faberline/aw#347 (relay) recommended to remove `blocked` from relay#18 and relay#11 because faberline/core#214 was closed.
-The same decision said that relay pins core tag `v0.4.14` and that the fixes were only on core `main`.
-The desk chose the other option.
-
-When the reason is gone, a note is not enough.
-Make the item with its `執行清單` (below).
-Then test it against the four checks of G21.
-When it passes all four, execute it in this same pass under G21.
-Do not open a `decision` issue for it, and do not wait for the desk.
-Every prerequisite closed with `stage:done` is the usual case.
-The fix is label-only (remove `blocked`), the type is `類型：中控可決定` and it has one option.
-This passes the four checks.
-Re-read the labels and the cause first, as G21 says.
-G21 keeps all its limits.
-
-When the item fails a G21 check, the supervisor may not change the label, so the desk must do it.
-An example is an `執行清單` with an action that G21 does not allow.
-Another is a cause that you cannot verify from the repository, the run or the signal.
-The desk acts only on an `執行清單`.
-Open one `decision` issue for each run of `<target>` for these items.
-Put each stale `blocked` issue of this run in that one issue.
-Use `類型：中控可決定`.
-Use one option.
-Its `執行清單` has these lines for each stale issue:
-
-- the label to remove (`blocked`);
-- the `stage:*` label to add, when the issue has none (G4);
-- the comment text for the issue, in one line.
-
-Search the open faberline/aw issues first (step 6).
-A `decision(<repo>)` issue can be open already.
-Then you may add the item there in a comment.
-The comment must have the full `執行清單`.
-A comment that only says "the reason is gone" is not enough.
-Do not create a second decision issue for the same blocked issue.
-Do not change the label yourself, except under G21 or G54.
-
-Example failure: core#163 stayed `blocked` after all 46 checks of its pull request became green.
-Example failure: the lumen supervisor found every prerequisite of a `blocked` issue closed with `stage:done`.
-It opened faberline/aw#342 for the label removal.
-The item passed all four G21 checks.
-The desk had to execute it by hand one pass later.
 
 ### Release chain (G11)
 
@@ -628,94 +573,6 @@ Example failure: the defer supervisor opened faberline/aw#294 for `Temporary fai
 The same failure hit tape and surface at the same time.
 It was a problem of the hosted runner.
 
-### tdd blocked on an incomplete spec (G16)
-
-The tdd stage can find that the spec is incomplete.
-The correct report is `respec`: the issue goes back to `stage:spec` without `blocked`.
-A `blocked` report keeps `stage:tdd` and adds `blocked`.
-Then no routine takes the issue.
-The spec routine does not read `stage:tdd`.
-The tdd routine does not take `blocked`.
-This is a pipeline defect, not a question for a person.
-
-For each open issue in `<target>` with `stage:tdd` and `blocked`, read the last aw signal.
-The signal has `stage=tdd` and `outcome=blocked`.
-Its text says that the spec is incomplete, unclear or lacks a point.
-Examples: `spec unclear:`, `spec incomplete`, `the spec is missing points`.
-Then this is a root cause named "tdd blocked on spec".
-
-Open a `decision` issue in faberline/aw in the same run.
-Do not wait for one hour.
-Do not wait for the planner.
-Use `類型：中控可決定`.
-Use one option.
-Write these facts: the link to the signal; its time; the missing points that the signal lists.
-The `執行清單` has these lines for each such issue:
-
-- remove `blocked`;
-- remove `stage:tdd` and add `stage:spec`;
-- the comment text in one line, with the missing points for the new spec.
-
-Search the open faberline/aw issues first (step 6).
-When an open `decision(<repo>)` issue exists, add a comment there with the full `執行清單`.
-Do not change the labels yourself, except under G21 or G54: the item is label-only with one option, so execute it in the same pass when its checks pass, and open no `decision` issue.
-
-Also name the defect.
-Search the open faberline/aw issues with the label `pipeline` for `tdd blocked on spec`.
-When one exists, add one comment there with the issue link and the signal link.
-When none exists, create one `pipeline(<repo>)` issue with these words in the title.
-Write the `aw` version of the tdd run when a comment or a log shows it: an `aw` older than 0.7.26 refuses `respec`.
-
-Example failure: faberline/relay#134 and faberline/lumen#307 got a tdd `blocked` signal for an incomplete spec on 2026-11-11.
-Each issue waited about 50 minutes for a label move (faberline/aw#305, faberline/aw#307).
-
-### Split proposed, no children (G17)
-
-The spec stage can find that an issue is too large for one pull request.
-When the split needs no decision, the correct report is `split`.
-`aw` then makes the child issues and closes the parent.
-A `blocked` report with a split proposal makes no issue.
-The issue keeps `stage:spec` and `blocked`, and no routine takes it.
-This is a pipeline defect, not a question for a person.
-
-For each open issue in `<target>` with `stage:spec` and `blocked`, read the last aw signal.
-The signal has `stage=spec` and `outcome=blocked`.
-Its text says that the issue is too large or names a split: `too large`, `split`, `child issues`, `more than one pull request`.
-Then look for children: issues whose body has `Part of #<n>`, the sub-issues of the issue, and issue links in a later comment.
-When no child exists, this is a root cause named "spec split without children".
-Do not wait for a second pass or for a time threshold (G31).
-
-Read the first line of the signal text.
-
-1. It names a decision (`Decision: ...`): two designs, a change of an acceptance criterion, or money.
-   Open one `decision` issue in faberline/aw for all such issues of `<target>` (G15).
-   Each option is one of the proposed splits.
-   The `執行清單` lists the child issues to make for each option, with title, milestone and priority.
-2. It names no decision.
-   Then the spec run did not use `split`.
-   Open a `decision` issue with `類型：中控可決定` and one option.
-   The `執行清單` has these lines: the child issues to make (title, the milestone and the priority label of the parent, `agent:claude`, `stage:spec`); one comment on the parent with the links; close the parent as replaced.
-   Also name the defect: search the open faberline/aw issues with the label `pipeline` for `spec split without children`.
-   When one exists, add one comment with the issue link and the signal link.
-   When none exists, create one `pipeline(<repo>)` issue with these words in the title.
-   Write the `aw` version of the spec run when a comment or a log shows it.
-3. The signal says `made N of M child issues`.
-   `aw` stopped part way. The `執行清單` lists only the children that are not made.
-
-A child of a split has `<!-- aw:child parent=<n> -->` on the first line of its body.
-From `aw` 0.7.30 a child (depth 1) can split once more: a spec run reports `split` and `aw` makes the grandchildren.
-A grandchild (depth 2) cannot split again; its spec run reports `blocked` with `Decision: split grandchild #<n> again`.
-Treat that as case 1.
-An older `aw` also refuses a child; its spec run reports `blocked` with `Decision: split child #<n> again`.
-Treat that as case 1 too.
-
-Do not make the child issues yourself and do not change the labels, except under G54.
-Case 2 and case 3 have one option, so G54 applies: make the children in the same pass.
-Case 1 goes to G54 only when the signal recommends one split and no "never in G54" case applies.
-
-Example failure: faberline/lumen#311, #307 and #310 on 2026-11-12 (faberline/aw#315) and faberline/keep#70 (faberline/aw#313).
-Each got a spec `blocked` signal with a correct split proposal. No routine made the children.
-
 ### Runs queued with zero jobs (G18)
 
 The whole faberline organization shares 20 concurrent Actions jobs.
@@ -842,118 +699,6 @@ Example failure: lumen#323 (22:21Z) and lumen#324 (22:27Z) on 2026-11-11.
 Each got a spec `blocked` signal with "Decision needed" and a recommendation.
 The pass of 23:11Z opened no decision issue for them.
 
-### A spec blocked signal is raised in the same round (G31)
-
-A spec `blocked` signal waits for a person or for the desk.
-No routine answers it, so each hour of delay is a lost hour (G17, G20).
-Example failure: lumen#288, #289, #290, #291 and #299 got a spec `blocked` signal with a split on 2026-11-11 and no child issue.
-The lumen supervisor raised the decision on 2026-11-14 (faberline/aw#394), more than 2 days later.
-Another: sift#66 on 2026-11-14 10:10Z, a `Decision:` line with a recommended choice.
-
-In each round, for each open issue in `<target>` with `blocked` whose last `aw:signal` is `stage=spec outcome=blocked`, do this.
-This rule sets the timing of G17 and G20. It does not replace their item format or their G21 limits.
-
-1. The signal proposes a split and the issue has no child.
-   A child exists when the sub-issues API of the issue is not empty (`gh api repos/<owner>/<repo>/issues/<n>/sub_issues`), or when an issue body starts with `Part of #<n>`.
-   Raise the decision in this same round.
-   Use the type `類型：中控可決定`.
-   The `執行清單` is the split: the child issues to make (G17 case 2).
-   Do not wait for a time threshold.
-2. The signal has a `Decision:` line with a recommended choice.
-   Raise the decision in this same round (G17 case 1, G20).
-   Copy the recommended choice as option A, in the words of the signal.
-   Before you copy it, verify the facts that the choice depends on (step 7, G3).
-   Write the result under the facts.
-   When a fact does not hold, say so under option A and give your own option, or use `類型：需要使用者` when you have none (G3).
-3. Search for a precedent before you open a new decision.
-   Search closed `decision` issues in faberline/aw, of any age, for the same pattern in the same repo.
-   Example: `gh api -X GET search/issues -f q='repo:faberline/aw is:issue is:closed label:decision "decision(<repo>)" split'`.
-   Read the best matches.
-   When one has the same pattern, cite it in the facts of the new decision, with its link and its chosen option, so the desk can apply it at once (faberline/aw#315 is the example for a split without children).
-   A precedent never replaces the new decision. Cite it, then raise the item.
-4. Put all items of the run in the one decision issue of the run (step 8), or add them as a comment to the open `decision(<repo>)` issue (step 6), as G20 says.
-   Make one item for one signal.
-5. The board lists these issues under `## 規格卡住` (step 10), with the age of the signal.
-
-The limits of G17 stay: do not make the child issues and do not change the labels, except under G21 or G54.
-An item that passes the G54 checks is executed in this same round, and no decision is raised for it.
-
-### Execute a label-only desk decision (G21)
-
-The desk is sometimes offline.
-A `decision` item of type `中控可決定` can then wait for hours, only for one label removal.
-Example failure: faberline/core#147 waited from 09:40Z to 14:0xZ for one label removal, and the p0 issue faberline/relay#138 waited 9 hours (faberline/aw#326, #328, #330, #331, #333 and #334).
-So in this case the supervisor executes the item itself and does not wait for the desk.
-
-Apply G21 to an item only when all of these are true:
-
-1. The item has the type `類型：中控可決定` and exactly one option.
-2. That option is the recommendation of the stage run (G20), or a verified "the cause is gone" (step 7, G10, G14).
-3. Its `執行清單` has only these actions, on issues that exist: remove the label `blocked`; add one `stage:*` label, or change the `stage:*` label to another one; post a comment.
-4. The item is not of type `類型：需要使用者`.
-
-Never apply G21 to an item whose `執行清單` has any other action.
-These are never in G21:
-
-- create or close an issue in a product repository (this includes the children of a split, G17);
-- merge or approve a pull request, or change a pull request;
-- rerun a workflow that costs money, or any other action that costs money;
-- change a milestone;
-- any change to a ruleset, a setting, a secret, a workflow file, a routine or a schedule.
-
-An item with such an action is not in G21. Test it against G54 (below): G54 allows the children of a split and the close of a split or replaced parent.
-An item that G54 does not allow either keeps waiting for the desk.
-An item of type `需要使用者` keeps waiting for the user.
-When one `decision` issue has items of both kinds, execute only the items that pass the four checks.
-
-An item that you find in this same pass is also in G21.
-Do not first open a `decision` issue and wait for the desk.
-Make the item, test the four checks, and execute it in the same pass.
-Example: a G10 check finds that every prerequisite of a `blocked` issue is closed with `stage:done`.
-The fix is label-only, the type is `類型：中控可決定` and there is one option.
-Then do this in the same pass:
-
-1. Read the labels of the blocked issue again (G19).
-2. Comment the evidence on the blocked issue: each prerequisite, its state and its `closed_at`.
-3. Remove `blocked`.
-4. Add the item to the status board under `這一輪做了什麼`, with the link.
-
-Open no `decision` issue for it.
-The limits do not change: label-only, one option, re-read before writing, no merge, no paid action.
-When a check fails, make the `decision` issue as before.
-
-Before you execute an item, in the same pass:
-
-1. Read the current labels of the issue (G19) and its last aw signal.
-   When the labels no longer match what the item expects (another session already moved the issue, `blocked` is already gone, or a `stage:*` label is already set), do not execute.
-   Write the new state in a comment on the decision issue.
-2. Read the cause again (step 7, G14).
-   Check that the cause is still gone, or that the recommendation of the stage run is still true.
-   When the issue waits for a fix in another repository, apply the pin check of G10 again.
-   Read it from the repository, the run or the signal, not from the old decision text.
-   When it is not true any more, do not execute.
-   Say so in a comment on the decision issue.
-3. Check that the issue has a `stage:*` label and an `agent:*` label after the write (G4).
-   When the list does not give the label and the issue has none, do not execute.
-
-Then execute the list, in the order of the list, with `gh api` REST.
-The writes of one executed item count as one write for the limit of step 11.
-When the limit is reached, leave the rest for the next pass.
-After the writes, read the labels again (G19) and do the claim check (G4).
-
-Then write on the decision issue one comment that starts with `executed by supervisor`.
-It lists each write with its link, and the time (G1).
-Close the decision issue when every item in it is executed, or is an item that the supervisor passed over because its cause is gone.
-When some items stay open, do not close it.
-The comment says which items wait, and for whom.
-This close and the parent close of G54 are the only closes that the supervisor may do.
-It never closes any other issue or pull request.
-
-When a write fails, stop the item, write the error in the comment, and keep the decision issue open for the desk.
-Do not retry more than once.
-
-Add each executed item to the status board under `這一輪做了什麼`, with the link.
-
 ### Label a red-main issue you open (G28)
 
 Use this rule only when all of these are true:
@@ -1009,6 +754,9 @@ Write the new time even when every other line of the body is the same.
 The old time shows that the supervisor did not run, so it must not stay.
 A run that ends without this PATCH is a failed run.
 Say so in the final answer and write `異常`.
+
+Exception (quick exit): when `aw supervise --check` says `quick` (see the top of this file), the one PATCH of the `更新：` time is the whole write of the run, and the final answer is one line.
+Every other run follows the text above.
 
 Example failure: the som supervisor run of 2026-11-12 16:54Z ended with "Nothing has changed since the last board ... No new write is needed".
 It made no write.
@@ -1393,7 +1141,6 @@ An option that widens or lowers a perf threshold, a baseline, a coverage ratchet
 2. The option that keeps the threshold goes first, as the recommendation, unless a measurement shows that it cannot work. G9 applies to every number.
 3. Never use G21 for an option of this kind, also when it has one option.
 
-
 ### A green pull request that is behind `main` waits for the review routine (G46)
 
 A pull request in review whose required checks on the current head are green and that is `behind` `main` for more than 2 hours does not wait for CI. CI has finished. It waits for the review routine, which must update its branch (`aw` does this after a merge and when the queue is idle; faberline/aw#563).
@@ -1419,7 +1166,6 @@ Then do this in the same pass. Open no `decision` issue.
 4. Read the labels of the issue again in this pass, just before you write "no labels" in a board or a decision. A pass that wrote "no labels" from an old read was wrong in aw#572 and aw#573.
 
 Do not close issues, merge or change other labels. Do not use this rule for a failure that has no advisory ID (use G28 or G44).
-
 
 ### Many branch updates and no merge (G48)
 
@@ -1488,139 +1234,3 @@ A thing that can be read is a release tag, an issue or a pull request, a workflo
 G38 is unchanged: it adds `blocked` for an open `Waits for:` prerequisite, and G52 reads that prerequisite again in each run, so a merged prerequisite is found in the same run.
 This rule adds no write. The routine prompt needs no new line.
 
-### Stale block sweep (G53)
-
-The check of G10 and G52 reads the issues that changed. A block can stay for days when nobody touches the issue (evidence, 2026-11-19: faberline/lumen had 102 open `blocked` issues; 9 of them had a reason that was gone for 5 to 10 days).
-So in each run, after step 4, do this sweep over all of them.
-
-1. List all open issues of `<target>` with the label `blocked`. Page through the list (`per_page=100`, follow `page`). Do not stop at the first page. Skip pull requests.
-2. For each issue find what it waits for: the last aw signal with `outcome=blocked`, the last `desk:` or supervisor comment, and each `Waits for:` line of the body (G38).
-3. Read each named blocker once: its `state` and `state_reason`. Keep the result in a table in this run and do not read the same blocker twice. The cost is one list call for each page and one read for each distinct blocker.
-4. Decide for each issue:
-   - Every named blocker is `closed` with `state_reason=completed`: remove `blocked` (label only), keep the `stage:*` label, and post one comment with each blocker number and its `closed_at`.
-   - A blocker is `closed` with `state_reason=not_planned`: read its `split` signal or its closing comment and find the issues that replace it. Post one comment `now waits for #X, #Y` and keep `blocked`. When no replacement exists, do not write to the issue: put it on the status board as needing a decision.
-   - A blocker is open: leave it.
-   - A blocker cannot be read: write `cannot verify: <name>` on the board (G52).
-   - The last comment is a decision of the user or of the desk that answers the blocked signal (a `desk:` comment, or a comment that quotes the user), no aw signal is newer, and the comment is more than 24 hours old: remove `blocked`, set the `stage:*` label that the decision names (`stage:spec` when it says the spec must be written again), and post one comment. When the decision does not name the next step clearly, do not guess: put it on the board.
-5. Never remove `blocked` when the reason is money, a paid run, a release tag, a thing the owner deferred, or a diagnosis that the issue is too large or needs a split. G52 reads a release tag and the other rules decide about the rest.
-6. Never act on a blocker that is only closed: read `state_reason` first. A blocker that is closed with another reason than `completed` or `not_planned` goes to the board.
-7. Write one comment for each issue and each change. When the issue already has your comment for the same blocker state, write nothing. Do not repeat a comment in a later run.
-8. Read the labels again before each write (G19) and check the `stage:*` and `agent:*` labels after it (G4).
-
-This rule has its own limit: at most 10 issues are changed in one run, and they do not count for the limit of step 11. The rest waits for the next run, and the board says how many are left.
-The board (step 10, `## 封鎖檢查`) gives two numbers in each run: how many blocked issues you checked, and how many blocks you removed or pointed again, with the issue numbers.
-G53 does not close issues, create issues, merge or change a pull request, and it does not touch a routine.
-Before the board says that a blocked issue never unblocks, apply the check of G54 ("Split or replaced before dead").
-
-### Execute a desk decision yourself (G54)
-
-The owner decided on 2026-11-22: the supervisor executes a `類型：中控可決定` item itself.
-Only a hard problem and a `類型：需要使用者` item go to the desk or the owner.
-Before this rule the desk did simple work by hand, one pass later: it made the children of a split, took the recommended option, and closed a replaced parent.
-G54 widens G21. G21 stays the rule for a label-only item with one option.
-Every re-read check of G21 applies to G54 too.
-
-#### When G54 applies
-
-Apply G54 to an item only when all of these are true:
-
-1. The item has the type `類型：中控可決定` (step 8), and no case of the "never in G54" list applies.
-2. The item has a recommended option.
-   It is the recommendation of the stage run (G20), the one option that a rule of this skill gives (G10, G16, G17, G38, G44, G52), or your own recommendation after you verified each fact (step 7, G9, G14).
-   When the item has two options, take the recommended one (the first one, G3).
-   Do not take the other option.
-3. Each write of its `執行清單` is in `<target>` and is on the list of allowed writes below.
-4. The routine prompt lists the G54 writes.
-
-When check 2 fails (no recommendation), or you cannot say which type the item has, do not execute.
-Open the `decision` issue for the desk as before (step 8).
-When check 4 fails, G54 does not run: open the `decision` issue as before.
-
-The item can be one that you find in this pass, or one in an open `decision(<repo>)` issue that this supervisor opened in an earlier pass.
-For an item of this pass, open no `decision` issue.
-
-#### Allowed writes, in `<target>` only
-
-- Create the child issues of a split (G17, G44).
-  A child gets these labels: `stage:spec` or the `stage:*` label of the parent; `agent:claude`; the priority label of the parent (`p0` to `p3`); `blocked` when the child waits for a sibling that is open.
-  The first line of the body is `<!-- aw:child parent=<n> -->`. The second line is `Part of #<n>.` (G17).
-  A child that waits for a sibling has `Waits for: #<m>` as a line of its own (G38). Create the sibling first, so the number exists.
-  When the parent body has a section `Common rules`, copy that section into each child, word for word. Do not shorten it and do not rewrite it.
-  Do not set a milestone on a child. Write `milestone 未設定` and the milestone of the parent on the board line of the child.
-- Edit the `Waits for:` line in the body of an issue that depends on the parent or on a replaced issue, so it names the replacements. Change only that line.
-- Remove or add the label `blocked`, and add or change one `stage:*` label (as in G21 and G38).
-- Post a comment.
-- Close a parent that is split or replaced, as not planned (`state=closed`, `state_reason=not_planned`).
-  Before the close, post one comment on the parent that names each replacement with its link.
-  Close a parent only after each replacement exists and you read it back (G26).
-- In faberline/aw: close the `decision(<repo>)` issue that this supervisor opened, with a comment of one line that starts with `executed by supervisor` and says what you did, with the links.
-
-#### Never in G54
-
-These limits do not change:
-
-- merge or approve a pull request, or change a pull request;
-- a paid action, a paid rerun or a `workflow_dispatch`;
-- a tag or a release;
-- a milestone change;
-- a change to a ruleset, a setting, a secret, a workflow file, a routine or a schedule;
-- a weaker test, threshold, timeout or coverage ratchet (G45), also a deleted, skipped or ignored test;
-- a choice of product direction: scope, an acceptance criterion, a frozen contract, or two valid designs with no clear recommendation;
-- a close of an issue as completed, or a close of an issue that is not split or replaced (the finished parent of G13 stays with the desk);
-- a priority label change on an existing issue (G36) and the `expedite` label for a release blocker (G28);
-- a write in another repository. The one exception is the faberline/aw decision issue.
-
-An item with one of the first seven has the type `類型：需要使用者`.
-Open the `decision` issue in faberline/aw with the labels `decision` and `needs-human` (step 8), and stop work on that item.
-Do not execute a part of it.
-An item with one of the last three goes to the desk as a `decision` issue, as before (G13, G36, G28, G2).
-
-#### Before you write
-
-Do the three checks of G21 "Before you execute an item" in the same pass, right before the first write: read the labels and the last aw signal again (G19), read the cause again (step 7, G14), and check the labels after the write (G4).
-Also read the state of each issue that the item touches (G24): the parent, each dependent issue and each replacement.
-When anything changed since you made the item, stop. Do not execute.
-Examples: the parent is closed, a child exists already, another session moved a label, a newer signal or a `desk:` comment is on the issue.
-Write the new state on the board, and in a comment on the decision issue when one is open.
-
-Before you create a child, look for it: the sub-issues of the parent, an issue body with `aw:child parent=<n>` or `Part of #<n>`, and the issue links in the later comments of the parent (G17, G31).
-Make only the children that do not exist (G17 case 3).
-
-#### Split or replaced before dead
-
-Before you write that an issue "never unblocks", is dead, or blocks a chain for ever, check whether it was split or replaced.
-Do this for the issue and for each blocker that it names:
-
-1. Read `state` and `state_reason`.
-2. Read its sub-issues, its `split` signal, its closing comment, and each issue whose body has `aw:child parent=<n>` or `Part of #<n>`.
-3. Read the state of each replacement (G24).
-
-When the replacements are all closed as completed, the wait is over: follow G53.
-When some are open, the issue waits for them: say which ones.
-Write "never unblocks" only when the blocker is closed, has no replacement, and you list what you read.
-Example failure: faberline/aw#701 said that an issue would never unblock because of faberline/lumen#100. lumen#100 was split into lumen#347, #348 and #349, and all three were completed.
-
-#### Same failure before a new issue
-
-Before you create any issue (a child, a tracking issue, a decision), search for the same failure.
-Search the open issues and the issues closed in the last 7 days of the repository where you create it (step 6, G43).
-Search for the run id, the failing test name and the error text, not only for the title.
-Read the issues that this run already created too.
-When one exists, use it: add a comment there, and create nothing.
-Example failure: faberline/core#618 and faberline/core#620 were two issues for one failed run.
-
-#### Order, limits and record
-
-Execute the list in this order: create the children; read each one back (G26); comment on the parent with the links; edit the `Waits for:` lines of the dependent issues; change the labels; close the parent.
-The writes of one executed item count as one write for the limit of step 11.
-When the limit is reached, leave the rest for the next pass.
-
-When a write fails, stop the item. Do not retry more than once.
-Do not close the parent.
-Open or keep a `decision` issue for the desk that lists what is made and what is not made (G17 case 3).
-
-After the writes, read the labels again (G19) and do the claim check (G4) for each child and each issue that lost `blocked`.
-Record each executed item:
-
-- on the status board under `這一輪做了什麼`, with the links;
-- when the item came from an open `decision` issue: one comment there that starts with `executed by supervisor`, then close it as G21 says. When some items of that issue stay open, do not close it, and say which items wait and for whom.

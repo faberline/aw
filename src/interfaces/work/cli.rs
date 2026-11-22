@@ -184,6 +184,8 @@ enum Command {
         #[command(subcommand)]
         command: DeskCommand,
     },
+    /// The supervisor quick exit: one line that says whether anything changed.
+    Supervise(SuperviseTarget),
     /// Check the core documents of a project folder against their contracts.
     Metadoc {
         #[command(subcommand)]
@@ -431,6 +433,25 @@ enum DeskCommand {
     Patrol(PatrolTarget),
 }
 
+/// What `aw supervise --check` reads. It changes nothing.
+///
+/// It prints one line: `quick` (exit 0) when the fingerprint of the repository
+/// is the one in the status board and the last full run is under 6 hours old,
+/// else `full` (exit 2) with the reason. An error is exit 1: run in full.
+#[derive(Args, Clone, Debug, Default)]
+pub struct SuperviseTarget {
+    /// Required: the only mode today.
+    #[arg(long, required = true)]
+    pub check: bool,
+    /// The repository to supervise (`name` or `owner/name`; `faberline/` is
+    /// the default owner).
+    #[arg(long, value_name = "REPO")]
+    pub repo: String,
+    /// The repository that holds the `status(<name>)` board issue.
+    #[arg(long, value_name = "REPO", default_value = "faberline/aw")]
+    pub board_repo: String,
+}
+
 /// What `aw desk patrol` reads.
 #[derive(Args, Clone, Debug, Default)]
 pub struct PatrolTarget {
@@ -661,6 +682,14 @@ impl Cli {
             Command::Metadoc {
                 command: MetadocCommand::Check(target),
             } => Some(target),
+            _ => None,
+        }
+    }
+
+    /// The target of `aw supervise --check`, if that is the command.
+    pub fn supervise_target(&self) -> Option<&SuperviseTarget> {
+        match &self.command {
+            Command::Supervise(target) => Some(target),
             _ => None,
         }
     }
@@ -907,6 +936,12 @@ pub fn run_metadoc(services: MetaServices<'_>, paths: &[String], format: ReportF
             Exit::Nothing
         }
     }
+}
+
+/// Print the quick exit line. Exit 0 for a quick exit, 2 for a full run.
+pub fn run_supervise_check(check: &crate::application::supervise::Check) -> Exit {
+    println!("{check}");
+    if check.quick { Exit::Ok } else { Exit::Nothing }
 }
 
 /// Print the patrol report. Exit 1 when a repository could not be read.
@@ -1160,6 +1195,9 @@ fn execute(s: Services<'_>, r: RunServices<'_>, command: Command) -> Result<Exit
         }
         Command::Meta { .. } => {
             anyhow::bail!("`aw meta` needs its adapter; the composition root runs it")
+        }
+        Command::Supervise(_) => {
+            anyhow::bail!("`aw supervise` needs its adapter; the composition root runs it")
         }
         Command::Desk { .. } => {
             anyhow::bail!("`aw desk` needs its adapter; the composition root runs it")

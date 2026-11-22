@@ -48,14 +48,14 @@ impl<A: Api> GhDesk<A> {
         GhDesk { api }
     }
 
-    fn json(&self, path: &str) -> Result<Value, ReadError> {
+    pub(crate) fn json(&self, path: &str) -> Result<Value, ReadError> {
         let text = self.api.get(path)?;
         serde_json::from_str(&text).map_err(|_| format!("gh api {path}: not JSON"))
     }
 
     /// Every row of a list endpoint, page by page (`gh api --paginate` is
     /// refused by the cloud proxy). `path` has a query already.
-    fn rows(&self, path: &str) -> Result<Vec<Value>, ReadError> {
+    pub(crate) fn rows(&self, path: &str) -> Result<Vec<Value>, ReadError> {
         let mut all = Vec::new();
         for page in 1..=MAX_PAGES {
             let value = self.json(&format!("{path}&per_page={PAGE}&page={page}"))?;
