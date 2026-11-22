@@ -186,8 +186,12 @@ and warnings go to stderr.
 ## Worker runs
 
 Claude Code runs `aw hook` from its hooks. The command writes one
-line per worker run event to the run ledger, `<workers dir>/runs.jsonl`. The
-workers directory is `$AW_WORKERS_DIR`, or `~/faberlines/.aw-workers`.
+line per worker run event to the run ledger,
+`~/.local/share/aw-rs/runs.jsonl`. A missing ledger is an empty ledger.
+
+`AW_WORKERS_DIR` is an optional override. When it names a directory, the
+ledger is `$AW_WORKERS_DIR/runs.jsonl`, and that directory is the workers
+directory. There is no default workers directory.
 
 ```bash
 aw hook claude start   # Claude Code UserPromptSubmit
@@ -197,7 +201,8 @@ aw runs -n 20          # the last 20 runs as JSON, oldest first
 
 `aw hook` reads the hook JSON from stdin. It records only worker runs:
 
-- a session whose working directory is a clone under the workers directory;
+- a session whose working directory is a clone under the workers directory,
+  when `AW_WORKERS_DIR` is set;
 - a start whose prompt is a worker automation prompt, such as a Claude
   scheduled task named `aw-worker-…`;
 - an end of a session that already has a recorded start.

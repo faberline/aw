@@ -8,6 +8,7 @@ use crate::domain::work::ports::Clock;
 pub struct RunServices<'a> {
     pub ledger: &'a dyn RunLedger,
     pub clock: &'a dyn Clock,
-    /// The workers directory. A session in a clone under it is a worker run.
-    pub root: &'a Path,
+    /// The workers directory, when `AW_WORKERS_DIR` names one. A session in
+    /// a clone under it is a worker run.
+    pub root: Option<&'a Path>,
 }

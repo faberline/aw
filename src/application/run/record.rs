@@ -18,7 +18,8 @@ pub enum Recorded {
 /// Record one hook event, but only for a worker run.
 ///
 /// A start is a worker run when the session works in a clone under the
-/// workers directory, or when its prompt is the worker automation prompt.
+/// workers directory (only when `AW_WORKERS_DIR` names one), or when its
+/// prompt is the worker automation prompt.
 /// An end is a worker run when it is in a clone, or when the ledger already
 /// holds a start for the same session. Claude's `Stop` input has no prompt.
 pub fn record(
@@ -31,10 +32,10 @@ pub fn record(
     let Some(session) = input.session.clone() else {
         return Ok(Recorded::Skipped("the hook input has no session id"));
     };
-    let clone = input
-        .cwd
-        .as_deref()
-        .and_then(|dir| clone_of(s.root, Path::new(dir)));
+    let clone = s
+        .root
+        .zip(input.cwd.as_deref())
+        .and_then(|(root, dir)| clone_of(root, Path::new(dir)));
     let worker = clone.is_some()
         || match event {
             Event::Start => input.prompt.as_deref().is_some_and(is_worker_prompt),

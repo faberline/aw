@@ -44,7 +44,7 @@ impl Fixture {
         RunServices {
             ledger: &self.ledger,
             clock: &self.clock,
-            root: Path::new("/w"),
+            root: Some(Path::new("/w")),
         }
     }
 
@@ -289,6 +289,56 @@ fn the_hook_command_writes_the_ledger_and_runs_reads_it() {
     assert_eq!(summaries[0]["session"], "s1");
     assert_eq!(summaries[0]["status"], "open");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Without `AW_WORKERS_DIR` the ledger is `~/.local/share/aw-rs/runs.jsonl`,
+/// a missing ledger is an empty one, and no directory is a workers directory.
+#[test]
+fn the_default_ledger_is_in_the_user_data_directory() {
+    let home = workers_dir("home");
+    let run = |args: &[&str], stdin: &str| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_aw"))
+            .args(args)
+            .env_remove("AW_WORKERS_DIR")
+            .env("HOME", &home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stdin.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    };
+    let empty = run(&["runs"], "");
+    assert_eq!(empty.status.code(), Some(2));
+    assert!(!home.join(".local").exists(), "a read creates nothing");
+
+    let old = home.join("faberlines/.aw-workers/claude/core");
+    let in_old = serde_json::json!({"session_id": "s0", "cwd": old, "prompt": "go"});
+    let skipped = run(&["hook", "claude", "start"], &in_old.to_string());
+    assert_eq!(skipped.status.code(), Some(0));
+    assert!(
+        !home.join(".local").exists(),
+        "the old folder is no clone root"
+    );
+
+    let payload = serde_json::json!({"session_id": "s1", "cwd": "/x", "prompt": SCHEDULED});
+    let out = run(&["hook", "claude", "start"], &payload.to_string());
+    assert_eq!(out.status.code(), Some(0));
+
+    let ledger = std::fs::read_to_string(home.join(".local/share/aw-rs/runs.jsonl")).unwrap();
+    assert_eq!(ledger.lines().count(), 1);
+    assert!(ledger.contains(r#""session":"s1""#));
+    assert!(!home.join("faberlines").exists());
+
+    let listed = run(&["runs"], "");
+    assert_eq!(listed.status.code(), Some(0));
+    let _ = std::fs::remove_dir_all(&home);
 }
 
 #[test]

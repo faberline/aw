@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::domain::run::ports::{RunError, RunLedger, RunResult};
 use crate::domain::run::record::RunRecord;
 
-/// The run ledger as JSON lines at `<workers dir>/runs.jsonl`. Each record
+/// The run ledger as JSON lines at `<dir>/runs.jsonl`. Each record
 /// is one write in append mode, so hooks that run at the same time do not
 /// mix their lines.
 pub struct LedgerFile {
