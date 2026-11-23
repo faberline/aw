@@ -155,7 +155,10 @@ Each bullet has the date, the owner's words and the meaning.
 - 2026-11-22: 「我們的流程是先判斷有沒有事，有沒有是需要執行 `aw` cli判斷」.
   A routine first asks `aw` if there is work. It reads its long instructions only when there is work.
 - 2026-11-22: 「我覺得可以先降低頻率 都先拉到3小時一次就好？」 and, for the desk patrol, 「也改 3 小時」.
-  Every routine and the desk patrol run one time in 3 hours. A new routine uses the same interval unless the owner says more.
+  Every routine runs one time in 3 hours. A new routine uses the same interval unless the owner says more.
+- 2026-11-23, about the desk patrol: 「我覺得你本地的以拉到6小時一次,慢慢tune監督員」.
+  The desk patrol runs one time in 6 hours. This replaces the 3 hours of 2026-11-22 for the desk patrol only.
+  The cloud routines stay at 3 hours. Desk reading: use the time to improve the supervisors, so that a patrol finds less.
 - 2026-11-21: 「你用 aw 寫好一個指令，讓你可以直接查看哪些地方你要下去看，不用每次都要寫一堆指定」 and 「不過還是要check list一下」.
   A patrol starts with `aw desk patrol`. The desk still reads each item of the list and reports on it.
 - 2026-11-20: 「先查門檻再提案（建議）」.
@@ -283,7 +286,7 @@ It sends up only what it cannot do. The rules are in `plugins/faberline/skills/a
 
 ## 5. Patrol runbook
 
-Run a patrol one time in 3 hours, and when the owner asks for the state.
+Run a patrol one time in 6 hours, and when the owner asks for the state. The cloud routines stay at 3 hours.
 
 ### Steps
 
@@ -304,7 +307,7 @@ Run a patrol one time in 3 hours, and when the owner asks for the state.
 | Situation | Action |
 | --- | --- |
 | `main` is red | Read the failed job log. Look for an open issue with the same failure. If there is none, open one with `stage:spec`, `ci-fix` and a priority. A failure of infrastructure (a download error, a lost node): rerun only the failed jobs, one time, if the rerun costs nothing. Never mark a red `main` as accepted. |
-| New security advisory | Read the advisory and the dependency tree. Open a fix issue with `stage:spec` and `expedite`. Do not add an ignore entry to pass the check. |
+| New security advisory | Read the advisory and the dependency tree. Sweep every `Cargo.lock` of each repository (`git ls-files '*Cargo.lock'`), not only the root: a workspace in a subfolder has its own lock file. Open a fix issue with `stage:spec` and `expedite`. Do not add an ignore entry to pass the check. |
 | A blocked chain | Follow `Waits for:` to the first issue that is not blocked. If the cause is gone, write the evidence in a comment and remove `blocked`. If the cause is in another repository, link the two issues. If the chain ends at the owner, see "needs the owner". |
 | An empty queue | Say why it is empty. Compare the repository with the internal-use bar and the 1.0.0 standard (aw#384). Open one issue for each gap. With no gap, prepare a release proposal. |
 | A stage with work and no claim | Run `aw claim --check` for that stage. `backpressure` is normal. `all-blocked` is a blocked chain. With `work` and no run for more than 6 hours, the routine is quiet: see section 6. |
