@@ -71,7 +71,7 @@ It lists each write with its link, and the time (G1).
 Close the decision issue when every item in it is executed, or is an item that the supervisor passed over because its cause is gone.
 When some items stay open, do not close it.
 The comment says which items wait, and for whom.
-This close and the parent close of G54 are the only closes that the supervisor may do.
+This close, the parent close of G54 and the close of G60 are the only closes that the supervisor may do.
 It never closes any other issue or pull request.
 
 When a write fails, stop the item, write the error in the comment, and keep the decision issue open for the desk.
@@ -131,9 +131,9 @@ These limits do not change:
 - a tag or a release;
 - a milestone change;
 - a change to a ruleset, a setting, a secret, a workflow file, a routine or a schedule;
-- a weaker test, threshold, timeout or coverage ratchet (G45), also a deleted, skipped or ignored test;
+- a weaker test, threshold, timeout or coverage ratchet (G45), also a deleted, skipped or ignored test. A test that a reference test replaces is a class that the desk can decide (G59); you still do not execute it;
 - a choice of product direction: scope, an acceptance criterion, a frozen contract, or two valid designs with no clear recommendation (G57 says when a choice of direction with a recommended option is not such a choice);
-- a close of an issue as completed, or a close of an issue that is not split or replaced (the finished parent of G13 stays with the desk);
+- a close of an issue as completed, or a close of an issue that is not split or replaced (the finished parent of G13 stays with the desk). The one exception is G60: every acceptance criterion already holds on the default branch;
 - a priority label change on an existing issue (G36) and the `expedite` label for a release blocker (G28). The `p0` of a G47 advisory issue is not in this limit: G47 allows it;
 - a write in another repository. The one exception is the faberline/aw decision issue.
 

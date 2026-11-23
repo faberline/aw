@@ -42,7 +42,7 @@ The routine prompt lists the allowed GitHub writes.
 Do only those writes.
 Use `gh api` REST only.
 Do not edit other labels, merge, approve or push.
-Do not close issues or pull requests, except under G21 and G54 (below).
+Do not close issues or pull requests, except under G21, G54 and G60 (below).
 Do not change rulesets, settings, secrets or workflow files.
 Do not delete anything.
 When a write is not on the list, make a `decision` issue instead.
@@ -60,6 +60,10 @@ Another exception: G53 (below) lets you remove `blocked`, set one `stage:*` labe
 The routine prompt must list the G53 label writes; without them, G53 only reports on the status board.
 Another exception: G54 (below) lets you execute a `中控可決定` item that has a recommended option: make the children of a split, edit a `Waits for:` line, add or remove `blocked`, and close a split or replaced parent.
 The routine prompt must list the G54 writes; without them, G54 does not run, and the item goes to the desk as before.
+Another exception: G58 (below) lets you remove `blocked` one time from an issue whose tdd or spec run was stopped by a tool refusal.
+The routine prompt must list the G21 label writes for it; without them, G58 does not run, and the item goes in a `pipeline` issue.
+Another exception: G60 (below) lets you close an issue as done when every acceptance criterion already holds on the default branch.
+The routine prompt must list the G60 writes; without them, G60 does not run, and the item goes to the desk.
 G25 (ghost runs) and G27 (the CI queue tracker) do not add writes. G27 only adds comments on faberline/aw#372.
 
 This cloud session blocks GitHub GraphQL.
@@ -236,6 +240,8 @@ It has this format:
   Use `中控可決定` for all other cases.
   A release tag or a paid run that a test needs is not `需要使用者` when an unreleased build or a run that exists meets the acceptance as written (G56).
   A choice of direction is not `需要使用者` when the recommended option keeps the acceptance, starts no paid run and no tag, and needs only a new issue in another Faberline cloud repository (G57).
+  A test that a reference test replaces is not `需要使用者` when the three facts of G59 are shown: the desk decides it, and you write the recommendation.
+  A `blocked` signal whose only cause is a tool refusal gets no `decision` issue (G58).
   A `需要使用者` decision issue also gets the label `needs-human`.
   A `中控可決定` item that passes the G54 checks is not sent to the desk: you execute it (G54).
 - The repository and links to each issue or pull request.
@@ -1305,6 +1311,71 @@ A `中控可決定` item of this rule goes to the desk as a `decision` issue whe
 When the recommended option needs no write outside `<target>`, test the item against G54 and execute it when its checks pass.
 When one `decision` issue has items of both types, each item says its own type (G20).
 This rule adds no write.
+
+### A tool refusal is not a decision for a person (G58)
+
+A tdd run or a spec run can report `blocked` because a tool refused one command, or failed one time. No person must decide anything, but the label `blocked` stops every routine (evidence, 2026-11-23: faberline/aw#728. The tdd run of tape#232 could not push its rework: the push was refused one time, and no force push was tried. The issue, pull request 241 and three issues that wait for it stayed blocked).
+
+Use this rule for an open issue of `<target>` with `blocked` when all of these are true:
+
+1. Its last aw signal has `stage=tdd` or `stage=spec` and `outcome=blocked`.
+2. The only cause in the signal text is a tool refusal or a tool error that can pass: a `git push` or a `gh` call that was refused or failed, a network error, a timeout, an HTTP 5xx answer, or a rate limit. The signal asks no question and gives no options.
+3. The refused command was not a force push, a delete, or a write that a ruleset rejects. Such a refusal is a guard that works. It follows G20.
+
+Then count the refusals on this issue. Read its comments for an earlier `blocked` signal with a tool refusal as its only cause, and for a comment that starts with `supervisor: tool refusal`.
+
+- The first time: remove `blocked` one time yourself, in the same pass. Read the labels again first (G19). Post one comment that starts with `supervisor: tool refusal, first time`. It tells the next run what to do again: the branch and its head on GitHub (read it in this pass), the work that did not reach GitHub (for example `the local commit <sha> was not pushed; make the change again from the head of the branch`), and the review request or the signal that the work answers. After the write, do the claim check (G4). Write one line on the board under `這一輪做了什麼`, with the link.
+- The second time on the same issue: do not remove `blocked`. Open one `pipeline` issue, or reuse the open one (G43). Quote the exact refusal text and the exact command of each of the two signals, with the links and the times. Say what the refusal blocks. Open no `decision` issue.
+
+A lost local commit is not a reason to wait: the next run makes the change again. Do not ask a person to push.
+The removal of `blocked` is a G21 label write. The routine prompt must list the G21 label writes for it; without them, G58 does not run, and the item goes in a `pipeline` issue. This rule adds no other write.
+
+### A test that a reference test replaces (G59)
+
+To delete or weaken a test so that a check passes is never a desk decision (G45, G54). To replace a test is a different case, and the desk can decide it (evidence, 2026-11-23: faberline/aw#729 for kit#302 and kit#303. The accepted spec changed `filtfilt` to match the reference implementation. The old test held values of the old behaviour. The supervisor wrote `我沒有建議` and typed the item `需要使用者`).
+
+The item is `類型：中控可決定` when you can show all three facts by a read in this pass:
+
+1. The accepted spec of the issue changes a behaviour so that it matches a reference implementation, and the spec names that implementation.
+2. The old test holds values of the old behaviour. Name the test, its file, and each row or value.
+3. New reference tests exist, or the spec says that the tdd run adds them: a fixture that the reference implementation made, and the test that reads it. Name the files.
+
+Then write the `decision` item with the option "replace the old test" first, as the recommendation. Do not write `我沒有建議`. The item lists these three conditions, and the answer comment of its `執行清單` repeats them for the tdd run:
+
+- (a) The new reference fixture has a row for the same input as each deleted row. When it has none, the tdd run adds the row first, and deletes the old row after that.
+- (b) The text of the pull request maps each deleted test and each deleted row to the new test and row.
+- (c) The change has no wider tolerance, no `#[ignore]` and no exclusion.
+
+For each fact and for condition (a), write `shown: <file and line>` or `not shown: <what is missing>`.
+The item stays `類型：需要使用者` when a fact is `not shown`, when the spec names no reference implementation, or when the option needs a wider tolerance, an ignored test or an exclusion (G45).
+
+This is a class of decision for the desk. It is not a supervisor action: do not execute it under G21 or G54, also when it has one option. The desk approves it. A review run then checks conditions (a), (b) and (c) on the pull request.
+This rule adds no write.
+
+### The change is already on the default branch (G60)
+
+A review run can close a pull request because the default branch already has the change. The issue then goes back to tdd, the tdd run answers `respec`, and the spec run has nothing to write: the issue moves in a loop (evidence, 2026-11-23: faberline/lumen#579. The review closed pull request 584 because `main` already had the change. The issue went back to `stage:tdd`, and the tdd run answered `respec`).
+
+Use this rule for an open issue of `<target>` when its last aw signal is one of these:
+
+- a review signal with the outcome `closed`, or a closed pull request of the issue, with the reason that the default branch already has the change;
+- a tdd `respec` signal that says that every acceptance criterion already holds on the default branch.
+
+Do not send the issue back to spec. Check the criteria on the default branch yourself, in this pass:
+
+1. Read the head commit of the default branch, and the result of its required checks (G14, G28).
+2. For each acceptance criterion of the issue, word for word, read the code, the test or the document at that commit. Write `holds on main: <file and line, or test name>` or `does not hold: <what is missing>`. A criterion that needs a run is proved by a passed run on that commit: name the run and the job. A criterion that you cannot read is `not read`.
+3. Find the commit or the pull request that brought the change to the default branch, and write its link.
+
+Then:
+
+- Every criterion holds, and the required checks of the head commit passed: close the issue as done. Post one comment that starts with `supervisor: already on main`, with the commit of step 1, the list of step 2 and the link of step 3. Change the `stage:*` label to `stage:done`, remove `blocked` when the issue has it, and close the issue as completed (`state=closed`, `state_reason=completed`). Read the issue back (G26). Write one line on the board under `這一輪做了什麼`, with the link.
+- A criterion does not hold: the signal was wrong. Open no close. Post one comment with the list of step 2, and send the issue to `stage:tdd` with a `中控可決定` item that names the criteria that do not hold (G20, G54).
+- A criterion is `not read`, or the head commit of the default branch is red: do not close. Open one `decision` item of type `中控可決定` with the list of step 2. The desk closes the issue.
+
+Before the close, read the labels and the last signal again (G19). When a newer signal, a new open pull request of the issue or a `desk:` comment is there, stop.
+Do not use this rule for an issue with open child issues, or for a parent whose children did the work (G13 stays with the desk).
+The routine prompt must list the G60 writes; without them, G60 does not run: open the `中控可決定` item with the evidence, and the desk closes the issue. This close, the close of G21 and the closes of G54 are the only closes that the supervisor may do.
 
 ### A runner label that GitHub retired (G51)
 
