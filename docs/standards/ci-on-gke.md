@@ -297,18 +297,28 @@ to sccache. Each repository has its own prefix.
 ## Results and logs
 
 For each work Job the stage job collects the pod log, the exit code, the
-start and end time, and the node pool.
+start and end time, and the node pool. It reads the pods and the log of a Job
+at the moment the Job ends, not at the end of the stage: the pod of an early
+Job can be gone by then, when its node was removed. When the cluster has no
+pod object of a Job, the log file says `the pod is gone` and gives the pod
+counts of the Job status; the exit code is then null.
 
 - **Log.** One folded group per work Job in the GitHub log:
   `::group::<stage>/<name>: <result> (<minutes> min)`, the log,
-  `::endgroup::`. Failed Jobs come first.
-- **Artifact.** `ci-<stage>-logs`: one `<name>.log` per work Job and
+  `::endgroup::`. Failed Jobs come first. The group of a Job that did not
+  pass starts with the events of that Job and of its pods.
+- **Artifact.** `ci-<stage>-logs`: one `<name>.log` and one
+  `<name>.events.txt` per work Job, `events.txt` of the namespace, `at-end/`
+  (the pods of each Job at the moment the Job ended), and
   `results.json` with one row per Job (`name`, `job`, `result`, `exit_code`,
   `started_at`, `finished_at`, `seconds`, `pool`, `retries`, `pods`), the
   applied `jobs.json` and `summary.md`. Kept 14 days. `result` is one of
   `success`, `failure`, `timeout`, `image-error` and `not-finished`.
 - **Job summary.** One table: Job, result, time, pool. The pull request page
   shows only the 4 stage jobs, so this table is where a reader starts.
+  Below the table, each Job that did not pass has one folded block with its
+  events and the last 40 lines of its log. A session that cannot download
+  the artifact reads the cause there or in the folded group of the log.
 - **Result.** The stage job fails when any work Job failed, timed out or was
   not scheduled before its timeout. A skipped Job (by `paths`) does not fail
   it.

@@ -16,7 +16,9 @@ set -euo pipefail
 #   STAGE              lint, test or e2e
 #   MANIFEST           path of the manifest, for example .github/ci/jobs.yaml
 #   EVIDENCE_DIR       folder for jobs.json, results.json, summary.md, one
-#                      <name>.log per work Job, events.txt
+#                      <name>.log and one <name>.events.txt per work Job,
+#                      events.txt, and at-end/ (the pods of each Job at the
+#                      moment the Job ended)
 #   SOURCE_REPOSITORY  <owner>/<name> on GitHub
 #   SOURCE_SHA         the commit that every work Job fetches
 # Required to run (not for `render`):
@@ -337,11 +339,62 @@ fi
 
 sleep_fn="${BATCH_SLEEP:-sleep}"
 blocked='[]' # names of the Jobs whose pod cannot pull its image
+saved='[]'   # names of the Jobs whose pods and logs save_job has read
 collected=""
+at_end="$EVIDENCE_DIR/at-end"
+SUMMARY_LOG_LINES=40
+SUMMARY_EVENT_LINES=30
+
+# Print the lines of an events table that are about one Job or its pods
+# (<job> or <job>-<suffix>). A Job whose name starts with the name of this one
+# does not match.
+events_of() { # events_of <job> <events file>
+  grep -E "(^|[^a-z0-9-])$1(-[a-z0-9]{5})?([^a-z0-9-]|\$)" "$2" 2>/dev/null || true
+}
+
+# Append the log of every pod in a pods file to a log file.
+read_logs() { # read_logs <pods file> <log file>
+  local pod
+  for pod in $(jq -r '.items[].metadata.name' "$1"); do
+    printf -- '--- pod %s ---\n' "$pod" >>"$2"
+    kubectl -n "$NAMESPACE" logs "$pod" --all-containers >>"$2" 2>&1 \
+      || echo "the log of pod $pod cannot be read; the pod is gone or it started no container" >>"$2"
+  done
+}
+
+# Save the pods, the log and the events of one Job at the moment the Job ends.
+# A pod whose node was removed is gone at the end of the stage, and then its
+# log and its exit code are lost (faberline/aw#716). Never fails the batch.
+save_job() { # save_job <job>
+  local job="$1" name="${1#"$STAGE-"}" all one events
+  mkdir -p "$at_end"
+  all="$at_end/.pods.json" one="$at_end/$job.pods.json" events="$at_end/.events.txt"
+  kubectl -n "$NAMESPACE" get pods -o json >"$all" 2>/dev/null || echo '{"items":[]}' >"$all"
+  jq --arg j "$job" '{items: [.items[] | select(.metadata.labels["job-name"] == $j)]}' "$all" >"$one" \
+    2>/dev/null || echo '{"items":[]}' >"$one"
+  rm -f "$all"
+  if [[ "$(jq '.items | length' "$one")" != 0 ]]; then
+    : >"$EVIDENCE_DIR/$name.log"
+    read_logs "$one" "$EVIDENCE_DIR/$name.log"
+  fi
+  kubectl -n "$NAMESPACE" get events --sort-by=.lastTimestamp >"$events" 2>&1 || true
+  events_of "$job" "$events" >"$EVIDENCE_DIR/$name.events.txt"
+  rm -f "$events"
+}
+
+# Call save_job for each Job of a JSON list of names that it has not seen yet.
+save_new() { # save_new <json list of finished Jobs>
+  local job
+  for job in $(jq -r --argjson s "$saved" '(. - $s)[]' <<<"$1"); do
+    save_job "$job" || true
+    saved="$(jq -c --arg j "$job" '. + [$j] | unique' <<<"$saved")"
+  done
+}
 
 # Read the Jobs and pods of the namespace, write results.json, the logs and the
 # summary, and print each log as a folded group. Returns 1 when a Job did not
-# pass.
+# pass. For a Job that save_job has seen, the pods and the log of that moment
+# are used when the pod object is gone now.
 collect() {
   collected=1
   local live="$EVIDENCE_DIR/live-jobs.json" pods="$EVIDENCE_DIR/live-pods.json"
@@ -349,7 +402,14 @@ collect() {
   kubectl -n "$NAMESPACE" get pods -o json >"$pods" 2>/dev/null || echo '{"items":[]}' >"$pods"
   kubectl -n "$NAMESPACE" get events --sort-by=.lastTimestamp >"$EVIDENCE_DIR/events.txt" 2>&1 || true
 
-  jq -n --slurpfile rendered "$jobs_file" --slurpfile live "$live" --slurpfile pods "$pods" \
+  # The pods that save_job saw, then the pods that are here now. For a pod in
+  # both, the newer state wins.
+  local known="$EVIDENCE_DIR/pods.json"
+  mkdir -p "$at_end"
+  jq -s '{items: (map(.items[]?) | group_by(.metadata.name) | map(.[-1]))}' \
+    "$at_end"/*.pods.json "$pods" >"$known" 2>/dev/null || cp "$pods" "$known"
+
+  jq -n --slurpfile rendered "$jobs_file" --slurpfile live "$live" --slurpfile pods "$known" \
     --argjson blocked "$blocked" --arg label_job "$LABEL_JOB" --arg label_pool "$LABEL_POOL" '
     def cond($t): [.status.conditions[]? | select(.type == $t and .status == "True")][0];
     ($live[0].items | map({ key: .metadata.name, value: . }) | from_entries) as $jobs
@@ -381,27 +441,59 @@ collect() {
                       else null end) ]
   ' >"$results_file"
 
-  local name pod file
+  local name job file one now
   for name in $(jq -r '.[].name' "$results_file"); do
+    job="$STAGE-$name"
     file="$EVIDENCE_DIR/$name.log"
-    : >"$file"
-    for pod in $(jq -r --arg n "$name" '.[] | select(.name == $n) | .pods[]' "$results_file"); do
-      printf -- '--- pod %s ---\n' "$pod" >>"$file"
-      kubectl -n "$NAMESPACE" logs "$pod" --all-containers >>"$file" 2>&1 || true
-    done
-    [[ -s "$file" ]] || echo "no pod of this Job started; see events.txt" >"$file"
+    one="$at_end/$job.pods.json"
+    # The log that save_job wrote stays. Read the log here only for a Job that
+    # save_job did not see, or whose pods it did not find.
+    if [[ ! -s "$file" || ! -s "$one" || "$(jq '.items | length' "$one")" == 0 ]]; then
+      now="$at_end/.now.json"
+      jq --arg j "$job" '{items: [.items[] | select(.metadata.labels["job-name"] == $j)]}' "$pods" >"$now"
+      : >"$file"
+      read_logs "$now" "$file"
+      rm -f "$now"
+    fi
+    if [[ ! -s "$file" ]]; then
+      # No pod object now and none when the Job ended. Do not say that no pod
+      # started: the Job status and the events tell (faberline/aw#716).
+      jq -r --arg j "$job" '
+        (.items[] | select(.metadata.name == $j) | .status) // {}
+        | "the pod is gone: the cluster has no pod object of this Job, so its log and its exit code cannot be read. Job status: failed=\(.failed // 0) succeeded=\(.succeeded // 0) active=\(.active // 0). See the events of this Job."' \
+        "$live" >"$file"
+    fi
+    # The events at the end of the stage have more lines than the ones of the
+    # moment the Job ended. Keep the older ones only when the new ones are gone.
+    events_of "$job" "$EVIDENCE_DIR/events.txt" >"$at_end/.events.txt"
+    if [[ -s "$at_end/.events.txt" || ! -e "$EVIDENCE_DIR/$name.events.txt" ]]; then
+      mv "$at_end/.events.txt" "$EVIDENCE_DIR/$name.events.txt"
+    else
+      rm -f "$at_end/.events.txt"
+    fi
   done
   if jq -e 'any(.[]; .result != "success")' "$results_file" >/dev/null; then
     kubectl -n "$NAMESPACE" describe pods >"$EVIDENCE_DIR/pods-describe.txt" 2>&1 || true
   fi
 
   # A work Job can print a workflow command (::error::, ::add-mask::). Stop
-  # the commands while its log is printed. Failed Jobs come first.
+  # the commands while its log is printed. Failed Jobs come first. A Job that
+  # did not pass shows its events first: a session that cannot download the
+  # artifact reads the cause here.
   local stop result minutes
   stop="ci-log-$$-$RANDOM$RANDOM"
   while IFS=$'\t' read -r name result minutes; do
     printf '::group::%s/%s: %s (%s min)\n' "$STAGE" "$name" "$result" "$minutes"
     printf '::stop-commands::%s\n' "$stop"
+    if [[ "$result" != success ]]; then
+      printf -- '--- events of %s-%s ---\n' "$STAGE" "$name"
+      if [[ -s "$EVIDENCE_DIR/$name.events.txt" ]]; then
+        cat "$EVIDENCE_DIR/$name.events.txt"
+      else
+        echo "no event names this Job"
+      fi
+      printf -- '--- log of %s-%s ---\n' "$STAGE" "$name"
+    fi
     cat "$EVIDENCE_DIR/$name.log"
     printf '::%s::\n' "$stop"
     printf '::endgroup::\n'
@@ -416,6 +508,22 @@ collect() {
     | "| `\(.name)` | \(.result) | \(if .seconds then (.seconds / 6 | round) / 10 else "-" end) | \(.pool) | \(.retries) |"' \
     "$results_file")
   summary """Commit \`$SOURCE_SHA\`, namespace \`$NAMESPACE\`. Logs: artifact \`ci-$STAGE-logs\`."
+
+  # For each Job that did not pass: its events and the last lines of its log.
+  # The text is escaped, so a log line cannot add markup to the summary.
+  local escape='s/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
+  while IFS=$'\t' read -r name result; do
+    summary "" "<details><summary><code>$name</code>: $result, events and the last $SUMMARY_LOG_LINES lines of the log</summary>" \
+      "" "<pre>" "--- events of $STAGE-$name ---"
+    if [[ -s "$EVIDENCE_DIR/$name.events.txt" ]]; then
+      summary "$(tail -n "$SUMMARY_EVENT_LINES" "$EVIDENCE_DIR/$name.events.txt" | cut -c1-400 | sed "$escape")"
+    else
+      summary "no event names this Job"
+    fi
+    summary "--- log of $STAGE-$name ---" \
+      "$(tail -n "$SUMMARY_LOG_LINES" "$EVIDENCE_DIR/$name.log" | cut -c1-400 | sed "$escape")" \
+      "</pre>" "" "</details>"
+  done < <(jq -r '.[] | select(.result != "success") | [.name, .result] | @tsv' "$results_file")
 
   local failed
   failed="$(jq -r '[.[] | select(.result != "success") | "\(.name) (\(.result))"] | join(", ")' "$results_file")"
@@ -495,6 +603,9 @@ while :; do
       log "$done_count of $job_count work Job(s) finished"
       last="$done_count"
     fi
+    # Read the pods and the log of a Job as soon as it ends, not at the end of
+    # the stage: the pod of an early Job can be gone by then.
+    save_new "$finished"
     (( done_count >= job_count )) && break
   else
     errors=$((errors + 1))

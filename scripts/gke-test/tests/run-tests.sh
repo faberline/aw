@@ -343,7 +343,8 @@ mkdir -p "$B/bin"
 # The fake cluster. It writes every call to $B/calls and every object that
 # comes through stdin to $B/stdin-objects. The namespace exists while $B/ns
 # does. `get jobs` answers $B/jobs-<n>.json for call n when that file exists,
-# else $B/jobs.json.
+# else $B/jobs.json. `get pods` does the same with $B/pods-<n>.json and
+# $B/pods.json. `get events` answers $B/events.txt when that file exists.
 cat >"$B/bin/kubectl" <<'FAKE'
 #!/usr/bin/env bash
 echo "kubectl $*" >>"$B/calls"
@@ -358,8 +359,11 @@ case "$*" in
     n=$(( $(cat "$B/job-calls" 2>/dev/null || echo 0) + 1 ))
     echo "$n" >"$B/job-calls"
     if [[ -f "$B/jobs-$n.json" ]]; then cat "$B/jobs-$n.json"; else cat "$B/jobs.json"; fi ;;
-  *"get pods -o json") cat "$B/pods.json" ;;
-  *"get events"*) echo "no events" ;;
+  *"get pods -o json")
+    n=$(( $(cat "$B/pod-calls" 2>/dev/null || echo 0) + 1 ))
+    echo "$n" >"$B/pod-calls"
+    if [[ -f "$B/pods-$n.json" ]]; then cat "$B/pods-$n.json"; else cat "$B/pods.json"; fi ;;
+  *"get events"*) if [[ -f "$B/events.txt" ]]; then cat "$B/events.txt"; else echo "no events"; fi ;;
   *" logs "*) echo "log line of $4" ;;
 esac
 exit 0
@@ -408,7 +412,7 @@ TOKEN_VALUE="tok3n-that-must-not-leak"
 SHA="0123456789abcdef0123456789abcdef01234567"
 
 batch() { # batch <stage> [render]; the FAKE_ and other values pass through
-  rm -rf "$B/ev" "$B/calls" "$B/deleted" "$B/stdin-objects" "$B/ns" "$B/job-calls" "$B/summary"
+  rm -rf "$B/ev" "$B/calls" "$B/deleted" "$B/stdin-objects" "$B/ns" "$B/job-calls" "$B/pod-calls" "$B/summary"
   PATH="$B/bin:$PATH" KUBECONFIG="$B/kubeconfig" REPO=som STAGE="$1" \
     MANIFEST="${BATCH_MANIFEST:-$B/jobs.yaml}" EVIDENCE_DIR="$B/ev" POOLS_FILE="$B/pools.yaml" \
     SOURCE_REPOSITORY=faberline/som SOURCE_SHA="$SHA" SOURCE_TOKEN="$TOKEN_VALUE" \
@@ -523,7 +527,60 @@ else
   pass "batch: the encoded token is in no log, argument, Job spec or artifact"
 fi
 
+check "batch: a Job that did not pass shows its events before its log" test \
+  "$(sed -n '3p;4p;5p' "$B/out" | tr '\n' '|')" = '--- events of test-doc ---|no event names this Job|--- log of test-doc ---|'
+check "batch: a Job that passed shows only its log" test "$(grep -c -- '--- events of test-unit' "$B/out")" = 0
+check "batch: the summary has the last lines of the log of a failed Job" test \
+  "$(grep -c 'log line of test-doc-bbb' "$B/summary"),$(grep -c 'log line of test-unit-aaa' "$B/summary")" = 1,0
+
+# The pod of a Job that failed early is gone at the end of the stage: its node
+# was removed while another Job still ran (faberline/aw#716). The first answer
+# of the cluster has the failed Job and its pod; the later answers have no pod
+# of it.
+{ bjob test-unit ""; bjob test-doc Failed PodFailurePolicy; } | items >"$B/jobs-1.json"
+{ bjob test-unit Complete; bjob test-doc Failed PodFailurePolicy; } | items >"$B/jobs.json"
+{ bpod test-unit-aaa test-unit 0; bpod test-doc-bbbbb test-doc 1; } | items >"$B/pods-1.json"
+bpod test-unit-aaa test-unit 0 | items >"$B/pods.json"
+cat >"$B/events.txt" <<'EVENTS'
+LAST SEEN   TYPE      REASON             OBJECT                    MESSAGE
+5m          Normal    TriggeredScaleUp   pod/test-doc-bbbbb          pod triggered scale-up <b>
+4m          Normal    Started            pod/test-doc-bbbbb          Started container work
+4m          Normal    Started            pod/test-doc-fast-ccccc   Started container work
+3m          Warning   PodFailurePolicy   job/test-doc              Container work failed with exit code 1 matching FailJob rule
+3m          Normal    Completed          job/test-unit             Job completed
+EVENTS
+if batch test; then fail "batch: a Job whose pod is gone still fails the stage"; else
+  pass "batch: a Job whose pod is gone still fails the stage"
+fi
+check "batch: the log is saved when the Job ends" grep -q 'log line of test-doc-bbbbb' "$B/ev/doc.log"
+check "batch: the log of a pod is read one time" test "$(grep -c ' logs test-doc-bbbbb ' "$B/calls")" = 1
+check "batch: the exit code is saved when the Job ends" jq -e \
+  '.[] | select(.name == "doc") | .exit_code == 1 and .pods == ["test-doc-bbbbb"]' "$B/ev/results.json"
+check "batch: a saved log does not say that the pod is gone" test "$(grep -c 'pod is gone' "$B/ev/doc.log")" = 0
+check "batch: the events of a Job are its own and those of its pods" test \
+  "$(grep -c . "$B/ev/doc.events.txt"),$(grep -c 'test-doc-fast\|test-unit' "$B/ev/doc.events.txt")" = 3,0
+check "batch: the group of a failed Job has its events" test \
+  "$(sed -n '/^::group::test\/doc/,/^::endgroup::/p' "$B/out" | grep -c 'matching FailJob rule')" = 1
+check "batch: the summary has the events of a failed Job" grep -q 'matching FailJob rule' "$B/summary"
+check "batch: the summary escapes the text of an event" grep -q 'scale-up &lt;b&gt;' "$B/summary"
+rm -f "$B/jobs-1.json" "$B/pods-1.json"
+
+# The pod was gone before the runner saw the end of the Job.
+if batch test; then fail "batch: a Job with no pod object fails the stage"; else
+  pass "batch: a Job with no pod object fails the stage"
+fi
+check "batch: no pod object means the pod is gone" grep -q '^the pod is gone: ' "$B/ev/doc.log"
+check "batch: it does not say that no pod started" test \
+  "$(cat "$B/ev/doc.log" "$B/out" "$B/summary" | grep -c 'no pod of this Job started')" = 0
+check "batch: a pod that is gone has no exit code" jq -e \
+  '.[] | select(.name == "doc") | .exit_code == null and .pods == []' "$B/ev/results.json"
+check "batch: the group names the pod that is gone and the events" test \
+  "$(sed -n '/^::group::test\/doc/,/^::endgroup::/p' "$B/out" | grep -c 'the pod is gone: \|matching FailJob rule')" = 2
+check "batch: the summary names the pod that is gone" grep -q '^the pod is gone: ' "$B/summary"
+rm -f "$B/events.txt"
+
 { bjob test-unit Complete; bjob test-doc Failed DeadlineExceeded; } | items >"$B/jobs.json"
+{ bpod test-unit-aaa test-unit 0; bpod test-doc-bbb test-doc 101; } | items >"$B/pods.json"
 if batch test; then fail "batch: a Job past its timeout fails the stage"; else
   check "batch: a Job past its timeout fails the stage" test "$(result_of doc)" = timeout
 fi
