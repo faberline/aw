@@ -54,7 +54,7 @@ Another exception: G41 (below) lets you move an issue from `stage:review` back t
 The routine prompt must list the G41 label writes; without them, G41 does not run, and the item goes in a `pipeline` issue.
 Another exception: G33 (below) lets you answer a blocked test issue of the known class "core v0.5.0 leader no-op" and remove `blocked`.
 The routine prompt must list the G21 label writes for it; without them, G33 does not run, and the item goes to the desk.
-Another exception: G47 (below) lets you add labels to the issue for a new RustSec advisory.
+Another exception: G47 (below) lets you add labels to the issue for a new RustSec advisory, and set its priority label to `p0`.
 The routine prompt must list the G47 label writes; without them, G47 does not run, and the item goes to the desk.
 Another exception: G53 (below) lets you remove `blocked`, set one `stage:*` label and post one comment on a stale blocked issue.
 The routine prompt must list the G53 label writes; without them, G53 only reports on the status board.
@@ -234,6 +234,8 @@ It has this format:
   Use `需要使用者` only in these cases: money or billing; an action that cannot be undone; deletes; rulesets; visibility; secrets; frozen contracts; a case in the "never in G54" list (G54); you have no recommendation.
   A conflict between the issue text and the spec is not `需要使用者` when one option keeps the acceptance of the issue as written: that option is `中控可決定` and you execute it (G54, "Keep the acceptance as written").
   Use `中控可決定` for all other cases.
+  A release tag or a paid run that a test needs is not `需要使用者` when an unreleased build or a run that exists meets the acceptance as written (G56).
+  A choice of direction is not `需要使用者` when the recommended option keeps the acceptance, starts no paid run and no tag, and needs only a new issue in another Faberline cloud repository (G57).
   A `需要使用者` decision issue also gets the label `needs-human`.
   A `中控可決定` item that passes the G54 checks is not sent to the desk: you execute it (G54).
 - The repository and links to each issue or pull request.
@@ -262,6 +264,8 @@ List the inputs that the operation needs, and say which of them are unknown.
 Example failure: the tape supervisor recommended `stage:spec` for tape#20 (a manual `workflow_dispatch` of a release candidate), and the spec routine correctly refused.
 
 Before a `decision` that asks for a paid run, look for a run that exists (G55, below).
+Before a `decision` that asks for a release tag or a paid run as a precondition of a test, look for an unreleased build (G56, below).
+For each option of a choice of direction, write which data or which acceptance criterion it changes (G57, below).
 
 An option can depend on a fact that you can read.
 Examples: a test message, a document, a closed issue, a tag.
@@ -946,7 +950,7 @@ When the queue of a stage is long (G34 names the depth), do this:
 3. Propose a higher priority for it to the desk in a `decision` issue (step 8).
    Write the count and the link of each issue that waits.
    Name the exact label change.
-   Do not change the priority label yourself.
+   Do not change the priority label yourself. The one exception is the `p0` of a G47 advisory issue.
 
 ### Claim and release loop (G37)
 
@@ -1180,7 +1184,9 @@ Then do this in the same pass. Open no `decision` issue.
 
 1. Search the open issues of `<target>` for the advisory ID (G43). When one exists, reuse it. Otherwise open one issue. Its body has: the advisory ID, the run id, the job, the crate and the dependency path, and these fix rules: add only this advisory ID to the ignore lists that the repository already uses, with a reason and an expiry date in the form of the existing entries; ignore no other advisory; change no test, threshold or required check.
 2. An advisory that is a vulnerability with a safe upgrade is not ignored. The issue asks for the upgrade and not for an ignore entry.
-3. Add the labels `stage:spec`, `agent:claude`, `p1` and `expedite` to the issue that this run created. When the issue already has a `stage:*` label, add only `expedite`, and change `p2` or `p3` to `p1`.
+3. Add the labels `stage:spec`, `agent:claude`, `p0` and `expedite` to the issue that this run created. When the issue already has a `stage:*` label, add only `expedite`, and change `p1`, `p2` or `p3` to `p0`.
+   The priority is `p0` because the advisory fails a required check of every pull request: no pull request of `<target>` can merge until the fix merges. `expedite` alone is not enough: the claim order puts the issue behind each older `expedite` issue (evidence, 2026-11-23: RUSTSEC-2026-0594. The fix issue faberline/sift#384 had `p1` and `expedite`. It waited behind ten older `expedite` issues for two spec runs, and no pull request could merge: faberline/aw#726).
+   This is the one case where you change the priority label of an existing issue (G36). Do it only on the issue whose title or body names the advisory ID. Write the old label and the new label on the board.
 4. Read the labels of the issue again in this pass, just before you write "no labels" in a board or a decision. A pass that wrote "no labels" from an old read was wrong in aw#572 and aw#573.
 
 Do not close issues, merge or change other labels. Do not use this rule for a failure that has no advisory ID (use G28 or G44), except after the lock file sweep below.
@@ -1194,7 +1200,7 @@ Use this part when the failed job is the audit or supply-chain job (`cargo deny`
 1. Search the organization for issues of the last 7 days that name a RustSec ID: `gh api -X GET search/issues -f q='org:faberline RUSTSEC in:title,body created:>=<date 7 days ago>'` (date from `date -u`, G1). When the search does not answer for a repository that this session cannot read, read the open faberline/aw issues and the `status(<repo>)` boards for `RUSTSEC`, and say which repositories you could not search.
 2. For each advisory ID that you find, read the affected crate and the affected versions from the issue or from the advisory.
 3. Search every `Cargo.lock` of `<target>`, not only the one at the root: `git ls-files '*Cargo.lock'` in the checkout, or the tree of the head commit with `gh api`. In each lock file, read the locked version of the affected crate. Write each lock file path and the version that you read.
-4. When a lock file has an affected version, the cause is the advisory. Follow steps 1 to 4 of G47 above: open or reuse the fix issue with the labels `stage:spec`, `agent:claude`, `p1` and `expedite`, and name the lock file path in it. Open no `pipeline` issue and no `decision` issue for this failure. When a `pipeline` issue for it is open already, add one comment there with the advisory ID, the lock file and the link of the fix issue.
+4. When a lock file has an affected version, the cause is the advisory. Follow steps 1 to 4 of G47 above: open or reuse the fix issue with the labels `stage:spec`, `agent:claude`, `p0` and `expedite`, and name the lock file path in it. Open no `pipeline` issue and no `decision` issue for this failure. When a `pipeline` issue for it is open already, add one comment there with the advisory ID, the lock file and the link of the fix issue.
 5. Only when no lock file has an affected version, go on with G14, G28 or G44.
 
 A green `main` is not proof that the lock file is clean. A `main` whose last run of the audit job is older than the publication of a known advisory did not check that advisory. Compare the two times before you cite the green run. Condition 2 of this rule ("the lockfile did not change") is about every `Cargo.lock` of the repository, not only the root one.
@@ -1257,6 +1263,48 @@ Then:
 - No run exists and the ledger has no line: write that you read both, with the command and the time (G1). Then open the `decision` of type `需要使用者`.
 
 Do not write `no approval on record` or `no run exists` before you did reads 1 and 2. This rule adds no write.
+
+### An unreleased build or a run that exists meets the test (G56)
+
+A `decision` that asks the owner for a release tag or a paid run, only so that a test can run, costs the owner a question that the desk can answer (evidence, 2026-11-23: faberline/aw#723 for defer#110. The supervisor typed the item `需要使用者` and asked for a second released tag. The desk decided it: the upgrade test uses the released version as N and the candidate image of `main` as N+1).
+
+Before a `decision` asks for a release tag or a paid run as a precondition of a test, do these three reads in this pass:
+
+1. Read the acceptance criteria of the issue, word for word. For each one, write what it needs: a version, an image or a run.
+2. Look for an unreleased build. List the runs of the release-candidate workflow on `main`: `gh api -X GET "repos/<target>/actions/workflows/<file>/runs" -f branch=main -f per_page=20`. Find the file name in `.github/workflows/` of `<target>`. For the newest passed run, write its id, its commit and its image digest.
+3. Look for a run that exists (G55, reads 1 and 3).
+
+Then:
+
+- An unreleased build or a run that exists meets each criterion as written: the type is `類型：中控可決定`, not `類型：需要使用者`. The `執行清單` says which build has which role, for example `N = the released tag <tag>; N+1 = the candidate image <digest> of main, run <id>`. It asks for no tag. Write under the facts: `no new tag is necessary: <criterion> is met by <build or run>`.
+- The test needs a paid run and no run exists: G55 gives the type of that part (the approval ledger). Ask only for the run, not for a tag.
+- A criterion cannot be met without a released tag: the item stays `類型：需要使用者`. Quote the criterion, and write each build and run that you read and why it does not meet the criterion.
+
+Do not write "needs a released version" or "needs a second tag" before you did reads 1 and 2.
+This rule adds no write. You never create a tag and you never start a paid run.
+
+### A choice of direction that keeps the acceptance (G57)
+
+A spec run can report `blocked` with two directions. That is not always a decision for the owner (evidence, 2026-11-23: faberline/aw#725. Two spec runs of sift reported `blocked` with a choice of direction, and the supervisor typed both items `需要使用者`. For sift#374 the recommended option kept the acceptance and needed only a new issue in faberline/core).
+
+The item is `類型：中控可決定` when the recommended option (the first one, G3) passes all three checks:
+
+1. It keeps the acceptance criteria of the issue as written.
+2. It starts no paid run, and it needs no tag.
+3. Outside `<target>`, it needs only a new issue in another Faberline cloud repository. The desk opens that issue. You do not write in another repository (G54).
+
+The item stays `類型：需要使用者` when the recommended option does one of these:
+
+- It makes the acceptance smaller: it removes or weakens a requirement or an acceptance criterion.
+- It moves user data, or changes the path where user data is stored.
+- It changes a public interface in a way that breaks a caller.
+
+For each option, write one line that starts with `資料或驗收：`. The line says `不變`, or it says which data or which acceptance criterion the option changes. The desk reads this line to see why the item has its type. Do not leave the line out for the option that you do not recommend.
+
+A `中控可決定` item of this rule goes to the desk as a `decision` issue when its `執行清單` has a write outside `<target>` (G54, check 3). The `執行清單` names the repository of the new issue, its title and the facts for its body, and says `the desk opens it`.
+When the recommended option needs no write outside `<target>`, test the item against G54 and execute it when its checks pass.
+When one `decision` issue has items of both types, each item says its own type (G20).
+This rule adds no write.
 
 ### A runner label that GitHub retired (G51)
 
