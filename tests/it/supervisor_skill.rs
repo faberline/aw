@@ -65,7 +65,7 @@ fn each_rule_number_is_defined_once() {
         assert_eq!(at.len(), 1, "G{n} is defined in {at:?}");
     }
     let all: Vec<u32> = found.keys().copied().collect();
-    assert_eq!(all, (1..=55).collect::<Vec<u32>>());
+    assert_eq!(all, (1..=57).collect::<Vec<u32>>());
 }
 
 #[test]

@@ -132,9 +132,9 @@ These limits do not change:
 - a milestone change;
 - a change to a ruleset, a setting, a secret, a workflow file, a routine or a schedule;
 - a weaker test, threshold, timeout or coverage ratchet (G45), also a deleted, skipped or ignored test;
-- a choice of product direction: scope, an acceptance criterion, a frozen contract, or two valid designs with no clear recommendation;
+- a choice of product direction: scope, an acceptance criterion, a frozen contract, or two valid designs with no clear recommendation (G57 says when a choice of direction with a recommended option is not such a choice);
 - a close of an issue as completed, or a close of an issue that is not split or replaced (the finished parent of G13 stays with the desk);
-- a priority label change on an existing issue (G36) and the `expedite` label for a release blocker (G28);
+- a priority label change on an existing issue (G36) and the `expedite` label for a release blocker (G28). The `p0` of a G47 advisory issue is not in this limit: G47 allows it;
 - a write in another repository. The one exception is the faberline/aw decision issue.
 
 The line "a choice of product direction" has one exception: see "Keep the acceptance as written" below.
