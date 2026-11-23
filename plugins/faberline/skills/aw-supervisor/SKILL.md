@@ -232,6 +232,7 @@ It has this format:
 
 - First line: `類型：需要使用者` or `類型：中控可決定`.
   Use `需要使用者` only in these cases: money or billing; an action that cannot be undone; deletes; rulesets; visibility; secrets; frozen contracts; a case in the "never in G54" list (G54); you have no recommendation.
+  A conflict between the issue text and the spec is not `需要使用者` when one option keeps the acceptance of the issue as written: that option is `中控可決定` and you execute it (G54, "Keep the acceptance as written").
   Use `中控可決定` for all other cases.
   A `需要使用者` decision issue also gets the label `needs-human`.
   A `中控可決定` item that passes the G54 checks is not sent to the desk: you execute it (G54).
@@ -259,6 +260,8 @@ A spec run or a tdd run changes files and opens a pull request. It cannot dispat
 Say that the desk or the owner must run it.
 List the inputs that the operation needs, and say which of them are unknown.
 Example failure: the tape supervisor recommended `stage:spec` for tape#20 (a manual `workflow_dispatch` of a release candidate), and the spec routine correctly refused.
+
+Before a `decision` that asks for a paid run, look for a run that exists (G55, below).
 
 An option can depend on a fact that you can read.
 Examples: a test message, a document, a closed issue, a tag.
@@ -292,6 +295,17 @@ A root cause is urgent when one of these is true:
 For an urgent root cause, put the label `urgent` on its faberline/aw issue.
 Create a new issue with the label, or add the label to an open one.
 Mark it `緊急` in the status board.
+
+A cause that you could not confirm gets `urgent` only when you cannot narrow it from the job log.
+You cannot download a CI artifact (the blob host is blocked). You can read the job log, and the job log is often enough.
+Before you write `urgent` with `cause not confirmed`, do these in the same pass:
+
+1. Read the log of the failed job to its end (G14). For a ci-on-gke stage, the folded group of a failed Job and the job summary show the events and the last lines of the log of that Job (faberline/aw#716).
+2. Narrow the cause to one of these: the code of the diff; a lock file or an advisory (G47, the lock file sweep); the manifest or the workflow; the cluster (name the event). Write what the log excludes.
+3. When the log narrows the cause, name the narrowed cause and follow its rule. Do not add `urgent` for "not confirmed".
+4. When the log does not narrow it, add `urgent` and name the file that the desk must read: the run id and the attempt, the artifact name and the file in it (for example run 45044890330 attempt 2, artifact `ci-test-logs`, file `events.txt`), and the question that the file answers.
+
+Evidence, 2026-11-22: faberline/aw#716. The supervisor could not read `events.txt`, wrote `cause not confirmed` and `urgent`, and every pull request of som stayed blocked for 4 hours. The job log showed that the failed Job was `test/audit` and that it failed after 1.5 minutes. The lock file sweep of G47 gives the cause from there.
 
 ### 10. Status board
 
@@ -355,7 +369,7 @@ Do not send push notifications.
 
 These rule groups are read only in the case that they name. Read the file with `Read`; it is in the same folder as this file. The rule numbers stay the same. A step that cites one of these rules with "below" means that file.
 
-- Read `special-desk-decisions.md` (G21, G54) when an open decision issue has a desk answer that you may carry out yourself, or when a label-only desk decision waits.
+- Read `special-desk-decisions.md` (G21, G54) when an open decision issue has a desk answer that you may carry out yourself, when a label-only desk decision waits, or when a blocked signal says that the issue text and the spec or the tests do not agree.
 - Read `special-blocked-recheck.md` (G10, G53) when a blocked issue is new or changed, when the blocker of a blocked issue may be closed, or in the stale block sweep.
 - Read `special-split-proposed.md` (G17) when an issue has a split proposed and no child issues.
 - Read `special-tdd-blocked-spec.md` (G16, G31) when a tdd issue is blocked on an incomplete spec, or a spec blocked signal needs a same-round answer.
@@ -532,6 +546,8 @@ Sometimes you cannot read the evidence.
 Examples: the log is expired; the job does not print the events.
 Then write `cause not confirmed` in the issue.
 List what you read and what you could not read.
+Name each file that you could not read, so the desk can read it: the run id and the attempt, the artifact name and the file name.
+First narrow the cause from what you can read (step 9). The label `urgent` is only for a cause that the job log does not narrow.
 Do not offer options that depend on the cause.
 Ask only for the missing evidence.
 
@@ -891,7 +907,8 @@ For each open issue in `<target>` that has a `stage:*` label and no `blocked` la
 3. Say whether the routine of that stage produced anything in the last 2 hours: a pull request, a comment or an `aw:signal` of that stage in `<target>`.
    Write `routine 有產出` or `routine 沒產出`.
 
-When the routine of that stage produced nothing in 2 hours, a board line is not enough.
+The 2 hours are the limit for the board line only.
+When the routine of that stage produced nothing for longer than the limit of G50 (two routine intervals of the stage, now 6 hours), or a run of the stage happened after the issue became claimable and did not take it, a board line is not enough.
 This is a `pipeline` report to the desk.
 Search the open faberline/aw issues with the label `pipeline` for the stage and `<repo>` first (step 6).
 When one is open, add one comment with the new numbers.
@@ -899,6 +916,7 @@ When none is open, create one `pipeline(<repo>)` issue in the same pass.
 The issue has: the stage, the issues in the list with the hours, the queue depth, the time of the last output of the routine, and the claim check of each issue (G4, G6, G30).
 Check G8 first: when every issue waits for an open prerequisite, this is not an alarm and not a pipeline issue.
 Check G40 too: when the stage is in backpressure, the routine skipped by design. Do not open or update a `pipeline` issue for it.
+Leave out an issue whose pull request fails for a cause that an open issue tracks (G50, step 4).
 
 Do not claim issues, do not change labels, and do not run the stage.
 Do not use the 2 hours as a reason to rerun anything.
@@ -1165,7 +1183,23 @@ Then do this in the same pass. Open no `decision` issue.
 3. Add the labels `stage:spec`, `agent:claude`, `p1` and `expedite` to the issue that this run created. When the issue already has a `stage:*` label, add only `expedite`, and change `p2` or `p3` to `p1`.
 4. Read the labels of the issue again in this pass, just before you write "no labels" in a board or a decision. A pass that wrote "no labels" from an old read was wrong in aw#572 and aw#573.
 
-Do not close issues, merge or change other labels. Do not use this rule for a failure that has no advisory ID (use G28 or G44).
+Do not close issues, merge or change other labels. Do not use this rule for a failure that has no advisory ID (use G28 or G44), except after the lock file sweep below.
+
+#### A failed audit job: read the lock files first
+
+A failed `cargo deny` or `cargo audit` job is first a possible advisory. It is not a flake and not an infrastructure fault until the lock files say so (evidence, 2026-11-22: faberline/aw#716. The som supervisor and two review runs wrote `flake` and `Job starts no pod` for the job `test/audit`. The cause was RUSTSEC-2026-0592 in `som-service/Cargo.lock`. Eight repositories had an issue for the same advisory on the same day).
+
+Use this part when the failed job is the audit or supply-chain job (`cargo deny`, `cargo audit`, a job or step with `audit`, `deny`, `advisories` or `supply` in its name), also when its log is lost, is empty or names no advisory ID. Do it before you write `flake`, `infrastructure`, `no pod` or `cause not confirmed`, and before you open a `pipeline` issue:
+
+1. Search the organization for issues of the last 7 days that name a RustSec ID: `gh api -X GET search/issues -f q='org:faberline RUSTSEC in:title,body created:>=<date 7 days ago>'` (date from `date -u`, G1). When the search does not answer for a repository that this session cannot read, read the open faberline/aw issues and the `status(<repo>)` boards for `RUSTSEC`, and say which repositories you could not search.
+2. For each advisory ID that you find, read the affected crate and the affected versions from the issue or from the advisory.
+3. Search every `Cargo.lock` of `<target>`, not only the one at the root: `git ls-files '*Cargo.lock'` in the checkout, or the tree of the head commit with `gh api`. In each lock file, read the locked version of the affected crate. Write each lock file path and the version that you read.
+4. When a lock file has an affected version, the cause is the advisory. Follow steps 1 to 4 of G47 above: open or reuse the fix issue with the labels `stage:spec`, `agent:claude`, `p1` and `expedite`, and name the lock file path in it. Open no `pipeline` issue and no `decision` issue for this failure. When a `pipeline` issue for it is open already, add one comment there with the advisory ID, the lock file and the link of the fix issue.
+5. Only when no lock file has an affected version, go on with G14, G28 or G44.
+
+A green `main` is not proof that the lock file is clean. A `main` whose last run of the audit job is older than the publication of a known advisory did not check that advisory. Compare the two times before you cite the green run. Condition 2 of this rule ("the lockfile did not change") is about every `Cargo.lock` of the repository, not only the root one.
+
+A review `failed` signal with a line `flake: <job> outside the diff` that names the audit job is this case too: do the sweep before you follow G44.
 
 ### Many branch updates and no merge (G48)
 
@@ -1193,10 +1227,36 @@ A stage that does no work is a defect, even when each run ends without an error 
 
 1. For each repository and each stage (`spec`, `tdd`, `review`), find the open issues with that stage label that can be claimed: no `blocked`, and for a `--rework-only` run only rework (open pull request, tdd `respec` or review `failed` as the last signal, or a newer `desk:` comment) or `expedite`.
 2. Find the time of the last signal of that stage in the repository.
-3. When at least one issue can be claimed and the last signal is more than 2 hours old, open one `pipeline` issue, or reuse the open one (G43). Write the issue numbers and the time of the last signal. Do not write "waits for the routine".
-4. Also name each issue whose label is `stage:tdd` or `stage:spec` while its last signal is `ready` of the same stage and no `desk:` comment follows it: no run takes it.
+3. Report the stage only when at least one issue can be claimed and one of these is true:
+   - The last signal of the stage is older than two routine intervals of that stage. A routine now runs one time in 3 hours, so the limit is 6 hours. A stage with a second routine has a shorter interval; use it when you know it.
+   - A run of that stage happened after the issue became claimable and did not take it. Name the run: its claim or signal comment on another issue, or its `backpressure:` or `no-work` line, with the time. The issue became claimable at the newest of: its `stage:*` label change, the removal of `blocked`, and the signal that sent it back.
+
+   Then open one `pipeline` issue, or reuse the open one (G43). Write the issue numbers, the time of the last signal, the time each issue became claimable, and which of the two conditions is true. Do not write "waits for the routine".
+
+   A signal that is younger than the limit, with no run after the issue became claimable, is the normal wait for the next run. Write it on the board (G34) and open nothing. The old limit of 2 hours was shorter than the 3-hour schedule, so a pass reported a routine that was on time (evidence, 2026-11-22: faberline/aw#717 reported the tdd stage of som after 2.5 hours; the routine was not late).
+4. Do not report an issue whose pull request fails for a cause that an open issue tracks. Read the failed checks of the head of its pull request (G14) and search the open issues of `<target>` and of faberline/aw for that cause (G43). When an open issue tracks it, the issue waits for that fix, not for the routine: write `waits for <link>` on the board line of the issue, and leave it out of the `pipeline` issue (evidence: som#327 in faberline/aw#717 waited for the fault of faberline/aw#716; a tdd claim could not make its checks pass).
+5. Also name each issue whose label is `stage:tdd` or `stage:spec` while its last signal is `ready` of the same stage and no `desk:` comment follows it: no run takes it.
 
 Do not change labels. Do not touch the issues.
+
+### A paid run that exists (G55)
+
+A `decision` that asks the owner for a paid run costs the owner a question, and it can cost money a second time. Before you open one, look for a run that exists (evidence, 2026-11-22: faberline/aw#715 for sift#214. The spec run and the supervisor wrote `no approval on record`. The acceptance workflow had two passed runs two days earlier, and the approval ledger in the `status(desk)` issue faberline/aw#713 listed the approval as used).
+
+Do these three reads in this pass, before the `decision`:
+
+1. List the runs of the acceptance workflow: `gh api -X GET "repos/<target>/actions/workflows/<file>/runs" -f per_page=20`. Find the file name in `.github/workflows/` of `<target>` (for example `gke-acceptance.yml`); when the issue names a workflow, use that one. Write each run: id, date, commit, conclusion.
+2. Read the approval ledger in the body of the faberline/aw issue with the title `status(desk)` (now faberline/aw#713). Find the lines for `<repo>`: each approval, its cap in TWD, and `used` or `unused` with the run.
+3. When a passed run exists, compare its evidence with the acceptance points of the issue first, one point at a time: the job log (G14), the job summary and the evidence files that the run committed or printed. For each point write `proved by run <id>: <line>` or `not proved: <what is missing>`. An artifact that you cannot download is `not read`, not `not proved`: name the file that the desk must read (step 9).
+
+Then:
+
+- Every point is proved: open no `decision` for a run. Write the evidence in one comment on the issue. The issue then moves as its stage rules say; when only a close as completed is left, that goes to the desk (G54).
+- Some points are not proved: ask only for what is not proved. Write the measured cost of the earlier run from the ledger (G9), or `not measured` and where the number will come from.
+- The ledger has an unused approval that covers the run: do not ask the owner again. The request goes to the desk as `中控可決定`; the desk starts the run. You never start a paid run.
+- No run exists and the ledger has no line: write that you read both, with the command and the time (G1). Then open the `decision` of type `需要使用者`.
+
+Do not write `no approval on record` or `no run exists` before you did reads 1 and 2. This rule adds no write.
 
 ### A runner label that GitHub retired (G51)
 
