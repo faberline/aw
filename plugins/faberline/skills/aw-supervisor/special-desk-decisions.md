@@ -137,10 +137,32 @@ These limits do not change:
 - a priority label change on an existing issue (G36) and the `expedite` label for a release blocker (G28);
 - a write in another repository. The one exception is the faberline/aw decision issue.
 
+The line "a choice of product direction" has one exception: see "Keep the acceptance as written" below.
+
 An item with one of the first seven has the type `類型：需要使用者`.
 Open the `decision` issue in faberline/aw with the labels `decision` and `needs-human` (step 8), and stop work on that item.
 Do not execute a part of it.
 An item with one of the last three goes to the desk as a `decision` issue, as before (G13, G36, G28, G2).
+
+#### Keep the acceptance as written
+
+A stage run can report `blocked` because the issue text and the spec (or the tests) do not agree on a scope point.
+This is not always a choice of product direction.
+The issue text is the acceptance that the owner accepted already.
+
+Compare each option with the acceptance criteria of the issue as written:
+
+- An option that keeps every acceptance criterion of the issue as written, and changes the spec or the code to meet it, is `類型：中控可決定`. It is the recommended option. Execute it under G54 in this pass: remove `blocked`, change the `stage:*` label to `stage:spec`, and post one comment. The comment names each point, quotes its acceptance line, and says that the spec must cover it as the issue text says. Open no `decision` issue for it.
+- An option that removes an acceptance criterion, or makes it smaller or weaker, or that weakens a test, a threshold or a gate, is `類型：需要使用者`. Never execute it. Do not make it the recommended option.
+
+When the only way forward is of the second kind, open the `decision` with `needs-human` as before.
+When the points can be decided one by one, execute the points of the first kind and open the `decision` only for the others.
+When you cannot say which option keeps the acceptance (the issue text is not clear, or both options change it), the item is `類型：需要使用者`.
+When the spec has more than the issue asks, and the stage run wants to drop the extra part, nothing in the issue becomes smaller: this is the first kind.
+
+Do the checks of "Before you write" first. Read the issue text, the spec and the blocked signal in this pass (G14, G19).
+
+Precedent: faberline/aw#703 (som#321: the proposed option made a test assertion smaller, so the owner had to decide; the option that kept the assertion needed no owner) and faberline/aw#714 (lumen#387: the supervisor asked the owner to choose between the issue text and a smaller spec; option A kept the issue as written, and the desk selected it with no new owner decision).
 
 #### Before you write
 

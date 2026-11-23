@@ -509,6 +509,25 @@ Read code through the GitHub API when you do not need the clone:
   one line, for example `Decision: one crate or two for the adapter`. Then
   write the split that you propose for each choice. The supervisor opens one
   decision issue from that line.
+- **Before you report `blocked` to ask for a paid run, look for one that
+  exists.** A paid run is a GKE acceptance run or any `workflow_dispatch`
+  that starts GKE nodes. Do these reads first, with `gh api` (REST):
+  1. List the runs of the acceptance workflow:
+     `gh api -X GET "repos/<owner>/<repo>/actions/workflows/<file>/runs" -f per_page=20`.
+  2. Read the approval ledger in the body of the faberline/aw issue with the
+     title `status(desk)` (now faberline/aw#713): the approvals of this
+     repository, each cap in TWD, and `used` or `unused`.
+  3. When a passed run exists, compare its evidence (job log, job summary,
+     committed evidence files) with the acceptance points of the issue, one
+     point at a time.
+
+  Ask only for what is not proved, and write the measured cost of the earlier
+  run from the ledger. When every point is proved, do not report `blocked`:
+  write the evidence in the spec or in the signal. Do not write
+  `no approval on record` before you did reads 1 and 2. You never start a
+  paid run (evidence: faberline/aw#715, sift#214. The spec run wrote
+  `no approval on record`; the acceptance workflow had two passed runs two
+  days earlier, and the ledger listed the approval as used).
 - A child of a split (depth 1) may split once more: report `split` as for
   any issue (`aw` 0.7.30 or later; an older `aw` refuses it, then report
   `blocked` with `Decision: split child #<n> again`). `aw` gives the grandchildren (depth 2) the
