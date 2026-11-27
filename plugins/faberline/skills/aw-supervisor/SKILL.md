@@ -66,6 +66,8 @@ Another exception: G60 (below) lets you close an issue as done when every accept
 The routine prompt must list the G60 writes; without them, G60 does not run, and the item goes to the desk.
 Another exception: G61 (below) uses the G47 label writes on the upgrade issue for a dated ignore entry.
 The routine prompt must list them for G61; without them, the issue has no labels and the label change goes to the desk.
+Another exception: G67 (below) lets you add `stage:spec`, `agent:claude` and `p0` to the one issue that moves an old aw pin of the workflows.
+The routine prompt must list the G67 label writes; without them, the issue has no labels and the label change goes to the desk.
 G25 (ghost runs) and G27 (the CI queue tracker) do not add writes. G27 only adds comments on faberline/aw#372.
 
 This cloud session blocks GitHub GraphQL.
@@ -148,6 +150,7 @@ Look only at these:
 - n. Issues in `stage:review` whose last review signal says that no open pull request closes them (G41, below).
 - o. Sent-back issues that no run touched for more than 2 hours while their stage is in rework-only mode (G42, below).
 - p. Every open issue with `blocked`, not only the changed ones (stale block sweep, G53, below).
+- q. In a full run: the aw pins of the workflows on the default branch (G67, below).
 
 ### 5. Find root causes before you act
 
@@ -246,6 +249,8 @@ It has this format:
   A `blocked` signal whose only cause is a tool refusal gets no `decision` issue (G58).
   A recommended option that keeps every acceptance criterion, costs no money, makes no tag and does not change the product direction is `中控可決定`, also when you cannot execute it yourself (G62).
   A spec that changes or drops an acceptance criterion of the issue with no desk decision is a `中控可決定` item: the recommended option keeps the acceptance as written (G64).
+  A major upgrade of a shared dependency whose spec does not list every workspace crate that uses it is a `中控可決定` item: the recommended option sends the issue back to `stage:spec` (G65).
+  A recommended option that is only a wait, with no write, no cost and no change of product direction, gets no `decision` issue and no `needs-human` label: write `Waits for:` on the issue and keep `blocked` (G66).
   A `需要使用者` decision issue also gets the label `needs-human`.
   A `中控可決定` item that passes the G54 checks is not sent to the desk: you execute it (G54).
 - The repository and links to each issue or pull request.
@@ -724,6 +729,7 @@ Make one item for one signal, not two.
 Do not answer the question on the issue yourself and do not change the labels.
 The exceptions are G21 and G54 (below).
 When the signal has a recommendation, test the item against G54 before you open a `decision` issue.
+When the recommended option is only a wait, open no `decision` issue: use G66 (below).
 
 Example failure: lumen#323 (22:21Z) and lumen#324 (22:27Z) on 2026-11-11.
 Each got a spec `blocked` signal with "Decision needed" and a recommendation.
@@ -1450,6 +1456,77 @@ In each pass, read each spec `ready` signal and each review `passed` signal of `
 
 A criterion with a desk decision on record is not a gap. Write the link of the decision.
 This rule adds no write.
+
+### A major upgrade of a shared dependency covers every crate that uses it (G65)
+
+A workspace can have more than one crate that names the same dependency. When an upgrade moves only one crate across a major version, the workspace holds two major versions of that dependency. A consumer that uses types of both crates then does not compile (evidence, 2026-11-27: faberline/core#648 moved `service-k8s` to schemars 1 and left `service-backup` on schemars 0.8. The tag `v0.5.3` broke faberline/tape and faberline/lumen, see faberline/core#656).
+
+The `aw-worker` skill has these two rules:
+
+- The spec of an issue that moves a dependency across a major version lists every workspace crate whose `Cargo.toml` names that dependency. Each crate is marked `moves` or `stays: <reason>`.
+- The review reads every `Cargo.toml` and the lock file at the head of the pull request. A crate that still names the old major version, with no `stays: <reason>` line in the spec, is a finding.
+
+In each pass, read each spec `ready` signal and each review `passed` signal of `<target>` that is newer than the last pass, for an issue that moves a dependency across a major version (for a `0.x` version, a change of the minor number is a major change):
+
+1. List the crates of the default branch that name the dependency: read each `Cargo.toml` (`git ls-files '*Cargo.toml'` in a checkout, or the REST tree).
+2. For a spec `ready` signal: each crate of the list must be in the spec, as `moves` or as `stays: <reason>`. A crate that is missing is a spec gap: post one comment on the issue that names each missing crate, and send the issue to the desk as a `中控可決定` item. The recommended option sends the issue back to `stage:spec` (a G54 write, when its checks pass).
+3. For a review `passed` signal: read the lock file of the default branch after the merge. When it holds two major versions of the dependency and the spec has no `stays:` line for it, open one issue for the crates that stayed, or reuse the open one (G43). Write the crates, the two versions and the merged pull request. Then write one `中控可決定` item that asks the desk for its labels (the priority of the first issue). Do not ask to revert the merged pull request.
+4. When the repository is `core` and a release candidate or a final tag is planned for the upgrade, write on the board: `consumer compile check: not shown for <tag>`, until a comment or a run shows that one consumer repository compiles against the candidate (desk handbook, section 5).
+
+A `stays: <reason>` line with a reason that the code shows is not a gap.
+This rule adds no write.
+
+### A decision that is only a wait is a `Waits for:` line (G66)
+
+A blocked signal can give options whose recommended one is "wait for X". The owner has nothing to answer: nothing is written, nothing is paid, and the product does not change. A `需要使用者` decision for it uses the owner's time and gets `needs-human` for no decision (evidence, 2026-11-27: faberline/aw#739 for faberline/sift#398. The recommended option was "wait for the next release". Its `執行清單` said "no write now", and the issue was typed `需要使用者`).
+
+Use this rule before you open or extend a `decision` issue (G20, step 8). The item is only a wait when the recommended option (the first one, G3) passes all four checks:
+
+1. It needs no write now, other than the `Waits for:` text and the label `blocked`.
+2. It costs no money and starts no paid run.
+3. It does not change the product direction or an acceptance criterion (G57, G62).
+4. The thing that it waits for can be read: an issue, a pull request, a release tag, a workflow run or a merged commit (G52).
+
+Then do this in the same pass:
+
+1. Open no `decision` issue, and add no `needs-human` label.
+2. Find the open issue that tracks the thing (G43, G24). Post one comment on the waiting issue: `Waits for: #<number>` for an issue of `<target>`, or `Waits for: <owner>/<repo>#<number>` for another repository. When no issue tracks the thing, write the thing itself, for example `Waits for: release tag sift@0.3.0 (no issue tracks it)`. Do not post the comment two times.
+3. Keep `blocked`. When the issue lost `blocked`, add it as G38 does (a G54 write, when its checks pass).
+4. When the body has no `Waits for:` line for the thing, edit the line under G54 when its checks pass. Otherwise the comment is enough.
+5. Write one line on the board with the thing, its state and the time of the check (G52). Read the thing again in each run. When the condition is met, G52 and G53 remove `blocked`.
+
+Do not use this rule in these cases; then step 8 applies as before:
+
+- The thing that the issue waits for needs an owner decision that no open issue asks, for example an approval of a paid run. Ask for that decision. Do not ask "wait or not".
+- Another option is better than the wait and you recommend it.
+- The wait stops a `p0` issue or a release chain: report it under step 9 (urgent) also.
+
+This rule adds no write: the comment is a normal comment, and the label and body writes are the G38 and G54 writes.
+
+### An old aw pin in the workflows (G67)
+
+A repository installs `aw` at a fixed commit in its workflows. A fix on aw `main` does not reach a repository with an old pin. G35 and G39 find an old pin only after a job fails. This rule finds it before (evidence, 2026-11-27: `ci.yml` of faberline/sift installed aw 0.7.38 and faberline/tape installed aw 0.7.34, while aw `main` was 0.7.80. The CR3 grace window came in aw 0.7.47 (faberline/aw#591). After the core tag `v0.5.3`, the required check `aw standards check` failed on every pull request of the two repositories: faberline/sift#419, faberline/tape#252. No rule had read the pins).
+
+Use this rule in each full run, not in a quick run:
+
+1. Read every workflow file of `<target>` on the default branch (`.github/workflows/*.yml`). Collect each aw pin: `cargo install ... faberline/aw --rev <sha>`, `uses: faberline/aw/.github/actions/<name>@<ref>`, `uses: faberline/aw/.github/workflows/<file>@<ref>`, and an `aw-ref:` input.
+2. Compare each pin with aw `main`: `gh api "repos/faberline/aw/compare/<pin>...main"`. When `ahead_by` is 0 for every pin, stop. Read the aw version of the pin and of `main` (`Cargo.toml` at each ref).
+3. List the aw commands, actions and reusable workflows that the workflows of `<target>` run, for example `aw standards check`, `aw ci check`, `aw security check`, the `coverage` action and `gke-test.yml`.
+4. In the commits between the pin and `main`, find each fix for one of them: a commit whose title starts with `fix` and names the command, the action, the workflow or its standard, or that changes its files. Read the commit before you name it (G14).
+5. No such fix: the pin is old and it lacks no fix. Write one board line, `aw pin: <version>, main <version>, no fix missing`. Open no issue.
+6. One or more such fixes: open one issue in `<target>`, or reuse the open one. Search the open issues for `aw pin` and for the pinned commit first (G43, G39 step 3). One issue covers all pins of the repository. Its body has:
+   - each pin: the file, the line, the commit and its aw version;
+   - the commit and the version of aw `main`;
+   - each fix that the pin lacks: the commit, its pull request and the check that it repairs, and a failed run when one exists;
+   - `Waits for: none`;
+   - these acceptance criteria: every aw pin in the workflows names one commit, the newest green commit of aw `main` that the spec run reads; the checks of the list pass on `main` with that pin; a new finding of the newer aw is fixed or gets a named issue; no rule is switched off, no exception is added to `aw.toml`, and no test, threshold, coverage line or timeout changes.
+7. Add the labels `stage:spec`, `agent:claude` and `p0` to the issue. When the issue already has a `stage:*` label, change only `p1`, `p2` or `p3` to `p0`. The priority is `p0` because the missing fix is in a check that every pull request runs: when the check fails, no pull request of the repository can merge.
+8. Write one line on the board under `這一輪做了什麼`, with the link of the issue, the pinned version and the version of aw `main`.
+
+Pins in one repository that name different commits are also a finding: write them in the same issue.
+A failed job that the old pin already causes is still a G39 case. Use the issue of this rule for it, and do not open a second one (G15).
+Do not change a workflow file yourself.
+The routine prompt must list the G67 label writes; without them, open the issue with no labels and send the label change to the desk as a `中控可決定` item.
 
 ### A runner label that GitHub retired (G51)
 
