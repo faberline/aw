@@ -64,6 +64,8 @@ Another exception: G58 (below) lets you remove `blocked` one time from an issue 
 The routine prompt must list the G21 label writes for it; without them, G58 does not run, and the item goes in a `pipeline` issue.
 Another exception: G60 (below) lets you close an issue as done when every acceptance criterion already holds on the default branch.
 The routine prompt must list the G60 writes; without them, G60 does not run, and the item goes to the desk.
+Another exception: G61 (below) uses the G47 label writes on the upgrade issue for a dated ignore entry.
+The routine prompt must list them for G61; without them, the issue has no labels and the label change goes to the desk.
 G25 (ghost runs) and G27 (the CI queue tracker) do not add writes. G27 only adds comments on faberline/aw#372.
 
 This cloud session blocks GitHub GraphQL.
@@ -242,6 +244,8 @@ It has this format:
   A choice of direction is not `需要使用者` when the recommended option keeps the acceptance, starts no paid run and no tag, and needs only a new issue in another Faberline cloud repository (G57).
   A test that a reference test replaces is not `需要使用者` when the three facts of G59 are shown: the desk decides it, and you write the recommendation.
   A `blocked` signal whose only cause is a tool refusal gets no `decision` issue (G58).
+  A recommended option that keeps every acceptance criterion, costs no money, makes no tag and does not change the product direction is `中控可決定`, also when you cannot execute it yourself (G62).
+  A spec that changes or drops an acceptance criterion of the issue with no desk decision is a `中控可決定` item: the recommended option keeps the acceptance as written (G64).
   A `需要使用者` decision issue also gets the label `needs-human`.
   A `中控可決定` item that passes the G54 checks is not sent to the desk: you execute it (G54).
 - The repository and links to each issue or pull request.
@@ -1376,6 +1380,76 @@ Then:
 Before the close, read the labels and the last signal again (G19). When a newer signal, a new open pull request of the issue or a `desk:` comment is there, stop.
 Do not use this rule for an issue with open child issues, or for a parent whose children did the work (G13 stays with the desk).
 The routine prompt must list the G60 writes; without them, G60 does not run: open the `中控可決定` item with the evidence, and the desk closes the issue. This close, the close of G21 and the closes of G54 are the only closes that the supervisor may do.
+
+### A dated ignore needs an upgrade issue (G61)
+
+An ignore entry with an expiry date stops a failed audit check for a short time. It does not remove the advisory from the product. When no issue tracks the upgrade, the ignore expires and the check fails again in every pull request (evidence, 2026-11-23: faberline/core#641 was closed with a dated ignore for RUSTSEC-2026-0600. No issue tracked the upgrade until the tape supervisor escalated it in faberline/aw#737. Then faberline/core#648 was created with `p1`, not `p0`).
+
+Use this rule in each full run for each advisory issue of `<target>` that closed in the last 7 days (an issue whose title or body names a `RUSTSEC-<year>-<number>` ID). Read the pull request that closed it (G14). The rule applies when both are true:
+
+1. The pull request added or kept an ignore entry for the advisory ID with an expiry date (`deny.toml`, `audit.toml` or another ignore list of the repository).
+2. A fixed version exists: the advisory names a patched version, or the audit log names an upgrade (`Solution: Upgrade to ...`). Write the crate, the locked version and the fixed version.
+
+Then do this in the same pass:
+
+1. Search the open issues of `<target>` for the advisory ID and for the crate name (G43). Reuse an open upgrade issue. Otherwise open one issue. Its body has: the advisory ID, the crate, the locked version and the fixed version, the ignore entry to remove (file, line and expiry date), the link of the closed issue, and these fix rules: upgrade the crate to the fixed version or later; remove the ignore entry in the same pull request; add no other ignore entry; change no test, threshold or required check.
+2. Add the labels `stage:spec`, `agent:claude`, `p0` and `expedite` to it, as G47 step 3 does. When the issue already has a `stage:*` label, add only `expedite`, and change `p1`, `p2` or `p3` to `p0`. The priority is `p0` because the ignore expires on a known date: then the audit check fails for every pull request again, as in G47.
+3. Find each open issue that waits for this upgrade: an issue whose body, `Waits for:` line or last signal names the advisory ID or the closed advisory issue. In `<target>`, post one comment on each: `Waits for: <link of the upgrade issue>`. Do not post it two times.
+4. For a waiting issue in another repository, the routine prompt gives no write there. The supervisor of that repository posts the link: in its own pass, when an open issue of its `<target>` waits for an advisory fix in another repository, it searches the organization for the upgrade issue (`gh api -X GET search/issues -f q='org:faberline <advisory ID> in:title,body state:open'`) and posts the comment of item 3 one time. Write each waiting issue that you found in another repository on the board, with its link.
+5. Write one line on the board under `這一輪做了什麼`, with the link of the upgrade issue and the expiry date of the ignore.
+
+Do not use this rule when no fixed version exists. Then the ignore is the fix: write `no fixed version: <advisory ID>, ignore expires <date>` on the board.
+The label writes are the G47 label writes. The routine prompt must list them for this rule (the words "or for the upgrade that a dated ignore entry waits for (G61)" in the G47 sentence); without them, G61 opens the issue with no labels and sends the label change to the desk as a `中控可決定` item.
+
+### A recommended option that keeps everything is the desk's decision (G62)
+
+A `decision` item can have a recommended option that keeps every acceptance point and costs nothing. The owner does not have to answer it, also when the supervisor cannot execute the option itself (evidence, 2026-11-23: faberline/aw#738 was typed `需要使用者`. Its recommended option kept every acceptance point and cost no money).
+
+The item is `類型：中控可決定` when the recommended option (the first one, G3) passes all four checks:
+
+1. It keeps every acceptance criterion of the issue as written.
+2. It costs no money: it starts no paid run, no new node pool, no quota and no other paid resource.
+3. It makes no release tag.
+4. It does not change the product direction: no new scope, no removed scope, no frozen contract, no change to user data or a public interface (G57).
+
+This is true also when the option needs a write that the routine prompt does not give you, or a write in another repository. Then the desk executes it: the `執行清單` names each write, and you do not execute it. When the option needs only writes that G54 allows, test it against G54 and execute it when its checks pass.
+This is the same class as G57. The item stays `類型：需要使用者` only for a case of step 8 (money, an action that cannot be undone, deletes, rulesets, visibility, secrets, frozen contracts, the "never in G54" list, no recommendation).
+Under the facts, write one line for each check: `驗收：不變`, `費用：0`, `標籤：無`, `方向：不變`, or what the option changes.
+This rule adds no write.
+
+### No claim loop on an outside advisory (G63)
+
+A pull request can fail only on a dependency audit job for an advisory outside its diff. A tdd run cannot fix that in the pull request, so each run claims the issue, finds nothing to do and releases it (evidence, 2026-11-23: faberline/aw#730 and faberline/aw#733. tdd runs claimed and released faberline/lumen pull requests 582 and 583 and faberline/tape pull request 241. The only failed job was the audit for an advisory outside their diffs).
+
+The tdd stage of `aw-worker` has the same rule: when the only failed check of a pull request is an advisory or dependency audit that also fails on the default branch, the run does not claim the issue again. It adds `blocked` with one comment `Waits for: <the advisory issue>`.
+
+In each pass:
+
+1. Find each open issue of `<target>` whose pull request has only one failed check, and that check is an audit or supply-chain job (as in the G47 sweep). Read the same job on the head of the default branch. When it also fails there for the same advisory ID, the failure is outside the diff.
+2. Find the advisory issue: the fix issue of G47 or the upgrade issue of G61 (G43). When none is open, open it under G47 first.
+3. The issue has `blocked` and the comment `Waits for: <the advisory issue>`: leave it. When the issue has neither, and a tdd or review run claimed and released it for this failure, add `blocked` and the comment yourself as G38 does for an open `Waits for:` prerequisite (a G54 write, when its checks pass). Otherwise report the loop under G37.
+4. When the advisory issue is closed as completed, remove `blocked` one time from each issue whose comment waits for it, in the same pass (the stale block sweep, G53). Read the labels again first (G19). Post one comment that names the closed advisory issue and its `closed_at`. Do not remove `blocked` a second time for the same advisory issue: when the audit check fails again after the close, report it under G47.
+
+Do not use this rule when the audit job passes on the default branch: then the diff can be the cause (G14, G47 sweep).
+This rule adds no new write: the `blocked` writes are the G53 and G54 writes.
+
+### Review checks the acceptance criteria of the issue (G64)
+
+A spec can change an acceptance criterion of the issue without a word. A review that compares the diff only with the spec then passes a pull request that does not meet the issue (evidence, 2026-11-23: faberline/core#650 had the criterion "a free test (kind) fails for the cause before the fix and passes after it". The spec replaced it with unit tests and did not say so. The review of pull request 651 passed).
+
+The `aw-worker` skill has these two rules:
+
+- The spec signal lists every acceptance criterion of the issue body, word for word, and marks each one `kept` or `changed: <reason>`. A changed or dropped criterion makes the spec outcome `blocked` with a `Decision:` line for the desk, not `ready`.
+- The review compares the diff with the acceptance criteria of the issue body, not only with the spec. It does not pass when a criterion is missing and no desk decision is on record.
+
+In each pass, read each spec `ready` signal and each review `passed` signal of `<target>` that is newer than the last pass:
+
+1. Read the acceptance criteria of the issue body, word for word.
+2. For a spec `ready` signal: each criterion must be in its list, as `kept` or as `changed` with a desk decision on record (a `desk:` comment or a decision issue that names the issue). A criterion that is missing, or `changed` with no desk decision, is a spec gap: post one comment on the issue that names each criterion, and send the issue to the desk as a `中控可決定` item. The recommended option keeps the acceptance as written (G54, "Keep the acceptance as written"): the spec is written again.
+3. For a review `passed` signal: when the issue body has a criterion that no test or file of the merged diff proves, and no desk decision is on record, open one `中控可決定` item. It names the criterion, the merged pull request and a new issue that proves the criterion. The pull request is merged: do not ask to revert it.
+
+A criterion with a desk decision on record is not a gap. Write the link of the decision.
+This rule adds no write.
 
 ### A runner label that GitHub retired (G51)
 
