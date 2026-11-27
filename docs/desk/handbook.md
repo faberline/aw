@@ -82,6 +82,7 @@ Always ask the owner first for these:
 - A general sentence such as "follow your recommendation" is not approval of a payment.
   An approval of money names the item and has a cap.
 - One approval is for one named run. A failed run does not give a second run.
+  Ask for a new run only when a free test or a read-only check proves the cause of the failure (section 5, "After a paid run fails").
 - The routines write comments with the owner's GitHub login. A comment is the owner's answer only when its first line starts with `owner:`.
 - When you send an owner decision to a work session, quote the owner's words and give the date.
 
@@ -315,8 +316,8 @@ Run a patrol one time in 6 hours, and when the owner asks for the state. The clo
 | A decision issue with no recommendation | Verify the facts and make your own recommendation. If it costs nothing and changes no product direction, decide. If not, it needs the owner. |
 | An issue that needs the owner | Make the question short: the facts, at most two choices, your recommendation, and the cost in TWD if there is one. Add `needs-human`. Add it to the open questions in `status(desk)`. Continue the patrol. |
 | The owner answered | Write the answer with the quote and the date on the issue. Do the actions. Remove `needs-human`. Close the issue. Add an approval of money to the ledger in `status(desk)`. |
-| A request for a paid run | Do not start it. Find the item in the approval ledger. With no unused approval: prepare the estimate and ask. With an unused approval: do the paid dispatch preflight below, then start the run one time. |
-| A release candidate | Do the preflight below. Run the free steps. When every gate has passed, make the tag and run the release (release rule, section 3). Stop at a paid step with no unused approval, and at any gate that fails. Report afterwards. |
+| A request for a paid run | Do not start it. Find the item in the approval ledger. With no unused approval: prepare the estimate and ask. With an unused approval: do the paid dispatch preflight below, then start the run one time. After a failed run, see "After a paid run fails" below. |
+| A release candidate | Do the preflight below. Run the free steps. When every gate has passed, make the tag and run the release (release rule, section 3). Stop at a paid step with no unused approval, and at any gate that fails. Report afterwards. For `core`, see "Core release with a major dependency change" below. |
 | A pull request in `faberline/aw` | Pipeline fix or documentation fix, checks green: merge it. Other changes: read the diff first, and ask if it changes a standard that a repository must obey. |
 | A request for a repository with a local desk | Send it to that desk. Do not do it. |
 
@@ -330,9 +331,39 @@ Each dispatch uses one approval. Read the whole workflow file before you start, 
 4. Find each gate that the release workflow has and the pull request CI does not run. Confirm that it passes on `main`.
 5. The evidence is for the right object. Acceptance evidence for a release is bound to the image of the release candidate, not to a CI test image.
 6. The run has a cost cap input when the workflow has one. Stop and report at 80% of the cap.
-7. If one doubt stays, repair it first. Do not use an approval as a test.
+7. For a paid deploy, a free check proves that every rendered workload can pull its image. Render the manifests that the run applies.
+   Read each pod template (Deployment, StatefulSet, DaemonSet, Job) and confirm that it has the image pull credentials for a private image:
+   `imagePullSecrets` in the template or in its ServiceAccount. A local `kind` cluster loads the image into the node, so a `kind` test does not prove a pull.
+   A repository that has no such free check on `main` gets a fix issue first.
+   Example: the paid acceptance run of `sift` failed in the deploy phase because the agent DaemonSet had no pull credentials (faberline/sift#415).
+8. If one doubt stays, repair it first. Do not use an approval as a test.
 
 After a paid run, write in the ledger: the run, the commit, the result and the estimated cost. Replace the estimate with the measured cost when the bill has it (about 3 hours later).
+
+### After a paid run fails
+
+A failed run does not give a second run (section 2). Do not ask the owner for a new run on a guess.
+
+1. Read the log of the failed job and name the cause.
+2. Prove the cause with a free test or a read-only check: a unit test or a local test that fails for the cause, the rendered manifest, a log line, or the state of the cluster object.
+   A cause that only the next paid run can confirm is a guess.
+3. The cause is proved: open the fix issue. After the fix is on `main` and a free test passes for it, ask the owner for one new run.
+   The question gives the proof, the fix and the cap in TWD.
+4. The cause is not proved: do not ask. Open an issue that adds the free test or the diagnostic output that can prove it.
+
+Example: the sixth `gke-drill` run of `core` was asked on a guess about the cause, with no free proof (faberline/aw#704).
+
+### Core release with a major dependency change
+
+Use this before the final tag of a `core` release that changes the major version of a shared dependency.
+A shared dependency is a crate whose types are in the public interface of `core` and that a consumer repository also names, for example `kube`, `k8s-openapi` or `schemars`.
+
+1. Make the release candidate tag as usual.
+2. Select one consumer repository that uses the changed crates of `core`. In a checkout or a branch of it, pin `core` to the candidate and run `cargo check --workspace --all-targets --locked` after the lock file update. This costs nothing.
+3. The consumer compiles: write the consumer, its commit and the command in the release record. Then make the final tag.
+4. The consumer does not compile: this is a failed gate. Do not make the final tag. Open a fix issue in `core` and make a new candidate after the fix.
+
+Example: `core` `v0.5.3` moved `service-k8s` to schemars 1 and left `service-backup` on schemars 0.8. No consumer compiled against the candidate, and the final tag broke `tape` and `lumen` (faberline/core#656).
 
 ### Rules that never change
 

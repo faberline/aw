@@ -454,6 +454,19 @@ Read code through the GitHub API when you do not need the clone:
   7. **Out of scope**: what not to change.
   8. **Traps**: repository rules and known failures that apply, for example
      the CI contract note in "Repository notes".
+- **A major upgrade of a shared dependency.** When the issue moves a
+  dependency across a major version (for a `0.x` version, a change of the
+  minor number), list every workspace crate whose `Cargo.toml` names that
+  dependency: run `git ls-files '*Cargo.toml'` and read each file, also in
+  a subfolder workspace. In the spec, mark each crate `moves` or
+  `stays: <reason>`. A crate that stays needs a reason that the code shows,
+  for example "no public type of this crate uses it". A test or a command
+  of the spec proves that the lock file holds one major version of the
+  dependency, or names each crate that keeps the old one. Do not report
+  `ready` while a crate of the list has no mark (aw-supervisor G65;
+  evidence: faberline/core#648 moved `service-k8s` to schemars 1 and left
+  `service-backup` on schemars 0.8, and the tag `v0.5.3` broke its
+  consumers, faberline/core#656).
 - **A precondition on another open issue.** When the spec needs a file or
   an interface that another open issue supplies, write one line that starts
   with `Waits for: #<number>`, with the issue number. A title is not enough:
@@ -763,6 +776,12 @@ Read code through the GitHub API when you do not need the clone:
     comment or a decision issue; write its link). Do not answer
     `VERDICT: passed` while such a finding is open (aw-supervisor G64;
     evidence: faberline/core#650, pull request 651);
+  - when the pull request moves a dependency across a major version, read
+    every `Cargo.toml` and the lock file at the head branch. A workspace
+    crate that still names the old major version is a finding, unless the
+    spec has a `stays: <reason>` line for it. Two major versions of the
+    dependency in the lock file with no such line are a finding
+    (aw-supervisor G65; evidence: faberline/core#648);
   - a small model wrote the code: look for tests that assert nothing,
     skipped or ignored tests, and changes outside the spec's files;
   - a lower `line` in `[standards.coverage]` of `aw.toml`, or a new
