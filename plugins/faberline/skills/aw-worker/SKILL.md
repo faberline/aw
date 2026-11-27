@@ -440,7 +440,17 @@ Read code through the GitHub API when you do not need the clone:
      narrower command for the new tests, for example `cargo test -p <crate> <name>`.
      When the change touches `.github/workflows/ci.yml`, add
      `$AW ci check --dir . --no-ruleset` (standard S7).
-  6. **Acceptance criteria**: each one proven by a named test or command.
+  6. **Acceptance criteria**: list every acceptance criterion of the issue
+     body, word for word, and mark each one `kept` or `changed: <reason>`.
+     Prove each kept criterion by a named test or command. A changed or
+     dropped criterion is a decision for the desk: do not report `ready`.
+     Report `blocked` with the first line `Decision: change acceptance
+     criterion <quote>`, the reason, and the option that keeps the criterion
+     as written. A criterion with a desk decision on record (a `desk:` comment
+     or a decision issue) is `changed: desk decision <link>` and does not stop
+     `ready` (evidence: faberline/core#650. The spec replaced the criterion
+     "a free test (kind) fails for the cause before the fix and passes after
+     it" with unit tests and did not say so; aw-supervisor G64).
   7. **Out of scope**: what not to change.
   8. **Traps**: repository rules and known failures that apply, for example
      the CI contract note in "Repository notes".
@@ -596,6 +606,30 @@ Read code through the GitHub API when you do not need the clone:
   the comment and adds the label. `aw report blocked` is for a decision that
   only a person can make, so do not use it here. Add `blocked` to no other
   issue. The supervisor or the desk removes it when the supplier merges.
+- **An advisory outside the diff.** On rework, read the failed checks of
+  the head of the pull request first. When the only failed check is an
+  advisory or dependency audit job (`cargo deny`, `cargo audit`, or a job
+  with `audit`, `deny`, `advisories` or `supply` in its name), read the same
+  job on the head of the default branch. When it also fails there for the
+  same advisory, the pull request cannot fix it. Do not change the lock file
+  or an ignore list in this pull request, and do not claim the issue again:
+  1. Find the open issue that fixes the advisory: search the issues of the
+     repository and of the organization for the advisory ID
+     (`gh api -X GET search/issues -f q='org:faberline <advisory ID> in:title,body state:open'`).
+  2. Post one comment on the issue: `Waits for: <the advisory issue>`, with
+     `owner/repo#N` for another repository. When no advisory issue is open,
+     write `Waits for: <advisory ID> (no issue)`; the supervisor opens it
+     (aw-supervisor G47).
+  3. Add the label `blocked` to that one issue:
+     `gh api -X POST repos/<repo>/issues/<issue>/labels -f 'labels[]=blocked'`.
+  4. Run `$AW release <who>`, then `$AW claim <who> --skip <issue>` in the
+     same run, as for a false precondition (above).
+  The supervisor removes `blocked` one time when the advisory issue is
+  closed (aw-supervisor G63). When the audit job passes on the default
+  branch, the diff can be the cause: do the rework as usual (evidence:
+  faberline/aw#730 and faberline/aw#733; tdd runs claimed and released
+  faberline/lumen pull requests 582 and 583 and faberline/tape pull request
+  241 again and again).
 - **A dependency that `aw claim` cannot read.** A `Waits for:` line can name
   an issue in a repository that this run cannot read (403, 404). `aw claim`
   then treats that one issue as waiting, prints `aw: skipped #N: could not
@@ -722,6 +756,13 @@ Read code through the GitHub API when you do not need the clone:
     `stage=spec` signal, the diff and CI;
   - compare the diff with the spec and each acceptance criterion; check that
     a test in the diff proves each criterion and that CI ran it;
+  - read the acceptance criteria of the issue body, word for word, not only
+    the criteria of the spec. A criterion of the issue that the diff does
+    not prove is a finding, also when the spec dropped or changed it. It is
+    not a finding only when a desk decision on record changed it (a `desk:`
+    comment or a decision issue; write its link). Do not answer
+    `VERDICT: passed` while such a finding is open (aw-supervisor G64;
+    evidence: faberline/core#650, pull request 651);
   - a small model wrote the code: look for tests that assert nothing,
     skipped or ignored tests, and changes outside the spec's files;
   - a lower `line` in `[standards.coverage]` of `aw.toml`, or a new
