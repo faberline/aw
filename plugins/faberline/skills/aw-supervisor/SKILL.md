@@ -70,7 +70,7 @@ Another exception: G67 (below) lets you add `stage:spec`, `agent:claude` and `p0
 The routine prompt must list the G67 label writes; without them, the issue has no labels and the label change goes to the desk.
 Another exception: G71 (below) lets you add `stage:spec`, `agent:claude` and `p2` to the one release readiness issue that you open for an empty queue.
 The routine prompt must list the G71 label writes; without them, the issue has no labels and the label change goes to the desk.
-Another exception: G72 (below) lets you correct the stage labels of a closed issue that a merged pull request completed.
+Another exception: G72 (below) lets you correct the stage labels of a closed issue that was closed as completed.
 The routine prompt must list the G72 label writes; without them, G72 only reports on the status board.
 G25 (ghost runs) and G27 (the CI queue tracker) do not add writes. G27 only adds comments on faberline/aw#372.
 
@@ -157,6 +157,7 @@ Look only at these:
 - q. In a full run: the aw pins of the workflows on the default branch (G67, below).
 - r. An empty queue: no open issue has `stage:spec`, `stage:tdd` or `stage:review` (G71, below).
 - s. In a full run: closed issues that still have `blocked`, `stage:spec`, `stage:tdd` or `stage:review` (G72, below).
+- t. Before each claim that `main` is green: the newest `ci` run of the newest `main` commit (G73, below).
 
 ### 5. Find root causes before you act
 
@@ -1640,7 +1641,7 @@ Use this rule in each full run. A quick run changes only the `更新：` time, s
    Use faberline/keep#278 as the example of the text. Do not copy its facts.
 5. The check is done. Read the closed release readiness issue, its signals and its children.
    - A child issue is open, or a point is not met and has no issue: the check has a gap. Write it on the board. For a point with no issue, open one `decision` item of type `中控可決定` that names the point.
-   - All nine points are met, or each gap is closed, and only a paid step or a tag is left: open one `decision(<repo>)` issue in faberline/aw (search first, G15). Its type is `類型：需要使用者`, with the label `needs-human` (step 8): a paid run, a tag and a release are never a supervisor action (G54, "Never in G54"). The item gives the release path of the readiness issue, each paid step with its number in TWD and the place where that number is written (`shown: <link>`), and the tag. When no number in TWD is written, write `cost: not shown` and name the workflow. Do not estimate a number yourself.
+   - All nine points are met, or each gap is closed, and only a paid step or a tag is left: first read `main` with G73. When its state is "not known" or red, open nothing in this run. When it is green, open one `decision(<repo>)` issue in faberline/aw (search first, G15). Its type is `類型：需要使用者`, with the label `needs-human` (step 8): a paid run, a tag and a release are never a supervisor action (G54, "Never in G54"). The item gives the release path of the readiness issue, each paid step with its number in TWD and the place where that number is written (`shown: <link>`), and the tag. When no number in TWD is written, write `cost: not shown` and name the workflow. Do not estimate a number yourself.
    - Nothing is left (the release exists): write that on the board. This rule opens no other issue.
 
 Never start a paid run, a `workflow_dispatch`, a tag or a release under this rule. Open at most one release readiness issue for `<target>` in 14 days.
@@ -1650,20 +1651,36 @@ The routine prompt must list the G71 issue and its three labels. Without them, o
 ### The stage labels of a closed issue (G72)
 
 A closed issue can keep `blocked` and an old stage label. The board counts and `aw desk patrol` then show work that does not exist (evidence, 2026-11-28: faberline/aw#756. The closed issue faberline/defer#312 kept `blocked` and `stage:tdd`. The supervisor wrote that it had no authority to change the labels of a closed issue, and the desk changed them by hand).
+A person can also close an issue as completed with no merged pull request. The labels stay wrong in the same way (evidence, 2026-11-28: faberline/aw#763. Seven core issues that a person closed as `completed` kept `blocked` or an old `stage:*` label for many runs, because this rule then accepted only an issue that a merged pull request closed).
 
 Use this rule in each full run, not in a quick run:
 
 1. List the closed issues that still have one of the labels: `gh api "repos/<target>/issues?state=closed&labels=<label>&per_page=30"` for `blocked`, `stage:spec`, `stage:tdd` and `stage:review`. Skip pull requests.
 2. For each issue, read it in this pass (G14, G19). All of these must be true:
    - `state` is `closed` and `state_reason` is `completed`;
-   - a merged pull request closed it. Read `gh api repos/<target>/issues/<n>/events` and find the newest `closed` event. Its `commit_id` is not empty, and `gh api repos/<target>/commits/<commit_id>/pulls` gives a pull request with `merged_at` set and the default branch as its base;
-   - nobody opened the issue again after that event.
+   - nobody opened the issue again after the newest `closed` event (`gh api repos/<target>/issues/<n>/events`).
+   A merged pull request is not necessary. An issue that a person closed as completed gets the same correction.
 3. Then remove `blocked` and the old `stage:spec`, `stage:tdd` or `stage:review` label, and add `stage:done`. Change no other label. Post no comment and do not open the issue again. Read the labels back (G26).
-4. Write one line on the board under `這一輪做了什麼` for each issue, with the link and the pull request.
+4. Write one line on the board under `這一輪做了什麼` for each issue, with the link. When a merged pull request closed it (the `commit_id` of the newest `closed` event, and `gh api repos/<target>/commits/<commit_id>/pulls`), add the pull request. Otherwise write `closed by a person`.
 
-Do not use this rule for an issue that was closed as not planned (a split or replaced parent of G54 keeps its labels), for an issue that was closed with no merged pull request, or for an open issue. For such an issue with `blocked` or a stage label, write one board line. When the same line is there for a second run, put it in a `pipeline` issue.
+Do not use this rule for an issue that was closed as not planned (`state_reason` is `not_planned`: a split or replaced parent of G54 keeps its labels), or for an open issue. For such an issue with `blocked` or a stage label, write one board line. When the same line is there for a second run, put it in a `pipeline` issue.
 Correct at most 10 issues in one run. Write the rest on the board for the next run.
 The routine prompt must list the G72 label writes. Without them, G72 only reports on the status board.
+
+### `main` is green only on a finished run (G73)
+
+A supervisor can say that `main` is green while the `ci` run of the newest commit is still running. That run can then fail (evidence, 2026-11-28: the defer supervisor closed the release readiness check faberline/defer#316 with "nine points met on main `ef32dce`", and opened the paid-run decision faberline/aw#762 at 12:16 UTC. The `ci` run of `ef32dce` on `main` was still in progress. It failed at 12:22 UTC, in the step `test: perf`).
+
+Use this rule before each claim that `main` is green: a point of a release readiness check, a release path, an empty-queue report (G71), and a `decision` item that asks for a paid run or a tag.
+
+1. Read the newest commit of the default branch: `gh api repos/<target>/commits/<default branch> --jq .sha`.
+2. Read the newest `ci` run of that exact commit: `gh api "repos/<target>/actions/workflows/ci.yml/runs?branch=<default branch>&head_sha=<sha>&per_page=1"`. Read `status` and `conclusion`.
+3. Only `status` `completed` and `conclusion` `success` on that exact commit counts as green. A green run of an older commit does not count.
+4. The run is `in_progress`, `queued`, `waiting` or `pending`, or there is no run for that commit: the state is "not known". Write `main <short sha>: ci not known (<status>)` on the board. Do not write that `main` is green. Do not open the `decision` item, do not close the readiness issue as met, and do not report the release path in this run. Check again in the next run.
+5. The run failed or was cancelled: `main` is red. Use the red-`main` rules (G28 and "Two classes of failure on `main`"). Open no paid-run or tag decision.
+
+Write the sha and the run link next to each claim that `main` is green.
+This rule adds no write. The routine prompt needs no new line.
 
 ### A runner label that GitHub retired (G51)
 
