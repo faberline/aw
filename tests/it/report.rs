@@ -14,6 +14,19 @@ fn claim_issue(w: &World, agent: &str) {
 }
 
 #[test]
+fn the_signal_keeps_every_mark_of_a_code_sample() {
+    // faberline/aw#754: a posted spec showed `vec[` for `vec![`. `aw` posts
+    // the report text as it is, so the loss is not in `aw report`.
+    let sample =
+        "```rust\nlet cases = vec![json!({}), other![1]];\nassert!(!cases.is_empty());\n```";
+    let w = World::new();
+    w.tracker.issue(1, &["agent:other", "stage:spec"]);
+    claim_issue(&w, "other");
+    report(w.services(), "other", None, Outcome::Ready, sample).unwrap();
+    assert!(w.tracker.last_comment(1).ends_with(sample));
+}
+
+#[test]
 fn spec_ready_turns_the_claim_into_the_signal() {
     let w = World::new();
     w.tracker.issue(1, &["agent:other", "stage:spec"]);

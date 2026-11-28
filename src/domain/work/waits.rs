@@ -45,6 +45,11 @@ pub fn parse(body: &str) -> Waits {
             continue;
         }
         let rest = line[10..].trim();
+        // `Waits for: none. #214 waits for this issue.` names no
+        // prerequisite: the rest of the line is not read (faberline/aw#751).
+        if says_none(rest) {
+            continue;
+        }
         let found = references(rest);
         if found.is_empty() {
             waits.without_number.push(rest.to_string());
@@ -56,6 +61,16 @@ pub fn parse(body: &str) -> Waits {
         }
     }
     waits
+}
+
+/// True when the first word of the text after `Waits for:` is `none` (any
+/// case, with or without a period or another mark after it). Such a line
+/// names no prerequisite, whatever comes after the word.
+pub fn says_none(rest: &str) -> bool {
+    let first = rest.split_whitespace().next().unwrap_or("");
+    first
+        .trim_end_matches(|c: char| ".,;:!?)".contains(c))
+        .eq_ignore_ascii_case("none")
 }
 
 /// Every issue reference (`#7`, `owner/name#7`) in a text, once each.
@@ -202,6 +217,27 @@ mod tests {
         let w = parse("- waits for: the port adapter\nWaits for: #3");
         assert_eq!(w.prerequisites, [p(None, 3)]);
         assert_eq!(w.without_number, ["the port adapter"]);
+    }
+
+    #[test]
+    fn none_as_the_first_word_means_no_prerequisite() {
+        // faberline/aw#751: `#214` on the same line is not a prerequisite.
+        for line in [
+            "Waits for: none. #214 waits for this issue.",
+            "Waits for: None",
+            "waits for: NONE.",
+            "- Waits for: none, see #5 and faberline/core#7",
+            "Part of #7. Waits for: none (#9 is closed)",
+        ] {
+            assert_eq!(parse(line), Waits::default(), "{line}");
+        }
+        // Another word that starts with `none` is not `none`.
+        let w = parse("Waits for: nonesuch adapter, #3");
+        assert_eq!(w.prerequisites, [p(None, 3)]);
+        // The next line still counts.
+        let w = parse("Waits for: none. See #214.\nWaits for: #8");
+        assert_eq!(w.prerequisites, [p(None, 8)]);
+        assert_eq!(signal_numbers("Waits for: none. #214 is next."), None);
     }
 
     #[test]

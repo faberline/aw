@@ -27,3 +27,10 @@ fn succeeds_reports_the_exit_status() {
     assert!(succeeds("sh", &["-c", "exit 0"]).unwrap());
     assert!(!succeeds("sh", &["-c", "exit 1"]).unwrap());
 }
+
+#[test]
+fn stdin_keeps_an_exclamation_mark_before_a_bracket() {
+    // faberline/aw#754: the request body goes to `gh` on stdin, with no shell.
+    let text = "let cases = vec![1]; assert!(!cases.is_empty()); echo !$ !!";
+    assert_eq!(run("cat", &[], Some(text)).unwrap(), text);
+}

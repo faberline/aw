@@ -251,6 +251,9 @@ It has this format:
   A spec that changes or drops an acceptance criterion of the issue with no desk decision is a `中控可決定` item: the recommended option keeps the acceptance as written (G64).
   A major upgrade of a shared dependency whose spec does not list every workspace crate that uses it is a `中控可決定` item: the recommended option sends the issue back to `stage:spec` (G65).
   A recommended option that is only a wait, with no write, no cost and no change of product direction, gets no `decision` issue and no `needs-human` label: write `Waits for:` on the issue and keep `blocked` (G66).
+  A spec that cannot read a file of another repository, when that repository is public, is a `中控可決定` item: the option gives the commit, the path and a checksum, and the tdd run copies the file (G68).
+  An acceptance criterion that the desk wrote, and whose premise the spec proves false, is a `中控可決定` item: the desk can restate it (G69).
+  A test that fails because an upstream release changed a public signature on purpose, when the fix is one expected string with the same assertion strength, is a `中控可決定` item (G70).
   A `需要使用者` decision issue also gets the label `needs-human`.
   A `中控可決定` item that passes the G54 checks is not sent to the desk: you execute it (G54).
 - The repository and links to each issue or pull request.
@@ -1527,6 +1530,81 @@ Pins in one repository that name different commits are also a finding: write the
 A failed job that the old pin already causes is still a G39 case. Use the issue of this rule for it, and do not open a second one (G15).
 Do not change a workflow file yourself.
 The routine prompt must list the G67 label writes; without them, open the issue with no labels and send the label change to the desk as a `中控可決定` item.
+
+### A file of a public repository that the spec cannot read (G68)
+
+A spec run can report `blocked` because it cannot read a file of another repository: the routine has no access to that repository, or the session blocks the request.
+This is not always a question for the owner (evidence, 2026-11-27: faberline/aw#750. The spec of faberline/core#669 needed one file of faberline/lumen. The supervisor wrote the item as `類型：需要使用者`. The desk decided it: lumen is public, so the desk gave the commit, the path and the SHA-256 of the file in a `desk:` comment, and the tdd run copies the file as a fixture).
+
+Use this rule when all of these are true. Read each one in this pass (G14, G19):
+
+1. The other repository is public. Read `gh api repos/<owner>/<name> --jq .visibility`. The answer must be `public`. When the call fails or the answer is not `public`, this rule does not apply.
+2. The spec or the blocked signal names the file: the repository and the path.
+3. The stage run needs the content of the file as it is (a schema, a fixture, a contract text). It does not ask for a change in the other repository.
+4. The copy needs no secret, no new access for the routine and no paid action.
+
+Then the item is `類型：中控可決定`. Write one option, as the recommendation:
+
+- the full commit SHA of the other repository that the copy comes from (a commit, not a branch name and not a tag name);
+- the path of the file at that commit;
+- a SHA-256 of the file content, when you can read the file. When you cannot read it, write `checksum: the desk supplies it` and do not write a number that you did not compute;
+- the instruction for the tdd run: copy the file into `<target>` as a fixture, compute the SHA-256 of the copy, and compare it with the number of the decision. When the numbers differ, or the tdd run cannot read the file, the tdd run reports `blocked` and changes nothing. It does not write the file from memory.
+- the place in `<target>` where the copy records its source: the repository, the commit and the path.
+
+The item stays `類型：需要使用者` when the other repository is private or internal, when the license of the file does not allow a copy, when the file holds a secret or personal data, or when the option needs a change in the other repository.
+A copy is a snapshot. When `<target>` must follow later changes of the file, say so in the item: that is a second issue, and this rule does not decide it.
+
+This is a class of decision for the desk. Do not execute it under G21 or G54: the desk supplies or confirms the checksum.
+This rule adds no write. The routine prompt needs no new line.
+
+### An acceptance criterion of the desk whose premise is false (G69)
+
+"Keep the acceptance as written" (G54) says that an option that changes an acceptance criterion is `類型：需要使用者`. The reason is that the issue text is the acceptance that the owner accepted.
+That reason does not hold for a criterion that the desk wrote and that the owner did not confirm (evidence, 2026-11-28: faberline/aw#752. The desk wrote criterion 2 of faberline/sift#415 before the cause was known. The spec proved that the premise of the criterion was false. The supervisor wrote the item as `類型：需要使用者`. The desk restated the criterion, and no test became weaker. The product question of the same issue, a new public field, stayed with the owner).
+
+Use this rule when all of these are true:
+
+1. The desk wrote the criterion. Read the author and the edit history of the issue body, or the `desk:` comment that added the criterion. When the owner wrote it, or you cannot show who wrote it, this rule does not apply.
+2. No comment or signal shows that the owner confirmed that criterion, and it is not a quote of the owner's words.
+3. The spec proves that the premise of the criterion is false, with evidence that you read in this pass: the file and the line, the run, or the commit. A premise is a fact about the present system that the criterion assumes. An opinion that the criterion is too hard is not such a proof.
+4. The intent of the criterion can still be stated: the defect that the issue reports is still tested.
+
+Then the item is `類型：中控可決定`. Write it with these parts:
+
+- the criterion as written, and who wrote it (`shown: <link>`);
+- the premise, and the evidence that it is false (`shown: <file and line>`);
+- one recommended option: the desk restates the criterion. Give a proposed text. The new text tests the same defect at the place where the spec shows that it occurs;
+- a line that says what does not change: no other criterion, no test, no threshold, no timeout and no gate becomes weaker (G45).
+
+The item stays `類型：需要使用者` when a condition above is `not shown`, when the new text makes the acceptance smaller (it removes a case, an input or a platform), when the criterion is a frozen contract or a milestone exit condition, or when the option adds or changes a public interface.
+When one issue has both kinds (a desk criterion with a false premise, and a product question), write two items. Only the first is `類型：中控可決定`.
+
+Do not restate the criterion yourself, and do not execute this item under G21 or G54. The desk edits its own criterion and records the old text in a comment.
+This rule adds no write. The routine prompt needs no new line.
+
+### An expected string after an intended upstream signature change (G70)
+
+A test in `<target>` can compare a text with the public signature of an upstream package. When the upstream release changes that signature on purpose, the test fails, and the fix changes the expected text.
+G45 says that a weaker test needs the owner. A change of one expected string to the new correct value does not make the test weaker (evidence, 2026-11-28: faberline/aw#753. core `v0.5.4` changed a TypeScript signature on purpose (faberline/core#597 and #608). The test of faberline/defer#311 changed one expected string from `adminBackup()` to `adminBackup(options?: CallOptions)`. The supervisor wrote the item as `類型：需要使用者`. The desk decided it with five limits).
+
+Use this rule when all of these are true. Write `shown: <link>` or `not shown: <what is missing>` for each one:
+
+1. The upstream change is intended: a merged issue or pull request of the upstream repository, or its release notes, names the new signature. A signature that changed with no such record is a possible upstream defect: write it as a cross-repository blocker of the upstream repository, and do not use this rule.
+2. The release that `<target>` uses has the change: read the tag or the lock file.
+3. The change in `<target>` is only expected strings of that signature, with the same kind of assertion as before (an exact comparison stays an exact comparison).
+
+Then the item is `類型：中控可決定`. Write one recommended option with these five limits, and repeat them in the answer comment of the `執行清單` for the tdd run:
+
+- (a) Only the expected string of the changed signature changes. Each other expected value stays.
+- (b) The assertion has no wider tolerance: no pattern, no prefix match and no `contains` in place of an exact comparison.
+- (c) No `#[ignore]`, no skip and no exclusion is added.
+- (d) No test and no test row is deleted.
+- (e) The text of the pull request maps each old string to the new string, and links the upstream record of condition 1.
+
+The item stays `類型：需要使用者` when a condition is `not shown`, when the fix needs a change that a limit forbids, or when the new signature removes a behavior that an acceptance criterion or a frozen contract of `<target>` names.
+
+This is a class of decision for the desk. Do not execute it under G21 or G54, also when it has one option. A review run then checks limits (a) to (e) on the pull request.
+This rule adds no write. The routine prompt needs no new line.
 
 ### A runner label that GitHub retired (G51)
 

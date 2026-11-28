@@ -156,7 +156,9 @@ fn title_waits(text: &str) -> Vec<String> {
                 .trim_start()
                 .strip_prefix_ignore_case("waits for:")?
                 .to_string();
-            (!rest.contains('#')).then(|| rest.trim().trim_end_matches('.').to_lowercase())
+            // `Waits for: none` names no child (faberline/aw#751).
+            (!rest.contains('#') && !super::waits::says_none(&rest))
+                .then(|| rest.trim().trim_end_matches('.').to_lowercase())
         })
         .collect()
 }
@@ -413,6 +415,14 @@ mod tests {
         // A child does not wait for itself.
         let own = kids(&[("A", "Text.\nWaits for: A"), ("B", "Text.")]);
         assert!(creation_order(&own).is_err());
+    }
+
+    #[test]
+    fn a_child_that_waits_for_none_names_no_sibling() {
+        // faberline/aw#751: `none` is not the title of a child.
+        let c = kids(&[("A", "Text.\nWaits for: none."), ("B", "Waits for: None")]);
+        assert_eq!(creation_order(&c).unwrap(), [0, 1]);
+        assert!(waits_on("Waits for: none", &[(5, "None".to_string())]).is_empty());
     }
 
     #[test]

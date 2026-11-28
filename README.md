@@ -69,6 +69,10 @@ limits of the aw-worker skill, so a routine can stop before it reads the skill.
 With `--stage spec` it also looks for plan work (triage, a label move, an
 answered blocked issue).
 
+A body line `Waits for: none` names no prerequisite. Since 0.7.81 `aw` reads
+`none` as the first word (any case, with or without a period) and ignores
+the rest of that line.
+
 `aw supervise --check --repo <owner/name>` (0.7.80) writes nothing and prints
 one line: `quick ...` (exit 0) or `full reason=<no-board|no-marker|changed|stale>`
 (exit 2); exit 1 is an error. It reads one repository through REST and hashes

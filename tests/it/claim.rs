@@ -681,6 +681,20 @@ fn a_waits_line_with_no_number_warns_and_is_claimed() {
     assert_eq!(claimed(&w, "claude").issue, 1);
 }
 
+#[test]
+fn a_number_after_waits_for_none_is_not_a_prerequisite() {
+    // faberline/aw#751: #9 is open, but the line says `none` first.
+    let w = World::new();
+    w.tracker.issue(1, &["agent:claude", "stage:spec", "p0"]);
+    w.tracker.issue(2, &["agent:claude", "stage:spec"]);
+    w.tracker.issue(9, &[]);
+    w.tracker
+        .bodies
+        .borrow_mut()
+        .insert(1, "Waits for: none. #9 waits for this issue.".into());
+    assert_eq!(claimed(&w, "claude").issue, 1);
+}
+
 fn claimed_tdd(world: &World) -> Claim {
     match claim(world.services(), "other", Some(Stage::Tdd), &[], &[]).unwrap() {
         ClaimOutcome::Claimed(c) => c,
