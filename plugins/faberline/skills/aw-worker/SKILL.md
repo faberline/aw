@@ -375,7 +375,18 @@ First read the issue and all its comments with the REST calls above.
 Read the repository rules: `AGENTS.md`, `CLAUDE.md` or `CONTRIBUTING.md`.
 Follow them for code and checks. For git and GitHub, `aw` and this skill win.
 Put report files in a temporary directory, never in a clone.
-Write the report file with the file tool or its own plain command first.
+Write the report file with the file tool first. When you have no file tool,
+write it with one plain command that has a quoted heredoc (`cat > <file>
+<<'AW_EOF'`, with the quotes): the shell then changes no character. Never
+give the report text as a shell argument (`-m "<text>"`, `echo "<text>"`,
+`printf`): a shell can change `!`, `$`, a backquote and `\`.
+A posted spec lost the `!` of `vec![` two times, and tdd sent it back each
+time (faberline/aw#754). `aw` posts the file as it is, so check the file
+before you report: read it back, or run `grep -n 'vec\[' <file>`. A hit
+where the code needs `vec![` means that the mark is lost: write the file
+again and check again. When the mark is lost again, say so in the first line
+of the report (`Note: read vec[ as the vec macro call, the mark is lost in
+transport`) and in your final answer, with the tool that wrote the file.
 Then run `$AW report` as a plain command. Do not add `trap`, `rm`,
 `set -e` or other cleanup to it; some clients block shell forms that they
 cannot inspect. Leave the temporary file; the system removes it.
@@ -473,6 +484,12 @@ Read code through the GitHub API when you do not need the clone:
   the supervisor, `aw claim` and the tdd run read the number. Write one such
   line for each issue. A `Waits for:` line with no issue number is a spec
   gap: `aw claim` does not skip that issue and the supervisor reports it.
+  `Waits for:` is alone on its line: nothing before it and no sentence
+  after the numbers. For no prerequisite, write `Waits for: none` and
+  nothing else on that line. Since aw 0.7.81 `aw` reads `none` as the first
+  word as "no prerequisite" and ignores the rest of the line
+  (faberline/aw#751); an older `aw` reads a number after it as a
+  prerequisite.
   The issue body must have this line on its own line (not after `Part of
   #N.` in one line), and the spec signal
   must repeat it. Use `Waits for: #N`, with commas for more than one number
@@ -586,6 +603,22 @@ Read code through the GitHub API when you do not need the clone:
 - The spec is the issue body and the newest `stage=spec` signal.
   On rework, also read the newest `stage=review` signal and the pull request
   review comments.
+- A Rust sample of the spec that shows `vec[` where only the macro call
+  `vec![` compiles has lost one character in transport (faberline/aw#754).
+  Read it as `vec![` and go on. This alone is not a reason for `respec`.
+- A `desk:` comment can give a file of a public repository to copy: the
+  repository, the commit, the path and a SHA-256 (supervisor rule G68).
+  Copy the file at that commit into the repository as a fixture, compute
+  the SHA-256 of the copy and compare it with the number of the comment.
+  Record the repository, the commit and the path next to the copy. When
+  the numbers differ, or you cannot read the file, report `blocked` with
+  what you read. Never write the file from memory.
+- A `desk:` comment can allow a new expected string after an upstream
+  release changed a public signature on purpose (supervisor rule G70).
+  Change only that expected string. Keep the same assertion: no pattern,
+  no prefix match, no `#[ignore]`, no exclusion and no deleted test. Map
+  each old string to the new string in the pull request text, with the
+  link of the upstream record.
 - Work on the branch that `aw claim` checked out. On rework it is the open
   pull request's branch. Do not copy files from another branch.
 - `aw claim` already ran `git merge origin/<default>` when that branch was

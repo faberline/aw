@@ -160,6 +160,9 @@ Each bullet has the date, the owner's words and the meaning.
 - 2026-11-23, about the desk patrol: 「我覺得你本地的以拉到6小時一次,慢慢tune監督員」.
   The desk patrol runs one time in 6 hours. This replaces the 3 hours of 2026-11-22 for the desk patrol only.
   The cloud routines stay at 3 hours. Desk reading: use the time to improve the supervisors, so that a patrol finds less.
+- 2026-11-27 (the desk recorded this decision in `status(desk)`; the words of the owner are not quoted there): the desk patrol runs one time in 3 hours, and only the tdd routines run one time each hour.
+  This replaces the 6 hours of 2026-11-23 for the desk patrol, and the 3 hours of 2026-11-22 for the tdd routines only.
+  The spec, review and supervisor routines stay at 3 hours.
 - 2026-11-21: 「你用 aw 寫好一個指令，讓你可以直接查看哪些地方你要下去看，不用每次都要寫一堆指定」 and 「不過還是要check list一下」.
   A patrol starts with `aw desk patrol`. The desk still reads each item of the list and reports on it.
 - 2026-11-20: 「先查門檻再提案（建議）」.
@@ -245,8 +248,8 @@ A routine works on an issue only through the `aw` CLI: `aw claim`, the work, `aw
 A blocked issue names its wait in a line `Waits for: #N`.
 
 **Routines.** Each cloud repository has one routine for each stage and one supervisor.
-Every routine runs one time in 3 hours, in UTC. The hours of spec and supervisor are 0, 3, 6 and so on.
-The tdd hours are one hour later, and the review hours are two hours later.
+The spec, review and supervisor routines run one time in 3 hours, in UTC. The hours of spec and supervisor are 0, 3, 6 and so on, and the review hours are two hours later.
+Only the tdd routines run one time each hour (owner decision of 2026-11-27).
 Thus one issue can pass all three stages in about 3 hours.
 A repository with a priority can have a second tdd or review routine.
 
@@ -287,7 +290,8 @@ It sends up only what it cannot do. The rules are in `plugins/faberline/skills/a
 
 ## 5. Patrol runbook
 
-Run a patrol one time in 6 hours, and when the owner asks for the state. The cloud routines stay at 3 hours.
+Run a patrol one time in 3 hours, and when the owner asks for the state (owner decision of 2026-11-27).
+Only the tdd routines run one time each hour. The spec, review and supervisor routines stay at 3 hours.
 
 ### Steps
 

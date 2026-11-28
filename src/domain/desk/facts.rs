@@ -220,6 +220,10 @@ fn comment_waits(text: &str) -> Vec<Prerequisite> {
         }
         let line = strip_parens(line);
         if let Some(cap) = phrase.captures(&line) {
+            // `Waits for: none. #214 waits for this issue.` names no wait.
+            if waits::says_none(&cap[1]) {
+                continue;
+            }
             for p in comment_references(&cap[1]) {
                 if !found.contains(&p) {
                     found.push(p);

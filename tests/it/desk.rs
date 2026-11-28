@@ -538,6 +538,12 @@ fn a_comment_that_says_now_waits_for_replaces_the_body_line() {
         i.waits().iter().map(|p| p.show()).collect::<Vec<_>>(),
         ["#308", "#309"]
     );
+    // faberline/aw#751: `none` first means that the line names no wait.
+    i.comments = comment("Waits for: none. #214 waits for this issue.");
+    assert_eq!(i.waits()[0].show(), "#379");
+    i.body = "Waits for: none. #214 waits for this issue.".into();
+    assert!(i.waits().is_empty());
+    i.body = "Waits for: #379".into();
     // A comment that ends a wait changes nothing.
     i.comments = comment("it no longer waits for #5");
     assert_eq!(i.waits()[0].show(), "#379");

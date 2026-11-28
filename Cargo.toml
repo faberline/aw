@@ -1,6 +1,6 @@
 [package]
 name = "aw"
-version = "0.7.80"
+version = "0.7.81"
 edition = "2024"
 description = "Issue worker CLI for faberline agents: claim one issue, do its stage, report back."
 license = "MIT"
